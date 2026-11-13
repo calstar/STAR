@@ -189,6 +189,83 @@ export function SwitchCard({ sw }: { sw: SwitchRoleConfig }) {
   );
 }
 
+/** 0x58cf7901abcd -> "58:cf:79:01:ab:cd" */
+export function formatMac(mac: number): string {
+  return mac.toString(16).padStart(12, '0').match(/../g)!.join(':');
+}
+
+function SeenSlot({ slot, onSeen }: { slot: number; onSeen: (mac: number, rssi: number) => void }) {
+  const mac = useSensorValue(`SWSEEN${slot}`, 'mac');
+  const rssi = useSensorValue(`SWSEEN${slot}`, 'rssi');
+  useEffect(() => {
+    if (mac != null && rssi != null) onSeen(mac, rssi);
+  }, [mac, rssi, onSeen]);
+  return null;
+}
+
+const SCAN_MS = 10_000;
+
+/** "Find switches": a 10 s scan on the env board for STAR switches not on the list, to bind one. */
+function FindSwitches({ roles }: { roles: SwitchRoleConfig[] }) {
+  const [scanUntil, setScanUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  const [found, setFound] = useState<Map<number, number>>(new Map());
+  const scanning = now < scanUntil;
+  useEffect(() => {
+    if (!scanning) return;
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [scanning]);
+  const onSeen = useCallback((mac: number, rssi: number) => {
+    setFound((prev) => (prev.get(mac) === rssi ? prev : new Map(prev).set(mac, rssi)));
+  }, []);
+  const listed = new Set(roles.map((r) => r.mac.toLowerCase()));
+  const rows = [...found].filter(([mac]) => !listed.has(formatMac(mac)));
+
+  const start = () => {
+    setFound(new Map());
+    setNow(Date.now());
+    setScanUntil(Date.now() + SCAN_MS);
+    getWebSocketClient().sendCommand({ commandType: 'switch_discover', data: {} });
+  };
+
+  return (
+    <section className="mt-8 rounded-lg border border-gray-700 bg-card p-4" aria-label="Find switches">
+      <div className="flex items-center gap-4">
+        <button type="button" onClick={start} disabled={scanning}
+          className="rounded bg-gray-600 px-4 py-2 text-white disabled:opacity-40">Find switches</button>
+        <span className="text-sm text-text-muted">
+          {scanning ? `Scanning… ${Math.ceil((scanUntil - now) / 1000)} s`
+            : 'Lists STAR switches in range that are not configured. It connects to none of them.'}
+        </span>
+      </div>
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((slot) => <SeenSlot key={slot} slot={slot} onSeen={onSeen} />)}
+      {rows.length > 0 && (
+        <table className="mt-4 w-full text-sm">
+          <thead><tr className="text-left text-text-muted"><th>Name</th><th>MAC</th><th>Signal</th></tr></thead>
+          <tbody>
+            {rows.map(([mac, rssi]) => (
+              <tr key={mac}>
+                <td className="font-mono">STAR-Switch-{formatMac(mac).slice(12, 14).toUpperCase()}{formatMac(mac).slice(15).toUpperCase()}</td>
+                <td className="font-mono">{formatMac(mac)}</td>
+                <td>{rssi} dBm</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {rows.length > 0 && (
+        <p className="mt-3 text-xs text-text-muted">
+          To bind one, add it to config.toml: [switch_roles.&lt;key&gt;] with role, name and mac = &quot;{formatMac(rows[0][0])}&quot;.
+        </p>
+      )}
+      {!scanning && scanUntil > 0 && rows.length === 0 && (
+        <p className="mt-3 text-sm text-text-muted">No unconfigured switches heard.</p>
+      )}
+    </section>
+  );
+}
+
 export default function SwitchesPage() {
   const roles = useSwitchRoles();
   return (
@@ -205,6 +282,7 @@ export default function SwitchesPage() {
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         {(roles ?? []).map((sw) => <SwitchCard key={sw.role} sw={sw} />)}
       </div>
+      {roles !== null && roles.length > 0 && <FindSwitches roles={roles} />}
     </main>
   );
 }

@@ -74,6 +74,13 @@ public:
     };
     std::optional<SwitchResultSample> get_last_switch_result();
 
+    // SWITCH_SEEN (type 20): an unlisted switch heard by a "Find switches" scan.
+    struct SwitchSeenSample {
+        daq::SwitchSeenPacket seen;
+        std::string source_ip;
+    };
+    std::optional<SwitchSeenSample> get_last_switch_seen();
+
 private:
     std::unique_ptr<daq_comms::transport::UDPSocket> socket_;
     std::vector<uint8_t> receive_buffer_;
@@ -88,6 +95,7 @@ private:
     std::optional<EnvironmentalSample> last_environmental_;
     std::optional<SwitchStatusSample> last_switch_status_;
     std::optional<SwitchResultSample> last_switch_result_;
+    std::optional<SwitchSeenSample> last_switch_seen_;
 
     static constexpr size_t RECEIVE_BUFFER_SIZE = 8192;
 };

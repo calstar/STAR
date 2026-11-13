@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planSwitchCommand } from '../switch-command.js';
+import { planSwitchCommand, planSwitchDiscover } from '../switch-command.js';
 import { CONTROL_COMMAND_TYPES } from '../control-commands.js';
 import { parseElodinPacket } from '../elodin-protocol.js';
 
@@ -45,5 +45,23 @@ describe('switch commands', () => {
     ]);
     expect(parseElodinPacket([0x28, 3], Buffer.alloc(11))).toEqual([]);
     expect(parseElodinPacket([0x28, 5], p)).toEqual([]);
+  });
+
+  it('"Find switches" is one line, not gated, and needs the service on', () => {
+    expect(CONTROL_COMMAND_TYPES.has('switch_discover')).toBe(false);
+    expect(planSwitchDiscover(CONFIG)).toEqual({ line: 'discover\n', port: 8094 });
+    expect('error' in planSwitchDiscover({ switch_service: { enabled: false } })).toBe(true);
+  });
+
+  it('seen switches decode onto SWSEEN<slot>', () => {
+    const p = Buffer.alloc(17);
+    p.writeBigUInt64LE(1_700_000_000_000_000_000n, 0);
+    p.writeBigUInt64LE(0x58cf7901abcdn, 8);
+    p.writeInt8(-80, 16);
+    expect(parseElodinPacket([0x29, 7], p)).toEqual([
+      { entity: 'SWSEEN7', component: 'mac', value: 0x58cf7901abcd, timestamp: 1700000000000 },
+      { entity: 'SWSEEN7', component: 'rssi', value: -80, timestamp: 1700000000000 },
+    ]);
+    expect(parseElodinPacket([0x29, 8], p)).toEqual([]);
   });
 });

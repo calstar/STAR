@@ -53,7 +53,7 @@ import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReloa
 import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import { isOperator } from './operators.js';
-import { planSwitchCommand, sendSwitchCommand } from './switch-command.js';
+import { planSwitchCommand, planSwitchDiscover, sendSwitchCommand } from './switch-command.js';
 import { CONTROL_COMMAND_TYPES } from './control-commands.js';
 import type { NotificationPayload } from '../../shared/types.js';
 import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUpdate, QueryHistoricalRequest } from '../../shared/types.js';
@@ -1352,6 +1352,16 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
         break;
       }
       console.log(`[ThinServer] Switch command ${plan.line.trim()} from ${(ws as WsWithControl).__daqEmail || 'local'}`);
+      sendSwitchCommand(plan.line, plan.port);
+      break;
+    }
+    case 'switch_discover': {
+      // Not gated: a scan moves nothing, and finding a switch's MAC is how one gets bound.
+      const plan = planSwitchDiscover(safeReadConfigForGui());
+      if ('error' in plan) {
+        send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: plan.error } });
+        break;
+      }
       sendSwitchCommand(plan.line, plan.port);
       break;
     }

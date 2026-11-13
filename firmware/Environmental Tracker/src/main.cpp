@@ -140,6 +140,12 @@ void loop() {
                 }
             }
         } else if (bytes_read > 0 && static_cast<daq::PacketType>(pkt_buf[0]) ==
+                                         daq::PacketType::SWITCH_DISCOVER) {
+            daq::PacketHeader hdr;
+            daq::SwitchDiscoverPacket d;
+            if (daq::parse_switch_discover_packet(pkt_buf, bytes_read, hdr, d))
+                switch_link::startDiscovery(d.duration_s * 1000u);
+        } else if (bytes_read > 0 && static_cast<daq::PacketType>(pkt_buf[0]) ==
                                   daq::PacketType::SERVER_HEARTBEAT) {
             daq::PacketHeader hdr;
             daq::ServerHeartbeatPacket data;
@@ -194,6 +200,11 @@ void loop() {
     for (size_t i = 0; i < nres; ++i)
         send_to_server(pkt_buf, daq::create_switch_command_result_packet(results[i], now, pkt_buf,
                                                                          sizeof(pkt_buf)));
+    daq::SwitchSeenPacket seen[daq::MAX_SEEN_SWITCHES];
+    size_t nseen = switch_link::collectSeen(now, seen, daq::MAX_SEEN_SWITCHES);
+    for (size_t i = 0; i < nseen; ++i)
+        send_to_server(pkt_buf, daq::create_switch_seen_packet(seen[i], now, pkt_buf,
+                                                               sizeof(pkt_buf)));
     static unsigned long last_ble_report = 0;
     if (!switch_link::running() && now - last_ble_report >= ENV_BME_RETRY_INTERVAL_MS) {
         last_ble_report = now;

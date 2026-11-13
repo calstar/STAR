@@ -382,4 +382,15 @@ bool parse_switch_command_result_packet(const uint8_t *buffer, size_t buffer_siz
                                         PacketHeader &header_out,
                                         SwitchCommandResultPacket &res_out);
 
+
+/** SWITCH_DISCOVER (21) / SWITCH_SEEN (20). 0 / false on error. */
+size_t create_switch_discover_packet(const SwitchDiscoverPacket &d, uint32_t timestamp_ms,
+                                     uint8_t *buffer, size_t buffer_size);
+bool parse_switch_discover_packet(const uint8_t *buffer, size_t buffer_size,
+                                  PacketHeader &header_out, SwitchDiscoverPacket &d_out);
+size_t create_switch_seen_packet(const SwitchSeenPacket &s, uint32_t timestamp_ms,
+                                 uint8_t *buffer, size_t buffer_size);
+bool parse_switch_seen_packet(const uint8_t *buffer, size_t buffer_size,
+                              PacketHeader &header_out, SwitchSeenPacket &s_out);
+
 } // namespace daq

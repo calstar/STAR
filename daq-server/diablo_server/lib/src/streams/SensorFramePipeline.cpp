@@ -85,6 +85,16 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return std::nullopt;
     }
 
+    if (peek.packet_type == daq::PacketType::SWITCH_SEEN) {
+        daq::PacketHeader header{};
+        daq::SwitchSeenPacket seen{};
+        if (peek.version == DIABLO_COMMS_VERSION &&
+            daq::parse_switch_seen_packet(receive_buffer_.data(), static_cast<size_t>(received),
+                                          header, seen))
+            last_switch_seen_ = SwitchSeenSample{seen, last_source_ip_};
+        return std::nullopt;
+    }
+
     if (peek.packet_type == daq::PacketType::SENSOR_DATA) {
         daq::PacketHeader sensor_header;
         std::vector<daq::SensorDataChunkCollection> chunks;
@@ -225,6 +235,10 @@ SensorFramePipeline::get_last_switch_status() {
 std::optional<SensorFramePipeline::SwitchResultSample>
 SensorFramePipeline::get_last_switch_result() {
     return std::exchange(last_switch_result_, std::nullopt);
+}
+
+std::optional<SensorFramePipeline::SwitchSeenSample> SensorFramePipeline::get_last_switch_seen() {
+    return std::exchange(last_switch_seen_, std::nullopt);
 }
 
 std::string SensorFramePipeline::last_error() const {

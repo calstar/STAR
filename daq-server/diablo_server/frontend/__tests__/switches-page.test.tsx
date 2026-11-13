@@ -8,7 +8,7 @@ vi.mock('@/lib/websocket', async (orig) => ({
   ...(await orig<typeof import('@/lib/websocket')>()),
   getWebSocketClient: () => ({ on: () => () => {}, send: vi.fn(), sendCommand }),
 }));
-import SwitchesPage, { SwitchCard, switchRolesFromConfig } from '@/app/switches/page';
+import SwitchesPage, { formatMac, SwitchCard, switchRolesFromConfig } from '@/app/switches/page';
 import { useSensorStore } from '@/lib/store';
 import { NAV_ITEMS } from '@/lib/nav-items';
 
@@ -121,13 +121,34 @@ describe('switches page', () => {
     const roles = Object.fromEntries([0, 1, 2, 3, 4].map((r) => [`s${r}`, { role: r, name: `Switch ${r}`, mac: `58:cf:79:01:00:0${r}` }]));
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ config: { switch_service: { enabled: true }, switch_roles: roles } }) })));
     render(<SwitchesPage />);
-    await waitFor(() => expect(screen.getAllByRole('region')).toHaveLength(5));
+    await waitFor(() => expect(screen.getAllByRole('region', { name: /^Switch \d$/ })).toHaveLength(5));
     for (const r of [0, 1, 2, 4]) feed(r, { ...DISARMED });
     feed(3, { ...DISARMED, link: 0, age_ms: 6000 });
     await waitFor(() => expect(screen.getAllByText(/^Connected/)).toHaveLength(4));
     const lost = screen.getByRole('region', { name: 'Switch 3' });
     expect(lost).toHaveTextContent('the environmental board is looking for it');
     expect(screen.getByRole('region', { name: 'Switch 2' })).not.toHaveTextContent('looking for it');
+  });
+
+  it('finds unconfigured switches, without listing configured ones', async () => {
+    expect(formatMac(0x58cf7901abcd)).toBe('58:cf:79:01:ab:cd');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ config: CONFIG }) })));
+    render(<SwitchesPage />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Find switches' })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Find switches' }));
+    expect(sendCommand).toHaveBeenCalledWith({ commandType: 'switch_discover', data: {} });
+    expect(screen.getByRole('button', { name: 'Find switches' })).toBeDisabled();
+    act(() => {
+      const t = Date.now();
+      useSensorStore.getState().updateSensor({ entity: 'SWSEEN0', component: 'mac', value: 0x58cf7901abcd, timestamp: t });
+      useSensorStore.getState().updateSensor({ entity: 'SWSEEN0', component: 'rssi', value: -80, timestamp: t });
+      // a configured one (the env board would not report it; the page drops it anyway)
+      useSensorStore.getState().updateSensor({ entity: 'SWSEEN1', component: 'mac', value: 0x58cf79013f2a, timestamp: t });
+      useSensorStore.getState().updateSensor({ entity: 'SWSEEN1', component: 'rssi', value: -50, timestamp: t });
+    });
+    await waitFor(() => expect(screen.getByText('STAR-Switch-ABCD')).toBeInTheDocument());
+    expect(screen.getByText('-80 dBm')).toBeInTheDocument();
+    expect(screen.queryByText('58:cf:79:01:3f:2a')).not.toBeInTheDocument();
   });
 });
 

@@ -90,6 +90,9 @@ public:
      *  (layout: streams/SwitchStatusMessage.hpp). */
     static bool register_switch_tables(ElodinClient& client, const std::vector<uint8_t>& roles);
 
+    /** [0x29, slot] / SWSEEN<slot>, slots 0..MAX_SEEN_SWITCHES-1: "Find switches" results. */
+    static bool register_switch_seen_tables(ElodinClient& client);
+
     /**
      * @brief Register RAW sensor / actuator VTables.
      *

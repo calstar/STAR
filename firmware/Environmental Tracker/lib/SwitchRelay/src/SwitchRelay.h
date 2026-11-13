@@ -64,6 +64,16 @@ public:
     size_t collectResults(daq::SwitchCommandResultPacket *out, size_t max);
     static constexpr size_t MAX_QUEUED = daq::MAX_SWITCHES;
 
+    // "Find switches". For durationMs from nowMs, switches heard that are not
+    // on the list are remembered (one slot each, up to MAX_SEEN_SWITCHES) and
+    // reported every second. Starting again forgets the last scan's. Discovery
+    // never connects to anything: shouldConnect() answers for listed MACs only.
+    void startDiscovery(uint32_t nowMs, uint32_t durationMs);
+    bool discovering(uint32_t nowMs) const;
+    // Heard during a scan; ignored unless discovering and unlisted.
+    void onSeen(const uint8_t mac[6], int8_t rssi, uint32_t nowMs);
+    size_t collectSeen(uint32_t nowMs, daq::SwitchSeenPacket *out, size_t max);
+
 private:
     struct Slot {
         bool listed = false;
@@ -84,6 +94,11 @@ private:
     void result(const daq::SwitchCommandPacket &cmd, daq::SwitchCommandResult r);
 
     Slot slots_[daq::MAX_SWITCHES];  // indexed by role
+    bool discovering_ = false;
+    uint32_t discoverStartMs_ = 0, discoverMs_ = 0, seenReportedMs_ = 0;
+    bool seenFresh_ = false;
+    daq::SwitchSeenPacket seen_[daq::MAX_SEEN_SWITCHES];
+    uint8_t nSeen_ = 0;
     struct Queued {
         daq::SwitchCommandPacket cmd;
         uint8_t mac[6];  // the switch it was accepted for; a new list can't redirect it

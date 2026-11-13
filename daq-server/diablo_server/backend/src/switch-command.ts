@@ -46,3 +46,12 @@ export function sendSwitchCommand(line: string, port: number): void {
   }
   sock.send(line, port, '127.0.0.1');
 }
+
+/** "Find switches": a 10 s scan on the env board for switches not on the list. Moves nothing. */
+export function planSwitchDiscover(config: unknown): SwitchCommandPlan {
+  const cfg = config as { switch_service?: { enabled?: unknown; command_port?: unknown } } | null;
+  if (!cfg || cfg.switch_service?.enabled !== true) return { error: 'Switches are not enabled ([switch_service] in config.toml).' };
+  const portRaw = Number(cfg.switch_service.command_port ?? 8094);
+  const port = Number.isInteger(portRaw) && portRaw > 0 && portRaw < 65536 ? portRaw : 8094;
+  return { line: 'discover\n', port };
+}

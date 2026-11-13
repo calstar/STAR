@@ -52,6 +52,9 @@ NimBLEAddress toAddress(const uint8_t mac[6]) {
 
 // A listed switch heard in a scan, waiting for the task to connect to it.
 volatile bool pendingSet = false;
+// A discovery scan was asked for: restart the scan so NimBLE's duplicate filter
+// reports switches it already heard before discovery began.
+volatile bool restartScan = false;
 uint8_t pendingMac[6];
 
 void onStatusNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, bool) {
@@ -88,6 +91,7 @@ class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
         {
             Guard g;
             want = relay.shouldConnect(mac);
+            if (!want) relay.onSeen(mac, static_cast<int8_t>(d->getRSSI()), millis());
         }
         if (want && !pendingSet) {
             memcpy(pendingMac, mac, 6);
@@ -167,9 +171,13 @@ void task(void *) {
         bool scan;
         {
             Guard g;
-            scan = relay.wantsScan();
+            scan = relay.wantsScan() || relay.discovering(millis());
         }
         NimBLEScan *s = NimBLEDevice::getScan();
+        if (restartScan) {
+            restartScan = false;
+            if (s->isScanning()) s->stop();
+        }
         if (scan && !s->isScanning() && !pendingSet) s->start(0, nullptr, false);
         if (!scan && s->isScanning()) s->stop();
 
@@ -241,6 +249,21 @@ size_t collectResults(daq::SwitchCommandResultPacket *out, size_t max) {
     if (!started) return 0;
     Guard g;
     return relay.collectResults(out, max);
+}
+
+void startDiscovery(uint32_t durationMs) {
+    if (!started) return;
+    {
+        Guard g;
+        relay.startDiscovery(millis(), durationMs);
+    }
+    restartScan = true;
+}
+
+size_t collectSeen(uint32_t nowMs, daq::SwitchSeenPacket *out, size_t max) {
+    if (!started) return 0;
+    Guard g;
+    return relay.collectSeen(nowMs, out, max);
 }
 
 size_t collectReports(uint32_t nowMs, daq::SwitchStatusReport *out, size_t max) {

@@ -603,6 +603,8 @@ int main(int argc, char* argv[]) {
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
         fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client, env_boards);
         fsw::elodin::DatabaseConfig::register_switch_tables(elodin_client, switch_roles);
+        if (!switch_board_ip.empty())
+            fsw::elodin::DatabaseConfig::register_switch_seen_tables(elodin_client);
         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
@@ -723,6 +725,20 @@ int main(int argc, char* argv[]) {
                         ++elodin_drop_count;
                 }
             }
+            if (auto seen = pipeline.get_last_switch_seen()) {
+                if (!switch_board_ip.empty() && seen->source_ip == switch_board_ip) {
+                    const uint64_t timestamp_ns =
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+                    const auto msg = fsw::streams::make_switch_seen_message(seen->seen, timestamp_ns);
+                    if (elodin_connected && elodin_client.is_connected() &&
+                        elodin_client.publish({0x29, seen->seen.slot}, msg))
+                        ++elodin_publish_count;
+                    else
+                        ++elodin_drop_count;
+                }
+            }
             // When last packet was a BOARD_HEARTBEAT, run discovery and broadcast config to that
             // board
             auto hb = pipeline.get_last_heartbeat();
@@ -825,6 +841,8 @@ int main(int argc, char* argv[]) {
                                                                                    env_boards);
                         fsw::elodin::DatabaseConfig::register_switch_tables(elodin_client,
                                                                             switch_roles);
+                        if (!switch_board_ip.empty())
+                            fsw::elodin::DatabaseConfig::register_switch_seen_tables(elodin_client);
                         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client,
                                                                                config_board_ids);
                     }

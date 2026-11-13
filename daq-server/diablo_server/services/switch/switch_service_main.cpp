@@ -130,6 +130,14 @@ int main(int argc, char* argv[]) {
         if (got <= 0)
             continue;
         line[got] = 0;
+        if (std::string(line).rfind("discover", 0) == 0) {  // "Find switches": 10 s scan
+            daq::SwitchDiscoverPacket d{10};
+            size_t n = daq::create_switch_discover_packet(d, now_ms(), buf, sizeof buf);
+            if (n > 0)
+                sendto(sock, buf, n, 0, reinterpret_cast<sockaddr*>(&dst), sizeof dst);
+            std::cout << "[SwitchService] discovery scan, 10 s\n";
+            continue;
+        }
         daq::SwitchCommandPacket cmd{};
         std::string why;
         if (!fsw::config::parse_switch_command(line, relay, cmd, why)) {

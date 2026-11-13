@@ -193,6 +193,18 @@ export function parseElodinPacket(
     ];
   }
 
+  // "Find switches" result [0x29, slot], entity SWSEEN<slot>: an unlisted switch's MAC (48 bits,
+  // as printed: most significant byte first) and RSSI.
+  if (high === 0x29) {
+    if (low > 7 || payload.length !== 17) return [];
+    const entity = `SWSEEN${low}`;
+    const timestamp = Number(payload.readBigUInt64LE(0) / 1000000n);
+    return [
+      { entity, component: 'mac', value: Number(payload.readBigUInt64LE(8) & 0xffffffffffffn), timestamp },
+      { entity, component: 'rssi', value: payload.readInt8(16), timestamp },
+    ];
+  }
+
   // ── Generic sensor type decoder ──────────────────────────────────────────
   // New packet ID scheme: low byte = (board_number - 1) * 0x20 + channel (raw)
   //                                   (board_number - 1) * 0x20 + 0x10 + channel (calibrated)

@@ -182,3 +182,43 @@ size_t SwitchRelay::collectResults(daq::SwitchCommandResultPacket *out, size_t m
     nResults_ -= n;
     return n;
 }
+
+void SwitchRelay::startDiscovery(uint32_t nowMs, uint32_t durationMs) {
+    discovering_ = true;
+    discoverStartMs_ = nowMs;
+    discoverMs_ = durationMs;
+    nSeen_ = 0;
+    seenFresh_ = false;
+    seenReportedMs_ = nowMs;
+}
+
+bool SwitchRelay::discovering(uint32_t nowMs) const {
+    return discovering_ && nowMs - discoverStartMs_ < discoverMs_;
+}
+
+void SwitchRelay::onSeen(const uint8_t mac[6], int8_t rssi, uint32_t nowMs) {
+    if (!discovering(nowMs) || find(mac)) return;
+    for (uint8_t i = 0; i < nSeen_; ++i) {
+        if (same(seen_[i].mac, mac)) {
+            seen_[i].rssi = rssi;
+            return;
+        }
+    }
+    if (nSeen_ == daq::MAX_SEEN_SWITCHES) return;
+    daq::SwitchSeenPacket &s = seen_[nSeen_];
+    s.slot = nSeen_++;
+    memcpy(s.mac, mac, 6);
+    s.rssi = rssi;
+    seenFresh_ = true;
+}
+
+size_t SwitchRelay::collectSeen(uint32_t nowMs, daq::SwitchSeenPacket *out, size_t max) {
+    if (!discovering_) return 0;
+    if (!discovering(nowMs)) discovering_ = false;  // one last report as the scan ends
+    if (!seenFresh_ && nowMs - seenReportedMs_ < REPORT_PERIOD_MS && discovering_) return 0;
+    size_t n = nSeen_ < max ? nSeen_ : max;
+    memcpy(out, seen_, n * sizeof seen_[0]);
+    seenFresh_ = false;
+    seenReportedMs_ = nowMs;
+    return n;
+}

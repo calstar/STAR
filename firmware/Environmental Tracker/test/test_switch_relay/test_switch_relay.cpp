@@ -350,6 +350,50 @@ void test_commands_reach_only_their_own_switch() {
     TEST_ASSERT_EQUAL_MEMORY(M[0], mac, 6);
 }
 
+
+// ---- find switches -----------------------------------------------------------
+
+void test_discovery_lists_only_unlisted_switches_and_ends() {
+    SwitchRelay r;
+    apply(r, list({{0, A}}));
+    daq::SwitchSeenPacket out[8];
+    r.onSeen(STRANGER, -70, 0);  // not discovering: ignored
+    TEST_ASSERT_EQUAL(0, r.collectSeen(0, out, 8));
+
+    r.startDiscovery(1000, 10000);
+    TEST_ASSERT_TRUE(r.discovering(1000));
+    r.onSeen(A, -50, 1100);         // listed: not "found"
+    r.onSeen(STRANGER, -70, 1200);
+    r.onSeen(STRANGER, -65, 1300);  // again: same slot, newer RSSI
+    TEST_ASSERT_EQUAL(1, r.collectSeen(1300, out, 8));
+    TEST_ASSERT_EQUAL(0, out[0].slot);
+    TEST_ASSERT_EQUAL_MEMORY(STRANGER, out[0].mac, 6);
+    TEST_ASSERT_EQUAL(-65, out[0].rssi);
+    TEST_ASSERT_EQUAL(0, r.collectSeen(1500, out, 8));   // nothing new, not a second yet
+    TEST_ASSERT_EQUAL(1, r.collectSeen(2300, out, 8));   // repeated every second
+    TEST_ASSERT_FALSE(r.shouldConnect(STRANGER));        // never connected to
+    TEST_ASSERT_FALSE(r.discovering(11000));
+    TEST_ASSERT_EQUAL(1, r.collectSeen(11000, out, 8));  // last report as it ends
+    TEST_ASSERT_EQUAL(0, r.collectSeen(12500, out, 8));
+    r.onSeen(B, -60, 11500);
+    TEST_ASSERT_EQUAL(0, r.collectSeen(13000, out, 8));
+}
+
+void test_discovery_caps_at_eight_and_restarts_clean() {
+    SwitchRelay r;
+    apply(r, list({{0, A}}));
+    r.startDiscovery(0, 10000);
+    for (uint8_t i = 0; i < 12; ++i) {
+        uint8_t mac[6] = {0x58, 0xCF, 0x79, 0x02, 0x00, i};
+        r.onSeen(mac, -60, 10);
+    }
+    daq::SwitchSeenPacket out[12];
+    TEST_ASSERT_EQUAL(8, r.collectSeen(10, out, 12));
+    TEST_ASSERT_EQUAL(7, out[7].slot);
+    r.startDiscovery(20000, 10000);
+    TEST_ASSERT_EQUAL(0, r.collectSeen(20000, out, 12));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_no_config_connects_to_nothing);
@@ -372,5 +416,7 @@ int main(int, char **) {
     RUN_TEST(test_five_switches_scan_until_the_last_one_is_up);
     RUN_TEST(test_one_lost_link_is_reported_at_once_and_alone);
     RUN_TEST(test_commands_reach_only_their_own_switch);
+    RUN_TEST(test_discovery_lists_only_unlisted_switches_and_ends);
+    RUN_TEST(test_discovery_caps_at_eight_and_restarts_clean);
     return UNITY_END();
 }

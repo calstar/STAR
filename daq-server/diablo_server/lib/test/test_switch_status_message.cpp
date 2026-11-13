@@ -67,6 +67,16 @@ int main() {
     m.serialize(row);
     require(row[8] == 0 && row[16] == 0 && u16(10) == 0xFFFF, "no status yet");
 
+    {  // "Find switches" row: the MAC packs most significant byte first, as printed
+        daq::SwitchSeenPacket seen{3, {0x58, 0xCF, 0x79, 0x01, 0xAB, 0xCD}, -80};
+        auto sm = fsw::streams::make_switch_seen_message(seen, 5);
+        uint8_t srow[fsw::streams::SwitchSeenMessage::nbytes()];
+        sm.serialize(srow);
+        uint64_t mac;
+        std::memcpy(&mac, srow + 8, 8);
+        require(mac == 0x58CF7901ABCDULL, "seen MAC");
+        require(static_cast<int8_t>(srow[16]) == -80, "seen rssi");
+    }
     if (failures) {
         std::cerr << failures << " failure(s)\n";
         return 1;

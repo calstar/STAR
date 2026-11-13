@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 
+#include "DiabloPackets.h"
 #include "db.hpp"  // utl/db.hpp — VTable builder, Msg, postcard encoding
 
 using namespace vtable;
@@ -100,6 +101,27 @@ bool DatabaseConfig::register_switch_tables(ElodinClient& client,
         }
         for (const auto& f : results)
             ok = send_msg(client, set_component_name(prefix + f.name)) && ok;
+    }
+    return ok;
+}
+
+bool DatabaseConfig::register_switch_seen_tables(ElodinClient& client) {
+    bool ok = true;
+    for (uint8_t slot = 0; slot < daq::MAX_SEEN_SWITCHES; ++slot) {
+        const std::string entity = "SWSEEN" + std::to_string(slot);
+        const std::string prefix = entity + ".";
+        auto vt = builder::vtable({
+            raw_field(0, 8, schema(PrimType::U64(), {}, component(prefix + "timestamp_ns"))),
+            raw_field(8, 8, schema(PrimType::U64(), {}, component(prefix + "mac"))),
+            raw_field(16, 1, schema(PrimType::I8(), {}, component(prefix + "rssi"))),
+        });
+        if (!send_msg(client, VTableMsg{.id = {0x29, slot}, .vtable = vt})) {
+            ok = false;
+            continue;
+        }
+        for (const char* f : {"timestamp_ns", "mac", "rssi"})
+            ok = send_msg(client, set_component_name(prefix + f)) && ok;
+        ok = send_msg(client, set_entity_name((0x29u << 8) | slot, entity)) && ok;
     }
     return ok;
 }

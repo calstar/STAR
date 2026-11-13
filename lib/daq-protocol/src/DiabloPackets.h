@@ -378,6 +378,23 @@ struct __attribute__((packed)) SwitchCommandResultPacket {
   SwitchCommandResult result;
 };
 
+// "Find switches": at most this many unlisted switches are reported per scan.
+constexpr uint8_t MAX_SEEN_SWITCHES = 8;
+
+/** SWITCH_DISCOVER body: scan this long, reporting switches not on the list. */
+struct __attribute__((packed)) SwitchDiscoverPacket {
+  uint8_t duration_s;
+};
+
+/** SWITCH_SEEN body: an unlisted switch heard during a discovery scan. `slot` is the env board's
+ *  index for it in this scan (0..MAX_SEEN_SWITCHES-1), so each has its own row. Discovery never
+ *  connects to it. */
+struct __attribute__((packed)) SwitchSeenPacket {
+  uint8_t slot;
+  uint8_t mac[6]; // most significant byte first, as printed
+  int8_t rssi;    // dBm
+};
+
 /** One role's link and its switch's last status, as the env board holds them.
  *  `status` is the switch's StatusPacket bytes untouched (SwitchStatus.h);
  *  `status_len` is 0 until the first one arrives. While the link is down the

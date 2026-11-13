@@ -27,6 +27,10 @@ void applyConfig(const daq::SwitchConfig &config, uint32_t hash);
 void submitCommand(const daq::SwitchCommandPacket &cmd);
 size_t collectResults(daq::SwitchCommandResultPacket *out, size_t max);
 
+// "Find switches": scan for durationMs and report unlisted switches heard.
+void startDiscovery(uint32_t durationMs);
+size_t collectSeen(uint32_t nowMs, daq::SwitchSeenPacket *out, size_t max);
+
 // Reports due now (see SwitchRelay::collectReports).
 size_t collectReports(uint32_t nowMs, daq::SwitchStatusReport *out, size_t max);
 

@@ -998,4 +998,55 @@ bool parse_switch_command_result_packet(const uint8_t *buffer, size_t buffer_siz
   return true;
 }
 
+
+namespace {
+template <typename Body>
+size_t create_fixed(PacketType type, const Body &body, uint32_t ts, uint8_t *buffer,
+                    size_t buffer_size) {
+  const size_t total = sizeof(PacketHeader) + sizeof(Body);
+  if (!buffer || buffer_size < total) return 0;
+  put_header(buffer, type, ts);
+  memcpy(buffer + sizeof(PacketHeader), &body, sizeof(Body));
+  return total;
+}
+
+template <typename Body>
+bool parse_fixed(PacketType type, const uint8_t *buffer, size_t buffer_size, PacketHeader &hdr,
+                 Body &body) {
+  if (!get_header(buffer, buffer_size, type, hdr)) return false;
+  if (buffer_size != sizeof(PacketHeader) + sizeof(Body)) return false;
+  memcpy(&body, buffer + sizeof(PacketHeader), sizeof(Body));
+  return true;
+}
+} // namespace
+
+size_t create_switch_discover_packet(const SwitchDiscoverPacket &d, uint32_t timestamp_ms,
+                                     uint8_t *buffer, size_t buffer_size) {
+  return create_fixed(PacketType::SWITCH_DISCOVER, d, timestamp_ms, buffer, buffer_size);
+}
+
+bool parse_switch_discover_packet(const uint8_t *buffer, size_t buffer_size,
+                                  PacketHeader &header_out, SwitchDiscoverPacket &d_out) {
+  SwitchDiscoverPacket d;
+  if (!parse_fixed(PacketType::SWITCH_DISCOVER, buffer, buffer_size, header_out, d)) return false;
+  if (d.duration_s == 0 || d.duration_s > 60) return false;
+  d_out = d;
+  return true;
+}
+
+size_t create_switch_seen_packet(const SwitchSeenPacket &s, uint32_t timestamp_ms,
+                                 uint8_t *buffer, size_t buffer_size) {
+  if (s.slot >= MAX_SEEN_SWITCHES) return 0;
+  return create_fixed(PacketType::SWITCH_SEEN, s, timestamp_ms, buffer, buffer_size);
+}
+
+bool parse_switch_seen_packet(const uint8_t *buffer, size_t buffer_size,
+                              PacketHeader &header_out, SwitchSeenPacket &s_out) {
+  SwitchSeenPacket s;
+  if (!parse_fixed(PacketType::SWITCH_SEEN, buffer, buffer_size, header_out, s)) return false;
+  if (s.slot >= MAX_SEEN_SWITCHES) return false;
+  s_out = s;
+  return true;
+}
+
 } // namespace daq

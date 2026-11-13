@@ -164,7 +164,8 @@ export interface CommandPayload {
   | 'session_start'
   | 'session_stop'
   | 'session_extend'
-  | 'switch';
+  | 'switch'
+  | 'switch_discover';
   data: {
     /** switch: [switch_roles.*] role index (0-4). */
     switchRole?: number;

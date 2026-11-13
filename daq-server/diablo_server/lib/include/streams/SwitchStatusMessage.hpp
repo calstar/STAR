@@ -51,5 +51,18 @@ inline SwitchCommandResultMessage make_switch_command_result_message(
                                       static_cast<uint8_t>(r.result));
 }
 
+// Elodin [0x29, slot], entity SWSEEN<slot>: an unlisted switch heard by a "Find switches" scan.
+//   0 u64 timestamp_ns   8 u64 mac (48 bits, most significant byte first as printed)   16 i8 rssi
+using SwitchSeenMessage = comms::CommsMessage<uint64_t, uint64_t, int8_t>;
+static_assert(SwitchSeenMessage::nbytes() == 17);
+
+inline SwitchSeenMessage make_switch_seen_message(const daq::SwitchSeenPacket& s,
+                                                  uint64_t timestamp_ns) {
+    uint64_t mac = 0;
+    for (uint8_t b : s.mac)
+        mac = (mac << 8) | b;
+    return SwitchSeenMessage(timestamp_ns, mac, s.rssi);
+}
+
 }  // namespace streams
 }  // namespace fsw

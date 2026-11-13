@@ -706,6 +706,30 @@ void test_switch_command_result_roundtrip() {
     TEST_ASSERT_FALSE(daq::parse_switch_command_result_packet(buf, n, hdr, out));
 }
 
+
+void test_switch_discover_and_seen_roundtrip() {
+    uint8_t buf[64];
+    daq::PacketHeader hdr;
+    daq::SwitchDiscoverPacket d{10}, dout{};
+    size_t n = daq::create_switch_discover_packet(d, 1, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(daq::parse_switch_discover_packet(buf, n, hdr, dout));
+    TEST_ASSERT_EQUAL(10, dout.duration_s);
+    daq::SwitchDiscoverPacket forever{0};  // a scan must end
+    n = daq::create_switch_discover_packet(forever, 1, buf, sizeof(buf));
+    TEST_ASSERT_FALSE(daq::parse_switch_discover_packet(buf, n, hdr, dout));
+
+    daq::SwitchSeenPacket s{7, {0x58, 0xCF, 0x79, 0x01, 0xAB, 0xCD}, -80}, sout{};
+    n = daq::create_switch_seen_packet(s, 1, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 8, n);
+    TEST_ASSERT_TRUE(daq::parse_switch_seen_packet(buf, n, hdr, sout));
+    TEST_ASSERT_EQUAL(daq::PacketType::SWITCH_SEEN, hdr.packet_type);
+    TEST_ASSERT_EQUAL(7, sout.slot);
+    TEST_ASSERT_EQUAL_MEMORY(s.mac, sout.mac, 6);
+    TEST_ASSERT_EQUAL(-80, sout.rssi);
+    buf[sizeof(daq::PacketHeader)] = daq::MAX_SEEN_SWITCHES;
+    TEST_ASSERT_FALSE(daq::parse_switch_seen_packet(buf, n, hdr, sout));
+}
+
 int main(int argc, char** argv) {
     UNITY_BEGIN();
 
@@ -760,6 +784,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_switch_status_rejects_bad_packets);
     RUN_TEST(test_switch_command_roundtrip);
     RUN_TEST(test_switch_command_result_roundtrip);
+    RUN_TEST(test_switch_discover_and_seen_roundtrip);
     RUN_TEST(test_parse_null_buffer);
 
     return UNITY_END();

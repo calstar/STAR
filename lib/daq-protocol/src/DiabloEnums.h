@@ -28,7 +28,8 @@ enum class PacketType : uint8_t {
   SWITCH_COMMAND = 17,        // server -> env board: set a role's output
   SWITCH_COMMAND_RESULT = 18, // env board -> server: what became of a command
   SWITCH_STATUS = 19,         // env board -> server: one role's link + raw switch status
-  SWITCH_SEEN = 20            // env board -> server: an unlisted switch heard in a scan
+  SWITCH_SEEN = 20,           // env board -> server: an unlisted switch heard in a scan
+  SWITCH_DISCOVER = 21        // server -> env board: scan for unlisted switches for a while
 };
 
 /**
