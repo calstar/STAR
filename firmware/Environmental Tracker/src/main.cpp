@@ -24,26 +24,28 @@ static IPAddress gateway(192, 168, 2, 1);
 static IPAddress subnet(255, 255, 255, 0);
 static IPAddress dns_ip(192, 168, 2, 1);
 
-// Sized for the largest packet sent: BOARD_HEARTBEAT (~41 bytes)
-static uint8_t pkt_buf[64];
+// Each function stands alone: a missing BME280 must not take down the board
+// (it will relay the Bluetooth switches too). Only Ethernet is fatal, since
+// without it the board can do nothing useful.
+static bool bme_ok = false;
+
+// Sized for the largest packet sent: a LOGS line (~50 bytes)
+static uint8_t pkt_buf[96];
 
 void setup() {
+    // No waiting for a USB host: on the pad nothing is plugged in, and the
+    // C3's USB console would block here forever.
     Serial.begin(115200);
-    while (!Serial)
-        delay(10);
 
     FirmwareHash::print();
     Serial.println("Environmental Tracker starting...");
 
-    // BME280
+    // BME280: optional. Missing is reported to the server and retried.
     Wire.begin(PIN_SDA, PIN_SCL);
-    if (!bme.begin(BME280_I2C_ADDR, &Wire)) {
-        Serial.println(
-            "ERROR: BME280 not found. Check wiring and I2C address!");
-        while (1)
-            delay(100);
-    }
-    Serial.println("BME280 OK");
+    bme_ok = bme.begin(BME280_I2C_ADDR, &Wire);
+    Serial.println(bme_ok ? "BME280 OK"
+                          : "ERROR: BME280 not found. Check wiring and I2C "
+                            "address! Continuing without it.");
 
     // Ethernet — mirrors hotfire sensor board init (no ETH_RST)
     ESP_ERROR_CHECK(esp_read_mac(mac, ESP_MAC_ETH));
@@ -53,6 +55,15 @@ void setup() {
     delay(ENV_ETH_INIT_DELAY_MS);
     Ethernet.begin(mac, static_ip, dns_ip, gateway, subnet);
     delay(ENV_ETH_BEGIN_DELAY_MS);
+
+    // The one fatal failure: no W5500 answering. Reboot and try again.
+    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
+        Serial.printf("ERROR: W5500 not found. Rebooting in %d ms.\n",
+                      ENV_ETH_RETRY_REBOOT_MS);
+        Serial.flush();
+        delay(ENV_ETH_RETRY_REBOOT_MS);
+        ESP.restart();
+    }
 
     udp.begin(ENV_LOCAL_PORT);
     ota_server.begin();
@@ -100,8 +111,27 @@ void loop() {
 
     unsigned long now = millis();
 
+    // BME280 missing: retry it, and tell the server (board logs) why there
+    // is no environmental data.
+    static unsigned long last_bme_retry = 0;
+    if (!bme_ok && now - last_bme_retry >= ENV_BME_RETRY_INTERVAL_MS) {
+        last_bme_retry = now;
+        bme_ok = bme.begin(BME280_I2C_ADDR, &Wire);
+        const char *msg = bme_ok ? "BME280 found; environmental data resumes\n"
+                                 : "BME280 not found; no environmental data\n";
+        Serial.print(msg);
+        size_t n = daq::create_log_packet(
+            0, reinterpret_cast<const uint8_t *>(msg), strlen(msg), now,
+            pkt_buf, sizeof(pkt_buf));
+        if (n > 0) {
+            udp.beginPacket(server_ip, ENV_SERVER_PORT);
+            udp.write(pkt_buf, n);
+            udp.endPacket();
+        }
+    }
+
     // Send ENVIRONMENTAL_DATA at ENV_SEND_RATE_HZ
-    if (now - last_env_send >= ENV_SEND_INTERVAL_MS) {
+    if (bme_ok && now - last_env_send >= ENV_SEND_INTERVAL_MS) {
         last_env_send = now;
 
         float temp = bme.readTemperature();
