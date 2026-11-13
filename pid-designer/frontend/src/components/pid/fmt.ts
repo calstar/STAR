@@ -47,6 +47,33 @@ export function fmtPressure(key: string, p: ParamValue | undefined, symbol = '')
   return psia === undefined ? fmtParam(p) : `${fmtPsi(psia)} psia`;
 }
 
+/**
+ * A monospace glyph's advance, in em. DejaVu Sans Mono and Menlo are 0.602;
+ * a hair over, so a fitted line never touches what it is fitted inside.
+ */
+export const MONO_ADVANCE = 0.61;
+
+/**
+ * The room a tank's readout has: its barrel is 48 px between the walls
+ * (x 6..54 of 60), less a pixel each side so no glyph touches a wall.
+ */
+export const TANK_READOUT_W = 46;
+
+/**
+ * The font size at which `text`, in monospace, fits `width` px: `size`, or
+ * smaller when it does not fit at `size`.
+ *
+ * A tank's readout is in psia, to a tenth, so from 1000 psia it is eleven
+ * characters -- "3764.7 psia", 49.7 px at 7.5 px -- and it ran through both
+ * walls of a 48 px barrel, where the export read its 3 as an 8. Shrunk, it
+ * keeps every digit the sheet's rule says it shows.
+ */
+export function fitMono(text: string, width: number, size: number): number {
+  const needed = text.length * MONO_ADVANCE * size;
+  if (needed <= width) return size;
+  return Math.floor((width / (text.length * MONO_ADVANCE)) * 100) / 100;
+}
+
 /** A pressure in psi, to a tenth, with no trailing ".0". */
 export function fmtPsi(value: number): string {
   if (!Number.isFinite(value)) return '—';

@@ -6,7 +6,7 @@ Elodin DB uses a 64-bit FNV-1a hash algorithm for component string names.
 Before the ControllerService was updated to broadcast set_component_name packets,
 the database exported CONTROLLER fields exclusively under their hash numbers.
 This script computes the FNV-1a hash of all known controller variables and renames
-matching files in the given export directory so analyze_run.py can plot them!
+matching files in the given export directory.
 """
 
 import sys

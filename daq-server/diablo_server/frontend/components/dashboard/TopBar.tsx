@@ -38,11 +38,12 @@ const SHORT_LABELS: Record<string, string> = {
 // Separate component for each pressure bar to properly use hooks
 // Dynamic width: ~9% each with max so bars scale with viewport
 // When avgEntities is set, value = average of those entities' pressure_psi
-function ReactivePressureBar({ label, entity, nop, meop, color, avgEntities }: {
+function ReactivePressureBar({ label, entity, nop, meop, showLimits = true, color, avgEntities }: {
   label: string;
   entity: string;
   nop?: number;
   meop?: number;
+  showLimits?: boolean;
   color: string;
   avgEntities?: string[];
 }) {
@@ -63,12 +64,15 @@ function ReactivePressureBar({ label, entity, nop, meop, color, avgEntities }: {
       title={traceHidden ? 'Show this sensor on Pressure History (click)' : 'Hide this sensor from Pressure History (click)'}
       onClick={() => togglePressureHistoryPlotVisibility(plotKeys)}
       className={`min-w-0 h-full overflow-visible flex-1 text-left transition-opacity hover:opacity-95 ${traceHidden ? 'opacity-35' : 'opacity-100'}`}
-      style={{ minWidth: '5%', maxWidth: '12%' }}
+      // A px floor, not a % one: the readout needs ~4 digits beside the limit-number
+      // gutter whatever the screen, and 5% of a tablet left ~10 px of capsule.
+      style={{ minWidth: 64, maxWidth: '12%' }}
     >
       <PressureBar
         label={label}
         value={value}
         nop={nop} meop={meop} color={color}
+        showLimits={showLimits}
         compact
       />
     </button>
@@ -240,6 +244,7 @@ export default function TopBar() {
       entity: s.entity,
       nop: s.nop,
       meop: s.meop,
+      showLimits: true,
       color: s.color,
     })) as PressureBarDef[];
   }, [pressureBars]);
@@ -379,8 +384,9 @@ export default function TopBar() {
   return (
     <div className="relative select-none">
       {/* ── The status line: connection, session, clocks; the two mode switches at the right.
-            One row, never wrapped (as Hotbench's is): the wall clock gives way below 1600 px. */}
-      <div className="flex min-h-[44px] flex-nowrap items-center gap-x-7 px-8 py-2 font-mono text-[13px] uppercase tracking-[0.08em] max-[1400px]:gap-x-5 max-[1400px]:px-5">
+            One row (as Hotbench's is) from md up: the wall clock gives way below 1600 px.
+            Narrower than that there is no room for one row, so it wraps rather than clip. */}
+      <div className="flex min-h-[44px] flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2 font-mono text-[13px] uppercase tracking-[0.08em] sm:gap-x-5 sm:px-5 md:flex-nowrap min-[1400px]:gap-x-7 min-[1400px]:px-8">
         <span className="flex flex-shrink-0 items-center gap-2 text-ink-2" title={badge.title}>
           <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${badge.dotClass}`} />
           {badge.label}
@@ -481,21 +487,30 @@ export default function TopBar() {
         </div>
       </div>
 
-      {/* ── The strip: the transducers as bars, the board notes, and the command stack. */}
-      <div
-        className="grid border-t border-line px-8 max-[1400px]:px-5"
-        style={{ height: 'max(15vh, 150px)', gridTemplateColumns: 'minmax(0,1fr) minmax(200px,15vw) minmax(280px,330px)' }}
-      >
-        <section className="flex min-h-0 min-w-0 flex-col py-3 pr-6">
+      {/* ── The strip: the transducers as bars, the board notes, and the command stack.
+            One row of three from lg up -- a landscape tablet is short (~726 px under Safari's
+            bars), and a second header row cost the actuators and state machine below the
+            room they need. lg narrows the notes and the stack so ten gauges keep their
+            64 px floor at 1180 px. Below lg, sharing a row gave the gauges ~10 px of capsule
+            each and the readouts ran together, so:
+              sm..lg (portrait tablet) -- bars full width, notes and stack side by side;
+              phone -- all three stacked. */}
+      <div className="grid grid-cols-1 border-t border-line px-4 sm:grid-cols-[minmax(0,1fr)_minmax(260px,330px)] sm:px-5 lg:h-[max(15vh,150px)] lg:grid-cols-[minmax(0,1fr)_minmax(170px,14vw)_minmax(220px,240px)] xl:grid-cols-[minmax(0,1fr)_minmax(200px,15vw)_minmax(280px,330px)] min-[1400px]:px-8">
+        <section className="flex h-[clamp(130px,17vh,170px)] min-h-0 min-w-0 flex-col border-b border-line py-3 sm:col-span-2 lg:col-span-1 lg:h-auto lg:border-b-0 lg:pr-5 xl:pr-6">
           <h2 className="caps mb-2 flex-shrink-0 text-[11px]" title="Gauge: the stand's transducers and its log files read psig. Hotbench shows psia; add 14.7 to compare.">Pressure · psig</h2>
-          <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-visible">
-            {effectivePressureBars.map(({ label, entity, nop, meop, color, avgEntities }) => (
+          {/* Each gauge keeps a minimum width (ReactivePressureBar); past that the row
+              scrolls sideways instead of overlapping the readouts. Not on desktop: the row
+              always fits there, and a scroll box clipped any limit number drawn near the top
+              of a bar and put a scrollbar under the gauges where scrollbars always show. */}
+          <div className="flex min-h-0 flex-1 items-stretch gap-2 overflow-x-auto overflow-y-hidden [scrollbar-width:thin] lg:gap-1.5 xl:gap-2 xl:overflow-visible">
+            {effectivePressureBars.map(({ label, entity, nop, meop, showLimits, color, avgEntities }) => (
               <ReactivePressureBar
                 key={entity}
                 label={label}
                 entity={entity}
                 nop={nop}
                 meop={meop}
+                showLimits={showLimits}
                 color={color}
                 avgEntities={avgEntities}
               />
@@ -503,11 +518,11 @@ export default function TopBar() {
           </div>
         </section>
 
-        <section className="flex min-h-0 min-w-0 flex-col border-l border-line px-5 py-3">
+        <section className="flex h-[150px] min-h-0 min-w-0 flex-col py-3 sm:pr-5 lg:h-auto lg:border-l lg:border-line lg:px-3 xl:px-5">
           <NotificationPanel />
         </section>
 
-        <section className="flex min-h-0 min-w-0 flex-col gap-2 border-l border-line py-3 pl-5">
+        <section className="flex h-[150px] min-h-0 min-w-0 flex-col gap-2 border-t border-line py-3 sm:border-l sm:border-t-0 sm:pl-5 lg:h-auto lg:pl-4 xl:pl-5">
           <div className="flex flex-shrink-0 items-baseline justify-between gap-3">
             <span className="caps text-[11px]">State</span>
             <span className={`truncate font-mono text-[clamp(14px,1.7vh,22px)] font-bold uppercase tracking-[0.12em] ${stateColor}`}>

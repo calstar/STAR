@@ -45,8 +45,9 @@ static void check(bool ok, const std::string& what) {
         g_failures++;
 }
 
-/** One calibrated-PT frame for table [0x20, lo]. */
-static std::vector<uint8_t> ptFrame(uint8_t lo, uint8_t channel, float psi, uint8_t cal_status) {
+/** One calibrated-PT frame for table [hi, lo] (0x20 an ESP32 PT, 0x26 a LabJack T7 input). */
+static std::vector<uint8_t> ptFrame(uint8_t lo, uint8_t channel, float psi, uint8_t cal_status,
+                                    uint8_t hi = 0x20) {
     comms::messages::sensor::CalibratedPTMessage msg(
         /*timestamp_ns=*/1, channel, std::array<uint8_t, 3>{0, 0, 0}, psi,
         /*raw_adc=*/12345u, cal_status);
@@ -58,7 +59,7 @@ static std::vector<uint8_t> ptFrame(uint8_t lo, uint8_t channel, float psi, uint
     std::vector<uint8_t> f(8 + payload.size());
     std::memcpy(f.data(), &len, 4);
     f[4] = 0x01;  // ty = TABLE
-    f[5] = 0x20;  // calibrated PT
+    f[5] = hi;    // calibrated PT table, high byte
     f[6] = lo;
     f[7] = 0x00;
     std::memcpy(f.data() + 8, payload.data(), payload.size());
@@ -238,6 +239,47 @@ int main() {
         check(feed.read("Nonexistent", psi) == PressureFeed::Status::NotSubscribed,
               "a role nothing subscribed to is NotSubscribed, not a stale zero");
 
+        feed.stop();
+        db.stop();
+    }
+
+    // ── A LabJack T7 PT, beside an ESP32 PT with the same table low byte ──────────────────────
+    //
+    // "T7 Tank" is AIN6 on slot 1: {0x26, 0x16}. GN2 Regulated is {0x20, 0x16}. Keyed by the low
+    // byte alone, the two would land on one role; each must arrive under its own.
+    {
+        const fsw::config::Config c = fsw::config::load_from_string(std::string(kConfig) + R"TOML(
+[boards.labjack_1]
+type = "T7"
+ip = "127.0.0.1"
+board_id = 81
+
+[[boards.labjack_1.channels]]
+ain = 6
+kind = "PT"
+role = "T7 Tank"
+signal = "0-5V"
+full_scale = 1000.0
+)TOML");
+        check(c.t7_errors.empty(), "T7 fixture parses");
+        std::vector<uint8_t> blob;
+        const auto esp = ptFrame(0x16, 6, 250.0f, 1, 0x20);
+        const auto t7 = ptFrame(0x16, 6, 812.5f, 1, 0x26);
+        blob.insert(blob.end(), esp.begin(), esp.end());
+        blob.insert(blob.end(), t7.begin(), t7.end());
+
+        FakeDb db;
+        db.start(blob);
+        PressureFeed feed;
+        feed.start(c, {"GN2 Regulated", "T7 Tank"}, "127.0.0.1", db.port.load());
+        std::this_thread::sleep_for(std::chrono::milliseconds(400));
+
+        double psi = 0.0;
+        check(feed.read("T7 Tank", psi) == PressureFeed::Status::Ok && psi == 812.5,
+              "a T7 PT reading lands under its role, from table {0x26, 0x16}");
+        psi = 0.0;
+        check(feed.read("GN2 Regulated", psi) == PressureFeed::Status::Ok && psi == 250.0,
+              "and the ESP32 PT on {0x20, 0x16} keeps its own value");
         feed.stop();
         db.stop();
     }

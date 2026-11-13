@@ -79,6 +79,14 @@ let _lastPrune = 0;
 const _timestamps: Map<string, number[]> = new Map();
 const _lastUpdate: Map<string, number> = new Map();
 const _emaRate: Map<string, number> = new Map();
+/** Last few sample timestamps per key (server timeline), for samplePeriodMs. */
+const _sampleTimes: Map<string, number[]> = new Map();
+const PERIOD_SAMPLES = 8;
+/** A readout may go this many of its own sample periods without a new one. */
+const STALE_SAMPLE_PERIODS = 2;
+/** Bound on the per-key stretch, so a channel that is barely alive cannot hold a
+ *  number on screen indefinitely. */
+const MAX_PERIOD_STRETCH_MS = 8000;
 
 export function recordSensorUpdate(entity: string, component: string, sampleTsMs?: number): void {
   if (typeof performance === 'undefined') return;
@@ -95,9 +103,22 @@ export function recordSensorUpdate(entity: string, component: string, sampleTsMs
   // Freshness keys off the sample's own server timestamp so a throttled client
   // reads live. Rate (the ts[] buffer above) stays on the local monotonic clock:
   // Hz is about delivery cadence, which is a different question.
-  _lastUpdate.set(key, Number.isFinite(sampleTsMs) && (sampleTsMs as number) > 0
+  const sampleMs = Number.isFinite(sampleTsMs) && (sampleTsMs as number) > 0
     ? (sampleTsMs as number)
-    : Date.now());
+    : Date.now();
+  _lastUpdate.set(key, sampleMs);
+
+  // Sample-clock spacing, for staleWindowMsFor. Ascending only: a duplicate or a straggler
+  // says nothing about the period.
+  let st = _sampleTimes.get(key);
+  if (!st) {
+    st = [];
+    _sampleTimes.set(key, st);
+  }
+  if (st.length === 0 || sampleMs > st[st.length - 1]) {
+    st.push(sampleMs);
+    if (st.length > PERIOD_SAMPLES) st.shift();
+  }
 
   // Prune entries outside the rolling window
   const cutoff = now - RATE_WINDOW_MS;
@@ -127,6 +148,7 @@ export function recordSensorUpdate(entity: string, component: string, sampleTsMs
       _timestamps.delete(k);
       _lastUpdate.delete(k);
       _emaRate.delete(k);
+      _sampleTimes.delete(k);
     }
   }
 }
@@ -165,6 +187,7 @@ export function resetSensorRateForTests(): void {
   _timestamps.clear();
   _lastUpdate.clear();
   _emaRate.clear();
+  _sampleTimes.clear();
   _deliveryLagAllowanceMs = 0;
   _lastPrune = 0;
 }
@@ -174,7 +197,33 @@ export function resetSensorRateForTests(): void {
 export function isSensorKeyFresh(key: string): boolean {
   const t = _lastUpdate.get(key);
   if (t == null || !Number.isFinite(t)) return false;
-  return serverNowMs() - t < staleWindowMs();
+  return serverNowMs() - t < staleWindowMsFor(key);
+}
+
+/** How long THIS key may go without a sample before its readout blanks: the shared window,
+ *  stretched for a channel whose own sample period is long.
+ *
+ *  The shared 1.5 s window assumed every sensor is fast. The LC boards at SINC4 / 20 SPS
+ *  deliver ~1.2 Hz per scale and ~0.76 Hz per load cell, so their readouts — on the
+ *  dashboards and in the calibration menu alike — blanked between every pair of samples
+ *  and read as a lost connection. A key may now go STALE_SAMPLE_PERIODS of its own periods
+ *  quiet. A fast channel's period is milliseconds, so it keeps exactly the old window. */
+export function staleWindowMsFor(key: string): number {
+  const base = staleWindowMs();
+  const period = samplePeriodMs(key);
+  if (period <= 0) return base;
+  const stretch = Math.min(MAX_PERIOD_STRETCH_MS, STALE_SAMPLE_PERIODS * period - SENSOR_DATA_STALE_MS);
+  return stretch > 0 ? base + stretch : base;
+}
+
+/** Mean spacing of this key's recent SAMPLE timestamps (server timeline), or 0 if unknown.
+ *  Mean, not median: a batched board delivers bursts of near-identical stamps, and only
+ *  the mean still averages out to the true rate. */
+export function samplePeriodMs(key: string): number {
+  const ts = _sampleTimes.get(key);
+  if (!ts || ts.length < 2) return 0;
+  const span = ts[ts.length - 1] - ts[0];
+  return span > 0 ? span / (ts.length - 1) : 0;
 }
 
 /**

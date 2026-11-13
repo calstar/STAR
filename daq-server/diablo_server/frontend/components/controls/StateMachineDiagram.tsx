@@ -7,6 +7,8 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useControlMode } from '@/lib/control-mode';
 import { allStates, loadStates, stateNameUpper, bootStateId } from '@/lib/states';
 import { getApiBaseUrl } from '@/lib/websocket';
+import { useGuiConfig } from '@/lib/gui-config';
+import { stateGridSize } from '@/lib/panel-layout';
 
 
 // States to exclude from diagram rendering
@@ -168,16 +170,25 @@ export default function StateMachineDiagram() {
   // module cache synchronously, so a version tick is what tells React the positions changed.
   const [, setStatesVersion] = useState(0);
   const { controlEnabled } = useControlMode();
+  const guiConfig = useGuiConfig();
 
   // Load the config-declared states (names + panel positions) on mount, and RELOAD them whenever a
   // config/CSV save is broadcast — otherwise the module-level cache in states.ts would hold the old
   // positions until a full page reload.
+  // `alive` drops a load that settles after unmount: setState then still reaches React's scheduler,
+  // which reads window.event, and under vitest a refused /api/states fetch landing just after the
+  // file's jsdom teardown threw "window is not defined" (a CI flake, StateMachineDiagram.test.tsx).
   useEffect(() => {
+    // A load can resolve after unmount (a test's teardown, a page change): bumping state then
+    // throws "window is not defined" under jsdom teardown, so a finished load checks first.
+    let mounted = true;
     const refreshStates = (force: boolean) =>
-      void loadStates(getApiBaseUrl(), force).then(() => setStatesVersion((v) => v + 1));
+      void loadStates(getApiBaseUrl(), force).then(() => {
+        if (mounted) setStatesVersion((v) => v + 1);
+      });
     refreshStates(false);
     const unsub = ws.on(MessageType.CONFIG_UPDATED, () => refreshStates(true));
-    return () => { unsub(); };
+    return () => { mounted = false; unsub(); };
   }, [ws]);
 
   useEffect(() => {
@@ -327,9 +338,15 @@ export default function StateMachineDiagram() {
 
   // Derived from the placed states, so adding one in config widens the canvas instead of
   // drawing it off the edge.
+  // [gui] state_grid_rows / state_grid_cols can make the grid larger than that (the Config page's
+  // grid editor), so the main page has the same empty cells the operator laid the states out in.
   const placed = allStates().filter((x) => x.panelRow !== null && x.panelCol !== null);
-  const COLS = placed.length ? Math.max(...placed.map((x) => x.panelCol as number)) + 1 : COLS_FALLBACK;
-  const ROW_COUNT = placed.length ? Math.max(...placed.map((x) => x.panelRow as number)) + 1 : ROW_COUNT_FALLBACK;
+  const grid = stateGridSize(
+    placed.map((x) => ({ panel_row: x.panelRow, panel_col: x.panelCol })),
+    { state_grid_rows: guiConfig.stateGridRows, state_grid_cols: guiConfig.stateGridCols },
+  );
+  const COLS = grid.cols || COLS_FALLBACK;
+  const ROW_COUNT = grid.rows || ROW_COUNT_FALLBACK;
   const svgW = PAD * 2 + COLS * COL_GAP;
   const svgH = PAD * 2 + ROW_COUNT * ROW_GAP; // rows 0-5 (IDLE, Armed/Fill, Press, Vent, Calibrate/Ready, Fire)
 
@@ -351,7 +368,10 @@ export default function StateMachineDiagram() {
       <div className="overflow-hidden min-h-0 flex-1 flex flex-col">
         <svg viewBox={`0 0 ${svgW} ${svgH}`}
           className="min-h-0 flex-1"
-          style={{ display: 'block', width: '100%', height: '100%' }}
+          // aspectRatio only applies when the parent leaves height open (the stacked
+          // narrow layout): the diagram then takes its natural height for its width
+          // instead of collapsing. In a sized panel, height:100% still wins.
+          style={{ display: 'block', width: '100%', height: '100%', aspectRatio: `${svgW} / ${svgH}` }}
           preserveAspectRatio="xMidYMin meet">
           <defs>
             <marker id="arr-green" markerWidth="14" markerHeight="14" refX="12" refY="5" orient="auto">

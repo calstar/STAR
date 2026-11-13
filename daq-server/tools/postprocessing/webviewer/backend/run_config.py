@@ -10,7 +10,8 @@ rebuilds the mapping, so a past run reads as "Ox Upstream" and "Fire" instead of
 Everything here mirrors conventions that already exist elsewhere and must not drift:
 
 * entity spelling — DatabaseConfig.cpp (`PT<n>.CH<c>`, `PT<n>_Cal.CH<c>`,
-  `ACT_CMD.B<n>.CH<c>`, `BOARD.HB_<board_id>`, `SELF_TEST.BOARD_<board_id>`)
+  `ACT_CMD.B<n>.CH<c>`, `BOARD.HB_<board_id>`, `SELF_TEST.BOARD_<board_id>`, and for a
+  LabJack T7 `T7<n>.AIN<a>`, `T7<n>_Cal.AIN<a>`, `T7<n>.CJC` — register_t7_*_tables)
 * Elodin slot `<n>` = `board_id % 10`, 0 → 10 — LoadActiveBoards.hpp / sensor-config.ts
 * board display names — the config editor's `boardDisplayName` (app/config/page.tsx)
 
@@ -75,11 +76,16 @@ _ENTITY_PREFIX = {
 _BOARD_TYPE_LABEL = {
     "PT": "PT",
     "ACTUATOR": "Actuator",
+    "BALL_VALVE": "Ball Valve",
     "LC": "LC",
     "TC": "TC",
     "RTD": "RTD",
     "ENCODER": "Encoder",
+    "T7": "LabJack T7",
 }
+
+#: AIN14 is the T7's internal temperature sensor, streamed raw beside any thermocouple.
+T7_CJC_AIN = 14
 
 
 def snapshot_path(run_id: str) -> Path:
@@ -148,15 +154,52 @@ def entity_labels(cfg: dict) -> dict[str, str]:
             labels[f"{prefix}{n}.CH{ch}"] = role
             labels[f"{prefix}{n}_Cal.CH{ch}"] = role
 
+    # LabJack T7s: each [[boards.<key>.channels]] row names its own AIN (no sensor_roles_ map).
+    # The raw table carries volts and the calibrated one psi / °C / kg; both are that sensor.
+    display = _board_display_names(boards)
+    for key, board in boards.items():
+        if not isinstance(board, dict) or board.get("type") != "T7":
+            continue
+        board_id = board.get("board_id")
+        channels = board.get("channels")
+        if not isinstance(board_id, int) or not isinstance(channels, list):
+            continue
+        n = _slot(board_id)
+        has_tc = False
+        for ch in channels:
+            if not isinstance(ch, dict) or not isinstance(ch.get("ain"), int):
+                continue
+            has_tc = has_tc or ch.get("kind") == "TC"
+            role = ch.get("role")
+            if isinstance(role, str) and role:
+                labels[f"T7{n}.AIN{ch['ain']}"] = role
+                labels[f"T7{n}_Cal.AIN{ch['ain']}"] = role
+        if has_tc:
+            name = display.get(board_id, f"T7 {board_id}")
+            labels[f"T7{n}.AIN{T7_CJC_AIN}"] = f"{name} internal sensor"
+            labels[f"T7{n}.CJC"] = f"{name} cold junction"
+
     # Actuators: [actuator_roles] is role = [NO|NC, channel, board_id]. It wins over any
     # sensor role on the same channel — on an actuator board the valve IS the channel.
     # board_id defaults to 11 (the first actuator board), as sensor-config.ts does.
+    # A role on a BALL_VALVE board is recorded under its own namespace (DatabaseConfig.cpp):
+    # BV<n>.CH<c> position counts, BV<n>_Cal.CH<c> % open, BV_CMD.B<n>.CH<c> commanded.
+    ball_valve_ids = {
+        b.get("board_id")
+        for b in boards.values()
+        if isinstance(b, dict) and b.get("type") == "BALL_VALVE"
+    }
     for role, spec in (cfg.get("actuator_roles") or {}).items():
         if not isinstance(spec, list) or len(spec) < 2 or not isinstance(spec[1], int):
             continue
         ch = spec[1]
         board_id = spec[2] if len(spec) >= 3 and isinstance(spec[2], int) else 11
         n = _slot(board_id)
+        if board_id in ball_valve_ids:
+            labels[f"BV{n}.CH{ch}"] = role
+            labels[f"BV{n}_Cal.CH{ch}"] = role  # its position, % open
+            labels[f"BV_CMD.B{n}.CH{ch}"] = role
+            continue
         labels[f"ACT{n}.CH{ch}"] = role
         labels[f"ACT{n}_Cal.CH{ch}"] = role  # current sense on that valve
         labels[f"ACT_CMD.B{n}.CH{ch}"] = role  # what the sequencer commanded it to

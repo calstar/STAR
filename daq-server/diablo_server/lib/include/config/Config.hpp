@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "config/LoadActiveBoards.hpp"  // ActiveBoardKind, PtInterface, PtBoardConfig, BoardChannels
+#include "config/T7Config.hpp"          // T7Board
 #include "time/BoardClockSync.hpp"      // fsw::time::TimeSyncConfig
 
 namespace fsw {
@@ -210,7 +211,8 @@ struct StateDef {  // one per [[states]]
 // and the fire-state handoff never engaged on a real rig.
 struct ActuatorRole {
     std::string kind = "NC";  // raw first element; polarity only (NC/NO)
-    bool is_no = false;       // kind == "NO"
+    bool is_no = false;       // kind == "NO"; always false on a ball valve board
+    bool ball_valve = false;  // its board_id names a [boards.*] with type = "BALL_VALVE"
     int channel = 0;
     int board_id = 0;
     std::string controller_role;  // "pwm_fuel" | "pwm_ox"; empty = sequencer-owned
@@ -219,7 +221,7 @@ struct ActuatorRole {
 // One [boards.*] section. Superset of every reader's keys so a single parse serves all binaries.
 struct BoardConfig {
     std::string section;  // e.g. "boards.pt_board" (order/diagnostics)
-    std::string type;     // "PT"/"TC"/"RTD"/"LC"/"ACTUATOR"/"ENCODER" (raw, unquoted)
+    std::string type;     // "PT"/"TC"/"RTD"/"LC"/"ACTUATOR"/"ENCODER"/"BALL_VALVE" (raw, unquoted)
     std::string ip;
     int board_id = -1;  // board_id, with legacy "id" fallback
     bool enabled = true;
@@ -268,6 +270,11 @@ struct Config {
     fsw::time::TimeSyncConfig time_sync;
     uint32_t config_broadcast_interval_ms = 1000;  // [config_broadcast_service].interval_ms
     std::vector<BoardConfig> boards;               // parse order preserved
+    // [boards.*] with type = "T7" (LabJack, read by t7_bridge only). They also appear in `boards`
+    // with type "T7", which every other reader skips as an unknown type. A board named in any
+    // t7_errors entry must not be streamed; t7_bridge refuses to start while the list is non-empty.
+    std::vector<T7Board> t7_boards;
+    std::vector<std::string> t7_errors;
     std::map<std::string, ActuatorRole> actuator_roles;
     FireConfig fire;
     FlowConfig flow;
@@ -280,8 +287,9 @@ struct Config {
     // section name -> {role name -> channel}, e.g. "sensor_roles_pt_board" -> {"Fuel Upstream": 1}.
     std::map<std::string, std::map<std::string, int>> sensor_roles;
     std::map<std::string, double> abort_pts;  // [abort_pts]
-    // section name -> {role name -> "cubic"|"robust"|"physics"|"blend"}, e.g.
-    // "calibration_model_pt_board" -> {"Ox Upstream": "robust"}. Per-sensor PT streaming model.
+    // section name -> {role name -> "cubic"|"robust"|"physics"|"blend"} for a PT board, or
+    // "linear"|"cubic"|"physics" for an LC board (linear is the LC default), e.g.
+    // "calibration_model_pt_board" -> {"Ox Upstream": "robust"}. Per-sensor streaming model.
     std::map<std::string, std::map<std::string, std::string>> calibration_models;
     // Per-sensor physics-mode parameters, role-keyed, parallel to calibration_models:
     // [calibration_full_scale_<board>] role->PSI (PT) or role->kg (LC) and
@@ -326,6 +334,9 @@ Config load_from_string(const std::string& text);
  * daq_bridge/calibration/sequencer.
  */
 std::map<ActiveBoardKind, std::vector<elodin::BoardChannels>> active_boards(const Config& cfg);
+
+/** [boards.*].type string -> kind; anything unrecognised is UNKNOWN. */
+ActiveBoardKind kind_of(const std::string& type_str);
 
 /** Derive PT board 4-20 mA parameters keyed by Elodin slot (mirrors old load_pt_boards()). */
 std::map<uint8_t, PtBoardConfig> pt_boards(const Config& cfg);

@@ -32,6 +32,7 @@
 #include "adc_mappings.h"
 #include "SensorHotfireCore.h"
 #include "SensorSelfTest.h"
+#include "send_policy.h"
 // clang-format on
 
 using namespace sense_board_pins;
@@ -120,7 +121,11 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
                                 int abort_controller_port) {
     if (dataChunks.empty())
         return;
-    if (dataChunks.size() < SENSOR_MAX_CHUNKS_BEFORE_SEND)
+    // A full LC chunk takes ~0.8 s at SINC4 / 20 SPS, so waiting for a whole
+    // packet of them would hold each reading back 7-12 s. Ship on age too.
+    if (!sensorBatchReady(dataChunks.size(), SENSOR_MAX_CHUNKS_BEFORE_SEND,
+                          dataChunks.front().timestamp, millis(),
+                          SENSOR_MAX_BATCH_AGE_MS))
         return;
     uint8_t packetBuffer[SENSOR_HOTFIRE_MAX_PACKET_SIZE];
     const uint8_t num_sensors = dataChunks[0].num_sensors;

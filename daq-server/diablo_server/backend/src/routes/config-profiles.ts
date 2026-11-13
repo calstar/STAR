@@ -257,7 +257,7 @@ export function deployActiveProfile(): void {
     // Drop the cache before the parse below, so the parse itself repopulates it from the file we
     // just wrote rather than handing back the previous deploy's object.
     invalidateDeployedConfigCache();
-    readConfig(); // parse the freshly-deployed config.toml
+    readConfig(configPath); // parse the freshly-deployed config.toml
   } catch (e) {
     for (const t of targets) {
       try {

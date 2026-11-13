@@ -168,12 +168,14 @@ function GuidedStart({ job, onShow, firstArrival }: {
   useEffect(() => {
     if (lastId && firstArrival()) job.openRun(lastId);
   }, [lastId, job, firstArrival]);
-  const tank = job.settings.tank_pressure_psia ?? job.derived?.target_lockup_psia ?? job.configTankPsia;
+  // The stand's lockup once the preflight knows it; while it is checking, not the design's tank pressure
+  // (step 2 read '578 psia' on a first visit, then '545 psia' once the check came back).
+  const tank = job.settings.tank_pressure_psia ?? job.derived?.target_lockup_psia ?? (job.pfLoading ? null : job.configTankPsia);
   const fill = bottleFillPsia(job.settings, job.derived);
   const steps: { step: RailStep; n: string; title: string; now: ReactNode; done: boolean }[] = [
     { step: 'drawing', n: '1', title: 'Pick the drawing', now: job.drawing ? drawingTitle(job.drawing) : 'none yet', done: !!job.drawing },
     { step: 'before', n: '2', title: 'Set the dome (or tank pressure) and bottle fill', done: tank !== null && fill !== null,
-      now: <span className="lx-num">{u.fmt(u.p(tank))} · {u.fmt(u.p(fill))}</span> },
+      now: tank === null && job.pfLoading ? 'checking…' : <span className="lx-num">{u.fmt(u.p(tank))} · {u.fmt(u.p(fill))}</span> },
     { step: 'run', n: '3', title: 'Run', done: false,
       now: job.pf?.ok ? 'ready' : job.pfLoading ? 'checking…' : job.pf ? 'blocked: see the rail' : '—' },
   ];

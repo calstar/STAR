@@ -13,3 +13,9 @@
 
 // Sensor data chunking: max chunks per packet (from hotfire_config.h)
 #define SENSOR_MAX_CHUNKS_BEFORE_SEND HOTFIRE_CHUNKS_PER_PACKET
+
+// ...or sooner, once the oldest queued chunk is this old (see send_policy.h).
+// Bounds how stale a slow board's newest reading can be on the ground.
+#ifndef SENSOR_MAX_BATCH_AGE_MS
+#define SENSOR_MAX_BATCH_AGE_MS 250
+#endif

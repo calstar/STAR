@@ -13,13 +13,15 @@ import {
 import { useSensorConfig, SensorConfig } from '@/lib/sensor-config';
 import { getApiBaseUrl } from '@/lib/websocket';
 import { CalibrationChart, PhysicsParams, LcPhysicsParams, CURVE_COLORS } from '@/components/calibration/CalibrationChart';
+import { BallValveCalPanel } from '@/components/calibration/BallValveCalPanel';
 
-type Model = 'cubic' | 'robust' | 'physics';
+type Model = 'cubic' | 'robust' | 'physics' | 'linear';
 type Kind = 'PT' | 'LC';
 
 // Per-model badge styling — the whole point is that a sensor's selected model reads at a glance.
 const MODEL_BADGE: Record<Model, string> = {
   cubic: 'text-sky-300 border-sky-600/60 bg-sky-900/40',
+  linear: 'text-emerald-300 border-emerald-600/60 bg-emerald-900/40',
   robust: 'text-violet-300 border-violet-600/60 bg-violet-900/40',
   physics: 'text-orange-300 border-orange-600/60 bg-orange-900/40',
 };
@@ -27,6 +29,8 @@ const MODEL_BADGE: Record<Model, string> = {
 // of the vocabulary (cubic/robust) means the same thing for either.
 function modelDesc(model: Model, kind: Kind): string {
   if (model === 'cubic') return 'Cubic fit from captured points.';
+  // A tare is an ADC code evaluated through this curve; on a line it cancels a zero drift exactly.
+  if (model === 'linear') return 'Straight-line fit from captured points; a tare cancels zero drift exactly. Datasheet conversion until 2 points.';
   if (model === 'robust') return 'Adaptive fit; learns from points, corrects drift.';
   return kind === 'LC'
     ? 'Datasheet conversion (sensitivity / PGA gain).'
@@ -52,21 +56,24 @@ interface SensorRowProps {
   numPoints: number;
   selected: boolean;
   onSelect: () => void;
+  /** PT rows only: whether this sensor is in the group capture, and how to toggle it. */
+  checked?: boolean;
+  onCheck?: () => void;
 }
-function SensorRow({ ch, model, status, calPsi, numPoints, selected, onSelect }: SensorRowProps) {
+function SensorRow({ ch, model, status, calPsi, numPoints, selected, onSelect, checked, onCheck }: SensorRowProps) {
   const isDrift = status?.driftDetected ?? false;
-  const detail = model === 'physics'
-    ? 'datasheet'
+  const detail = model === 'physics' || (model === 'linear' && numPoints < 2)
+    ? (model === 'linear' ? 'datasheet until 2 pts' : 'datasheet')
     : model === 'robust'
       ? (status?.rlsUpdateCount ? `RLS ${status.rlsUpdateCount}` : 'no data yet')
       : (numPoints > 0 ? `${numPoints} point${numPoints === 1 ? '' : 's'}` : 'uncalibrated');
-  return (
+  const row = (
     <button
       onClick={onSelect}
-      className={`w-full text-left px-4 py-3.5 flex items-center gap-3 border-l-[3px] transition-colors
+      className={`w-full text-left ${onCheck ? 'pl-2' : 'pl-4'} pr-4 py-3.5 flex items-center gap-3 ${onCheck ? '' : 'border-l-[3px]'} transition-colors
         ${selected
-          ? 'bg-blue-950/40 border-l-blue-500'
-          : 'border-l-transparent hover:bg-white/5'}`}
+          ? `bg-blue-950/40 ${onCheck ? '' : 'border-l-blue-500'}`
+          : `${onCheck ? '' : 'border-l-transparent'} hover:bg-white/5`}`}
     >
       <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isDrift ? 'bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.8)]' : 'bg-gray-600'}`} />
       <div className="min-w-0 flex-1">
@@ -82,7 +89,29 @@ function SensorRow({ ch, model, status, calPsi, numPoints, selected, onSelect }:
       </div>
     </button>
   );
+  if (!onCheck) return row;
+  // The tick box is its own control beside the row: a click on the row still opens the sensor,
+  // a click on the box only adds it to (or drops it from) the group capture.
+  return (
+    <div className={`flex items-stretch border-l-[3px] ${selected ? 'border-l-blue-500' : 'border-l-transparent'}`}>
+      <label className="flex flex-shrink-0 cursor-pointer items-center pl-3 pr-1" title="Include in the group capture">
+        <input
+          type="checkbox"
+          className="h-4 w-4 cursor-pointer accent-blue-500"
+          checked={!!checked}
+          onChange={onCheck}
+          aria-label={`Include ${ch.role || `CH${ch.id}`} in the group capture`}
+        />
+      </label>
+      <div className="min-w-0 flex-1">{row}</div>
+    </div>
+  );
 }
+
+// Capture commands reach calibration_service as one Elodin table packet each, stamped to the
+// millisecond. Spacing a group's commands keeps two from sharing a timestamp; at 20 ms apart a
+// dozen PTs land well inside the service's 1 s capture window, so they all average the same hold.
+const GROUP_CAPTURE_STAGGER_MS = 20;
 
 // ── Detail readout stat tile ────────────────────────────────────────────────────
 function Stat({ label, value, className = '' }: { label: string; value: string; className?: string }) {
@@ -100,6 +129,8 @@ export default function CalibrationPage() {
   const getSensorValue = useGetSensorValue();
   const ws = getWebSocketClient();
   const allSensors = useSensorConfig();
+  // LabJack T7 inputs are here too: calibration_service calibrates them exactly like an ESP32
+  // PT / LC (uid board_id*100 + AIN). Their "ADC" column is the reading in microvolts.
   const ptChannels = useMemo(() => allSensors.filter((c) => c.type === 'PT'), [allSensors]);
   const lcChannels = useMemo(() => allSensors.filter((c) => c.type === 'LC'), [allSensors]);
 
@@ -107,8 +138,12 @@ export default function CalibrationPage() {
   const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
   const [cubicState, setCubicState] = useState<Record<string, CubicCalibrationChannel>>({});
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
-  const [overlay, setOverlay] = useState<{ cubic: boolean; robust: boolean; physics: boolean }>({ cubic: true, robust: true, physics: true });
+  const [overlay, setOverlay] = useState<{ cubic: boolean; linear: boolean; robust: boolean; physics: boolean }>({ cubic: true, linear: true, robust: true, physics: true });
   const [refInput, setRefInput] = useState('');
+  // Group capture: PTs ticked in the sidebar take one reference pressure together.
+  const [groupUids, setGroupUids] = useState<number[]>([]);
+  const [groupRefInput, setGroupRefInput] = useState('');
+  const [lastGroupCapture, setLastGroupCapture] = useState<{ psi: number; roles: string[] } | null>(null);
   const [showLoadCells, setShowLoadCells] = useState(true);
   // Captures write into the live ADC stream, which only exists while a session runs; with it off the
   // calibration service is down and a capture/zero is silently dropped. Gate the controls on it.
@@ -173,14 +208,14 @@ export default function CalibrationPage() {
   const [cfgRoot, setCfgRoot] = useState<Record<string, any>>({});
 
   // Each sensor's streaming model (service truth); default by interface/kind when the record is
-  // absent (PT: 4-20 mA -> physics else cubic; LC: physics — cubic is opt-in per role).
+  // absent (PT: 4-20 mA -> physics else cubic; LC: linear, which streams physics until 2 points).
   const modelOf = useCallback((uid: number): Model => {
     const rec = cubicState[String(uid)];
     if (rec?.active_model) return rec.active_model as Model;
     const pt = ptChannels.find((c) => c.boardId * 100 + c.id === uid);
     if (pt) return pt.isHpPt ? 'physics' : 'cubic';
     const lc = lcChannels.find((c) => c.boardId * 100 + c.id === uid);
-    if (lc) return 'physics';
+    if (lc) return 'linear';
     return 'cubic';
   }, [cubicState, ptChannels, lcChannels]);
 
@@ -240,7 +275,7 @@ export default function CalibrationPage() {
 
   // Load full config once (physics params).
   useEffect(() => {
-    fetch(`${getApiBaseUrl()}/api/config`)
+    fetch(`${getApiBaseUrl()}/api/config/running`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { config?: Record<string, any> } | null) => {
         const cfg = data?.config;
@@ -331,6 +366,29 @@ export default function CalibrationPage() {
     setRefInput('');
   }, [selectedChannel, selectedModel, refInput, sendCalCmd]);
 
+  const groupChannels = useMemo(
+    () => ptChannels.filter((c) => groupUids.includes(c.boardId * 100 + c.id)),
+    [ptChannels, groupUids],
+  );
+  const toggleGroup = useCallback((uid: number) => {
+    setGroupUids((g) => (g.includes(uid) ? g.filter((u) => u !== uid) : [...g, uid]));
+  }, []);
+
+  const handleCaptureGroup = useCallback(() => {
+    // One known pressure on a shared manifold, captured on every ticked PT -- the same
+    // capture_point each would get one at a time, so every point lands in its own sensor's fit.
+    const psi = parseFloat(groupRefInput);
+    if (isNaN(psi) || groupChannels.length === 0) return;
+    groupChannels.forEach((c, i) => {
+      window.setTimeout(
+        () => sendCalCmd({ commandType: 'capture_point', sensorId: c.id, boardId: c.boardId, referencePressure: psi }),
+        i * GROUP_CAPTURE_STAGGER_MS,
+      );
+    });
+    setLastGroupCapture({ psi, roles: groupChannels.map((c) => c.role || `CH${c.id}`) });
+    setGroupRefInput('');
+  }, [groupRefInput, groupChannels, sendCalCmd]);
+
   const handleNewCalibration = useCallback(() => {
     if (!selectedChannel) return;
     if (typeof window !== 'undefined' && !window.confirm(`Clear the calibration for ${selectedChannel.role || 'CH' + selectedChannel.id}? Drops its captured points and resets both cubic and robust to nothing (0).`)) return;
@@ -384,8 +442,9 @@ export default function CalibrationPage() {
     healthValue = selPhysics ? `${selPhysics.fullScale} ${unit}` : '—';
     healthClass = 'text-orange-300';
   } else {
-    healthLabel = 'Cubic fit';
+    healthLabel = selectedModel === 'linear' ? 'Linear fit' : 'Cubic fit';
     if (selPoints >= 2) { healthValue = 'Live'; healthClass = 'text-green-400'; }
+    else if (selectedModel === 'linear') { healthValue = 'Datasheet'; healthClass = 'text-orange-300'; }
     else if (selPoints === 1) { healthValue = 'Need ≥2 pts'; healthClass = 'text-amber-400'; }
     else { healthValue = 'None'; healthClass = 'text-gray-400'; }
   }
@@ -403,6 +462,19 @@ export default function CalibrationPage() {
             <span className="text-violet-300">{counts.robust} robust</span>
             <span className="text-orange-300">{counts.physics} physics</span>
           </div>
+          {ptChannels.length > 0 && (
+            <div className="mt-3 flex items-center gap-2 text-xs">
+              <span className="text-text-muted">{groupUids.length ? `${groupUids.length} ticked for group capture` : 'Tick PTs to capture several at once'}</span>
+              <span className="ml-auto flex gap-1.5">
+                <button type="button" className="ctl h-6 px-2 text-[10px]"
+                  onClick={() => setGroupUids((g) => Array.from(new Set([...g, ...visibleChannels.map((c) => c.boardId * 100 + c.id)])))}
+                  title="Tick every PT in the list">All</button>
+                {groupUids.length > 0 && (
+                  <button type="button" className="ctl h-6 px-2 text-[10px]" onClick={() => setGroupUids([])}>Clear</button>
+                )}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Board filter */}
@@ -437,6 +509,8 @@ export default function CalibrationPage() {
                   numPoints={cubicState[String(uid)]?.numPoints ?? 0}
                   selected={uid === selectedUid}
                   onSelect={() => setSelectedUid(uid)}
+                  checked={groupUids.includes(uid)}
+                  onCheck={() => toggleGroup(uid)}
                 />
               );
             })
@@ -481,6 +555,9 @@ export default function CalibrationPage() {
           </div>
         )}
 
+        {/* Ball valves — two-point (fully closed / fully open), stored by the backend */}
+        <BallValveCalPanel config={cfgRoot} sessionActive={sessionActive} />
+
         {/* Global action: Zero all — captures a 0 reference point on every cubic/robust PT + LC
             sensor. It's a real point (feeds the shared fit + persists), NOT a tare.
 
@@ -515,7 +592,89 @@ export default function CalibrationPage() {
 
       {/* ── Detail: everything about the selected sensor ───────────────────── */}
       <section className="flex-1 min-w-0 overflow-auto">
-        {!selectedChannel || !selectedModel ? (
+        {groupChannels.length > 0 && (
+          <div className="px-8 pt-8 max-w-5xl mx-auto" data-testid="group-capture">
+            <div className="rounded-xl border border-blue-800/70 bg-blue-950/20 p-5">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <div className="text-sm font-bold text-text">
+                  Group capture · {groupChannels.length} PT{groupChannels.length === 1 ? '' : 's'}
+                </div>
+                <button type="button" className="ctl h-7 px-3 text-[11px]" onClick={() => setGroupUids([])}>Clear selection</button>
+              </div>
+              <p className="text-sm text-text-muted mt-1">
+                One known pressure, captured on every ticked PT — for a manifold where they all see the same pressure.
+                Each gets the same point it would get captured on its own.
+              </p>
+              <div className="mt-3 max-h-64 overflow-auto border border-gray-800 rounded-lg">
+                <table className="w-full text-sm font-mono">
+                  <thead className="sticky top-0 bg-gray-900 text-text-muted">
+                    <tr>
+                      <th className="text-left px-3 py-2">Sensor</th>
+                      <th className="text-left px-3 py-2">Model</th>
+                      <th className="text-right px-3 py-2">PSI</th>
+                      <th className="text-right px-3 py-2">ADC</th>
+                      <th className="text-right px-3 py-2">Points</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {groupChannels.map((c) => {
+                      const uid = c.boardId * 100 + c.id;
+                      const st = cubicState[String(uid)];
+                      const m = modelOf(uid);
+                      return (
+                        <tr key={uid} className="odd:bg-white/[0.02]">
+                          <td className="px-3 py-1.5 text-text">
+                            {c.role || `CH${c.id}`} <span className="text-text-muted">B{c.boardId}·CH{c.id}</span>
+                            {st?.last_capture && !st.last_capture.settled && (
+                              <span className="ml-2 text-amber-400" title="Its last capture was taken while the reading was still moving">moving</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-1.5"><span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border uppercase ${MODEL_BADGE[m]}`}>{m}</span></td>
+                          <td className="px-3 py-1.5 text-right text-green-400">{fmtPsi(getSensorValue(c.calEntity, 'pressure_psi'))}</td>
+                          <td className="px-3 py-1.5 text-right text-gray-400">{fmtAdc(getSensorValue(c.calEntity, 'raw_adc_counts'))}</td>
+                          <td className="px-3 py-1.5 text-right text-gray-300">{st?.numPoints ?? 0}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {groupChannels.some((c) => modelOf(c.boardId * 100 + c.id) === 'physics') && (
+                <p className="text-sm text-orange-300/90 mt-3">
+                  Physics sensors in the group record the point but keep streaming the datasheet conversion.
+                </p>
+              )}
+              <div className="flex items-center gap-3 flex-wrap mt-4">
+                <input
+                  type="number" step="any" placeholder="Reference PSI"
+                  value={groupRefInput}
+                  onChange={(e) => setGroupRefInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && sessionActive && handleCaptureGroup()}
+                  aria-label="Reference PSI for the group capture"
+                  className="w-44 bg-black/30 border border-gray-700 rounded-lg px-4 py-2.5 text-base font-mono text-text placeholder-gray-600 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={handleCaptureGroup}
+                  // Same tablet fix as the single capture: keep the keyboard up so the first tap lands.
+                  onPointerDown={(e) => e.preventDefault()}
+                  disabled={!groupRefInput || !sessionActive}
+                  title={sessionActive ? undefined : 'Start a session to calibrate — there is no live stream to capture.'}
+                  className="ctl h-10 px-6 text-[12px]"
+                >
+                  Capture on {groupChannels.length} PT{groupChannels.length === 1 ? '' : 's'}
+                </button>
+                {!sessionActive && <span className="text-sm text-text-muted">Start a session to calibrate.</span>}
+              </div>
+              {lastGroupCapture && (
+                <p className="text-sm text-text-muted mt-3" data-testid="group-capture-sent">
+                  Sent {lastGroupCapture.psi} psi to {lastGroupCapture.roles.length} PT{lastGroupCapture.roles.length === 1 ? '' : 's'}: {lastGroupCapture.roles.join(', ')}.
+                  {' '}The Points column updates as the service records each one.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+        {(!selectedChannel || !selectedModel) && groupChannels.length > 0 ? null : !selectedChannel || !selectedModel ? (
           <div className="h-full flex flex-col items-center justify-center text-text-muted gap-2">
             <div className="text-lg">Select a sensor to view its calibration</div>
             <div className="text-sm text-gray-600">Live pressure, captured points, and curve previews appear here.</div>
@@ -535,7 +694,7 @@ export default function CalibrationPage() {
                 </div>
                 <div className="text-sm text-text-muted mt-1.5 max-w-2xl">
                   {modelDesc(selectedModel, selectedKind ?? 'PT')}
-                  {selectedModel !== 'physics' && selPoints === 0 && (
+                  {selectedModel !== 'physics' && selectedModel !== 'linear' && selPoints === 0 && (
                     <span className="text-amber-400/80"> Reads 0 until you capture points.</span>
                   )}
                   {' '}<span className="text-gray-600">Change the model in Config → Roles.</span>
@@ -588,7 +747,7 @@ export default function CalibrationPage() {
               {selectedModel === 'physics' && (
                 <div className="text-sm text-orange-300/90 mb-3">
                   This sensor is in physics mode: points are recorded but do not change what it streams.
-                  Switch it to cubic or robust in Config &rarr; Roles to use them.
+                  Switch it to {selectedKind === 'LC' ? 'linear or cubic' : 'cubic or robust'} in Config &rarr; Roles to use them.
                 </div>
               )}
               {(
@@ -616,7 +775,7 @@ export default function CalibrationPage() {
                   </button>
                   <span className="text-sm text-text-muted">
                     {sessionActive
-                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'cubic' : 'cubic & robust'} fit{selectedModel === 'physics' ? ', for whenever this sensor is switched to one of them' : ''}.</>
+                      ? <>Records the current ADC at this known {selectedKind === 'LC' ? 'weight' : 'pressure'}. Feeds the {selectedKind === 'LC' ? 'linear & cubic' : 'cubic & robust'} fits{selectedModel === 'physics' ? ', for whenever this sensor is switched to one of them' : ''}.</>
                       : <>Start a session to calibrate — there is no live stream to capture.</>}
                   </span>
                 </div>
@@ -628,7 +787,7 @@ export default function CalibrationPage() {
               <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
                 <div className="text-sm font-bold text-text">Curve previews</div>
                 <div className="flex items-center gap-4 text-sm flex-wrap">
-                  {((selectedKind === 'LC' ? ['cubic', 'physics'] : ['cubic', 'robust', 'physics']) as Model[]).map((m) => (
+                  {((selectedKind === 'LC' ? ['linear', 'cubic', 'physics'] : ['cubic', 'robust', 'physics']) as Model[]).map((m) => (
                     <label key={m} className="flex items-center gap-2 cursor-pointer select-none">
                       <input type="checkbox" checked={overlay[m]} onChange={(e) => setOverlay((o) => ({ ...o, [m]: e.target.checked }))} />
                       <span className="inline-block w-4 rounded" style={{ background: CURVE_COLORS[m], height: m === selectedModel ? 4 : 2 }} />

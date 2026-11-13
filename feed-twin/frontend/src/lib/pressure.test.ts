@@ -1,6 +1,10 @@
+/// <reference types="node" />
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   ATMOSPHERE_PSI,
+  PRESSURE_DIFFERENCES,
   PRESSURE_UNIT,
   asShown,
   commitPsia,
@@ -127,7 +131,37 @@ describe('labels', () => {
     expect(shown.unit).toBe('psia');
     expect(shown.value).toBeCloseTo(549.7, 1);
     expect(asShown({ value: 50, unit: 'psi' })).toEqual({ value: 50, unit: 'psi' });
-    expect(asShown({ value: 2.5e6, unit: 'Pa' })).toEqual({ value: 2.5e6, unit: 'Pa' });
+    expect(asShown({ value: 300, unit: 'K' })).toEqual({ value: 300, unit: 'K' });
+  });
+
+  it('shows a value the library holds in pascals in psi: psia at a place, psi across one', () => {
+    // The Checks list printed "design_chamber_pressure 2.6e+6 Pa" and
+    // "lockup_rise 0 Pa": the library's own SI defaults, which are absolute.
+    const pc = asShown({ value: 2585533.98, unit: 'Pa' }, 'design_chamber_pressure');
+    expect(pc.unit).toBe('psia');
+    expect(pc.value).toBeCloseTo(375.0, 1);
+    expect(asShown({ value: 101325, unit: 'Pa' }, 'pressure')).toEqual({ value: ATMOSPHERE_PSI, unit: 'psia' });
+    // A difference is the same size either way: plain psi, no atmosphere.
+    const rise = asShown({ value: 6894.757293168361 * 20, unit: 'Pa' }, 'lockup_rise');
+    expect(rise.unit).toBe('psi');
+    expect(rise.value).toBeCloseTo(20, 9);
+    expect(asShown({ value: 0, unit: 'Pa' }, 'min_inlet_differential')).toEqual({ value: 0, unit: 'psi' });
+    expect(asShown({ value: 1.5, unit: 'MPa' }, 'setpoint').value).toBeCloseTo(217.6, 1);
+    // A pressure the reader lists in neither table is absolute, as drawn_unit reads it.
+    expect(asShown({ value: 6894.757293168361, unit: 'kPa' }).unit).toBe('psia');
+  });
+
+  it('knows the differences the library\'s drawing reader knows', () => {
+    // feedtwin.model.pressure.DIFFERENCE: a copy here drifts, so it is read
+    // from the library's source.
+    const py = readFileSync(
+      fileURLToPath(new URL('../../../../lib/feedtwin/feedtwin/model/pressure.py', import.meta.url)),
+      'utf8',
+    );
+    const body = /\nDIFFERENCE = frozenset\(\s*\{([\s\S]*?)\}\s*\)/.exec(py)?.[1] ?? '';
+    const names = [...body.replace(/#.*$/gm, '').matchAll(/"([A-Za-z_]+)"/g)].map((m) => m[1]).sort();
+    expect(names.length).toBeGreaterThan(5);
+    expect([...PRESSURE_DIFFERENCES].sort()).toEqual(names);
   });
 
   it('knows a gauge Configuration row before and after the backend says so', () => {

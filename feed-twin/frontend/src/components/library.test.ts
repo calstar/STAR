@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import type { Artifact, ImportResult } from '../api';
-import { pulledFrom, superseded } from './LibraryPanel';
-import { importedNote } from './SourcePanel';
+import { isStandBundle, pulledFrom, superseded } from './LibraryPanel';
+import { importedNote, sourceName } from './SourcePanel';
+
+describe('a stand file dropped on the Library is a stand, not a drawing', () => {
+  it('by the format it says it is', () => {
+    expect(isStandBundle(JSON.stringify({ format: 'hotbench-stand', version: 1, name: 'LE4 (3)', stand: {} }))).toBe(true);
+  });
+  it('a P&ID, other JSON and not JSON at all are not', () => {
+    expect(isStandBundle(JSON.stringify({ nodes: [], edges: [] }))).toBe(false);
+    expect(isStandBundle('null')).toBe(false);
+    expect(isStandBundle('{"format": "something-else"}')).toBe(false);
+    expect(isStandBundle('not json')).toBe(false);
+  });
+});
 
 const art = (id: string, source: string, imported_at: string, name = 'Ethalox 7200N Doublet'): Artifact => ({
   id,
@@ -44,5 +56,15 @@ describe('what an import says when it lands', () => {
   });
   it('a new drawing is imported', () => {
     expect(importedNote(result('LE4 Stand', false), 'LE4 Stand')).toBe('Imported LE4 Stand.');
+  });
+});
+
+describe('the design tools by the names the header gives them', () => {
+  it('calls the drawing and engine tools Hotbench P&ID and Hotbench Engine', () => {
+    // The header's switcher says ENGINE | P&ID | TWIN; the Library's list said
+    // "pid-designer", the server's own key.
+    expect(sourceName({ key: 'pid-designer', label: 'pid-designer' })).toBe('Hotbench P&ID');
+    expect(sourceName({ key: 'engine-design', label: 'EngineDesign' })).toBe('Hotbench Engine');
+    expect(sourceName({ key: 'someone-else', label: 'Their tool' })).toBe('Their tool');
   });
 });

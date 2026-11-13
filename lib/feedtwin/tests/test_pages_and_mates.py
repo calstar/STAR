@@ -145,3 +145,14 @@ def test_a_cart_drawn_on_the_gse_page_charges_the_copv_itself() -> None:
     assert not copv.filling, "the built-in charge stands aside"
     assert copv.pressure > start + 200 * 6894.757, "the drawn cart charged it"
     assert session.bottles["BANK"].pressure < 4500 * 6894.757 + 101325.0
+
+
+def test_halves_joined_by_their_own_line_are_coupled_and_nothing_is_said() -> None:
+    """A pair a drawn line already joins (LE4's HP-QD-A and HP-QD-B): coupled on
+    the page, as pid-designer reads it, with nothing to say. The twin found no
+    free side to mate and warned the pair was left unmated."""
+    payload = _two_pages("both")
+    payload["edges"].append(line("g-r", "QG", "QR"))
+    flow, built = _flow(payload)
+    assert flow > 0.01, "the cart reaches the vent through the drawn line"
+    assert not [w for w in built.warnings if "unmated" in w], built.warnings

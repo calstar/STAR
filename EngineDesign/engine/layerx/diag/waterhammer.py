@@ -45,9 +45,9 @@ Treated as the MOC valve boundary appearing instantly at the front: ``p = p_fron
 with ``m = phi sqrt(p - Pc)``, ``B = a/A``. The gas cushion the last of the manifold gas gives is
 ignored, so this is an upper bound.
 
-Ratings: the drawing rates only the tanks (MAWP, estimated) and the bottle; no line, valve or
-manifold carries a rating. Each line is graded against its tank's MAWP, read as gauge on the
-standard atmosphere as feedtwin's trip reads it, and the row says so.
+Ratings: the drawing rates only the tanks (MAWP or burst pressure, estimated) and the bottle; no
+line, valve or manifold carries a rating. Each line is graded against the absolute pressure its tank
+trips the stand at (``prepare.vessel_trip``, feedtwin's own trip), and the row says so.
 """
 
 from __future__ import annotations
@@ -61,7 +61,6 @@ from engine.layerx.diag.start import (
 )
 
 MODEL_NAME = "water_hammer_moc"
-STD_ATM_PSI = 14.695948775513449
 E_316_PA = 193.0e9
 E_316_SOURCE = ("assumed 193 GPa (28.0 x 10^6 psi): the room-temperature modulus producers' 316/316L data sheets "
                 "list (the AK Steel 316/316L product data bulletin was cited from memory and not re-checked; a "
@@ -312,16 +311,14 @@ def _row(prep: Any, result: Mapping[str, Any], side: str, key: str, settings: Ha
                        "basis": "start model's rigid-column arrival flow meeting the orifices (gas cushion ignored: "
                                 "upper bound); at the manifold, which carries no rating"}
     tank = feed.tank
+    # ``tank_mawp_psi`` is already the absolute pressure the twin trips the tank at (prepare.vessel_trip:
+    # the drawn MAWP, a bare psi read as gauge, or burst over the safety factor). It used to have the
+    # standard atmosphere added again here: a rating one atmosphere over the trip.
     mawp = ((prep.derived or {}).get("tank_mawp_psi") or {}).get(tank)
-    rating = (float(mawp) + STD_ATM_PSI) if mawp is not None else None
-    mawp_param = None
-    try:
-        mawp_param = prep.model.diagram.node(tank).params.get("MAWP")
-    except Exception:  # noqa: BLE001
-        pass
-    rating_prov = (f"{tank} MAWP {mawp:.0f} psi, " + (f"{getattr(getattr(mawp_param, 'source', None), 'value', '')}"
-                   if mawp_param is not None else "drawing") + "; read as gauge on the standard atmosphere "
-                   "(feedtwin's trip); no line, valve or manifold rating is drawn") if mawp is not None else "no rating drawn"
+    rating = float(mawp) if mawp is not None else None
+    said = (((prep.derived or {}).get("vessel_ratings") or {}).get(tank) or {}).get("words")
+    rating_prov = (f"{tank} trips the stand at {said or f'{float(mawp):.1f} psia'} (feedtwin's trip); no line, valve or "
+                   "manifold rating is drawn") if mawp is not None else "no rating drawn"
     peak_close = sim["p_max"]
     peak_open = opening["peak_psia"] * PSI if opening.get("available") else 0.0
     peak, peak_source = (peak_close, "closure") if peak_close >= peak_open else (peak_open, "opening")
@@ -380,7 +377,8 @@ def _row(prep: Any, result: Mapping[str, Any], side: str, key: str, settings: Ha
             "column separation (pressure below vapour) ends the MOC's validity; it is flagged, not modelled, and "
             "graded on the Joukowsky value, which a cavity's collapse can exceed",
             "the opening surge ignores the gas cushion in the manifold (upper bound)",
-            "ratings: only the tanks are rated on the drawing (MAWP, estimated); lines are graded against them",
+            "ratings: only the tanks are rated on the drawing (MAWP or burst, estimated); lines are graded against the "
+            "pressure their tank trips the stand at",
         ],
         inputs)
     return {

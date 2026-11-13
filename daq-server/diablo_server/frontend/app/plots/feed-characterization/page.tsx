@@ -232,7 +232,7 @@ export default function FeedCharacterizationPage() {
   // run died in the baseline phase before it ever reached the sequencer.
   const allSensors = useSensorConfig();
   const ptSensors = useMemo(
-    () => allSensors.filter((x) => /(^PT_Cal\.|^PT\d+_Cal\.)/.test(x.calEntity) && !x.calEntity.includes('RTD')),
+    () => allSensors.filter((x) => (x.type === 'PT' || /(^PT_Cal\.|^PT\d+_Cal\.)/.test(x.calEntity)) && !x.calEntity.includes('RTD')),
     [allSensors],
   );
 

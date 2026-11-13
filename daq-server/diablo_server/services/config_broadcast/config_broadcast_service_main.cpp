@@ -237,9 +237,13 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
 
     const std::map<std::string, double>& abort_pts = cfg.abort_pts;
 
+    // A ball valve is left out of the abort list. In a no-connection abort its own board has lost
+    // the server too, and it opens the valve itself 5 s after the last server heartbeat and
+    // ignores a command to close until heartbeats return (BallValve_Hotfire), so a survivor's
+    // vent/abort command could not hold it anywhere else. Its fail-open is its abort behaviour.
     std::map<std::string, std::tuple<int, int, bool>> actuator_roles;
     for (const auto& [name, r] : cfg.actuator_roles)
-        if (r.channel >= 1 && r.channel <= 255)
+        if (r.channel >= 1 && r.channel <= 255 && !r.ball_valve)
             actuator_roles[name] = {r.channel, r.board_id > 0 ? r.board_id : 12, r.is_no};
 
     // Autonomous overpressure abort thresholds: invert each abort PSI to a raw ADC code through the
@@ -251,7 +255,8 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
     // net was simply absent. A threshold that cannot be computed is now logged loudly and omitted
     // (no board trip for that one sensor) rather than shipped wrong or dropped in silence.
     //
-    // Only ratiometric-physics (0-5 V) inversion is implemented: adc = psi/full_scale * 2^31, the
+    // Only ratiometric-physics (0.5-4.5 V) inversion is implemented:
+    // adc = (0.1 + 0.8 * psi/full_scale) * 2^31, the
     // exact inverse of the calibration service's convert_ratiometric_pt_to_pressure. A sensor whose
     // model is cubic/robust/blend, or that sits on a 4-20 mA board, is refused here (set its
     // calibration_model to "physics" for a board trip, or it has none) — inverting the operator
@@ -268,6 +273,10 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         const auto ref = fsw::config::find_pt_role(cfg, sensor_name);
         if (!ref) {
             abort_warnings.insert(tag + "no PT sensor_role declares this name — NO board trip");
+            continue;
+        }
+        if (ref->t7 != nullptr) {
+            abort_warnings.insert(tag + "is a LabJack T7 input — no board can trip on it");
             continue;
         }
         const auto& b = *ref->board;
@@ -319,7 +328,9 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
             continue;
         }
         constexpr double ADC_MAX = 2147483648.0;  // 2^31
-        double adc = std::clamp((threshold_psi / full_scale) * ADC_MAX, 0.0, ADC_MAX - 1.0);
+        // 0.5-4.5 V at 5 V excitation: 10 % of full code at zero, 90 % at full scale.
+        double adc =
+            std::clamp((0.1 + 0.8 * (threshold_psi / full_scale)) * ADC_MAX, 0.0, ADC_MAX - 1.0);
         abort_pt_list.push_back(
             {ipToU32Le(b.ip), static_cast<uint8_t>(channel), static_cast<uint32_t>(llround(adc))});
     }
@@ -419,6 +430,12 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         if (b.type == "ACTUATOR") {
             int is_abort = (b.id == designated_id) ? 1 : 0;
             auto pkt = build_actuator_config(is_abort, b.enable_serial_printing);
+            if (!pkt.empty())
+                packets.push_back({ACTUATOR_CONFIG, pkt, b.ip, b.listen_port});
+        } else if (b.type == "BALL_VALVE") {
+            // The ball valve firmware reads only the log-mode byte; it is never the abort
+            // controller and ignores the abort lists.
+            auto pkt = build_actuator_config(0, b.enable_serial_printing);
             if (!pkt.empty())
                 packets.push_back({ACTUATOR_CONFIG, pkt, b.ip, b.listen_port});
         } else if (b.type == "PT" || b.type == "TC" || b.type == "RTD" || b.type == "LC" ||

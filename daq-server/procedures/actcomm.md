@@ -21,6 +21,7 @@
 - [ ] During initial GSE low press, monitor all pneumatic actuators for unintended motion or jitter; do not proceed to higher pressures until anomalies are resolved.
 - [ ] Actively communicate with Mission Control Team to confirm all actuators are correctly mapped and respond to the intended commands.
 - [ ] While confirming mapping, verify that each actuator’s commanded open/close state matches the intended Normally Closed (NC) / Normally Open (NO) configuration for its associated valve.
+- [ ] Motorized ball valves have no NC/NO: confirm OPEN drives each one open and CLOSE drives it closed, and that the GUI reads ~100% OPEN / ~100% CLOSED under it at each end of travel.
 - [ ] Monitor solenoid actuation during dry run.
 - [ ] For every command, verify the correct actuator responded and the actuator moved in the correct direction. 
 - [ ] Confirm the resulting physical valve state matches the commanded state, including that all ball valves driven by pneumatic actuators rotate the full 90° between open and closed.
@@ -28,6 +29,7 @@
 - [ ] Verify actuation timing is nominal.
 - [ ] Verify state transitions twice during dry run.
 - [ ] Confirm abort state forces valves to correct safe positions.
+- [ ] Know that a motorized ball valve opens itself ~5 s after its board loses the server, and does not take a vent/abort command from the designated survivor.
 - [ ] **TELL MISSION CONTROL / AVIONICS MANAGER OF ANY ACTUATOR ANOMALY.**
 
 ## Press Proof

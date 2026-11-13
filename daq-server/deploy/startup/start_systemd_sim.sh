@@ -51,14 +51,18 @@ mkdir -p "$DAQ_DIR"
 # runtime-mutable config.toml, so the systemd sim stack + session tests are deterministic.
 sed 's/192\.168\.2\./127.0.0./g' "$PROJECT/config/config_base.toml" > "$SIM_CONFIG"
 cat > "$PIPELINE_ENV" <<EOF
-# Written by start_systemd_sim.sh — points the always-on backend at the remapped
-# (no-hardware) config. The data source (live vs simulated) is chosen PER RUN from
-# the Session screen: session-start writes USE_SIM + the pipeline's config into this
-# file itself, so the harness no longer forces USE_SIM. Remove (stop_systemd_sim.sh)
-# to return to a hardware config.
+# Written by start_systemd_sim.sh — points the always-on C++ units (config_broadcast,
+# heartbeat) at the remapped (no-hardware) config. The data source (live vs simulated) is
+# chosen PER RUN from the Session screen: session-start writes USE_SIM + the pipeline's
+# config into this file itself, so the harness no longer forces USE_SIM. Remove
+# (stop_systemd_sim.sh) to return to a hardware config.
 DAQ_CONFIG=$SIM_CONFIG
-CONFIG_PATH=$SIM_CONFIG
 EOF
+# No CONFIG_PATH here, on purpose. The backend deploys the active profile INTO CONFIG_PATH (on a
+# save while idle, and at a live session start), so pointing it at sim_config.toml sent every
+# deploy to the sim file while a live run's pipeline read config.toml. The backend reads and
+# deploys config.toml exactly as on the stand; a simulated session moves what it reads to
+# sim_config.toml for the run (backend routes/config.ts getRunningConfigPath).
 # Optional: fast auto-stop warnings for the integration test (env passthrough).
 [ -n "${SESSION_WARN_LEADS_MS:-}" ] && echo "SESSION_WARN_LEADS_MS=$SESSION_WARN_LEADS_MS" >> "$PIPELINE_ENV"
 echo "  sim config: $SIM_CONFIG"
@@ -77,10 +81,10 @@ bash "$PROJECT/deploy/systemd/install_services.sh" >/dev/null
 systemctl --user daemon-reload
 
 # ── Clean slate, then start only the always-on web + support layer ───────────
-PIPELINE_UNITS="sensor-elodin sensor-daq sensor-calibration sensor-controller sensor-actuator sensor-simulator"
+PIPELINE_UNITS="sensor-elodin sensor-daq sensor-calibration sensor-controller sensor-actuator sensor-simulator sensor-t7"
 # SKIP_FRONTEND=1 omits the Vite dist build (CI/WS-only runs don't need the GUI;
 # the backend still serves :8081 and, if dist already exists, :3000).
-WEB_UNITS="sensor-backend sensor-config-broadcast sensor-heartbeat"
+WEB_UNITS="sensor-backend sensor-config-broadcast sensor-heartbeat sensor-video"
 [ "${SKIP_FRONTEND:-0}" = "1" ] || WEB_UNITS="sensor-frontend $WEB_UNITS"
 systemctl --user stop $PIPELINE_UNITS sensor-frontend $WEB_UNITS 2>/dev/null || true
 

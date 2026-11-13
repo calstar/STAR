@@ -45,10 +45,52 @@ describe('the test card', () => {
     expect(html).not.toContain('765 psig');
   });
 
+  it('says when the trip is a burst rating over the safety factor, not an MAWP', () => {
+    // LE4 (3) rates its tanks by burst pressure (1500 psi, estimated); the twin trips them at 1500/2
+    // across the wall, 764.7 psia (prepare.vessel_trip). Calling that "MAWP 750 psi on the drawing" misread the drawing.
+    const r = result();
+    (r.provenance.derived as Record<string, unknown>).vessel_ratings = {
+      OXT: { basis: 'burst', rating_psig: 1500, safety_factor: 2, source: 'estimated', trip_psia: 764.696 },
+    };
+    const card = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(card).toContain('<td class="n">764.7 psia</td><td>burst 1,500 psi on the drawing over a safety factor of 2.0 (estimated)');
+    expect(card).toContain('<td class="n">1,000.0 psia</td><td>MAWP 985 psi on the drawing');   // the fuel tank: an MAWP
+  });
+
+  it('prints the graded chug margin, not the replay’s config-basis one', () => {
+    // LE4 (3): graded 1.004 on the drawing's lines (diagnostics.stability), 1.21 on EngineDesign's feed_system.
+    const r = result();
+    (r as unknown as Record<string, unknown>).delivered = { summary: { chug_margin_min: 1.2057, chug_margin_min_t: 0.45 } };
+    (r as unknown as Record<string, unknown>).limits = [{ key: 'chug_margin', label: 'Chug margin', value: 1.0043, t_worst: 0.3, grade: 'warn',
+      basis: 'EngineDesign double-time-lag chug model, drawing feed basis, from the first full-flow step' }];
+    const card = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(card).toContain('predicted lowest 1.00 at 0.30 s, on the drawing’s feed lines');
+    expect(card).not.toContain('1.21');
+    // A run with no graded margin says the replay's figure is EngineDesign's feed, not the drawing's.
+    (r as unknown as Record<string, unknown>).limits = [];
+    const old = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(old).toContain('predicted lowest 1.21 at 0.45 s, on EngineDesign’s feed_system');
+  });
+
   it('draws the other lines in psia, and escapes what people typed', () => {
     expect(html).toContain('≥ 678 psia');                   // bottle: lockup + 100 psi
     expect(html).toContain('≥ 458 psia');                   // injector: 382 psia chamber x 1.2
     expect(html).not.toMatch(/\d psig<\/td>/);             // no redline in gauge
     expect(html).toContain('Hotfire 3 &lt;prediction&gt;');
+  });
+
+  it('names a thermal model as left out only when the burn’s Setup ran without it', () => {
+    // Run 20261102-120705-5a3c15: the switches are null (left to the twin's Setup) and the Setup ran all
+    // three. The card said "run without ullage collapse, propellant vapour, line-wall heat".
+    const r = result();
+    r.provenance.settings = { ...r.provenance.settings, ullage_collapse: null, ullage_vapour: null, line_walls: null };
+    (r.provenance as unknown as Record<string, unknown>).setup = { ullage_collapse: true, ullage_vapour: true, line_walls: true };
+    const card = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(card).toContain('Not in these numbers');
+    expect(card).not.toContain('run without');
+    // A Setup that ran without one names that one alone.
+    (r.provenance as unknown as Record<string, unknown>).setup = { ullage_collapse: true, ullage_vapour: false, line_walls: true };
+    const one = testCardHtml(r, { id: 'r1', started: 0, settings: {}, meta: {} } as unknown as RunView, {});
+    expect(one).toContain('; run without propellant vapour.');
   });
 });

@@ -27,6 +27,11 @@ The two servers share one kind of token, minted and revoked in one place.
    ```
 
    Claude Desktop, through `mcp-remote`, the same way as `starproject/docs/MCP.md` shows.
+3. **claude.ai:** Settings → Connectors → Add custom connector, URL
+   `https://mcp.starberkeley.org/mcp`, OAuth fields blank. Connect signs you in to STAR and mints the
+   token itself (no step 1): the STAR login, not claude.ai's account, decides whose it is.
+   STARProject is the OAuth server; `starproject/docs/MCP.md` has the flow. This server only serves
+   `/.well-known/oauth-protected-resource` and names it in every `401`.
 
 A token without the Design tools scope gets `401` with `reason: "scope"`. If STARProject cannot
 be reached to check a token, the answer is `503`: never a pass.
@@ -134,8 +139,9 @@ backend, the tab fetches the same thing, and these tools read it:
   Export clicks. It works for an agent that has a browser signed in to STAR, e.g. Claude
   in Chrome on the person's own browser. Without one, `get_design` gives the drawing as JSON.
 
-Still not here: **parts-hub** (Node, its own auth), **writes** of any kind, and
-**claude.ai connectors** (those need OAuth rather than a header token).
+Still not here: **parts-hub** (Node, its own auth) and **writes** of any kind. In claude.ai, links
+are only as useful as the sandbox's network access: plots, summaries and tables work there,
+`/files/*` downloads may not.
 
 ## Running it
 
@@ -167,6 +173,7 @@ neither a token check nor a dev email, or with both.
 | `DESIGN_MCP_JOB_CONCURRENCY`, `DESIGN_MCP_JOB_INLINE_WAIT_S` | jobs at once (2), wait before handing back a job id (25) |
 | `ENGINE_DESIGN_URL`, `PID_DESIGNER_URL`, `OPENROCKET_URL`, `FEED_TWIN_URL`, `DAQ_VIEWER_URL` | each app's API on the compose network |
 | `PID_DESIGNER_PUBLIC_URL` | pid-designer for a person's browser, for `pid_image_link` |
+| `DESIGN_MCP_AUTH_SERVER` | the OAuth authorization server named to clients; defaults to `DESIGN_MCP_VERIFY_URL`'s origin |
 
 ## Deploying (once)
 

@@ -191,7 +191,9 @@ export class ElodinClient extends EventEmitter {
     return (
       high === 0x10 || // heartbeats
       high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23 || high === 0x24 || // PT/TC/RTD/LC/ENC
+      high === 0x26 || // LabJack T7 (t7_bridge)
       high === 0x30 || high === 0x31 || high === 0x32 || // ACT raw/cal/commanded
+      high === 0x33 || high === 0x34 || high === 0x35 || // ball valve raw/cal/commanded
       high === 0x40 || high === 0x41 || high === 0x42 || high === 0x43 || high === 0x44 || // controller
       high === 0x46 || // calibration commands
       high === 0x50 || // sequencer/PSM

@@ -48,6 +48,10 @@ struct CubicFit {
  */
 enum class SensorKind { PT, LC };
 
+/** CubicChannel::raw_unit values. */
+inline constexpr const char* kRawUnitAdc = "adc";
+inline constexpr const char* kRawUnitMicrovolts = "uV";
+
 /**
  * How trustworthy the most recent capture on this channel was.
  *
@@ -77,16 +81,44 @@ struct CubicChannel {
     uint8_t logical_ch =
         0;             // pt_logical_calibration_channel(slot, connector) — PTCalibrationManager key
     std::string role;  // human role from config, e.g. "Fuel Upstream"
-    // Which model this uid streams (from config g_pt_model): "cubic" (default) | "robust". Decides
-    // capture routing at the service and which display the frontend renders. For robust uids the
-    // cubic `fit` is left invalid (points are display-only) and `fit_curve` holds the sampled
-    // model.
+    // Which model this uid streams (from config): "cubic" (PT default) | "robust" | "linear" (a
+    // load cell's default) | "physics". Decides capture routing at the service and which display
+    // the frontend renders. For robust uids the cubic `fit` is left invalid (points are
+    // display-only) and `fit_curve` holds the sampled model.
     std::string active_model = "cubic";
     // Which logical-channel namespace this channel's fit is serialized into. PT by default so
     // a legacy file, and any caller that does not say, keeps its historical meaning.
     SensorKind kind = SensorKind::PT;
+    /**
+     * True when the RUNNING config declares a board/connector that owns this uid, i.e.
+     * register_channel() was called for it. False for an ORPHAN: an entry load() resumed from
+     * disk whose board is disabled, removed, or whose connector is not in active_connectors.
+     *
+     * An orphan's points stay here — durable, and they re-attach by role when the board comes
+     * back — but its `logical_ch` is NOT its own. logical_ch is (slot - 1) * 10 + connector with
+     * slot = board_id % 10, and nothing stops two boards of different kinds sharing a slot, so a
+     * disabled LC board 41's connectors 1/6/7 name the same logical channels as live PT board
+     * 21's. Anything that pushes a fit into (or clears it from) a live logical-channel map must
+     * therefore ask `live` first — see cal_target() below.
+     */
+    bool live = false;
+    /**
+     * What a point's `adc` means: kRawUnitAdc for an ESP32 board's ADC code, kRawUnitMicrovolts for
+     * a LabJack T7 channel's reading in µV. Calibration is filed by role, so a role that moves from
+     * an ESP32 board to a T7 (or back) would otherwise carry a curve fitted in one unit onto a
+     * channel that reads in the other — a confident, wrong pressure. load() refuses that re-attach.
+     */
+    std::string raw_unit = "adc";
     std::vector<CubicPoint> points;
+    // The fit this uid streams through: `fit_linear` when active_model is "linear", else
+    // `fit_cubic` (so cubic, and physics/blend as before, are unchanged). It is what the
+    // logical-channel maps carry, so the service, the tare and every reader see one curve.
     CubicFit fit;
+    // Both fits over the same points, kept so the calibration page can draw linear beside cubic
+    // without the browser fitting anything. fit_linear needs >= 2 points: a one-point "line" is a
+    // constant, which would read the same kilograms for any load.
+    CubicFit fit_cubic;
+    CubicFit fit_linear;
     // Robust display overlay: (adc, psi) samples of the live robust model (predict_pressure_psi),
     // set by the service on each robust capture. Empty for cubic uids.
     std::vector<std::pair<double, double>> fit_curve;
@@ -95,6 +127,26 @@ struct CubicChannel {
     std::string last_error;
     double updated_at = 0.0;
 };
+
+/**
+ * Which live calibration manager a store entry's fit belongs in — the one rule every caller that
+ * applies a resumed curve to the running stream must go through.
+ *
+ * `None` for an orphan (see CubicChannel::live): it has no sensor streaming, and its logical
+ * channel is shared with whatever live board happens to own that slot. On 2026-11-09 LC board 41
+ * was disabled in config; its three saved entries (connectors 1, 6, 7) resumed as orphans, and
+ * because the service's LC/PT discriminant was built from ENABLED boards they were taken for PTs.
+ * Each held one point, so each fit was invalid, so the service CLEARED PT logical channels 1, 6
+ * and 7 — FT-PT-R, FF-PT and DR-PT-G — right after the PT entries had set them. All three streamed
+ * 0 psi, with raw ADC healthy and a good cubic sitting on disk.
+ */
+enum class CalTarget { None, PT, LC };
+
+inline CalTarget cal_target(const CubicChannel& ch) {
+    if (!ch.live)
+        return CalTarget::None;
+    return ch.kind == SensorKind::LC ? CalTarget::LC : CalTarget::PT;
+}
 
 /**
  * Owns the per-channel captured points and the fitted cubic for the calibration service.
@@ -111,11 +163,13 @@ public:
     explicit CubicCalibrationStore(std::string file_path);
 
     /** Attach/refresh identity + role + streaming model for a uid (idempotent; call at startup).
-     *  `active_model` is the config truth ("cubic"|"robust"); it takes precedence over a value
-     *  restored from disk by load(). */
+     *  `active_model` is the config truth ("cubic"|"robust"|"linear"|"physics"); it takes
+     *  precedence over a value restored from disk by load(). A channel that already holds points
+     *  is re-fitted when its model changes, so switching cubic <-> linear in config needs no
+     *  recapture. */
     void register_channel(uint16_t uid, uint8_t board_id, uint8_t connector, uint8_t logical_ch,
                           const std::string& role, const std::string& active_model = "cubic",
-                          SensorKind kind = SensorKind::PT);
+                          SensorKind kind = SensorKind::PT, const std::string& raw_unit = "adc");
 
     /** Append a capture point (raw ADC, reference PSI), cap history, and re-fit. Returns the fit.
      *  For a robust uid the point is recorded for display only and an invalid fit is returned
@@ -159,7 +213,14 @@ private:
     bool load_failed_ = false;
     std::map<uint16_t, CubicChannel> channels_;
 
-    CubicFit compute_fit(const std::vector<CubicPoint>& pts) const;
+public:
+    /** Least-squares polynomial of degree min(max_degree, n - 1) over `pts`. Public for tests. */
+    static CubicFit compute_fit(const std::vector<CubicPoint>& pts, int max_degree = 3);
+
+private:
+    /** Recompute fit_cubic / fit_linear / fit / status from ch.points per ch.active_model.
+     *  Caller holds mutex_. Robust channels are left to their own branch (no fit). */
+    static void refit(CubicChannel& ch);
     std::string serialize() const;  // caller holds mutex_
 };
 

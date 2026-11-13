@@ -51,9 +51,11 @@ class BoardProfile:
     # "sensor" boards (LC/PT/TC/RTD) are configured with SENSOR_CONFIG and
     # stream signed ADC codes; "actuator" boards are configured with
     # ACTUATOR_CONFIG, take ACTUATOR_COMMAND / PWM_ACTUATOR_COMMAND, and
-    # stream IEEE-754 float current-sense volts in the datapoint field.
+    # stream raw 12-bit current-sense ADC counts in the datapoint field.
     kind: str = "sensor"            # "sensor" | "actuator"
-    value_encoding: str = "adc"     # "adc" (signed code -> volts) | "float"
+    # "adc" (signed code -> volts) | "act_adc12" (12-bit counts -> volts,
+    # legacy float bits accepted) | "float"
+    value_encoding: str = "adc"
 
     # --- sensors / channels ---------------------------------------------------
     # For actuator boards these are the actuator/current-sense channel IDs.
@@ -108,6 +110,8 @@ class BoardProfile:
     def decode_value(self, raw_u32: int) -> float:
         """Wire u32 datapoint -> volts, per this board's encoding."""
         from . import protocol
+        if self.value_encoding == "act_adc12":
+            return protocol.act_raw_to_voltage(raw_u32)
         if self.value_encoding == "float":
             return protocol.raw_to_float(raw_u32)
         return protocol.raw_to_voltage(raw_u32, self.ref_voltage_volts())

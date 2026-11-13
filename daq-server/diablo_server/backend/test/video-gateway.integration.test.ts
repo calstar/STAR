@@ -1,0 +1,496 @@
+/**
+ * The video backend against the REAL gateway: the pinned MediaMTX with the repo's
+ * daq-server/video/mediamtx.yml, an ffmpeg test-pattern "camera" that also sends G.711
+ * audio (a codec WebRTC could carry, so dropping it is a choice, not an accident), and a
+ * real Chromium doing WHEP through the backend's proxy.
+ *
+ * Proves what the fakes in src/__tests__/video.test.ts cannot:
+ *   - reconcile's API calls are the ones this MediaMTX version accepts;
+ *   - the proxied handshake yields decoded video in a browser;
+ *   - the pane's video-only offer gets no audio, while an offer that asks for audio does
+ *     (the control case: without it, "no audio" could just mean the camera had none);
+ *   - a gateway that restarts is refilled by the next sync.
+ *
+ * Hermetic (no stand hardware) but needs the gateway binary, ffmpeg and Chromium, so it
+ * runs only with VIDEO_GATEWAY_IT=1 -- and then *fails*, rather than skips, if one is missing:
+ *   VIDEO_GATEWAY_IT=1 npx vitest run test/video-gateway.integration.test.ts
+ */
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { spawn, execFileSync, type ChildProcess } from 'child_process';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import * as http from 'http';
+import * as net from 'net';
+
+const ENABLED = process.env.VIDEO_GATEWAY_IT === '1';
+const HIDES_PORT = 5607;
+const here = dirname(fileURLToPath(import.meta.url));
+const DAQ = resolve(here, '..', '..', '..');
+
+const dir = mkdtempSync(join(tmpdir(), 'daq-video-it-'));
+process.env.VIDEO_CONFIG_PATH = join(dir, 'video.json');
+process.env.VIDEO_SECRETS_PATH = join(dir, 'video.secrets.json');
+
+function freePort(): Promise<number> {
+  return new Promise((res, rej) => {
+    const s = net.createServer();
+    s.once('error', rej);
+    s.listen(0, '127.0.0.1', () => {
+      const p = (s.address() as net.AddressInfo).port;
+      s.close(() => res(p));
+    });
+  });
+}
+
+async function waitFor<T>(what: string, fn: () => Promise<T | undefined>, ms = 15000): Promise<T> {
+  const until = Date.now() + ms;
+  let last: unknown;
+  while (Date.now() < until) {
+    try {
+      const v = await fn();
+      if (v !== undefined) return v;
+    } catch (e) { last = e; }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(`timed out waiting for ${what}${last ? ` (${String(last)})` : ''}`);
+}
+
+describe.skipIf(!ENABLED)('video gateway (real MediaMTX)', () => {
+  let ports: { api: number; rtsp: number; webrtc: number; udp: number; backend: number; agent: number };
+  let gateway: ChildProcess | undefined;
+  let camera: ChildProcess | undefined;
+  let backend: http.Server;
+  let svc: InstanceType<typeof import('../src/video/service.js').VideoService>;
+  /** The service the test backend answers with (swapped for the password case). */
+  let active: typeof svc;
+  let bin = '';
+  let gatewayLog = '';
+
+  const startGateway = async (extraEnv: Record<string, string> = {}) => {
+    // As in production: the video agent runs MediaMTX as its child (scripts/video-gateway.sh).
+    gateway = spawn('node', [join(DAQ, 'video', 'agent.mjs'), '--mediamtx', bin, '--config', join(DAQ, 'video', 'mediamtx.yml')], {
+      cwd: dir,
+      env: {
+        ...process.env,
+        ...extraEnv,
+        VIDEO_AGENT_PORT: String(ports.agent),
+        // A short buffer and short segments, so a Save is testable in seconds.
+        VIDEO_BUFFER_SECONDS: '15',
+        MTX_PATHDEFAULTS_RECORDSEGMENTDURATION: '3s',
+        MTX_PATHDEFAULTS_RECORDDELETEAFTER: '30s',
+        MTX_APIADDRESS: `127.0.0.1:${ports.api}`,
+        MTX_RTSPADDRESS: `127.0.0.1:${ports.rtsp}`,
+        MTX_WEBRTCADDRESS: `127.0.0.1:${ports.webrtc}`,
+        MTX_WEBRTCLOCALUDPADDRESS: `127.0.0.1:${ports.udp}`,
+        // Only loopback candidates: CI runners have odd interfaces, and so does a laptop on VPN.
+        MTX_WEBRTCIPSFROMINTERFACES: 'no',
+        MTX_WEBRTCADDITIONALHOSTS: '127.0.0.1',
+      },
+    });
+    gateway.stdout?.on('data', (d) => (gatewayLog += d));
+    gateway.stderr?.on('data', (d) => (gatewayLog += d));
+    // Any answer (401 included) means it is up.
+    await waitFor('gateway API', async () => ((await fetch(`http://127.0.0.1:${ports.api}/v3/paths/list`)).status ? true : undefined))
+      .catch((e) => { throw new Error(`${(e as Error).message}\n--- gateway log ---\n${gatewayLog.slice(-3000)}`); });
+  };
+
+  const startCamera = () => {
+    camera = spawn('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-re',
+      '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=8000',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '30', '-pix_fmt', 'yuv420p',
+      '-c:a', 'pcm_mulaw', '-ar', '8000', '-ac', '1',
+      '-f', 'rtsp', '-rtsp_transport', 'tcp', `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`,
+    ], { stdio: 'ignore' });
+  };
+
+  const stopGateway = async () => {
+    if (!gateway) return;
+    const g = gateway;
+    gateway = undefined;
+    await new Promise<void>((r) => { g.once('exit', () => r()); g.kill('SIGTERM'); });
+  };
+
+  beforeAll(async () => {
+    bin = execFileSync(join(DAQ, 'scripts', 'video-gateway.sh'), ['--print-bin'], { encoding: 'utf8' }).trim().split('\n').pop()!;
+    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' }); // fail loudly if missing
+    ports = { api: await freePort(), rtsp: await freePort(), webrtc: await freePort(), udp: await freePort(), backend: await freePort(), agent: await freePort() };
+
+    writeFileSync(process.env.VIDEO_CONFIG_PATH!, JSON.stringify({
+      version: 1,
+      // The low-res URL is the same camera here; what matters is that raw/cam1/low is its own path.
+      streams: [
+        { id: 'cam1', label: 'Test pattern', kind: 'rtsp', url: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, lowResUrl: `rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`, record: true },
+        // The HiDes link: MPEG-TS pushed over UDP (a port in the video range, 5600-5609).
+        { id: 'hides', label: 'HiDes', kind: 'udp', port: HIDES_PORT, record: true },
+      ],
+    }));
+
+    await startGateway();
+    startCamera();
+    await waitFor('test camera', async () => {
+      const r = await fetch(`http://127.0.0.1:${ports.api}/v3/paths/get/fake/cam1`);
+      return r.ok && (await r.json()).ready ? true : undefined;
+    });
+
+    const { VideoService } = await import('../src/video/service.js');
+    const { handleVideoRequest } = await import('../src/video/routes.js');
+    svc = new VideoService({ apiUrl: `http://127.0.0.1:${ports.api}`, webrtcUrl: `http://127.0.0.1:${ports.webrtc}`, agentUrl: `http://127.0.0.1:${ports.agent}`, host: '127.0.0.1' });
+    active = svc;
+
+    // The backend, plus a page on the same origin to run the browser's side.
+    backend = http.createServer(async (req, res) => {
+      const path = new URL(req.url!, 'http://x').pathname;
+      if (await handleVideoRequest(req, res, path, active)) return;
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end('<!doctype html><title>probe</title>');
+    });
+    await new Promise<void>((r) => backend.listen(ports.backend, '127.0.0.1', r));
+  }, 120_000);
+
+  afterAll(async () => {
+    camera?.kill('SIGKILL');
+    await stopGateway();
+    backend?.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reconcile pushes the stream onto the gateway, idempotently', async () => {
+    await svc.sync();
+    expect(svc.gatewayStatus()).toMatchObject({ reachable: true });
+    const conf = await (await fetch(`http://127.0.0.1:${ports.api}/v3/config/paths/get/raw/cam1`)).json();
+    expect(conf.source).toBe(`rtsp://127.0.0.1:${ports.rtsp}/fake/cam1`);
+    const { reconcile, desiredPaths, HttpGatewayApi } = await import('../src/video/gateway.js');
+    expect(await reconcile(new HttpGatewayApi(`http://127.0.0.1:${ports.api}`), desiredPaths(svc.current())))
+      .toEqual({ added: [], replaced: [], deleted: [] });
+  });
+
+  it('a browser gets video and no audio through the proxy; asking for audio would get it', async () => {
+    const { chromium } = await import('playwright-core');
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://127.0.0.1:${ports.backend}/`);
+      const probe = (withAudio: boolean, route = '/api/video/streams/cam1/whep') => page.evaluate(async ([withAudio, route]) => {
+        const pc = new RTCPeerConnection({ iceServers: [] });
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        if (withAudio) pc.addTransceiver('audio', { direction: 'recvonly' });
+        const v = document.createElement('video');
+        v.muted = true; v.autoplay = true; document.body.append(v);
+        pc.ontrack = (e) => { if (e.track.kind === 'video') v.srcObject = new MediaStream([e.track]); };
+        await pc.setLocalDescription(await pc.createOffer());
+        await new Promise<void>((r) => {
+          if (pc.iceGatheringState === 'complete') return r();
+          pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') r(); };
+          setTimeout(r, 2000);
+        });
+        const res = await fetch(route as string, { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription!.sdp });
+        const answer = await res.text();
+        if (res.status !== 201) return { status: res.status, answer, frames: 0, audioPackets: 0, mlines: [] as string[], location: null };
+        await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+        let frames = 0;
+        const tick = () => { frames++; (v as any).requestVideoFrameCallback(tick); };
+        (v as any).requestVideoFrameCallback(tick);
+        await new Promise((r) => setTimeout(r, 3000));
+        let audioPackets = 0;
+        (await pc.getStats()).forEach((s: any) => { if (s.type === 'inbound-rtp' && s.kind === 'audio') audioPackets += s.packetsReceived; });
+        const location = res.headers.get('Location');
+        pc.close(); v.remove();
+        if (location) await fetch(location, { method: 'DELETE' });
+        return { status: res.status, frames, audioPackets, mlines: answer.split(/\r?\n/).filter((l) => l.startsWith('m=')).map((l) => l.split(' ')[0]), location };
+      }, [withAudio, route] as const);
+
+      const pane = await probe(false);
+      expect(pane.status, gatewayLog.slice(-2000)).toBe(201);
+      expect(pane.location).toMatch(/^\/api\/video\/streams\/cam1\/whep\/[0-9a-f-]+$/);
+      expect(pane.mlines).toEqual(['m=video']);
+      expect(pane.frames).toBeGreaterThan(10);
+      expect(pane.audioPackets).toBe(0);
+
+      const control = await probe(true);
+      expect(control.mlines).toEqual(['m=video', 'm=audio']);
+      expect(control.audioPackets).toBeGreaterThan(0);
+
+      // The low-res path: its own gateway path (raw/cam1/low), same proxy, same video-only rule.
+      const low = await probe(false, '/api/video/streams/cam1/low/whep');
+      expect(low.status, gatewayLog.slice(-2000)).toBe(201);
+      expect(low.location).toMatch(/^\/api\/video\/streams\/cam1\/low\/whep\/[0-9a-f-]+$/);
+      expect(low.frames).toBeGreaterThan(10);
+      expect(low.audioPackets).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  }, 60_000);
+
+  it('a HiDes-style UDP push plays as video only, and its check sees it arriving', async () => {
+    const { chromium } = await import('playwright-core');
+    expect(await svc.checkStream('hides')).toMatchObject({ ok: false, detail: expect.stringMatching(/nothing arriving on UDP 5607/) });
+    // As HiDesViewer forwards the UT-130's TS: H.264 plus audio (Opus, which WebRTC could carry).
+    const sender = spawn('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-re',
+      '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=660:sample_rate=48000',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '30', '-pix_fmt', 'yuv420p',
+      '-c:a', 'libopus', '-f', 'mpegts', `udp://127.0.0.1:${HIDES_PORT}?pkt_size=1316`,
+    ], { stdio: 'ignore' });
+    const browser = await chromium.launch();
+    try {
+      // The check is cached for 5 s, so this can take one cache period to flip.
+      await waitFor('TS arriving on the HiDes path', async () => ((await svc.checkStream('hides'))!.ok ? true : undefined), 20000);
+      const page = await browser.newPage();
+      await page.goto(`http://127.0.0.1:${ports.backend}/`);
+      const probe = (withAudio: boolean) => page.evaluate(async (withAudio) => {
+        const pc = new RTCPeerConnection({ iceServers: [] });
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        if (withAudio) pc.addTransceiver('audio', { direction: 'recvonly' });
+        const v = document.createElement('video'); v.muted = true; v.autoplay = true; document.body.append(v);
+        pc.ontrack = (e) => { if (e.track.kind === 'video') v.srcObject = new MediaStream([e.track]); };
+        await pc.setLocalDescription(await pc.createOffer());
+        await new Promise((r) => setTimeout(r, 500));
+        const res = await fetch('/api/video/streams/hides/whep', { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription!.sdp });
+        const answer = await res.text();
+        if (res.status !== 201) return { status: res.status, answer, frames: 0, audioPackets: 0, mlines: [] as string[] };
+        await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+        let frames = 0;
+        const tick = () => { frames++; (v as any).requestVideoFrameCallback(tick); };
+        (v as any).requestVideoFrameCallback(tick);
+        await new Promise((r) => setTimeout(r, 3000));
+        let audioPackets = 0;
+        (await pc.getStats()).forEach((s: any) => { if (s.type === 'inbound-rtp' && s.kind === 'audio') audioPackets += s.packetsReceived; });
+        const loc = res.headers.get('Location');
+        pc.close(); v.remove();
+        if (loc) await fetch(loc, { method: 'DELETE' });
+        return { status: res.status, frames, audioPackets, mlines: answer.split(/\r?\n/).filter((l) => l.startsWith('m=')).map((l) => l.split(' ')[0]) };
+      }, withAudio);
+      const pane = await probe(false);
+      expect(pane.status, gatewayLog.slice(-2000)).toBe(201);
+      expect(pane.mlines).toEqual(['m=video']);
+      expect(pane.frames).toBeGreaterThan(10);
+      expect(pane.audioPackets).toBe(0);
+      const control = await probe(true);
+      expect(control.mlines).toEqual(['m=video', 'm=audio']);
+      expect(control.audioPackets).toBeGreaterThan(0);
+    } finally {
+      sender.kill('SIGKILL');
+      await browser.close();
+    }
+  }, 90_000);
+
+  it('the rolling buffer: Save keeps the last window as one video-only file per stream', async () => {
+    await svc.sync(); // cam1 is "include in recording": the gateway now records it
+    const path = await (await fetch(`http://127.0.0.1:${ports.api}/v3/config/paths/get/raw/cam1`)).json();
+    expect(path).toMatchObject({ record: true, sourceOnDemand: false });
+    // Let more than the window (15 s) build up, so the Save is trimmed, not everything.
+    await new Promise((r) => setTimeout(r, 21_000));
+    await svc.sync();
+    expect(svc.bufferStatus()).toMatchObject({ available: true, bufferSeconds: 15 });
+    expect(svc.bufferStatus().buffered?.cam1).toBeGreaterThanOrEqual(14);
+
+    const pressed = Date.now();
+    const saved = await svc.save();
+    const cam = saved.streams.find((x) => x.stream === 'cam1')!;
+    expect(cam.error, JSON.stringify(saved)).toBeUndefined();
+    expect(cam.file).toMatch(/recordings\/\d{4}-\d{2}-\d{2}_\d{6}_save\/cam1\.mp4$/);
+    // Read now: the next Save lands in the same second, so the same folder.
+    const timing = JSON.parse(readFileSync(cam.file!.replace(/\.mp4$/, '.json'), 'utf8'));
+    // A stream with nothing buffered says so, without failing the others.
+    const none = await (await fetch(`http://127.0.0.1:${ports.agent}/save`, { method: 'POST', body: JSON.stringify({ streams: ['never-sent', 'cam1'] }) })).json();
+    expect(none.streams.find((x: any) => x.stream === 'never-sent').error).toMatch(/nothing buffered/);
+    expect(none.streams.find((x: any) => x.stream === 'cam1').file).toMatch(/cam1\.mp4$/);
+
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', cam.file!], { encoding: 'utf8' }));
+    // The test camera sends G.711 audio; the kept file has none.
+    expect(probe.streams.map((x: any) => x.codec_type)).toEqual(['video']);
+    // The window (15 s) plus at most one segment (3 s) before it -- not the whole 21 s.
+    const seconds = Number(probe.format.duration);
+    expect(seconds).toBeGreaterThanOrEqual(14);
+    expect(seconds).toBeLessThanOrEqual(19);
+
+    // The timing file beside it: the clip ends where Save was pressed (to within a
+    // segment still being written) and starts the file's length before that.
+    expect(timing).toMatchObject({ version: 1, stream: 'cam1', kind: 'save', latencyMs: 0 });
+    expect(timing.durationS).toBeCloseTo(seconds, 1);
+    const last = timing.pieces[timing.pieces.length - 1];
+    const endMs = last.wallMs + (timing.durationS - last.fileS) * 1000;
+    expect(Math.abs(endMs - pressed)).toBeLessThan(2000);
+    expect(timing.firstFrameMs).toBe(timing.pieces[0].wallMs);
+    // The backend measured the gateway's clock against its own: the same machine here.
+    expect(Math.abs(timing.clockOffsetMs)).toBeLessThanOrEqual(timing.clockUncertaintyMs + 2);
+    expect(timing.clockUncertaintyMs).toBeLessThan(50);
+  }, 60_000);
+
+  it('Record: press to Stop, one video-only file per stream, trimmed to the press', async () => {
+    await svc.sync();
+    // Press about 2 s into a 3 s segment, so the segment's start, the keyframe before the
+    // press (1 s apart) and the press itself are all different times: a timing file that
+    // took any of the wrong ones fails below.
+    await waitFor('a press ~2 s into a segment', async () => {
+      // segmentStart, restated: MediaMTX names a segment by its local start time.
+      const starts = readdirSync(join(dir, 'buffer', 'raw', 'cam1'))
+        .map((n) => n.match(/^(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})-(\d{6})\.mp4$/))
+        .filter((m): m is RegExpMatchArray => !!m)
+        .map((m) => new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6], Math.floor(+m[7] / 1000)).getTime());
+      const into = Date.now() - Math.max(...starts);
+      return into >= 1900 && into <= 2300 ? true : undefined;
+    }, 20_000);
+    const started = await svc.startRecording();
+    expect(started.streams).toEqual(['cam1', 'hides']);
+    const t0 = Date.now();
+    await new Promise((r) => setTimeout(r, 10_000)); // spans at least three 3 s segments
+    await svc.sync();
+    expect(svc.bufferStatus().recording).toMatchObject({ active: true, streams: ['cam1', 'hides'] });
+    const done = await svc.stopRecording();
+    const held = (Date.now() - t0) / 1000;
+    expect(done.reason).toBe('stopped');
+    const cam = done.streams.find((x) => x.stream === 'cam1')!;
+    expect(cam.error, JSON.stringify(done)).toBeUndefined();
+    expect(cam.file).toMatch(/_record\/cam1\.mp4$/);
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', cam.file!], { encoding: 'utf8' }));
+    expect(probe.streams.map((x: any) => x.codec_type)).toEqual(['video']);
+    // Trimmed to the press (to a keyframe, 1 s apart here): not the whole segment before it.
+    expect(Number(probe.format.duration)).toBeGreaterThan(held - 2);
+    expect(Number(probe.format.duration)).toBeLessThan(held + 2);
+
+    // The timing file: the first frame is the keyframe at or before the press (1 s apart
+    // here), not the segment's start and not the press itself.
+    const timing = JSON.parse(readFileSync(cam.file!.replace(/\.mp4$/, '.json'), 'utf8'));
+    expect(timing).toMatchObject({ version: 1, stream: 'cam1', kind: 'record' });
+    expect(timing.firstFrameMs).toBeLessThanOrEqual(started.startedAt + 100);
+    expect(timing.firstFrameMs).toBeGreaterThan(started.startedAt - 1500);
+    expect(timing.durationS).toBeCloseTo(Number(probe.format.duration), 1);
+  }, 60_000);
+
+  it('the disk guard: refuses to start below the threshold, stops cleanly at the floor', async () => {
+    const agent = (path: string, body: unknown) => fetch(`http://127.0.0.1:${ports.agent}${path}`, { method: 'POST', body: JSON.stringify(body) });
+    const refused = await agent('/record/start', { streams: ['cam1'], refuseBelowBytes: 1e18, stopBelowBytes: 0 });
+    expect(refused.status).toBe(409);
+    expect((await refused.json()).error).toMatch(/GB free on the gateway machine; recording needs/);
+
+    // A floor above what is free: the first check (2 s) stops it, with the reason.
+    expect((await agent('/record/start', { streams: ['cam1'], refuseBelowBytes: 0, stopBelowBytes: 1e18 })).status).toBe(200);
+    const last = await waitFor('the guard to stop the recording', async () => {
+      const st = await (await fetch(`http://127.0.0.1:${ports.agent}/status`)).json();
+      return st.recording.active ? undefined : st.lastRecording;
+    }, 15_000);
+    expect(last.reason).toBe('disk nearly full');
+  }, 60_000);
+
+  it('a recording cut short by a gateway restart is finished from what was kept', async () => {
+    await svc.startRecording();
+    await new Promise((r) => setTimeout(r, 8_000)); // a couple of segments linked
+    await stopGateway(); // agent and MediaMTX go down mid-recording
+    camera?.kill('SIGKILL');
+    await startGateway();
+    const st = await waitFor('the recovered recording', async () => {
+      const s = await (await fetch(`http://127.0.0.1:${ports.agent}/status`)).json();
+      return s.lastRecording?.reason?.startsWith('interrupted') ? s : undefined;
+    }, 20_000);
+    expect(st.recording.active).toBe(false);
+    const cam = st.lastRecording.streams.find((x: any) => x.stream === 'cam1');
+    expect(cam.file, JSON.stringify(st.lastRecording)).toMatch(/cam1\.mp4$/);
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type', '-of', 'json', cam.file], { encoding: 'utf8' }));
+    expect(probe.streams.map((x: any) => x.codec_type)).toEqual(['video']);
+    // The clock offset measured at the press survived the restart (it rides in the
+    // recording's meta file) and reached the timing file.
+    const timing = JSON.parse(readFileSync(cam.file.replace(/\.mp4$/, '.json'), 'utf8'));
+    expect(Number.isFinite(timing.clockOffsetMs) && Number.isFinite(timing.clockUncertaintyMs)).toBe(true);
+    startCamera(); // the restart test below expects the camera back
+  }, 90_000);
+
+  it('a gateway that restarts empty is refilled by the next sync', async () => {
+    camera?.kill('SIGKILL');
+    await stopGateway();
+    await svc.sync();
+    expect(svc.gatewayStatus().reachable).toBe(false);
+    await startGateway();
+    expect((await fetch(`http://127.0.0.1:${ports.api}/v3/config/paths/get/raw/cam1`)).status).toBe(404);
+    await svc.sync();
+    expect(svc.gatewayStatus().reachable).toBe(true);
+    expect((await fetch(`http://127.0.0.1:${ports.api}/v3/config/paths/get/raw/cam1`)).status).toBe(200);
+  }, 60_000);
+
+  it('a gateway that only admits the password: the backend gets in with it, and not without', async () => {
+    // As the media Mac in the desert: the launcher's user "daq", and this machine no longer
+    // trusted (so loopback cannot stand in for the password).
+    camera?.kill('SIGKILL');
+    await stopGateway();
+    await startGateway({
+      MTX_AUTHINTERNALUSERS_0_IPS: '192.0.2.1/32',
+      MTX_AUTHINTERNALUSERS_1_USER: 'daq',
+      MTX_AUTHINTERNALUSERS_1_PASS: 'gw-pass',
+      MTX_AUTHINTERNALUSERS_1_IPS: '',
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_0_ACTION: 'api',
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_1_ACTION: 'read',
+      // The test camera publishes as user daq too, now that loopback is not trusted.
+      MTX_AUTHINTERNALUSERS_1_PERMISSIONS_2_ACTION: 'publish',
+      // OBS on a streaming laptop: RTSP reads only (scripts/video-gateway.sh --set-obs-password).
+      MTX_AUTHINTERNALUSERS_2_USER: 'obs',
+      MTX_AUTHINTERNALUSERS_2_PASS: 'obs-pass',
+      MTX_AUTHINTERNALUSERS_2_IPS: '',
+      MTX_AUTHINTERNALUSERS_2_PERMISSIONS_0_ACTION: 'read',
+    });
+    const { VideoService } = await import('../src/video/service.js');
+    const { gatewayEndpoint } = await import('../src/video/gateway.js');
+    const env = { VIDEO_GATEWAY_HOST: '127.0.0.1', VIDEO_GATEWAY_API_PORT: String(ports.api), VIDEO_GATEWAY_WEBRTC_PORT: String(ports.webrtc) };
+
+    const wrong = new VideoService(gatewayEndpoint({ password: 'nope' }, env));
+    await wrong.sync();
+    expect(wrong.gatewayStatus(), JSON.stringify(wrong.gatewayStatus())).toMatchObject({ reachable: false, error: expect.stringMatching(/refused the password/) });
+
+    const right = new VideoService(gatewayEndpoint({ password: 'gw-pass' }, env));
+    await right.sync();
+    expect(right.gatewayStatus().reachable).toBe(true);
+
+    camera = spawn('ffmpeg', [
+      '-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30',
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-g', '30', '-pix_fmt', 'yuv420p',
+      '-f', 'rtsp', '-rtsp_transport', 'tcp', `rtsp://daq:gw-pass@127.0.0.1:${ports.rtsp}/fake/cam1`,
+    ], { stdio: 'ignore' });
+
+    // The stream's own pull needs the password now too: give the camera URL's credentials.
+    writeFileSync(process.env.VIDEO_SECRETS_PATH!, JSON.stringify({ streams: { cam1: { username: 'daq', password: 'gw-pass' } } }));
+    await right.sync();
+
+    const { chromium } = await import('playwright-core');
+    const browser = await chromium.launch();
+    try {
+      const page = await browser.newPage();
+      await page.goto(`http://127.0.0.1:${ports.backend}/`);
+      const whep = () => page.evaluate(async () => {
+        const pc = new RTCPeerConnection({ iceServers: [] });
+        pc.addTransceiver('video', { direction: 'recvonly' });
+        await pc.setLocalDescription(await pc.createOffer());
+        await new Promise((r) => setTimeout(r, 500));
+        const res = await fetch('/api/video/streams/cam1/whep', { method: 'POST', headers: { 'Content-Type': 'application/sdp' }, body: pc.localDescription!.sdp });
+        const loc = res.headers.get('Location');
+        pc.close();
+        if (loc) await fetch(loc, { method: 'DELETE' });
+        return res.status;
+      });
+      active = wrong;
+      expect(await whep()).not.toBe(201);
+      active = right;
+      expect(await waitFor('WHEP with the password', async () => ((await whep()) === 201 ? 201 : undefined))).toBe(201);
+
+      // OBS: reads the same path over RTSP with its own read-only password, and nothing more.
+      const rtsp = `127.0.0.1:${ports.rtsp}/raw/cam1`;
+      const probe = (url: string) => {
+        try {
+          return execFileSync('ffprobe', ['-v', 'error', '-rtsp_transport', 'tcp', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', url], { encoding: 'utf8', timeout: 15000 }).trim();
+        } catch (e) {
+          return `failed: ${String((e as any).stderr ?? e).trim().split('\n')[0]}`;
+        }
+      };
+      expect(probe(`rtsp://obs:obs-pass@${rtsp}`)).toMatch(/^video/);
+      expect(probe(`rtsp://${rtsp}`)).toMatch(/401/);
+      expect(probe(`rtsp://obs:wrong@${rtsp}`)).toMatch(/401/);
+      const obsApi = await fetch(`http://127.0.0.1:${ports.api}/v3/paths/list`, { headers: { Authorization: `Basic ${Buffer.from('obs:obs-pass').toString('base64')}` } });
+      expect(obsApi.status).toBe(401);
+    } finally {
+      active = svc;
+      await browser.close();
+    }
+  }, 90_000);
+});

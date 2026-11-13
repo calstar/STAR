@@ -264,6 +264,32 @@ export const nextRowId = (rows: FittingRow[] = []) => freshId('fit', rows);
 /** The method actually in force, with the default made explicit. */
 export const methodOf = (s: LineSegment): LossMethod => s.method ?? 'itemised';
 
+/** A bore the solver can size by: stated, and more than nothing. */
+export const statesBore = (s: LineSegment): boolean => !!s.bore && s.bore.value > 0;
+
+/**
+ * The stretches of a run the solver has no bore of their own for, and what it
+ * does with them.
+ *
+ * feed-twin refers a segment's friction, fittings and K to the segment's own
+ * bore; failing that, to the narrowest bore stated anywhere on the run -- an
+ * assumption, not the drawing's -- and failing that to none, when the segment
+ * contributes nothing (`SegmentedPipe._segment_dp`). So a run split before its
+ * diameter was given is priced, at the other stretch's bore; only a run with no
+ * bore anywhere is priced at nothing. Only an itemised segment, or one with a
+ * K to refer, wants a bore: a measured curve is priced without one, and an
+ * unstated segment, or a K method with no K, prices nothing bore or no bore --
+ * the same segments feed-twin's reader names (`feedtwin.pid.segments._check`).
+ */
+export function boreGap(segments: LineSegment[]): { unbored: LineSegment[]; borrowed: boolean } {
+  const wantsBore = (s: LineSegment) => {
+    const m = methodOf(s);
+    return m === 'itemised' || ((m === 'measured_K' || m === 'lumped_K') && s.K !== undefined);
+  };
+  const unbored = segments.filter(s => wantsBore(s) && !statesBore(s));
+  return { unbored, borrowed: unbored.length > 0 && segments.some(statesBore) };
+}
+
 /**
  * Fittings whose K this drawing already knows, summed.
  *

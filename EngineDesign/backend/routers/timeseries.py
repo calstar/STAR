@@ -1,7 +1,7 @@
 """Time-series evaluation endpoints."""
 
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Request
 from pydantic import BaseModel, Field, ValidationError
 from typing import List, Optional, Literal
 import math
@@ -10,7 +10,8 @@ import pandas as pd
 import io
 import yaml
 
-from backend.session import UserSession, get_session, run_compute
+from backend.checkout import require_design_checkout
+from backend.session import UserSession, get_session, replace_config, run_compute
 from engine.pipeline.time_series import generate_pressure_profile
 from engine.pipeline.config_schemas import PintleEngineConfig
 from engine.optimizer.layers.layer2_pressure import generate_pressure_curve_from_segments
@@ -189,15 +190,20 @@ def compute_timeseries_results(
             recession_rate_graphite_oxidation_um_s.append(np.nan)
             continue
             
-        # Injector pressure drops (check both locations like Streamlit)
-        injector_pressure = diag.get("injector_pressure", {})
-        if injector_pressure and isinstance(injector_pressure, dict):
-            delta_P_O = injector_pressure.get("delta_P_injector_O")
-            delta_P_F = injector_pressure.get("delta_P_injector_F")
-        else:
-            # Fallback to direct access
-            delta_P_O = diag.get("delta_P_injector_O")
-            delta_P_F = diag.get("delta_P_injector_F")
+        # Injector pressure drops. The per-point diagnostics are the injector closure's, which
+        # spell it ``delta_p_injector_*`` (engine/core/injectors/impinging.py, pintle.py) -- the
+        # same keys forward mode reports. This read only the capital-P spelling, found nothing at
+        # any point, and the "Injector Pressure Drops vs Time" chart never appeared. Both
+        # spellings, and the runner's ``injector_pressure`` block if a caller passes that.
+        injector_pressure = diag.get("injector_pressure")
+        src = injector_pressure if isinstance(injector_pressure, dict) and injector_pressure else diag
+
+        def _dp(side: str):
+            v = src.get(f"delta_p_injector_{side}")
+            return v if v is not None else src.get(f"delta_P_injector_{side}")
+
+        delta_P_O = _dp("O")
+        delta_P_F = _dp("F")
         
         if delta_P_O is not None:
             delta_P_injector_O_psi.append(float(delta_P_O * PA_TO_PSI))
@@ -463,6 +469,28 @@ def compute_timeseries_results(
         "burn_time_s": float(times[-1] - times[0]) if len(times) > 1 else 0.0,
     }
 
+    # CEA table: points solved on thermochemistry read off the table's clamped edge (a blowdown
+    # below the table's Pc floor, an O/F past its edge). The cache clamps without a word; the
+    # summary counts them and says where, and data["cea_clamped"] marks each one.
+    from engine.pipeline.forward_report import cea_off_table
+
+    cea_clamped = [bool(isinstance(dg, dict) and dg.get("cea_clamped")) for dg in diagnostics_list]
+    if len(cea_clamped) == n_points and mask is not None:
+        cea_clamped = [c and not bool(m) for c, m in zip(cea_clamped, mask)]
+    if any(cea_clamped):
+        first = cea_clamped.index(True)
+        dg = diagnostics_list[first]
+        at = {"Pc": np.asarray(results["Pc"], dtype=float)[first], "MR": np.asarray(results["MR"], dtype=float)[first]}
+        result_data["cea_clamped"] = cea_clamped
+        summary["cea_clamped_points"] = int(sum(cea_clamped))
+        summary["cea_clamped_axes"] = sorted(
+            {a for c, d in zip(cea_clamped, diagnostics_list) if c for a in (d.get("cea_clamped") or ())}
+        )
+        summary["cea_clamped_note"] = (
+            f"{sum(cea_clamped)} of {n_points} points read CEA off the table edge; "
+            f"first at t = {float(np.asarray(times)[first]):.2f} s: {cea_off_table(dg, at)}"
+        )
+
     # =========================================================================
     # Propellant Mass Remaining (Tank Fill Levels)
     # =========================================================================
@@ -479,32 +507,45 @@ def compute_timeseries_results(
     summary["lox_propellant_kg"] = total_lox_kg
     summary["fuel_propellant_kg"] = total_fuel_kg
 
-    # If blowdown mode provided mass history, use it directly
-    if lox_mass_kg is not None and len(lox_mass_kg) == len(times):
-        result_data["lox_mass_remaining_kg"] = to_float_array(lox_mass_kg).tolist()
-    else:
-        # Calculate from integrating mass flow (mass remaining = total - cumulative consumed)
-        times_arr = np.asarray(times, dtype=float)
-        mdot_O_arr_clean = np.nan_to_num(mdot_O_arr, nan=0.0)
-        cumulative_O = np.zeros(len(times_arr))
+    # Tank fill levels. Blowdown mode hands in the mass history it integrated. Otherwise the levels
+    # start from the configured load (lox_tank.mass / fuel_tank.mass: the fire load, fixed by the
+    # competition) and fall by the integrated flow. They used to start from whatever the curve
+    # consumes, so every run ended at exactly 0 -- a burn needing 7.55 kg of LOX drew a full
+    # 7.55 kg tank where 6.61 kg is loaded, and nothing said it runs dry at 3.50 s.
+    # The curves themselves are left as run: this tab solves the pressure curve it is given; the
+    # Flight tab truncates the burn at the dry-out. The summary says where that is.
+    times_arr = np.asarray(times, dtype=float)
+    short_notes = []
+    for side, tank_attr, label, given, mdot, total in (
+        ("lox", "lox_tank", "LOX", lox_mass_kg, mdot_O_arr, total_lox_kg),
+        ("fuel", "fuel_tank", "Fuel", fuel_mass_kg, mdot_F_arr, total_fuel_kg),
+    ):
+        if given is not None and len(given) == len(times):
+            result_data[f"{side}_mass_remaining_kg"] = to_float_array(given).tolist()
+            continue
+        mdot_clean = np.nan_to_num(np.asarray(mdot, dtype=float), nan=0.0)
+        cumulative = np.zeros(len(times_arr))
         for i in range(1, len(times_arr)):
             dt = times_arr[i] - times_arr[i - 1]
-            cumulative_O[i] = cumulative_O[i - 1] + 0.5 * (mdot_O_arr_clean[i - 1] + mdot_O_arr_clean[i]) * dt
-        lox_remaining = total_lox_kg - cumulative_O
-        result_data["lox_mass_remaining_kg"] = lox_remaining.tolist()
+            cumulative[i] = cumulative[i - 1] + 0.5 * (mdot_clean[i - 1] + mdot_clean[i]) * dt
+        loaded = _loaded_mass(runner.config, tank_attr)
+        if loaded is None:
+            # No load in the config: the old view, the curve's own consumption.
+            result_data[f"{side}_mass_remaining_kg"] = (total - cumulative).tolist()
+            continue
+        result_data[f"{side}_mass_remaining_kg"] = np.maximum(loaded - cumulative, 0.0).tolist()
+        summary[f"{side}_loaded_kg"] = loaded
+        if cumulative[-1] > loaded:
+            t_dry = float(np.interp(loaded, cumulative, times_arr))
+            summary[f"{side}_short_kg"] = float(cumulative[-1] - loaded)
+            summary[f"{side}_depletion_time_s"] = t_dry
+            short_notes.append(
+                f"{label} runs dry at t = {t_dry:.2f} s: the curve needs {cumulative[-1]:.2f} kg, "
+                f"{loaded:.2f} kg is loaded"
+            )
+    if short_notes:
+        summary["propellant_short_note"] = "; ".join(short_notes)
 
-    if fuel_mass_kg is not None and len(fuel_mass_kg) == len(times):
-        result_data["fuel_mass_remaining_kg"] = to_float_array(fuel_mass_kg).tolist()
-    else:
-        times_arr = np.asarray(times, dtype=float)
-        mdot_F_arr_clean = np.nan_to_num(mdot_F_arr, nan=0.0)
-        cumulative_F = np.zeros(len(times_arr))
-        for i in range(1, len(times_arr)):
-            dt = times_arr[i] - times_arr[i - 1]
-            cumulative_F[i] = cumulative_F[i - 1] + 0.5 * (mdot_F_arr_clean[i - 1] + mdot_F_arr_clean[i]) * dt
-        fuel_remaining = total_fuel_kg - cumulative_F
-        result_data["fuel_mass_remaining_kg"] = fuel_remaining.tolist()
-    
     # =========================================================================
     # COPV Sizing Analysis - Always run if press_tank config is available
     # AND run_copv is enabled
@@ -529,6 +570,12 @@ def compute_timeseries_results(
         summary["copv_initial_mass_kg"] = copv_results["copv_initial_mass_kg"]
         summary["copv_min_margin_psi"] = copv_results["copv_min_margin_psi"]
         summary["copv_volume_L"] = copv_results["copv_volume_L"]
+        summary["copv_mode"] = copv_results["copv_mode"]
+        summary["copv_required_pressure_psi"] = copv_results["copv_required_pressure_psi"]
+        summary["copv_required_mass_kg"] = copv_results["copv_required_mass_kg"]
+        # What the margin is graded against: the regulator's minimum differential, when stated.
+        need = getattr(getattr(runner.config, "design_requirements", None), "regulator_min_differential_psi", None)
+        summary["copv_margin_needed_psi"] = float(need) if need is not None else None
     
     # =========================================================================
     # Correlation Matrix - Compute correlations between key variables
@@ -542,6 +589,17 @@ def compute_timeseries_results(
 
 
 
+
+
+def _loaded_mass(config, tank_attr: str) -> Optional[float]:
+    """The configured propellant load of ``lox_tank`` / ``fuel_tank`` [kg], or None if unset."""
+    tank = getattr(config, tank_attr, None)
+    m = getattr(tank, "mass", None) if tank is not None else None
+    try:
+        m = float(m)
+    except (TypeError, ValueError):
+        return None
+    return m if math.isfinite(m) and m > 0 else None
 
 
 def _compute_correlation_matrix(result_data: dict) -> Optional[dict]:
@@ -631,24 +689,35 @@ def _run_copv_analysis(
         "P_tank_F (psi)": np.asarray(P_tank_F_psi),
     })
     
+    # The charge actually loaded, when the config says (press_tank.initial_gas_mass, or the legacy
+    # press_tank.mass). With one, the panel checks THAT charge -- its P0, its trace, its margin --
+    # and shows the sized requirement beside it. Without, it can only size: the P0 that just meets
+    # the curve, i.e. a margin of zero by construction, which used to be shown as "P0" with a green
+    # 0.1 psi margin on the LE4 (3) stand whose 1.312 kg charge is ~3,800 psia.
+    m0_cfg = getattr(press_tank, "initial_gas_mass", None) or getattr(press_tank, "mass", None)
+    solver_args = dict(
+        df=df,
+        config=config,
+        n=1.2,  # polytropic exponent
+        T0_K=300.0,  # initial COPV temperature
+        Tp_K=293.0,  # default propellant gas temp (overridden by branch temps)
+        use_real_gas=True,  # use Z lookup table
+        n2_Z_csv=N2_Z_LOOKUP_CSV,
+        pressurant_R=296.8,  # gas constant for N2
+        branch_temperatures_K={
+            "oxidizer": 250.0,  # oxidizer gas temp
+            "fuel": 293.0,      # fuel gas temp
+        },
+        copv_volume_m3=copv_volume_m3,
+    )
+
     try:
-        # Run COPV solver with hardcoded parameters
-        copv_result = size_or_check_copv_for_polytropic_N2(
-            df=df,
-            config=config,
-            n=1.2,  # polytropic exponent
-            T0_K=300.0,  # initial COPV temperature
-            Tp_K=293.0,  # default propellant gas temp (overridden by branch temps)
-            use_real_gas=True,  # use Z lookup table
-            n2_Z_csv=N2_Z_LOOKUP_CSV,
-            pressurant_R=296.8,  # gas constant for N2
-            branch_temperatures_K={
-                "oxidizer": 250.0,  # oxidizer gas temp
-                "fuel": 293.0,      # fuel gas temp
-            },
-            copv_volume_m3=copv_volume_m3,
-        )
-        
+        # The requirement: the P0 (and charge) that just meets the curve in this volume.
+        sized = size_or_check_copv_for_polytropic_N2(**solver_args)
+        copv_result = sized
+        if m0_cfg:
+            copv_result = size_or_check_copv_for_polytropic_N2(**solver_args, copv_m0_kg=float(m0_cfg))
+
         # Extract COPV pressure trace (Pa -> psi)
         PH_trace_Pa = np.asarray(copv_result.get("PH_trace_Pa", []))
         if len(PH_trace_Pa) == 0:
@@ -658,9 +727,14 @@ def _run_copv_analysis(
         
         return {
             "copv_pressure_psi": copv_pressure_psi,
+            # "configured": the loaded charge, checked; "sized": no charge configured, so the
+            # numbers are the requirement and the margin is zero by construction.
+            "copv_mode": "configured" if m0_cfg else "sized",
             "copv_initial_pressure_psi": float(copv_result.get("P0_Pa", 0) * PA_TO_PSI),
             "copv_initial_mass_kg": float(copv_result.get("m0_kg", 0)),
             "copv_min_margin_psi": float(copv_result.get("min_margin_Pa", 0) * PA_TO_PSI),
+            "copv_required_pressure_psi": float(sized.get("P0_Pa", 0) * PA_TO_PSI),
+            "copv_required_mass_kg": float(sized.get("m0_kg", 0)),
             "copv_volume_L": free_volume_L,
         }
         
@@ -694,6 +768,9 @@ class GenerateProfileResponse(BaseModel):
     status: str
     data: dict
     summary: dict
+    #: Set when the request replaced the session config (a YAML to /from-csv): the new token,
+    #: which the uploading tab adopts as its own load.
+    load_token: Optional[str] = None
 
 
 @router.post("/generate", response_model=GenerateProfileResponse)
@@ -1064,223 +1141,200 @@ async def preview_curve(request: PreviewSegmentsRequest):
 
 
 @router.post("/from-csv", response_model=GenerateProfileResponse)
-async def generate_from_csv(file: UploadFile = File(...), session: UserSession = Depends(get_session)):
+async def generate_from_csv(
+    request: Request,
+    file: UploadFile = File(...),
+    session: UserSession = Depends(get_session),
+):
     """Generate time-series results from uploaded CSV file or YAML config file.
-    
+
     CSV files must contain columns:
     - T (or time): time in seconds
     - P_O (or P_tank_O): LOX tank pressure in psi
     - P_F (or P_tank_F): Fuel tank pressure in psi
-    
+
     YAML config files:
-    - Must be a valid PintleEngineConfig
-    - If it contains a 'pressure_curves' section, will generate curves from segments
-    - Will set the uploaded config as the active session config
+    - Must be a valid PintleEngineConfig with a 'pressure_curves' section; one without is
+      refused (400) and changes nothing
+    - Replace the session config wholesale, as /api/config/upload does: behind the design
+      checkout, off the event loop, with a new load_token (returned)
     - If time column is missing in CSV, it will be generated with uniform spacing.
+
+    The run itself goes through ``run_compute`` like /generate: on the event loop it froze
+    every other request for its length, and outside the compute lock it shared the session's
+    runner with whatever else was solving.
     """
+    contents = await file.read()
+    filename = file.filename or ""
+
+    if not filename.endswith(('.yaml', '.yml')):
+        return await run_compute(session, _generate_from_csv_bytes, contents, session)
+
+    # A YAML config. Everything that can refuse it runs before anything changes: a 4xx here
+    # used to come back after the config had already been swapped in, and the design bar then
+    # autosaved the "failed" upload over the open design.
     try:
-        contents = await file.read()
-        filename = file.filename or ""
-        
-        # Check if it's a YAML config file
-        is_yaml = filename.endswith(('.yaml', '.yml'))
-        
-        if is_yaml:
-            # Try to parse as YAML config
-            try:
-                config_dict = yaml.safe_load(contents.decode("utf-8"))
-                config = PintleEngineConfig(**config_dict)
-                
-                # Check if config has pressure_curves section
-                if hasattr(config, 'pressure_curves') and config.pressure_curves is not None:
-                    pressure_curves = config.pressure_curves
-                    
-                    # Extract parameters
-                    n_points = pressure_curves.n_points
-                    target_burn_time_s = pressure_curves.target_burn_time_s
-                    
-                    # Convert segments to dict format for curve generation
-                    lox_segments = []
-                    for seg in pressure_curves.lox_segments:
-                        lox_segments.append({
-                            "length_ratio": seg.length_ratio,
-                            "type": seg.type,
-                            "start_pressure": seg.start_pressure_pa,
-                            "end_pressure": seg.end_pressure_pa,
-                            "k": seg.k or 0.5,
-                        })
-                    
-                    fuel_segments = []
-                    for seg in pressure_curves.fuel_segments:
-                        fuel_segments.append({
-                            "length_ratio": seg.length_ratio,
-                            "type": seg.type,
-                            "start_pressure": seg.start_pressure_pa,
-                            "end_pressure": seg.end_pressure_pa,
-                            "k": seg.k or 0.5,
-                        })
-                    
-                    # Generate pressure curves
-                    lox_curve_pa = generate_pressure_curve_from_segments(
-                        lox_segments,
-                        n_points=n_points,
-                    )
-                    fuel_curve_pa = generate_pressure_curve_from_segments(
-                        fuel_segments,
-                        n_points=n_points,
-                    )
-                    
-                    # Convert to psi
-                    lox_curve_psi = lox_curve_pa * PA_TO_PSI
-                    fuel_curve_psi = fuel_curve_pa * PA_TO_PSI
-                    
-                    # Generate time array
-                    times = np.linspace(0, target_burn_time_s, n_points)
-                    
-                    # Set config as active
-                    session.app_state.set_config(config)
-                    
-                    # Compute time-series results
-                    data, summary = compute_timeseries_results(
-                        session.app_state.runner,
-                        times,
-                        lox_curve_psi,
-                        fuel_curve_psi,
-                    )
-                    
-                    return GenerateProfileResponse(
-                        status="success",
-                        data=convert_numpy(data),
-                        summary=convert_numpy(summary),
-                    )
-                else:
-                    # Config doesn't have pressure_curves, just set it as active
-                    session.app_state.set_config(config)
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Config file does not contain a 'pressure_curves' section. Please upload a config with pressure_curves or use a CSV file."
-                    )
-                    
-            except yaml.YAMLError as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid YAML: {str(e)}"
-                )
-            except ValidationError as e:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Config validation error: {str(e)}"
-                )
-            except HTTPException:
-                raise
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Failed to process config file: {str(e)}"
-                )
-        else:
-            # Process as CSV file
-            if not session.app_state.has_config():
-                raise HTTPException(
-                    status_code=400,
-                    detail="No config loaded. Upload a config file first."
-                )
-            
-            try:
-                df = pd.read_csv(io.BytesIO(contents))
-                
-                # Normalize column names (case-insensitive, handle variations)
-                df.columns = df.columns.str.strip()
-                column_map = {}
-                for col in df.columns:
-                    col_lower = col.lower()
-                    if col_lower in ['t', 'time', 'time_s', 'time (s)']:
-                        column_map[col] = 'time'
-                    elif col_lower in ['p_o', 'p_tank_o', 'p_tank_o_psi', 'lox_pressure', 'lox_pressure_psi']:
-                        column_map[col] = 'P_O'
-                    elif col_lower in ['p_f', 'p_tank_f', 'p_tank_f_psi', 'fuel_pressure', 'fuel_pressure_psi']:
-                        column_map[col] = 'P_F'
-                
-                # Rename columns
-                df = df.rename(columns=column_map)
-                
-                # Check required columns
-                if 'P_O' not in df.columns or 'P_F' not in df.columns:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="CSV must contain columns P_O (or P_tank_O) and P_F (or P_tank_F)"
-                    )
-                
-                # Generate time column if missing
-                if 'time' not in df.columns:
-                    # Use uniform spacing, default 0.1s
-                    n_points = len(df)
-                    df['time'] = np.linspace(0, n_points * 0.1, n_points)
-                
-                # Sort by time
-                df = df.sort_values('time').reset_index(drop=True)
-                
-                # Extract arrays
-                times = np.asarray(df['time'], dtype=float)
-                P_tank_O_psi = np.asarray(df['P_O'], dtype=float)
-                P_tank_F_psi = np.asarray(df['P_F'], dtype=float)
-                
-                # Validate data
-                if len(times) < 2:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="CSV must contain at least 2 data points"
-                    )
-                
-                if np.any(np.isnan(P_tank_O_psi)) or np.any(np.isnan(P_tank_F_psi)):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Pressure values cannot contain NaN"
-                    )
-                
-                if np.any(P_tank_O_psi <= 0) or np.any(P_tank_F_psi <= 0):
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Pressure values must be positive"
-                    )
-                
-                # Compute time-series results
-                data, summary = compute_timeseries_results(
-                    session.app_state.runner,
-                    times,
-                    P_tank_O_psi,
-                    P_tank_F_psi,
-                )
-                
-                return GenerateProfileResponse(
-                    status="success",
-                    data=convert_numpy(data),
-                    summary=convert_numpy(summary),
-                )
-                
-            except HTTPException:
-                raise
-            except pd.errors.EmptyDataError:
-                raise HTTPException(
-                    status_code=400,
-                    detail="CSV file is empty"
-                )
-            except pd.errors.ParserError as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Failed to parse CSV: {str(e)}"
-                )
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Time-series evaluation from CSV failed: {str(e)}"
-                )
-                
+        config_dict = yaml.safe_load(contents.decode("utf-8"))
+        if not isinstance(config_dict, dict):
+            raise HTTPException(status_code=400, detail="Invalid YAML: the file is not a config mapping")
+        config = PintleEngineConfig(**config_dict)
     except HTTPException:
         raise
+    except (yaml.YAMLError, UnicodeDecodeError) as e:
+        raise HTTPException(status_code=400, detail=f"Invalid YAML: {str(e)}")
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=f"Config validation error: {str(e)}")
+
+    if getattr(config, "pressure_curves", None) is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Config file does not contain a 'pressure_curves' section. Please upload a config with pressure_curves or use a CSV file."
+        )
+
+    try:
+        times, lox_curve_psi, fuel_curve_psi = _curves_from_config(config)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process config file: {str(e)}")
+
+    # The swap is a write to the live design: the same checkout /api/config/upload asks for.
+    require_design_checkout(request)
+    load_token = await replace_config(session, config)
+
+    def run() -> GenerateProfileResponse:
+        _, runner = session.app_state.snapshot()
+        try:
+            data, summary = compute_timeseries_results(runner, times, lox_curve_psi, fuel_curve_psi)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to process config file: {str(e)}")
+        return GenerateProfileResponse(
+            status="success",
+            data=convert_numpy(data),
+            summary=convert_numpy(summary),
+            load_token=load_token,
+        )
+
+    return await run_compute(session, run)
+
+
+def _curves_from_config(config: PintleEngineConfig):
+    """(times, LOX psi, fuel psi) from a config's Layer 2 ``pressure_curves`` section."""
+    pressure_curves = config.pressure_curves
+    n_points = pressure_curves.n_points
+
+    def segments(segs):
+        return [
+            {
+                "length_ratio": seg.length_ratio,
+                "type": seg.type,
+                "start_pressure": seg.start_pressure_pa,
+                "end_pressure": seg.end_pressure_pa,
+                "k": seg.k or 0.5,
+            }
+            for seg in segs
+        ]
+
+    lox_curve_pa = generate_pressure_curve_from_segments(segments(pressure_curves.lox_segments), n_points=n_points)
+    fuel_curve_pa = generate_pressure_curve_from_segments(segments(pressure_curves.fuel_segments), n_points=n_points)
+    times = np.linspace(0, pressure_curves.target_burn_time_s, n_points)
+    return times, lox_curve_pa * PA_TO_PSI, fuel_curve_pa * PA_TO_PSI
+
+
+def _generate_from_csv_bytes(contents: bytes, session: UserSession) -> GenerateProfileResponse:
+    """A CSV of tank pressures run on the session's design (in the thread pool, under the lock)."""
+    # The runner is taken once: off the event loop a PUT /api/config can land mid-run.
+    _, runner = session.app_state.snapshot()
+    if runner is None:
+        raise HTTPException(
+            status_code=400,
+            detail="No config loaded. Upload a config file first."
+        )
+
+    try:
+        df = pd.read_csv(io.BytesIO(contents))
+
+        # Normalize column names (case-insensitive, handle variations)
+        df.columns = df.columns.str.strip()
+        column_map = {}
+        for col in df.columns:
+            col_lower = col.lower()
+            if col_lower in ['t', 'time', 'time_s', 'time (s)']:
+                column_map[col] = 'time'
+            elif col_lower in ['p_o', 'p_tank_o', 'p_tank_o_psi', 'lox_pressure', 'lox_pressure_psi']:
+                column_map[col] = 'P_O'
+            elif col_lower in ['p_f', 'p_tank_f', 'p_tank_f_psi', 'fuel_pressure', 'fuel_pressure_psi']:
+                column_map[col] = 'P_F'
+
+        # Rename columns
+        df = df.rename(columns=column_map)
+
+        # Check required columns
+        if 'P_O' not in df.columns or 'P_F' not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail="CSV must contain columns P_O (or P_tank_O) and P_F (or P_tank_F)"
+            )
+
+        # Generate time column if missing
+        if 'time' not in df.columns:
+            # Use uniform spacing, default 0.1s
+            n_points = len(df)
+            df['time'] = np.linspace(0, n_points * 0.1, n_points)
+
+        # Sort by time
+        df = df.sort_values('time').reset_index(drop=True)
+
+        # Extract arrays
+        times = np.asarray(df['time'], dtype=float)
+        P_tank_O_psi = np.asarray(df['P_O'], dtype=float)
+        P_tank_F_psi = np.asarray(df['P_F'], dtype=float)
+
+        # Validate data
+        if len(times) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="CSV must contain at least 2 data points"
+            )
+
+        if np.any(np.isnan(P_tank_O_psi)) or np.any(np.isnan(P_tank_F_psi)):
+            raise HTTPException(
+                status_code=400,
+                detail="Pressure values cannot contain NaN"
+            )
+
+        if np.any(P_tank_O_psi <= 0) or np.any(P_tank_F_psi <= 0):
+            raise HTTPException(
+                status_code=400,
+                detail="Pressure values must be positive"
+            )
+
+        # Compute time-series results
+        data, summary = compute_timeseries_results(
+            runner,
+            times,
+            P_tank_O_psi,
+            P_tank_F_psi,
+        )
+
+        return GenerateProfileResponse(
+            status="success",
+            data=convert_numpy(data),
+            summary=convert_numpy(summary),
+        )
+
+    except HTTPException:
+        raise
+    except pd.errors.EmptyDataError:
+        raise HTTPException(
+            status_code=400,
+            detail="CSV file is empty"
+        )
+    except pd.errors.ParserError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to parse CSV: {str(e)}"
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"File upload failed: {str(e)}"
+            detail=f"Time-series evaluation from CSV failed: {str(e)}"
         )
-

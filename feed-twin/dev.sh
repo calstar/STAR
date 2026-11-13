@@ -13,9 +13,23 @@ UI_PORT="${FEED_TWIN_UI_PORT:-5177}"
 dev_init feed-twin "$HERE"
 
 dev_preflight() {
+  # lib/feedtwin and lib/stardesign require Python 3.11 or newer, which a bare
+  # `python3` is not on every machine (macOS's 3.9, Ubuntu 22.04's 3.10).
+  # shellcheck disable=SC1091
+  source "$HERE/../scripts/setup_common.sh"
   if [ ! -d "$HERE/.venv" ]; then
-    echo "  creating backend virtualenv..."
-    python3 -m venv "$HERE/.venv"
+    local py
+    py="$(python_at_least 11)" || {
+      echo "  feed-twin needs Python 3.11 or newer; python3 here is $(python3 --version 2>&1)." >&2
+      echo "  Install python3.11 or newer (or run feed-twin/setup.sh) and start again." >&2
+      exit 1
+    }
+    echo "  creating backend virtualenv ($("$py" --version 2>&1))..."
+    "$py" -m venv "$HERE/.venv"
+  elif ! venv_at_least "$HERE/.venv" 11; then
+    echo "  feed-twin/.venv is $("$HERE/.venv/bin/python" --version 2>&1); feed-twin needs 3.11 or newer." >&2
+    echo "  Remove feed-twin/.venv and start again to rebuild it." >&2
+    exit 1
   fi
   if [ ! -x "$HERE/.venv/bin/uvicorn" ]; then
     echo "  installing backend dependencies..."

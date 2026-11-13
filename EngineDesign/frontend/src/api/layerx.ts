@@ -7,6 +7,7 @@
  */
 
 import { API_BASE } from './client';
+import { designHeaders } from '../lib/activeDesign';
 import type { TimeSeriesData, TimeSeriesSummary } from './client';
 
 export type EngineModel = 'card' | 'calibrated' | 'native';
@@ -113,7 +114,7 @@ export interface DrawingSummary {
   lines?: number;
   tanks?: { id: string; label: string; fluid: string; volume_L: number | null; mawp_psi: number | null }[];
   bottles?: { id: string; label: string; fluid: string; volume_L: number | null; pressure_psi: number | null; mawp_psi: number | null }[];
-  regulators?: { id: string; label: string; dome_loaded: boolean; setpoint_psi: number | null; dome_bias_psi: number | null; supply_coefficient: number | null; flow_droop_psi: number | null }[];
+  regulators?: { id: string; label: string; dome_loaded: boolean; setpoint_psi: number | null; dome_bias_psi: number | null; supply_coefficient: number | null; flow_droop_psi: number | null; flow_droop_default?: boolean }[];
   engines?: { id: string; label: string }[];
   valves?: number;
 }
@@ -620,6 +621,8 @@ export interface ParameterRow {
   unit: string;
   source: string;
   reference: string;
+  /** An absolute pressure, as the twin reads it, in psia (a bare drawn psi is gauge): what the table shows and takes. */
+  psia?: number;
 }
 
 export interface OverrideEntry {
@@ -631,6 +634,8 @@ export interface OverrideEntry {
   provenance: 'measured' | 'manufacturer' | 'estimated';
   uncertainty?: number | null;
   date?: string | null;
+  /** Read back only: an absolute-pressure restatement in psia, whatever unit it was saved in. */
+  psia?: number;
 }
 
 export type SweepMetric =
@@ -690,6 +695,8 @@ export interface RunView {
   started: number;
   finished: number | null;
   design: string;
+  /** The design's fingerprint when the job started (jobs from 2026-11 on): two designs under one name are two. */
+  design_sha256?: string;
   settings: LayerXSettings;
   result?: LayerXResult | SweepResult | OptimizeResult | ReconcileResult | SetpointResult | HardwareResult | null;
   summary?: Summary | null;
@@ -752,6 +759,11 @@ export function errorText(detail: unknown, status: number): string {
   }
   return `HTTP ${status}`;
 }
+
+/** A job started from the design that is open: the server files it under that design's name
+ * (backend/routers/layerx.py _design_label), not the file the session first loaded. */
+const started = <T,>(path: string, body: unknown) =>
+  call<T>(path, { method: 'POST', body: JSON.stringify(body), headers: designHeaders() });
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<Result<T>> {
   try {
@@ -1073,17 +1085,17 @@ export const layerx = {
   pidImport: (doc: { id: string; owner?: string; release?: string; name?: string }) =>
     call<Drawing>('/pid-designer/import', { method: 'POST', body: JSON.stringify(doc) }),
   preflight: (settings: LayerXSettings) => call<Preflight>('/preflight', { method: 'POST', body: JSON.stringify(settings) }),
-  start: (settings: LayerXSettings) => call<{ id: string; status: RunStatus }>('/runs', { method: 'POST', body: JSON.stringify(settings) }),
+  start: (settings: LayerXSettings) => started<{ id: string; status: RunStatus }>('/runs', settings),
   runs: () => call<RunView[]>('/runs'),
   parameters: (drawingId: string) =>
     call<{ rows: ParameterRow[]; overrides: OverrideEntry[] }>(`/drawings/${encodeURIComponent(drawingId)}/parameters`),
   putMeasurements: (drawingId: string, overrides: OverrideEntry[]) =>
     call<{ overrides: OverrideEntry[] }>(`/drawings/${encodeURIComponent(drawingId)}/measurements`, { method: 'PUT', body: JSON.stringify({ overrides }) }),
-  startUncertainty: (settings: LayerXSettings) => call<{ id: string; kind: string; status: RunStatus }>('/uncertainty', { method: 'POST', body: JSON.stringify(settings) }),
+  startUncertainty: (settings: LayerXSettings) => started<{ id: string; kind: string; status: RunStatus }>('/uncertainty', settings),
   optimizeVariables: (settings: LayerXSettings) =>
     call<{ variables: OptVariable[]; stiffness_band: Record<string, number[] | null> | null; design_of: number | null }>(
       '/optimize/variables', { method: 'POST', body: JSON.stringify(settings) }),
-  startOptimize: (body: OptimizeBody) => call<{ id: string; kind: string; status: RunStatus }>('/optimize', { method: 'POST', body: JSON.stringify(body) }),
+  startOptimize: (body: OptimizeBody) => started<{ id: string; kind: string; status: RunStatus }>('/optimize', body),
   /** The live design with an injector what-if written in, as a YAML file. */
   exportConfig: async (body: { design_patch?: DesignPatch | null; feed_system?: Record<string, unknown> | null; name: string; note?: string }):
     Promise<Result<{ text: string; filename: string }>> => {
@@ -1100,9 +1112,9 @@ export const layerx = {
       return { error: err instanceof Error ? err.message : 'Network error' };
     }
   },
-  startReconcile: (body: ReconcileBody) => call<{ id: string; kind: string; status: RunStatus }>('/reconcile', { method: 'POST', body: JSON.stringify(body) }),
-  startSetpoint: (body: SetpointBody) => call<{ id: string; kind: string; status: RunStatus }>('/setpoint', { method: 'POST', body: JSON.stringify(body) }),
-  startHardware: (body: HardwareBody) => call<{ id: string; kind: string; status: RunStatus }>('/hardware', { method: 'POST', body: JSON.stringify(body) }),
+  startReconcile: (body: ReconcileBody) => started<{ id: string; kind: string; status: RunStatus }>('/reconcile', body),
+  startSetpoint: (body: SetpointBody) => started<{ id: string; kind: string; status: RunStatus }>('/setpoint', body),
+  startHardware: (body: HardwareBody) => started<{ id: string; kind: string; status: RunStatus }>('/hardware', body),
   /** The parts Hardware mode chooses from: {<kind>: rows, drills, problems} (engine/layerx/catalog.py). */
   catalog: () => call<Record<string, unknown> & { drills: unknown[]; problems: string[] }>('/catalog'),
   /** A finished run's large side data; 404 (status) when the run has none. */

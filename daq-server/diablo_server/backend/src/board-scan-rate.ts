@@ -39,6 +39,10 @@ export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
   if (/^LC\d+(_Cal)?\.CH/.test(entity)) return 'lc';
   if (/^ACT\d+(_Cal)?\.CH/.test(entity)) return 'act';
   if (/^ENC\d+(_Cal)?\.CH/.test(entity)) return 'enc';
+  // LabJack T7: one group per T7 (t7<slot>), like PT boards — it is one device on one link.
+  const t7 = entity.match(/^T7(\d+)(?:_Cal)?\.AIN/);
+  if (t7) return `t7${t7[1]}`;
+  if (/^BV\d+(_Cal)?\.CH/.test(entity)) return 'bv';
   return null;
 }
 
@@ -50,7 +54,7 @@ export function mapEntityToGroup(entity: string): BoardScanGroupId | null {
 export function isPrimaryPhysicalStream(entity: string, component: string): boolean {
   if (/^ENV\d+$/.test(entity)) return component === 'temperature_c';
   if (component === 'raw_adc_counts') {
-    return /^PT\d+(_Cal)?\.CH|^TC\d+(_Cal)?\.CH|^LC\d+(_Cal)?\.CH|^ACT\d+(_Cal)?\.CH/.test(entity);
+    return /^PT\d+(_Cal)?\.CH|^TC\d+(_Cal)?\.CH|^LC\d+(_Cal)?\.CH|^ACT\d+(_Cal)?\.CH|^BV\d+\.CH/.test(entity);
   }
   if (component === 'raw_resistance_counts') {
     return /^RTD\d+(_Cal)?\.CH/.test(entity);
@@ -58,6 +62,8 @@ export function isPrimaryPhysicalStream(entity: string, component: string): bool
   if (component === 'raw_angle') {
     return /^ENC\d+(_Cal)?\.CH/.test(entity);
   }
+  // T7: the raw table's volts is the one sample per AIN per scan (the calibrated table repeats it).
+  if (component === 'volts') return /^T7\d+\.AIN\d+$/.test(entity);
   return false;
 }
 

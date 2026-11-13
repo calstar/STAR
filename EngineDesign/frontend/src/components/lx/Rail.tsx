@@ -104,6 +104,11 @@ function drawingNote(d: Drawing): string {
   return [from, d.group === 'Benchmarks' ? '' : when].filter(Boolean).join(' · ');
 }
 
+/** The server's bounds on the rail's pressures (backend/routers/layerx.py Settings: dome and tank < 5000 psia, bottle
+ * fill < 12000 psia), so a number past them is refused in the rail's own words and units, not the API's ("Dome (psia):
+ * Input should be less than 5000"). */
+const SETTINGS_MAX_PSIA = { dome: 5000, tank: 5000, bottle: 12000 } as const;
+
 const GAS_WORD: Record<string, string> = { nitrogen: 'GN2', helium: 'helium' };
 const gasWord = (fluid: string | null | undefined) => (fluid ? GAS_WORD[fluid] ?? fluid : '');
 
@@ -142,11 +147,12 @@ function DrawingFacts({ d, pressurant }: { d: Drawing; pressurant?: string | nul
       {dome && (
         <div className="contents">
           <dt className="text-[var(--lx-text-2)]">
-            <Hint text={`Dome-loaded regulator. Supply effect ${dome.supply_coefficient ?? '—'} psi per 1000 psi of bottle drop, droop ${dome.flow_droop_psi ?? '—'} psi at full flow (from the drawing).`}>
+            <Hint text={`Dome-loaded regulator. Supply effect ${dome.supply_coefficient ?? '—'} psi per 1000 psi of bottle drop (from the drawing), droop ${dome.flow_droop_psi ?? '—'} psi at full flow (${dome.flow_droop_default ? 'the feed twin\u2019s default: the drawing states none' : 'from the drawing'}).`}>
               Dome regulator
             </Hint>
           </dt>
-          <dd className="lx-num text-right text-[var(--lx-text-2)]">{dome.flow_droop_psi !== null ? `${u.fmt(u.dp(dome.flow_droop_psi))} droop` : ''}</dd>
+          <dd className="lx-num text-right text-[var(--lx-text-2)]">{dome.flow_droop_psi !== null && dome.flow_droop_psi !== undefined
+            ? `${u.fmt(u.dp(dome.flow_droop_psi))} droop${dome.flow_droop_default ? ' (default)' : ''}` : '—'}</dd>
         </div>
       )}
     </dl>
@@ -427,7 +433,7 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
                  value={settings.dome_psia ?? (settings.tank_pressure_psia === null || settings.tank_pressure_psia === undefined ? domeDrawn : null) ?? domeNow}
                  defaultValue={domeDrawn ?? undefined}
                  placeholder={settings.tank_pressure_psia !== null && settings.tank_pressure_psia !== undefined ? 'from tank' : 'drawing'}
-                 allowEmpty min={STD_ATM_PSIA}
+                 allowEmpty min={STD_ATM_PSIA} max={SETTINGS_MAX_PSIA.dome}
                  onCommit={(v) => job.setSettings((st) => ({
                    ...st,
                    dome_psia: v === null || (domeDrawn !== null && Math.abs(v - domeDrawn) < 1e-9) ? null : v,
@@ -435,7 +441,7 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
                  }))} />
           <Field label="Tank pressure" termKey="tankPressure" scale={tankScale}
                  value={settings.tank_pressure_psia ?? lockupNow}
-                 placeholder="from dome" allowEmpty min={14.7}
+                 placeholder="from dome" allowEmpty min={14.7} max={SETTINGS_MAX_PSIA.tank}
                  onCommit={(v) => job.setSettings((st) => ({
                    ...st,
                    tank_pressure_psia: v,
@@ -445,7 +451,7 @@ export function Rail({ job, collapsed, onToggle, highlight, onExpandTo }: {
           <Field label="Bottle fill" termKey="bottleFill" scale={tankScale}
                  value={bottleFillPsia(settings, derived)}
                  defaultValue={drawnBottle ?? undefined}
-                 placeholder="drawing" allowEmpty min={STD_ATM_PSIA}
+                 placeholder="drawing" allowEmpty min={STD_ATM_PSIA} max={SETTINGS_MAX_PSIA.bottle}
                  onCommit={(v) => job.setSettings((st) => ({
                    ...st,
                    copv_pressure_psia: v === null || (drawnBottle !== null && Math.abs(v - drawnBottle) < 1e-9) ? null : v,

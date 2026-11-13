@@ -51,3 +51,28 @@ def test_t0_follows_the_dome_knob_and_lands_in_ready() -> None:
             assert drop == pytest.approx(50.0, abs=3.0), tank["label"]
     finally:
         main.library.remove(diagram)
+
+
+def test_t0_refuses_to_charge_the_bottle_over_its_mawp() -> None:
+    """The pre-check covered the tanks only (D-33): a COPV target over the
+    bottle's MAWP was charged at T-0 and tripped the stand on its first frame.
+    It is refused up front now, as a dome too high is, and nothing moves."""
+    client = TestClient(main.app)
+    diagram = client.post(
+        "/api/library/diagrams",
+        files={"file": (STAND.name, STAND.read_bytes(), "application/json")},
+    ).json()["artifact"]["id"]
+    try:
+        opened = client.post(
+            "/api/session", params={"diagram": diagram}, json={"copv_target": 7000.0}
+        ).json()
+        sid = opened["id"]
+        refused = client.post(f"/api/session/{sid}/t0")
+        assert refused.status_code == 422, refused.text
+        said = refused.json()["detail"]
+        assert "7,014.7 psia" in said and "6,764.7 psia MAWP" in said, said
+        session = main._SESSIONS[sid]
+        assert not session.tripped and session.state == opened["state"]
+        assert all(not b.charged for b in session.bottles.values())
+    finally:
+        main.library.remove(diagram)

@@ -55,3 +55,45 @@ describe('buildPressureBarDefsFromSensorConfig (config-driven)', () => {
     expect(defs.map((d) => d.label)).toContain('CHAMBER');
   });
 });
+
+// [pressure_limits.<key>].show_in_top_bar: the config tab's checkbox. Absent must mean shown, so
+// an untouched config draws every limit exactly as before.
+describe('show_in_top_bar', () => {
+  const bars: PressureBarConfig[] = [
+    { label: 'GN2 HI', role: 'GN2 High', limits: 'GN2_High' },
+    { label: 'CHAMBER', avg_roles: ['Chamber Mid PT 1', 'Chamber Mid PT 2'], limits: 'Chamber' },
+  ];
+
+  it('shows the limits when the key is absent or true', () => {
+    const defs = buildPressureBarDefsFromSensorConfig(sensors, bars, {
+      ...limits,
+      Chamber: { ...limits.Chamber, show_in_top_bar: true },
+    });
+    expect(defs.map((d) => d.showLimits)).toEqual([true, true]);
+  });
+
+  it('hides only the gauges whose limits entry is unchecked, keeping its NOP/MEOP', () => {
+    const defs = buildPressureBarDefsFromSensorConfig(sensors, bars, {
+      ...limits,
+      GN2_High: { ...limits.GN2_High, show_in_top_bar: false },
+    });
+    expect(defs.map((d) => d.showLimits)).toEqual([false, true]);
+    // The thresholds are still known: the bar keeps turning amber/red past them.
+    expect(defs[0].nop).toBe(4000);
+    expect(defs[0].meop).toBe(5000);
+  });
+
+  it('a gauge with no limits key follows its own PT row, so unticking that row hides the lines', () => {
+    const generic: PressureBarConfig[] = [
+      { label: 'DR-PT-G', role: 'DR-PT-G', limits: '' },
+      { label: 'GN2 HI', role: 'GN2 High' },
+    ];
+    const defs = buildPressureBarDefsFromSensorConfig(sensors, generic, {
+      ...limits,
+      'DR-PT-G': { show_in_top_bar: false } as any,
+    });
+    expect(defs.map((d) => d.showLimits)).toEqual([false, true]);
+    // GN2 High -> GN2_High by the space-to-underscore convention.
+    expect(defs[1].nop).toBe(4000);
+  });
+});

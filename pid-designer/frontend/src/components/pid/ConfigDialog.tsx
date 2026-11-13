@@ -15,7 +15,7 @@ import { SAT_REFERENCE, paramFromPreset, saturationK } from './materials';
 import { toAbsolutePa } from './params';
 import { ManifoldEditor } from './ManifoldEditor';
 import type { ManifoldGeometry } from './ManifoldEditor';
-import { fittingCount } from './segments';
+import { boreGap, fittingCount } from './segments';
 import type { LineSegment } from './segments';
 import { SketchEditor } from './sketch/Sketch';
 import { emptySketch } from './sketch/model';
@@ -119,8 +119,25 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
       if (rise) stored.fall = { ...rise, value: -rise.value };
       if (stored.roughness && !stored.roughness_custom) stored.roughness_custom = stored.roughness;
     }
-    setDrafts(Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, stored[p.key], type)])));
-    const opts = Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default]));
+    const filled = Object.fromEntries(spec.params.map(p => [p.key, toDraft(p, stored[p.key], type)]));
+    setDrafts(filled);
+    // A dewar's temperature this dialog filled from its pressure, on an
+    // earlier opening, is still the dialog's to fill: it is refreshed below,
+    // not kept as though typed. Saved before ADR 0004 read a bare psi on a
+    // dewar as gauge, LE4 (3)'s LOX dewar sat at 103.79 K beside 50 psi --
+    // Tsat at 50 psia, 3.4 K under Tsat at 50 psig -- and stayed so.
+    const t = stored.temperature;
+    const satFilled = spec.params.some(p => p.key === 'temperature' && p.auto === 'saturation')
+      && t?.source === 'default' && !!t.reference?.startsWith(SAT_REFERENCE);
+    lastAutoTemp.current = satFilled ? filled.temperature.value : null;
+    const named = Object.fromEntries((spec.options ?? []).map(o => [o.key, data.options?.[o.key] ?? o.default]));
+    // A symbol keeps the options this dialog does not show. It writes back
+    // what it holds, wholesale (saveConfig), so holding only its own erased
+    // anything else a drawing said on the next save -- a key written by
+    // another tool or by hand, the way a hand valve's `normalPosition` had to
+    // be before the dialog offered it. A line's are all its own, one of them
+    // derived (`construction`), and are written back as before.
+    const opts = kind === 'node' ? { ...(data.options ?? {}), ...named } : named;
     if (kind === 'edge') {
       // A stored hose reopens with its flag set; a stored roughness that is
       // not one of the materials reopens as custom.
@@ -184,7 +201,19 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   };
 
   const save = () => {
-    let params: Record<string, ParamValue> = {};
+    // What the symbol holds that this dialog does not own -- a parameter
+    // feed-twin reads and the spec does not offer, written by hand or by
+    // another tool -- is kept: the dialog writes back wholesale (saveConfig),
+    // and rebuilt from its own fields alone, an untouched Save deleted a
+    // tank's measured diameter and a regulator's datasheet droop. A line made
+    // another kind (hose to hardline) is the dialog rewriting it, and keeps
+    // only its own, since feed-twin refuses a parameter its kind lacks.
+    const owned = new Set(spec.params.map(p => p.key));
+    const sameKind = kind === 'node'
+      || (data.lineType ?? 'pipe') === ((options.hose ?? 'no') === 'no' ? 'pipe' : 'flex_hose');
+    let params: Record<string, ParamValue> = sameKind
+      ? Object.fromEntries(Object.entries(data.params ?? {}).filter(([k]) => !owned.has(k)))
+      : {};
     for (const p of spec.params) {
       if (p.derived) continue;                     // computed below, never typed
       if (!showing(p)) continue;                   // a hidden field is not an answer
@@ -215,8 +244,11 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
         savedSegments = out.segments;
         params.elevation_change = out.elevationChange;
         params.length = { value: Math.round(out.totalLengthMm) / 1000, unit: 'm', source: 'measured', reference: 'from the centerline sketch' };
+        // Its bore, or none: a sketch with no inner diameter states none, and
+        // a bore typed on the line before it was sketched is not the run's.
         const first = out.segments[0];
         if (first?.bore) params.bore = { ...first.bore };
+        else delete params.bore;
         delete params.K_minor;
       }
     }
@@ -254,6 +286,12 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
   const fittings = kind === 'edge' ? segments.reduce((n, s) => n + fittingCount(s), 0) : 0;
   const sketched = kind === 'edge' && !!sketch && sketch.legs.length > 0;
   const superseded = kind === 'edge' && (segments.length > 0 || sketched);
+  // A run with a stretch of no stated bore. feed-twin prices that stretch at
+  // the narrowest bore stated elsewhere on the run, and a run with none
+  // anywhere at nothing (`boreGap`). Said here, where it can be fixed, not only
+  // in the twin's assembly report -- and said as what the solver does.
+  const sketchGap = boreGap(sketched ? exportSketch(sketch!).segments : []);
+  const listGap = boreGap(sketched ? [] : segments);
 
   const title = kind === 'edge' ? 'Line' : (data.label || type);
 
@@ -313,6 +351,19 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
           />
         ))}
 
+        {/* Above the line's numbers, which the sketch dims, so it is seen on
+            opening -- the sketch and its diameter box are below the fold. */}
+        {sketchGap.unbored.length > 0 && (
+          <p className="text-[10px] text-amber-500/90">
+            {sketchGap.borrowed
+              ? 'Part of the run has no inner diameter. The solver prices that stretch at the narrowest diameter '
+                + 'given on the rest of the run, which is an assumption, not the drawing\'s.'
+              : 'The run has no inner diameter, so the solver can size neither its tube nor its bends and prices '
+                + 'nothing for it.'}{' '}
+            Set the inner diameter on the sketch below, or pick a size from its chart.
+          </p>
+        )}
+
         {spec.params.length > 0 && (
           <div className={`space-y-2 border-t border-[var(--color-border)] pt-2.5${
             superseded ? ' opacity-45' : ''}`}>
@@ -328,7 +379,13 @@ export function ConfigDialog({ open, onClose, kind, data, peers, readOnly, onSav
             ) : superseded && (
               <p className="text-[10px] text-amber-500/90">
                 This run carries an itemised list from before ({fittings} fitting{fittings === 1 ? '' : 's'});
-                the solver reads that instead of the numbers here.{' '}
+                the solver reads that instead of the numbers here.
+                {listGap.unbored.length > 0 && (listGap.borrowed
+                  ? ' Part of it states no bore; the solver prices that part at the narrowest bore stated on the'
+                    + ' rest of the run, an assumption.'
+                  : listGap.unbored.length === segments.length
+                    ? ' It states no bore, and the solver prices nothing for it.'
+                    : ' Part of it states no bore, and the solver prices nothing for that part.')}{' '}
                 <button disabled={readOnly} onClick={() => setSegments([])}
                   className="underline decoration-dotted hover:text-[var(--color-text-primary)]">
                   let it go

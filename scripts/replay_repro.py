@@ -4,8 +4,9 @@
     python3 scripts/replay_repro.py repro.json
     python3 scripts/replay_repro.py repro.json --until 120 --every 5
 
-The repro carries the drawing and the engine themselves, the setup the stand
-was opened with, the hookup it ran and every command and T-0 at its stand time.
+The repro carries the drawing and the engine themselves, the Drawing tab's
+overrides, the setup the stand was opened with, the hookup it ran and every
+command and T-0 at its stand time.
 This opens the same stand in a throwaway library (never the real one -- see
 FEEDTWIN_LIBRARY), plays the commands at their times, and prints the end state
 and the watcher's flags beside the ones the original run recorded.
@@ -51,7 +52,7 @@ def main() -> int:
     sys.path.insert(0, str(ROOT / "feed-twin"))
     from fastapi.testclient import TestClient
 
-    from backend.main import app, library
+    from backend.main import app, library, overrides
 
     client = TestClient(app)
     opened = repro["opened"]
@@ -76,6 +77,10 @@ def main() -> int:
             },
         )
     )["artifact"]["id"]
+    # The Drawing tab's overrides the stand was built with (a repro written
+    # before they were carried has none: the stand as drawn).
+    if repro.get("overrides"):
+        overrides.put_entry(library.get(drawing).name, {"params": repro["overrides"]})
     engine = ""
     if repro.get("engine"):
         e = repro["engine"]

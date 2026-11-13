@@ -1,14 +1,23 @@
 #pragma once
 
 /**
- * Firmware hash: computes SHA-256 of the running app partition at boot.
+ * Firmware hash: the identity of the image this board is running.
  *
- * Uses ESP-IDF's esp_partition_get_sha256(), which hashes the actual bytes
- * in flash. Any modification to the binary — even without a new git commit —
- * produces a different hash.
+ * esp_partition_get_sha256() returns the SHA-256 that ESP-IDF *appended* to the
+ * app image at build time, after recomputing it once to check the image is
+ * intact. It is therefore NOT sha256(firmware.bin): hashing the whole file
+ * folds the appended digest into its own input and can never match this value.
+ * To compare a board against a build, use firmware/tools/firmware_digest.py,
+ * and to turn a digest into a commit use firmware/tools/which_firmware.py. See
+ * FIRMWARE_HASH_VERIFICATION.md.
+ *
+ * Any change to the image changes this, with or without a new commit. The build
+ * is kept free of absolute paths so the same source hashes the same on every
+ * machine -- see firmware/tools/reproducible_build.py.
  *
  * SHA-256 is 32 bytes. The full 64-character hex string is printed for
- * unambiguous identification.
+ * unambiguous identification. Note print() emits uppercase hex; the registry
+ * stores lowercase, and which_firmware.py accepts either.
  */
 
 #include <Arduino.h>

@@ -7,6 +7,8 @@ perturbs the default is not an option, it is a regression.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from dataclasses import replace
 
@@ -429,3 +431,89 @@ def test_ethanol_vapour_is_priced_as_a_gas() -> None:
     assert tank.vapour_pressure(state) == pytest.approx(
         eth.get("p", T=293.15, q=0.0), rel=0.3
     )
+
+
+# ------------------------------------------- which way the mass goes (quadrants)
+
+
+def _exchange(q: float, partial_over_sat: float) -> object:
+    """Ethanol at 293.15 K, its vapour at ``partial_over_sat`` x saturation."""
+    eth = Fluid("ethanol")
+    p_sat = eth.get("p", T=293.15, q=0.0)
+    return SaturatedVapour().exchange(
+        liquid=eth,
+        liquid_temperature=293.15,
+        ullage_pressure=101325.0,
+        vapour_partial_pressure=partial_over_sat * p_sat,
+        interface_area=0.018,
+        heat_to_interface=q,
+    )
+
+
+def test_heat_into_a_subsaturated_surface_evaporates_it() -> None:
+    """The case 1.5 checks: unchanged."""
+    out: Any = _exchange(3.0, 0.0)
+    assert out.latent_power == pytest.approx(3.0)
+    assert out.mdot == pytest.approx(3.0 / latent_heat(Fluid("ethanol"), 293.15))
+
+
+def test_a_subsaturated_surface_losing_heat_does_not_condense() -> None:
+    """No vapour at all over the surface, and the surface losing 3 W to a
+    colder gas: it cools. It used to condense 3.3 mg/s of vapour that was not
+    there -- liquid out of nothing (LE4 (3)'s vented ethanol tank)."""
+    out: Any = _exchange(-3.0, 0.0)
+    assert out.mdot == 0.0 and out.latent_power == 0.0
+
+
+def test_a_supersaturated_surface_losing_heat_condenses() -> None:
+    out: Any = _exchange(-3.0, 1.5)
+    assert out.mdot < 0.0
+    assert -3.0 <= out.latent_power < 0.0
+
+
+def test_a_supersaturated_surface_gaining_heat_warms_and_does_not_condense() -> None:
+    """Heat arriving cannot pay for condensation; it warms the surface until
+    its own vapour pressure meets the partial pressure."""
+    out: Any = _exchange(3.0, 1.5)
+    assert out.mdot == 0.0 and out.latent_power == 0.0
+
+
+def test_a_vented_ethanol_tank_losing_heat_makes_no_liquid() -> None:
+    """LE4 (3)'s fuel tank in Ox Fill: vented at atmosphere, no vapour, gas 3 K
+    under the liquid and the wall a tenth of a kelvin under it, with the
+    cockpit's surface layer. The liquid gained 3.3 mg/s and the layer warmed
+    above the bulk, the gas, the wall and the room."""
+    eth, gn2 = Fluid("ethanol"), Fluid("nitrogen")
+    geometry = CylindricalTank(diameter=0.1524, barrel_length=0.531)
+    tank = Tank(
+        eth,
+        gn2,
+        geometry,
+        wall_mass=6.9,
+        wall_capacity=900.0,
+        wall_conductance=12.0,
+        vapour=SaturatedVapour(),
+        wetted_conductance=100.0,
+        surface_layer=0.01,
+        surface_mixing=5.0,
+        wall_boiling=True,
+    )
+    state = tank.initial_state(
+        pressure=101325.0,
+        liquid_mass=4.40,
+        liquid_temperature=293.0,
+        gas_temperature=290.0,
+        contact_time=300.0,
+    )
+    state = replace(
+        state,
+        vapour_mass=0.0,
+        surface_temperature=293.0,
+        ullage=replace(state.ullage, wall_temperature=292.9),
+    )
+    rates = tank.rates(state)
+    assert rates.heat_to_liquid < 0.0 and rates.heat_to_wetted_wall < 0.0
+    assert rates.liquid_mass <= 0.0, rates.liquid_mass
+    assert rates.vapour_mass >= 0.0
+    assert rates.surface_temperature <= 0.0, rates.surface_temperature
+    assert rates.liquid_temperature <= 0.0

@@ -89,8 +89,36 @@ def curve(result: Dict[str, Any]) -> Tuple[List[float], List[float]]:
     return [v - t0 for v in t], f
 
 
+def _psia(value: Any, digits: int = 1) -> Optional[str]:
+    return f"{float(value):.{digits}f}" if isinstance(value, (int, float)) and math.isfinite(float(value)) else None
+
+
+def _t0_words(result: Dict[str, Any], derived: Dict[str, Any], settings: Dict[str, Any]) -> str:
+    """The tanks and the bottle the burn started from, in psia (ADR 0007): the run's own T-0 when it
+    recorded one (a settle a relief or a regulator moved is said as it was), else what it asked for."""
+    s = result.get("summary") or {}
+    ox, fu = _psia((s.get("ox") or {}).get("t0_psia")), _psia((s.get("fuel") or {}).get("t0_psia"))
+    bottle = _psia(s.get("copv_t0_psia"))
+    if ox and fu:
+        tanks = ox if ox == fu else f"LOX {ox} / fuel {fu}"
+        return f"tanks {tanks} psia, bottle {bottle or '-'} psia at T-0"
+    lockup = _psia(derived.get("target_lockup_psia")) or _psia(settings.get("tank_pressure_psia"))
+    fill = (_psia(derived.get("copv_psia")) or _psia(settings.get("copv_pressure_psia"))
+            or (_psia(float(settings["copv_pressure_psig"]) + 101325.0 / 6894.757293168361)
+                if isinstance(settings.get("copv_pressure_psig"), (int, float)) else None))
+    return f"tanks {lockup or '-'} psia, bottle {fill or '-'} psia (as set)"
+
+
 def _trapz(t: List[float], f: List[float]) -> float:
     return sum(0.5 * (f[i] + f[i + 1]) * (t[i + 1] - t[i]) for i in range(len(t) - 1))
+
+
+def _run_mean(t: List[float], f: List[float]) -> Tuple[float, float]:
+    """``(impulse [N s], mean thrust [N])`` as the run totals them (``delivered.summary``): each sample
+    after Fire carries the step that ends there, so the curve is step-held. The trapezoid of the same
+    samples is neither the run's figure nor the file's (LE4 (3): 23743.9 against the run's 23737.9 N-s)."""
+    impulse = sum(f[i + 1] * (t[i + 1] - t[i]) for i in range(len(t) - 1))
+    return impulse, (impulse / t[-1] if t[-1] > 0 else 0.0)
 
 
 def to_eng(
@@ -119,7 +147,7 @@ def to_eng(
     if not prop > 0.0:
         raise ValueError("the run reports no propellant consumed")
     total = prop + float(dry or 0.0)
-    mean = _trapz(t, f) / t[-1] if t[-1] > 0 else 0.0
+    run_impulse, mean = _run_mean(t, f)
     name = _token(name or f"STAR-{round(mean)}N")
 
     # Only the first point moves: the ramp in loses half an edge of the first step's thrust and
@@ -127,7 +155,6 @@ def to_eng(
     pts_t = [EDGE_S] + t[1:] + [t[-1] + EDGE_S]
     pts_f = [f[0]] + f[1:] + [0.0]
     written = _trapz([0.0] + pts_t, [0.0] + pts_f)
-    run_impulse = _trapz(t, f)
 
     prov = result.get("provenance") or {}
     settings = prov.get("settings") or {}
@@ -136,9 +163,7 @@ def to_eng(
     basis = motor.get("basis") or {}
     lines = [
         f"; {name}: Layer X burn{f' {run_id}' if run_id else ''}, exported {time.strftime('%Y-%m-%d %H:%M')}",
-        f"; drawing {((prov.get('drawing') or {}).get('name')) or '-'}, tanks "
-        f"{derived.get('target_lockup_psia') or settings.get('tank_pressure_psia') or '-'} psia, bottle "
-        f"{derived.get('copv_psig') or settings.get('copv_pressure_psig') or '-'} psig, "
+        f"; drawing {((prov.get('drawing') or {}).get('name')) or '-'}, {_t0_words(result, derived, settings)}, "
         f"{'as flown (acceleration on the feed)' if flown else 'on the pad'}",
         f"; burn {t[-1]:.3f} s, total impulse {run_impulse:.1f} N-s (this file {written:.1f} N-s), "
         f"mean thrust {mean:.1f} N",
@@ -160,7 +185,9 @@ def to_eng(
 
 def filename(result: Dict[str, Any], run_id: str = "") -> str:
     t, f = curve(result)
-    mean = _trapz(t, f) / t[-1] if t[-1] > 0 else 0.0
+    # The motor's own name inside the file (to_eng): the run's mean, not the trapezoid's, or the
+    # download is STAR-6189N and the motor in it STAR-6188N.
+    mean = _run_mean(t, f)[1]
     stamp = run_id or time.strftime("%Y%m%d-%H%M%S")
     return f"STAR-{round(mean)}N-{stamp}.eng"
 

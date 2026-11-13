@@ -18,7 +18,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CHARGE_KNOB, DOME_KNOB, fixed, type LiveKnob, type StandSetup } from '../api';
+import { CHARGE_KNOB, DOME_KNOB, fixed, getTunables, type LiveKnob, type StandSetup } from '../api';
+import { rowCommit } from '../lib/entry';
 import Knob from '../components/Knob';
 import { PsiaInput } from '../components/PsiaInput';
 import { useStand } from '../stand';
@@ -51,31 +52,76 @@ function useCommitted(value: number, commit: (v: number) => void): [number, (v: 
   return [shown, set];
 }
 
+/** Typing pauses this long before the stand hears a cart setting [ms]. */
+const TYPED_MS = 400;
+
+/** A cart setting typed in. It commits a moment after the typing stops, on
+ *  Enter, or on leaving the box -- never an emptied box or half a number
+ *  (lib/entry `rowCommit`), and within the tunable's bounds. It used to send
+ *  every keystroke to the running stand: '' as 0, and '30' typed into the
+ *  fuel load time as 0, 3, then 30. */
 function Number_({
   label,
   value,
   unit,
   step,
+  low,
+  high,
   onChange,
 }: {
   label: string;
   value: number;
   unit: string;
   step: number;
+  /** Bounds, from /api/tunables; the commit keeps within them. */
+  low: number;
+  high: number;
   onChange: (v: number) => void;
 }) {
+  const [draft, setDraft] = useState(String(value));
+  const editing = useRef(false);
+  const timer = useRef<number | null>(null);
+  useEffect(() => {
+    if (!editing.current) setDraft(String(value));
+  }, [value]);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
+  );
+  const flush = (raw: string) => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = null;
+    const next = rowCommit(raw, { step, low, high, unit }, value);
+    if (next !== null) onChange(next);
+  };
   return (
     <label className="flex flex-col gap-1">
       <span className="caps text-[11px]">{label}</span>
       <span className="flex items-baseline gap-1.5">
         <input
           type="number"
-          value={value}
+          value={draft}
           step={step}
-          min={0}
+          min={low}
+          max={high}
+          onFocus={() => {
+            editing.current = true;
+          }}
           onChange={(e) => {
-            const next = Number(e.target.value);
-            if (Number.isFinite(next)) onChange(next);
+            const raw = e.target.value;
+            setDraft(raw);
+            if (timer.current !== null) window.clearTimeout(timer.current);
+            timer.current = window.setTimeout(() => flush(raw), TYPED_MS);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') flush(draft);
+          }}
+          onBlur={() => {
+            editing.current = false;
+            flush(draft);
+            setDraft(String(value));
           }}
           className="w-24 rounded-md border border-gray-700 bg-black/60 px-2 py-1.5 font-mono text-sm tabular-nums text-white focus:border-blue-500 focus:outline-none"
         />
@@ -117,7 +163,20 @@ export function Gse() {
   // Tripped, or a stand you have not taken: where the knobs sit is saved with
   // the stand, so turning them is changing it.
   const locked = Boolean(live?.tripped) || readOnly;
+  // Mid-burn the stand is not swapped out from under the operator, as on the
+  // top bar's gas switch: either switch here reopened it during Fire.
+  const burning = /^fire$/i.test(live?.state ?? '');
+  const notMidBurn = burning ? ' Not during a burn: it changes once the burn is over.' : '';
   const chargeKnob = live?.knobs?.find((k) => k.id === CHARGE_KNOB);
+  // Each setting's bounds are the backend's (/api/tunables): the COPV fill
+  // knob went down to 14.7 psia while the stand charged to its 100 psig floor.
+  const [bounds, setBounds] = useState<Record<string, { low: number; high: number }>>({});
+  useEffect(() => {
+    getTunables()
+      .then((ts) => setBounds(Object.fromEntries(ts.map((t) => [t.key, { low: t.low, high: t.high }]))))
+      .catch(() => undefined);
+  }, []);
+  const limits = (key: string) => bounds[key] ?? { low: 0, high: Number.MAX_SAFE_INTEGER };
 
   // A transducer's reading, found by its tag. The live frame is keyed by
   // drawing id, so matching the pattern against those keys never found one
@@ -173,12 +232,12 @@ export function Gse() {
     <div className="flex flex-col gap-4 p-4">
       <label
         className="flex items-center gap-2 text-[12px] text-text"
-        title="On: the cart drawn on the GSE page is not simulated, except its vent lines, which stay plugged into the rocket until the last moment before launch (the tanks still vent through the cart's vent valves). The rest is cut, its disconnects capped, and GN2 High Press, Fuel Fill and Ox Fill are the simple built-in fills at the settings below; the dome knob sets the tank regulator's dome directly. Changing it opens a fresh stand."
+        title={`On: the cart drawn on the GSE page is not simulated, except its vent lines, which stay plugged into the rocket until the last moment before launch (the tanks still vent through the cart's vent valves). The rest is cut, its disconnects capped, and GN2 High Press, Fuel Fill and Ox Fill are the simple built-in fills at the settings below; the dome knob sets the tank regulator's dome directly. Changing it opens a fresh stand.${notMidBurn}`}
       >
         <input
           type="checkbox"
           checked={Boolean(setup.ignore_gse)}
-          disabled={locked}
+          disabled={locked || burning}
           onChange={(e) => set({ ignore_gse: e.target.checked })}
           className="accent-blue-500"
         />
@@ -189,7 +248,7 @@ export function Gse() {
       </label>
       <div
         className="flex items-center gap-2 text-[12px] text-text"
-        title="The gas in the bottles and press lines. Drawing's: whatever the drawing has; Helium or GN2: the drawing's other gas swapped for it everywhere it is drawn. Each burn's run record says which, so Runs compares them. Changing it opens a fresh stand."
+        title={`The gas in the bottles and press lines. Drawing's: whatever the drawing has; Helium or GN2: the drawing's other gas swapped for it everywhere it is drawn. Each burn's run record says which, so Runs compares them. Changing it opens a fresh stand.${notMidBurn}`}
       >
         <span>Pressurant</span>
         <div className="flex overflow-hidden rounded border border-[var(--line-strong)]">
@@ -205,7 +264,7 @@ export function Gse() {
               <button
                 key={value}
                 type="button"
-                disabled={locked}
+                disabled={locked || (burning && !on)}
                 aria-pressed={on}
                 onClick={() => !on && set({ pressurant: value })}
                 className={`px-2 py-0.5 text-[11px] disabled:opacity-50 ${
@@ -227,8 +286,8 @@ export function Gse() {
           <Knob
             label={chargeKnob?.label ?? 'COPV fill (built-in)'}
             value={toPsia(high)}
-            min={toPsia(0)}
-            max={toPsia(6000)}
+            min={toPsia(Math.max(chargeKnob?.low ?? 0, limits('copv_target').low))}
+            max={toPsia(Math.min(6000, chargeKnob?.high ?? 6000, limits('copv_target').high))}
             step={50}
             unit={PRESSURE_UNIT}
             onChange={(psia) => setHigh(fromPsia(psia))}
@@ -341,8 +400,22 @@ export function Gse() {
           disabled={locked}
           className="bg-card m-0 flex min-w-0 flex-wrap items-end gap-5 rounded-xl border border-gray-800 px-4 py-3 disabled:opacity-60"
         >
-          <Number_ label="COPV charge time" value={setup.copv_fill_s} unit="s" step={5} onChange={(copv_fill_s) => set({ copv_fill_s })} />
-          <Number_ label="Fuel load time" value={setup.fuel_fill_s} unit="s" step={5} onChange={(fuel_fill_s) => set({ fuel_fill_s })} />
+          <Number_
+            label="COPV charge time"
+            value={setup.copv_fill_s}
+            unit="s"
+            step={5}
+            {...limits('copv_fill_s')}
+            onChange={(copv_fill_s) => set({ copv_fill_s })}
+          />
+          <Number_
+            label="Fuel load time"
+            value={setup.fuel_fill_s}
+            unit="s"
+            step={5}
+            {...limits('fuel_fill_s')}
+            onChange={(fuel_fill_s) => set({ fuel_fill_s })}
+          />
           <label
             className="flex flex-col gap-1"
             title={`What pushes the LOX load in. The load is the dewar less the tank, through the fill line; while the wall is warm it all boils into the ullage and the tank climbs until the vent carries it. ${fmtP(0, 1)} (vented): a fixed-rate load over the LOX load time.`}
@@ -362,10 +435,24 @@ export function Gse() {
           </label>
           {setup.dewar_psi > 0 ? (
             <span title={`Everything on the fill line that is not tube -- in practice how far the dewar valve is open. The stand tops out near ${fmtP(30)} during the chill; on LE4 (6) 0.019 peaks at ${fmtP(57)}, 0.013 at ${fmtP(38)}.`}>
-              <Number_ label="Dewar valve Cv" value={setup.dewar_fill_cv} unit="Cv" step={0.001} onChange={(dewar_fill_cv) => set({ dewar_fill_cv })} />
+              <Number_
+                label="Dewar valve Cv"
+                value={setup.dewar_fill_cv}
+                unit="Cv"
+                step={0.001}
+                {...limits('dewar_fill_cv')}
+                onChange={(dewar_fill_cv) => set({ dewar_fill_cv })}
+              />
             </span>
           ) : (
-            <Number_ label="LOX load time" value={setup.tank_fill_s} unit="s" step={10} onChange={(tank_fill_s) => set({ tank_fill_s })} />
+            <Number_
+              label="LOX load time"
+              value={setup.tank_fill_s}
+              unit="s"
+              step={10}
+              {...limits('tank_fill_s')}
+              onChange={(tank_fill_s) => set({ tank_fill_s })}
+            />
           )}
           {lox && setup.dewar_psi > 0 ? (
             <span className="pb-1.5 font-mono text-[12px] tabular-nums text-text-muted">

@@ -9,6 +9,10 @@ set(FSW_SOURCES
     src/config/SensorAssignment.cpp
     src/config/LoadActiveBoards.cpp
     src/config/Config.cpp
+    src/config/T7Config.cpp
+    src/t7/T7Stream.cpp
+    src/t7/T7Convert.cpp
+    src/t7/T7Calibration.cpp
     src/config/SensorTables.cpp
     src/script/Lexer.cpp
     src/script/Parser.cpp
@@ -28,6 +32,7 @@ set(FSW_SOURCES
     src/calibration/LcTareStore.cpp
     src/calibration/CaptureWindow.cpp
     src/calibration/SensorCalibration.cpp
+    src/calibration/TypeK.cpp
     src/calibration/AllanVariance.cpp
     src/calibration/RobustCalibrationFramework.cpp
     src/calibration/RobustCalibrationManager.cpp
@@ -69,6 +74,18 @@ add_executable(test_environmental_config test/test_environmental_config.cpp)
 target_link_libraries(test_environmental_config fsw_daq_lib)
 add_test(NAME environmental_config COMMAND test_environmental_config)
 
+add_executable(test_ball_valve_config test/test_ball_valve_config.cpp)
+target_link_libraries(test_ball_valve_config fsw_daq_lib)
+add_test(NAME ball_valve_config COMMAND test_ball_valve_config)
+
+add_executable(test_subscription_tracker test/test_subscription_tracker.cpp)
+target_link_libraries(test_subscription_tracker fsw_daq_lib)
+add_test(NAME subscription_tracker COMMAND test_subscription_tracker)
+
+add_executable(test_ball_valve_position test/test_ball_valve_position.cpp)
+target_link_libraries(test_ball_valve_position fsw_daq_lib)
+add_test(NAME ball_valve_position COMMAND test_ball_valve_position)
+
 add_executable(test_robust_ddp test/test_robust_ddp.cpp)
 target_include_directories(test_robust_ddp PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -93,6 +110,12 @@ target_link_libraries(test_capture_window
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME capture_window COMMAND test_capture_window)
 
+add_executable(test_hp_pt_code test/test_hp_pt_code.cpp)
+target_include_directories(test_hp_pt_code PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+add_test(NAME hp_pt_code COMMAND test_hp_pt_code)
+
 add_executable(test_lc_tare test/test_lc_tare.cpp)
 target_include_directories(test_lc_tare PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -108,6 +131,20 @@ target_include_directories(test_cubic_store_namespace PRIVATE
 target_link_libraries(test_cubic_store_namespace
     fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME cubic_store_namespace COMMAND test_cubic_store_namespace)
+
+add_executable(test_lc_linear_fit test/test_lc_linear_fit.cpp)
+target_include_directories(test_lc_linear_fit PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_lc_linear_fit
+    fsw_daq_lib daq_comms_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME lc_linear_fit COMMAND test_lc_linear_fit)
+
+add_executable(test_command_dedupe test/test_command_dedupe.cpp)
+target_include_directories(test_command_dedupe PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+add_test(NAME command_dedupe COMMAND test_command_dedupe)
 
 add_executable(test_fire_lifecycle
     test/test_fire_lifecycle.cpp
@@ -198,6 +235,21 @@ add_test(NAME script_positions COMMAND test_script_positions)
 # RUN_SERIAL: binds a fixed UDP port, and every case is a wall-clock measurement that a loaded
 # box would skew.
 set_tests_properties(script_positions PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+
+add_executable(test_ball_valve_commander
+    test/test_ball_valve_commander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+)
+target_include_directories(test_ball_valve_commander PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_ball_valve_commander
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME ball_valve_commander COMMAND test_ball_valve_commander)
+# RUN_SERIAL: binds a fixed UDP port.
+set_tests_properties(ball_valve_commander PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 
 add_executable(test_sequencer_elodin
     test/test_sequencer_elodin.cpp
@@ -290,6 +342,21 @@ target_link_libraries(test_script_runtime
 add_test(NAME script_runtime COMMAND test_script_runtime)
 set_tests_properties(script_runtime PROPERTIES
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR} TIMEOUT 180 RUN_SERIAL TRUE)
+
+# LabJack T7: config parsing, stream setup and block decoding, against FakeT7Device. Hermetic —
+# no LJM, no sockets, no files.
+add_executable(test_t7 test/test_t7.cpp)
+target_link_libraries(test_t7 fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME t7 COMMAND test_t7)
+
+add_executable(test_pt_smoothing test/test_pt_smoothing.cpp)
+target_link_libraries(test_pt_smoothing fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME pt_smoothing COMMAND test_pt_smoothing)
+
+add_executable(test_rtd_board test/test_rtd_board.cpp)
+target_link_libraries(test_rtd_board fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME rtd_board COMMAND test_rtd_board)
+
 
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.

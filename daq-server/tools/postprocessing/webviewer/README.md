@@ -5,8 +5,7 @@ pick arbitrary sensors, plot them interactively (zoom/pan), and export CSV or a
 plot image — without copying the multi-GB DB off the box or setting up a Python
 toolchain per person.
 
-This complements the static-PNG `analyze_run.py` pipeline: same data, but
-interactive and self-serve.
+It replaces the old static-PNG `analyze_run.py` pipeline (removed).
 
 ## Quick start (local)
 
@@ -34,6 +33,8 @@ Single-process (build the frontend, serve everything from uvicorn):
 | `ELODIN_DB_DIR` | `~/.local/share/elodin` | where run dirs live |
 | `WEBVIEWER_CACHE_DIR` | `./.cache` | exported parquet cache |
 | `PORT` | `8000` | backend port |
+| `WEBVIEWER_VIDEO_DIR` | unset (no video) | the video gateway's recordings folder, read-only; see [Video](#video) |
+| `WEBVIEWER_VIDEO_TZ` | `America/Los_Angeles` | the gateway machine's time zone (recording folders are named in local time) |
 | `WEBVIEWER_MAX_DOWNLOAD_BPS` | `0` (unlimited); `run.sh --build` sets `10485760` (10 MB/s) | CSV download rate cap in bytes/sec. Dev is unthrottled; the deployment (`--build`) applies the cap |
 
 ## What it does
@@ -75,6 +76,67 @@ Single-process (build the frontend, serve everything from uvicorn):
   saturate the host uplink and starve co-located services — it paces, not caps
   size.
 - **Save image** — PNG of the current chart (uPlot canvas).
+- **Fold the lists** — the ‹ on the run list's header and on the sensor picker folds
+  each to a thin rail, giving its width to the plot and video; click the rail to bring
+  it back. The rail keeps the count of plotted channels. Remembered per browser.
+
+## Video
+
+The video gateway's **Record** and **Save** clips (`daq-server/video/recordings/`) appear
+above the plot, at the time they were taken, for any run they overlap. Outside a clip
+there is no video. Click the plot to put the playhead there and the video shows that
+moment; a drag still zooms and hovering never seeks. In compose the folder is
+`VIDEO_RECORDINGS_HOST_DIR`, mounted read-only; unset, an empty folder (`no-video/`) is
+mounted instead and the panel never appears. Desert recordings are copied in afterwards
+(`daq-server/video/README.md`).
+
+**Cameras.** The panel lists cameras, not files: a camera's footage in a run is all its
+clips together, and where a Save and a Record hold the same moment the Record plays. A run
+opens on its first camera; click the others' names to add them. Up to four can be on, in
+a grid. A camera that is off has no `<video>` at all, so it costs
+nothing.
+
+**Coverage.** A thin band per shown camera runs along the top of the plot, filled where
+that camera has footage (Saves and Records merged, outages left empty), so a long run's
+few recorded seconds are visible at a glance. Hover a band to see which camera it is, and
+click it to put the playhead at the start of that stretch. It is drawn in uPlot's draw
+hook: no series, no fetch.
+
+**Playback.** Play/pause (space) runs at 1×, and while it plays one tile leads: the first
+camera shown with footage there drives the playhead from the frames it actually shows
+(`requestVideoFrameCallback`). On each of its frames, every other playing tile is checked
+against that instant. A tile more than a frame out is steered back by its speed (up to
+±10 %, not visible) rather than seeked; only one more than a second out is seeked, once,
+and then left to settle. Seeking for small drift froze tiles in Safari, which seeks a
+playing video slowly. When the leader's footage
+ends, the next camera with footage takes over. Where the camera
+has no footage, the page clock carries the playhead on at real speed. ← / → (and ◀ ▶) step
+one frame, using the clip's own frame period from its mp4 header. Drag the playhead's tab
+to scrub. When it runs off the right edge of a zoomed plot, the view pages forward one
+window at the same zoom, and play stops at the end of the run.
+
+Matching is by time overlap with the run's extent on either clock (`backend/video.py`), so
+a Save made after a run, or a recording copied in later, still finds it. A clip's duration
+comes from its mp4 header, read once and cached; a recording still in progress has no
+finished mp4 and is not listed. Files are served with HTTP Range, so the browser fetches
+only what it shows, and with `Cache-Control: private`, so Cloudflare passes each Range
+straight through instead of caching the clip. Cached, a miss made Cloudflare pull the whole
+file from byte 0 before answering: a seek to the end of a fresh 190 MB Save waited ~25 s
+per camera for its first byte, and the panel looked dead.
+
+**Timing.** The agent writes `<stream>.json` beside each clip it keeps: pieces saying
+which second of the file was filmed when, by the gateway's clock. They carry the keyframe
+cut (the first frame is up to a keyframe interval before the press) and any outage (the
+file plays straight through it; the timeline does not, so the plot shows no video there),
+and the gateway's clock offset from the DAQ's. When Record or Save is pressed, the DAQ
+backend times three round trips to the agent's clock and keeps the quickest
+(`clockOffset`, NTP-style, ±half that round trip). The viewer takes the offset off, so a
+clip filmed on the media Mac lands on the sensors' clock, not the Mac's. At the workspace
+both are star-rfs and the offset is ~0. The clip's tooltip says what was corrected.
+A clip without one (kept before timing files existed) is placed by its folder name: a
+Record starts at the name, a Save *ends* at it. That is whole seconds in the gateway's
+local time plus the keyframe cut, so such a clip is marked **approx. timing** and sits
+within a second or two of the data.
 
 ## Which clock the x-axis is
 
@@ -253,30 +315,33 @@ uPlot canvas ──toBlob()──▶ PNG
 
 ## Theme
 
-The header is the one the other STAR apps use — wordmark, rule, title (see
-`star-openrocket/frontend/src/App.tsx`). `star-wordmark.png` is synced from
-`assets/brand` by `scripts/sync-brand.sh`; the copy under `src/assets/` is generated, so
-edit the master and re-run the script.
+Drawn the way the DAQ console is (`daq-server/diablo_server/frontend/app/globals.css`;
+feed-twin's console shares it), so the viewer reads as part of the same stand: true black,
+a panel is a region between hairlines rather than a card, nothing is rounded or casts a
+shadow, labels and controls are small spaced monospace capitals, related buttons share
+one hairline box (the console's segmented control: Play/step, the exports), and colour is
+kept for what it means: each channel's trace colour on the plot, amber for "not exact or
+not real" (a simulated run, a clip placed approximately). The header is the console's:
+"Diablo DAQ" with "a STAR project" under it, a hairline, then this view. Inter is served
+from `public/fonts` (the same files the DAQ ships, SIL OFL), so the viewer draws the same
+on the stand's offline network.
 
-Controls are a base plus variants, mirroring the vocabulary the design tools share
-(`lib/stardesign-ui/src/theme.ts`): `.btn` bordered by default, `.btn.ghost` chromeless
-for controls that are always present but rarely the point (Clear), `.btn.sm` compact for
-a row shared with inputs; `.input` for every text field, with the classes beside it
-setting only width. Both live in a **Primitives** block at the top of `styles.css`, ahead
-of every app section — declared after their consumers, a base rule wins on equal
-specificity, which is how the Config filter once rendered full-width and the description
-box grew a border it was meant not to have. `.btn` also sets an explicit `line-height`,
-because a `<button>` takes the UA's `normal` while an `<a class="btn">` inherits the
-body's 1.45, which rendered the CSV links 3px taller than the buttons beside them.
+Controls are a base plus variants: `.btn` a hairline box by default, `.btn.ghost` with no
+box until hovered (Clear), `.btn.sm` compact for a row shared with inputs, `.seg` to set
+buttons into one box; `.input` for every text field, with the classes beside it setting
+only width. Both live in a **Primitives** block at the top of `styles.css`, ahead of every
+app section — declared after their consumers, a base rule wins on equal specificity, which
+is how the Config filter once rendered full-width and the description box grew a border it
+was meant not to have. `.btn` also sets an explicit `line-height`, because a `<button>`
+takes the UA's `normal` while an `<a class="btn">` inherits the body's 1.45.
 
-Dark-only otherwise, adopting the conventions the recovery-calculator enforces
-(`recovery-calculator/frontend/src/lib/theme.test.ts`): a `--color-*` token
-namespace where every text tier clears WCAG **AAA (7:1)** on every background, a
-`--text-*` scale that never drops below **13px**, and a chart palette kept as
-literal hex in `src/chartTheme.ts` (canvas ignores `var()`, which is why axis
-text must not be left to default to black). `frontend/theme.check.mjs` (run via
-`npm test`) parses `styles.css` directly and fails on any contrast, type-scale,
-palette-mirror, or undeclared-var violation.
+Two guardrails are the viewer's own and win over the console where they differ
+(`frontend/theme.check.mjs`, run by `npm test`, after the recovery-calculator's theme
+test): every text tier clears WCAG **AAA (7:1)** on every background, so the quietest grey
+is `#a3a3a3` where the console uses `#7a7a7a`; and no text is below **13px**, where the
+console sets its capitals at 11-12px. The check parses `styles.css` and also holds the
+canvas colours in `src/chartTheme.ts` (axis, grid, playhead, coverage band: literal hex,
+because a canvas ignores `var()`) to the CSS tokens they mirror.
 
 ## Notes
 

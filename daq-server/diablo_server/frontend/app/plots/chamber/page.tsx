@@ -75,7 +75,7 @@ export default function ChamberGraphsPage() {
     const [lcData, setLcData] = useState<SenseRowConfig[]>([]);
 
     const loadChannelConfig = useCallback(() => {
-      fetch(`${getApiBaseUrl()}/api/config`)
+      fetch(`${getApiBaseUrl()}/api/config/running`)
         .then((r) => (r.ok ? r.json() : null))
         .then((data: any) => {
           const config = data?.config;
@@ -88,7 +88,8 @@ export default function ChamberGraphsPage() {
           // Board-scoped: two boards of one type routinely share a connector number, and
           // a bare LC_Cal.CH1 resolves through the store's alias table to whichever board
           // it finds first — two readouts, one board's data.
-          const tc = buildSenseRowsFromBoards(boards, 'TC').filter((d) => [2, 3, 4, 5].includes(d.channel));
+          // The chamber TCs are the ESP32 TC board's connectors 2-5; a T7's AIN2-5 are something else.
+          const tc = buildSenseRowsFromBoards(boards, 'TC').filter((d) => d.source !== 'T7' && [2, 3, 4, 5].includes(d.channel));
           if (tc.length) setTcData(tc);
           const lc = buildSenseRowsFromBoards(boards, 'LC');
           if (lc.length) {

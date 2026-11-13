@@ -41,13 +41,15 @@ struct Layout {
     int LED;
 };
 
-const Layout Actuator_Board = {
+constexpr Layout Actuator_Board = {
     // ETH_MOSI, ETH_MISO, ETH_SCLK, ETH_CS, ETH_INT, ETH_RST
     40, 41, 39, 38, 37, 21,
 
     // ACTUATOR_1 through ACTUATOR_10
-    // 7, 5, 48, 21, 36, 6, 4, 47, 14, 35,
-    4, 6, 14, 21, 35, 5, 7, 21, 48, 36,
+    // Pre-remap order (Jan 2026): 7, 5, 48, 21, 36, 6, 4, 47, 14, 35.
+    // ACTUATOR_4 is GPIO 47 and ACTUATOR_8 is GPIO 21 (the team, 2026-11-06).
+    // Both were typed as 21, so commanding either drove the same pin (#163).
+    4, 6, 14, 47, 35, 5, 7, 21, 48, 36,
 
     // CURRENT_SENSE_1 through CURRENT_SENSE_10
     // Hardware mapping: 1→18, 2→9, 3→13, 4→11, 5→1, 6→17, 7→8, 8→10, 9→12, 10→2
@@ -55,6 +57,22 @@ const Layout Actuator_Board = {
 
     // LED
     15};
+
+#if __cplusplus >= 201402L
+// Two actuators on one GPIO means commanding one fires the other (#163).
+constexpr bool actuatorPinsDistinct(const Layout& l) {
+    const int pins[] = {l.ACTUATOR_1, l.ACTUATOR_2, l.ACTUATOR_3, l.ACTUATOR_4,
+                        l.ACTUATOR_5, l.ACTUATOR_6, l.ACTUATOR_7, l.ACTUATOR_8,
+                        l.ACTUATOR_9, l.ACTUATOR_10};
+    for (int i = 0; i < 10; ++i)
+        for (int j = i + 1; j < 10; ++j)
+            if (pins[i] == pins[j])
+                return false;
+    return true;
+}
+static_assert(actuatorPinsDistinct(Actuator_Board),
+              "two actuators share a GPIO in actuator_board_pins.h");
+#endif
 
 // Maximum number of actuators supported by hardware (physical pin limit)
 // Actual number of actuators in use should be determined dynamically from

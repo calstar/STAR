@@ -254,6 +254,162 @@ void unreadable_file_is_not_overwritten() {
 
 }  // namespace
 
+// ── 8. A role that moves between an ESP32 board and a LabJack T7 ─────────────────────
+// Calibration is filed by role, so "LOX Tank" moving from PT board 21 to T7 board 81 would carry
+// a fit in ADC codes (hundreds of millions per volt-ish) onto a channel that reads microvolts.
+void role_moved_to_t7_keeps_its_unit() {
+    const std::string path = scratch("t7move");
+    {
+        CubicCalibrationStore s(path);
+        s.register_channel(2101, 21, 1, 1, "LOX Tank", "cubic", SensorKind::PT);
+        add_pt_points(s, 2101);
+        CHECK(s.save(), "save should succeed");
+        CHECK(read_json(path)["cubic_state"]["2101"]["rawUnit"] == "adc",
+              "an ESP32 channel is saved with rawUnit adc");
+    }
+    {
+        // Now the role lives on a T7: uid 8101, logical channel 129, readings in uV.
+        CubicCalibrationStore s(path);
+        s.register_channel(8101, 81, 1, 129, "LOX Tank", "cubic", SensorKind::PT, "uV");
+        s.load();
+        const auto* t7 = s.channel(8101);
+        CHECK(t7 != nullptr && t7->points.empty() && !t7->fit.valid,
+              "the ADC-code fit must NOT attach to the T7 channel");
+        const auto* old = s.channel(2101);
+        CHECK(old != nullptr && old->points.size() == 4 && old->raw_unit == "adc",
+              "the ESP32 points stay, as an orphan at their own uid");
+        CHECK(s.save(), "save should succeed");
+        const json j = read_json(path);
+        CHECK(j["cubic_state"].contains("2101") && j["cubic_state"]["2101"]["numPoints"] == 4,
+              "and survive the next save instead of being dropped");
+        CHECK(j["cubic_state"]["8101"]["rawUnit"] == "uV", "the T7 channel is saved as uV");
+    }
+}
+
+// ── 9. Same unit still follows the role, and a T7 orphan keeps its logical channel ────
+void t7_role_follows_within_t7() {
+    const std::string path = scratch("t7follow");
+    {
+        CubicCalibrationStore s(path);
+        s.register_channel(8101, 81, 1, 129, "LOX Tank", "cubic", SensorKind::PT, "uV");
+        s.add_point(8101, 0.0, 0.0);
+        s.add_point(8101, 2500000.0, 500.0);
+        s.add_point(8101, 5000000.0, 1000.0);
+        CHECK(s.save(), "save should succeed");
+    }
+    {
+        // Rewired from AIN1 to AIN3 on the same T7.
+        CubicCalibrationStore s(path);
+        s.register_channel(8103, 81, 3, 131, "LOX Tank", "cubic", SensorKind::PT, "uV");
+        s.load();
+        const auto* moved = s.channel(8103);
+        CHECK(moved != nullptr && moved->points.size() == 3 && moved->fit.valid,
+              "a uV fit follows its role to another T7 input");
+        CHECK(s.save(), "save should succeed");
+    }
+    {
+        // The T7 is gone from config: its entry is an orphan, and must keep logical channel 129
+        // rather than be re-derived as ESP32 slot 1 connector 1 (logical 1, a live PT's).
+        CubicCalibrationStore s(path);
+        s.register_channel(2101, 21, 1, 1, "Fuel Upstream", "cubic", SensorKind::PT);
+        s.load();
+        const auto* orphan = s.channel(8103);
+        CHECK(orphan != nullptr && orphan->logical_ch == 131 && orphan->raw_unit == "uV",
+              "a T7 orphan keeps its own logical channel and unit");
+        CHECK(s.save(), "save should succeed");
+        const json j = read_json(path);
+        CHECK(!j["calibration_polynomials"].contains("1"),
+              "nothing lands on ESP32 logical channel 1");
+    }
+}
+
+// ── 10. A DISABLED board's entry must not reach a live sensor's logical channel ───────
+// 2026-11-09, the stand: LC board 41 was set enabled = false. Its three saved entries
+// (connectors 1, 6, 7 — one point each, so no valid fit) resumed as orphans, and the service's
+// LC/PT discriminant was built from ENABLED boards, so it took them for PTs. Iterating uids in
+// order, it set PT logical 1/6/7 from 2101/2106/2107 and then CLEARED them from 4101/4106/4107.
+// FT-PT-R, FF-PT and DR-PT-G streamed 0 psi with healthy raw ADC and a good cubic on disk.
+// cal_target() is what the service now asks, and an orphan answers None.
+void disabled_board_orphan_is_not_applied() {
+    const std::string path = scratch("disabledlc");
+    {  // Both boards enabled: the PT is calibrated, the load cell has a single point.
+        CubicCalibrationStore s(path);
+        s.register_channel(2101, 21, 1, 1, "FT-PT-R", "cubic", SensorKind::PT);
+        s.register_channel(4101, 41, 1, 1, "LC-1", "linear", SensorKind::LC);
+        add_pt_points(s, 2101);
+        s.add_point(4101, 598340.0, 0.0);
+        CHECK(s.save(), "save should succeed");
+    }
+    // LC board 41 is now disabled: only the PT board registers.
+    CubicCalibrationStore s(path);
+    s.register_channel(2101, 21, 1, 1, "FT-PT-R", "cubic", SensorKind::PT);
+    CHECK(s.load() == 2, "both entries should still load — an orphan's points are kept");
+
+    const auto* pt = s.channel(2101);
+    const auto* orphan = s.channel(4101);
+    CHECK(pt != nullptr && orphan != nullptr, "both channels should be present");
+    if (pt == nullptr || orphan == nullptr)
+        return;
+
+    // The collision is the premise: if these ever stop sharing a logical channel the test below
+    // would pass for the wrong reason.
+    CHECK(pt->logical_ch == 1 && orphan->logical_ch == 1,
+          "premise: PT 2101 and LC 4101 share logical channel 1 (got %u and %u)",
+          static_cast<unsigned>(pt->logical_ch), static_cast<unsigned>(orphan->logical_ch));
+    // And so is the invalid fit: one point under a linear model is what made the service clear.
+    CHECK(!orphan->fit.valid, "premise: a one-point linear fit is invalid");
+    CHECK(pt->fit.valid, "premise: the PT's own cubic is good");
+
+    CHECK(fsw::calibration::cal_target(*pt) == fsw::calibration::CalTarget::PT,
+          "a live PT applies to the PT manager");
+    CHECK(fsw::calibration::cal_target(*orphan) == fsw::calibration::CalTarget::None,
+          "a disabled board's entry must reach NEITHER manager — it would clear logical 1");
+
+    // It must also not be mistaken for the LC it is: were it applied as an LC it would clear
+    // LC logical 1, and a live LC board in slot 1 would lose its curve the same way.
+    CHECK(orphan->kind == SensorKind::LC, "the orphan still knows it is a load cell");
+}
+
+// ── 11. A removed board's still-good curve must not win the logical-channel map ───────
+// The same collision one step out, and inside a single kind where the SensorKind split cannot
+// help: `calibration_polynomials` is keyed by logical channel and written in uid order, and the
+// Node backend's loadCalibrationJSON keys its own CalibrationMap from it. A PT board in slot 1
+// that is dropped from config keeps a VALID fit, and its uid sorts after the live board's — so it
+// used to overwrite the live sensor's curve on disk, in the file that is the only record of it.
+void removed_board_does_not_win_the_logical_map() {
+    const std::string path = scratch("removedpt");
+    {  // Two PT boards, both slot 1 (board 21 and board 91) → both logical channel 1.
+        CubicCalibrationStore s(path);
+        s.register_channel(2101, 21, 1, 1, "FT-PT-R", "cubic", SensorKind::PT);
+        s.register_channel(9101, 91, 1, 1, "Spare PT", "cubic", SensorKind::PT);
+        add_pt_points(s, 2101);
+        // The spare's own curve: same shape, deliberately offset so the two are told apart.
+        s.add_point(9101, 413578828.0, 1000.0);
+        s.add_point(9101, 488735724.0, 1225.0);
+        s.add_point(9101, 546113706.0, 1400.0);
+        s.add_point(9101, 579791093.0, 1501.0);
+        CHECK(s.save(), "save should succeed");
+    }
+    // Board 91 is gone from config. Only board 21 registers.
+    CubicCalibrationStore s(path);
+    s.register_channel(2101, 21, 1, 1, "FT-PT-R", "cubic", SensorKind::PT);
+    CHECK(s.load() == 2, "both entries load");
+
+    const auto* orphan = s.channel(9101);
+    CHECK(orphan != nullptr && orphan->logical_ch == 1 && orphan->fit.valid,
+          "premise: the orphan shares logical channel 1 AND still has a valid fit");
+    CHECK(s.save(), "save should succeed");
+
+    const json j = read_json(path);
+    CHECK(j["calibration_polynomials"].contains("1"), "the live PT keeps its map entry");
+    const double psi = eval_abcd(j["calibration_polynomials"]["1"], 579791093.0);
+    CHECK(std::fabs(psi - 501.0) < 5.0,
+          "logical 1 must be the LIVE sensor's curve (~501 psi), got %.4g", psi);
+    // And the orphan's points survive for when its board comes back.
+    CHECK(j["cubic_state"].contains("9101") && j["cubic_state"]["9101"]["numPoints"] == 4,
+          "the orphan's points are kept in cubic_state");
+}
+
 int main() {
     std::printf("CubicCalibrationStore PT/LC namespace tests\n");
     pt_lc_logical_collision();
@@ -263,6 +419,10 @@ int main() {
     add_point_rejects_unknown_uid();
     recovery_regenerates_overwritten_pt_curve();
     unreadable_file_is_not_overwritten();
+    role_moved_to_t7_keeps_its_unit();
+    t7_role_follows_within_t7();
+    disabled_board_orphan_is_not_applied();
+    removed_board_does_not_win_the_logical_map();
 
     if (g_failures == 0)
         std::printf("  ✅ all passed\n");

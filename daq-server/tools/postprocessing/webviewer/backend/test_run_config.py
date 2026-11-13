@@ -94,6 +94,34 @@ def test_actuator_role_names_sense_and_command_entities(labels):
     assert labels["ACT_CMD.B2.CH1"] == "LOX Main"
 
 
+def test_ball_valve_role_names_its_own_entities(elodin_dir):
+    # Board 71 is slot 1, as is actuator board 11; the ball valve lives under BV*, so its role
+    # must not land on ACT1.* (which is board 11's).
+    snapshot(
+        elodin_dir,
+        "bv",
+        """
+[boards.act_11]
+type = "ACTUATOR"
+board_id = 11
+
+[boards.ball_valve_board]
+type = "BALL_VALVE"
+board_id = 71
+
+[actuator_roles]
+"Main Ball Valve" = ["NC", 1, 71]
+""",
+    )
+    labels = run_config.entity_labels(run_config.load("bv"))
+    assert labels["BV1.CH1"] == "Main Ball Valve"
+    assert labels["BV1_Cal.CH1"] == "Main Ball Valve"
+    assert labels["BV_CMD.B1.CH1"] == "Main Ball Valve"
+    assert "ACT1.CH1" not in labels
+    assert "ACT_CMD.B1.CH1" not in labels
+    assert labels["BOARD.HB_71"] == "Ball Valve Board"
+
+
 def test_actuator_role_board_id_defaults_to_the_first_actuator_board(elodin_dir):
     # Two-element form (no board_id) predates multi-board actuators; it means board 11.
     snapshot(
@@ -194,3 +222,56 @@ def test_annotate_reports_a_run_with_no_snapshot(elodin_dir):
     out = run_config.annotate({"components": []}, "daq_20260101_000000")
     assert out["has_config"] is False
     assert out["states"]["16"] == "Fire"  # built-in table still names states
+
+
+# ── LabJack T7 (t7_bridge + calibration_service) ─────────────────────────────
+
+T7_TOML = """
+[boards.pt_board]
+type = "PT"
+board_id = 21
+
+[sensor_roles_pt_board]
+"Ox Upstream" = 5
+
+[boards.labjack_1]
+type = "T7"
+board_id = 82
+
+[[boards.labjack_1.channels]]
+ain = 1
+kind = "PT"
+role = "LOX Tank"
+
+[[boards.labjack_1.channels]]
+ain = 2
+kind = "TC"
+role = "Nozzle TC"
+tc_type = "K"
+
+[[boards.labjack_1.channels]]
+ain = 6
+kind = "VOLTAGE"
+"""
+
+
+def test_t7_channels_take_their_role_raw_and_calibrated(elodin_dir):
+    # The run's sidecar config is all a past T7 run needs to read as sensors, not AINs.
+    snapshot(elodin_dir, "daq_20261104_120000", T7_TOML)
+    labels = run_config.entity_labels(run_config.load("daq_20261104_120000"))
+    # board_id 82 -> slot 2, the same rule as every other board.
+    assert labels["T72.AIN1"] == "LOX Tank"
+    assert labels["T72_Cal.AIN1"] == "LOX Tank"
+    assert labels["T72_Cal.AIN2"] == "Nozzle TC"
+    # A board with a thermocouple also records AIN14 and its cold junction.
+    assert labels["T72.AIN14"] == "LabJack T7 Board internal sensor"
+    assert labels["T72.CJC"] == "LabJack T7 Board cold junction"
+    # Unnamed VOLTAGE input keeps its numeric name; the ESP32 board is untouched.
+    assert "T72.AIN6" not in labels
+    assert labels["PT1.CH5"] == "Ox Upstream"
+
+
+def test_t7_without_a_thermocouple_names_no_cold_junction(elodin_dir):
+    snapshot(elodin_dir, "daq_20261104_120001", T7_TOML.replace('kind = "TC"', 'kind = "PT"'))
+    labels = run_config.entity_labels(run_config.load("daq_20261104_120001"))
+    assert "T72.CJC" not in labels and "T72.AIN14" not in labels

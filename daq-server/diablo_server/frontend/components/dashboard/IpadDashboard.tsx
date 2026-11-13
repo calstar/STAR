@@ -58,7 +58,7 @@ export default function IpadDashboard() {
                         {Array.from({ length: 16 }, (_, i) => {
                             const a = actuatorsFromConfig[i];
                             if (!a) return <div key={`empty-${i}`} className="min-h-0 border border-line/60" />;
-                            return <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} />;
+                            return <ActuatorControlByName key={a.name} name={a.name} channel={a.channel} entity={a.entity} boardId={a.boardId} ballValve={a.ballValve} />;
                         })}
                     </div>
                 </section>

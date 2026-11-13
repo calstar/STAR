@@ -273,12 +273,22 @@ function slipped(p: Phase, live: SessionState, setup: StandSetup): boolean {
 const HELD = new Set(['ox', 'fuel', 'charge', 'dome', 'fuelpress', 'topup', 'oxpress']);
 
 /** Phase `key` is done now, or was (it is in `reached`) and has not slipped
- *  since, or a later phase has been reached. One done now is added to
+ *  since, or a later phase has been reached -- or `entered`: the guide sent
+ *  the stand there and it is being worked. One done now is added to
  *  `reached`. The guide does not walk back past a phase it has moved on from:
  *  the LOX press draws a rocket-only COPV to 81 % of its charge, and sending
  *  the operator to top it up again let the pressed LOX collapse while the
- *  bottle filled. What has sagged by Ready is reported there (`sagged`). */
-export function phaseDone(key: string, live: SessionState, setup: StandSetup, reached: Set<string>): boolean {
+ *  bottle filled. Nor while a press is under way: at x1 the fuel press drew
+ *  the COPV to 84 % of its charge a quarter second before the tank reached
+ *  lockup, and the guide read "charge copv" and Auto to Ready left Fuel
+ *  Press for it. What has sagged by Ready is reported there (`sagged`). */
+export function phaseDone(
+  key: string,
+  live: SessionState,
+  setup: StandSetup,
+  reached: Set<string>,
+  entered: ReadonlySet<string> = new Set(),
+): boolean {
   const i = PHASES.findIndex((q) => q.key === key);
   if (i < 0) return true;
   const p = PHASES[i];
@@ -286,8 +296,64 @@ export function phaseDone(key: string, live: SessionState, setup: StandSetup, re
     if (HELD.has(key)) reached.add(key);
     return true;
   }
-  if (PHASES.slice(i + 1).some((q) => reached.has(q.key))) return true;
+  if (PHASES.slice(i + 1).some((q) => reached.has(q.key) || entered.has(q.key))) return true;
   return reached.has(key) && !slipped(p, live, setup);
+}
+
+/** The bottle's two phases: one gauge, so it is named once. */
+const BOTTLE = new Set(['charge', 'topup']);
+const PRESSES = new Set(['fuelpress', 'oxpress']);
+
+/** What the guide keeps from frame to frame of one session. */
+export interface PadMemory {
+  /** The session it is about: a new one starts afresh. */
+  id: string;
+  /** Held phases that have been done (HELD). */
+  reached: Set<string>;
+  /** Held phases the guide sent the stand to that it got to: being worked. */
+  entered: Set<string>;
+  /** The phase the guide was routing to last frame, '' when none. */
+  heading: string;
+}
+
+export const padMemory = (): PadMemory => ({ id: '', reached: new Set(), entered: new Set(), heading: '' });
+
+/** A regulator gives no more than its supply: a bottle under the lockup of a
+ *  tank it presses cannot hold that tank through a burn. */
+const bottleUnderLockup = (live: SessionState): boolean => {
+  const b = bottle(live);
+  const lockups = [oxTank(live), fuelTank(live)]
+    .map((t) => t?.lockup_psi)
+    .filter((x): x is number => x != null && x > 0);
+  return b !== undefined && lockups.length > 0 && b.pressure_psi < Math.max(...lockups);
+};
+
+/** What has slipped since the stand was committed, for the line at Ready.
+ *  The bottle once, and once a press after it has been reached or entered --
+ *  or its tank stands pressed, as after a reload -- only when it is under a
+ *  lockup it feeds: the presses spend it on purpose (the guide's own order
+ *  took LE4 (3)'s COPV to 83 % of its charge), and an amber "has slipped" at
+ *  every Ready, the bottle named twice, said nothing. */
+export function saggedPhases(
+  phases: readonly Phase[],
+  live: SessionState,
+  setup: StandSetup,
+  memory: Pick<PadMemory, 'reached' | 'entered'>,
+): Phase[] {
+  const pressedOff = (key: string) => {
+    const t = key === 'oxpress' ? oxTank(live) : fuelTank(live);
+    return t !== undefined && t.lockup_psi != null && !underPressed(t, setup.dome);
+  };
+  const spent = (key: string) =>
+    BOTTLE.has(key) &&
+    PHASES.slice(PHASES.findIndex((q) => q.key === key) + 1).some(
+      (q) => PRESSES.has(q.key) && (memory.reached.has(q.key) || memory.entered.has(q.key) || pressedOff(q.key)),
+    );
+  const slips = phases.filter(
+    (p) => p.key !== 'ready' && p.key !== 'fire' && (spent(p.key) ? bottleUnderLockup(live) : slipped(p, live, setup)),
+  );
+  const lastBottle = [...slips].reverse().find((p) => BOTTLE.has(p.key));
+  return slips.filter((p) => !BOTTLE.has(p.key) || p === lastBottle);
 }
 
 /** The pad sequence's phases in the order the guide walks them. */
@@ -364,11 +430,64 @@ export interface PadGuide {
   /** Phases done before the stand was committed that have since slipped
    *  further than SLIP. */
   sagged: Phase[];
+  /** At Ready, each tank holding less than its fire load, as a whole
+   *  percentage of it under 100. */
+  short: { label: string; percent: number }[];
   /** The LOX tank's chilldown while it runs: how far, the wall, and the
    *  stand seconds left at the rate it is cooling (null until measurable). */
   chill: { fraction: number; wallK: number; endK: number; leftS: number | null } | null;
   auto: boolean;
   setAuto: (on: boolean) => void;
+}
+
+/**
+ * The guide read off one frame, given what it remembers of the frames before
+ * (`memory`, updated here). Pure but for `memory`, so a recorded run can be
+ * replayed through it exactly as the console keeps it (padGuide.test.ts).
+ */
+export function readPad(
+  live: SessionState,
+  machine: StateMachine,
+  setup: StandSetup,
+  memory: PadMemory,
+): Omit<PadGuide, 'chill' | 'auto' | 'setAuto'> {
+  const phases = PHASES.filter((p) => machine.states.includes(p.target));
+  const committed = COMMITTED(live.state);
+  if (memory.id !== live.id) Object.assign(memory, padMemory(), { id: live.id });
+  // The stand has got where the guide sent it: that phase is being worked, and
+  // what a press draws from the bottle on the way is its cost, not a reason
+  // to send the operator back to the charge (`phaseDone`).
+  const sentTo = phases.find((p) => p.key === memory.heading);
+  if (sentTo && HELD.has(sentTo.key) && live.state === sentTo.target) memory.entered.add(sentTo.key);
+  const done = (p: Phase) => phaseDone(p.key, live, setup, memory.reached, memory.entered);
+  const current = phases.find((p) => !done(p) && !(committed && p.key !== 'ready' && p.key !== 'fire'));
+  const index = current ? phases.indexOf(current) : phases.length;
+  const inTarget = current !== undefined && live.state === current.target;
+  if (current && inTarget && HELD.has(current.key)) memory.entered.add(current.key);
+  memory.heading = current?.key ?? '';
+  // What has sagged since the stand was committed. Hot pressurant collapsing
+  // onto a cryogen after the press solenoid shuts is physical and is exactly
+  // what an operator watches for at Ready; the guide names it rather than
+  // pretending the checklist is still green.
+  // Not during a burn: tanks emptying into an engine have not "sagged".
+  // Only past SLIP: a few percent of sag after T-0 is the physics, not news.
+  const sagged = committed && live.state !== 'Fire' ? saggedPhases(phases, live, setup, memory) : [];
+  // The guide moves on from a load at LOADED_OF_TARGET of the fire load (a
+  // procedure call that is the team's, W12), and T-0 loads all of it: a pad
+  // burn is short by what is missing, so Ready says what is aboard.
+  const short =
+    live.state === 'Ready'
+      ? [fuelTank(live), oxTank(live)]
+          .filter((t): t is TankState => t !== undefined && (t.load_kg ?? 0) > 0)
+          .map((t) => ({ label: t.label, percent: Math.round((t.liquid_mass_kg / (t.load_kg as number)) * 100) }))
+          .filter((s) => s.percent < 100)
+      : [];
+  const path = current && !inTarget ? route(machine, live.state, current.target) : [];
+  const hop = path[0] ?? '';
+  const legal = hop !== '' && live.reachable.includes(hop);
+  const progress = current?.progress?.(live, setup);
+  const blocked = current?.blocked?.(live) ?? '';
+  return { phases, index, current, inTarget, hop, path, legal, progress, blocked, sagged, short };
 }
 
 /**
@@ -387,41 +506,14 @@ export function usePadGuide(
 ): PadGuide | null {
   const [auto, setAuto] = useState(false);
   const commanded = useRef('');
-  /** The held phases this session has reached (HELD); a new session, a new set. */
-  const reached = useRef<{ id: string; keys: Set<string> }>({ id: '', keys: new Set() });
+  /** What the guide remembers of this session; a new session, a new memory. */
+  const memory = useRef<PadMemory>(padMemory());
   const live = stand && {
     ...stand,
     tanks: stand.tanks.filter((t) => !ground.has(t.id)),
     bottles: stand.bottles.filter((b) => !ground.has(b.id)),
   };
-  const guide = (() => {
-    if (!live || !machine) return null;
-    const phases = PHASES.filter((p) => machine.states.includes(p.target));
-    const committed = COMMITTED(live.state);
-    if (reached.current.id !== live.id) reached.current = { id: live.id, keys: new Set() };
-    const held = reached.current.keys;
-    const current = phases.find(
-      (p) => !phaseDone(p.key, live, setup, held) && !(committed && p.key !== 'ready' && p.key !== 'fire'),
-    );
-    const index = current ? phases.indexOf(current) : phases.length;
-    // What has sagged since the stand was committed. Hot pressurant collapsing
-    // onto a cryogen after the press solenoid shuts is physical and is exactly
-    // what an operator watches for at Ready; the guide names it rather than
-    // pretending the checklist is still green.
-    // Not during a burn: tanks emptying into an engine have not "sagged".
-    // Only past SLIP: a few percent of sag after T-0 is the physics, not news.
-    const sagged =
-      committed && live.state !== 'Fire'
-        ? phases.filter((p) => p.key !== 'ready' && p.key !== 'fire' && slipped(p, live, setup))
-        : [];
-    const inTarget = current !== undefined && live.state === current.target;
-    const path = current && !inTarget ? route(machine, live.state, current.target) : [];
-    const hop = path[0] ?? '';
-    const legal = hop !== '' && live.reachable.includes(hop);
-    const progress = current?.progress?.(live, setup);
-    const blocked = current?.blocked?.(live) ?? '';
-    return { phases, index, current, inTarget, hop, path, legal, progress, blocked, sagged };
-  })();
+  const guide = live && machine ? readPad(live, machine, setup, memory.current) : null;
 
   // The chilldown, read off the LOX tank's wall: how far, and how long to go
   // at the rate it is cooling (measured over the last ~20 s of stand time).
@@ -524,7 +616,8 @@ export function PadGuideLine({
   /** The stand's note that this abort's table row leaves a main open. */
   abortNote?: string;
 }) {
-  const { phases, index, current, inTarget, hop, path, legal, progress, blocked, sagged, chill, auto, setAuto } = guide;
+  const { phases, index, current, inTarget, hop, path, legal, progress, blocked, sagged, short, chill, auto, setAuto } =
+    guide;
   // While the LOX wall chills nothing collects: the bar is the chill, by the
   // wall's temperature, and the line says how long to go.
   const chilling = inTarget && current?.key === 'ox' && chill !== null;
@@ -701,6 +794,15 @@ export function PadGuideLine({
           Since commit, {sagged.map((p) => p.label.toLowerCase()).join(', ')}{' '}
           {sagged.length === 1 ? 'has' : 'have'} slipped more than {Math.round(SLIP * 100)} %. Fire as it stands, or
           Vent and go round again.
+        </span>
+      )}
+      {short.length > 0 && (
+        <span
+          className="text-[var(--ink-3)]"
+          title={`The guide moves on from a load at ${Math.round(LOADED_OF_TARGET * 100)} % of the fire load; T-0 loads all of it. This burn runs short by what is missing, so compare it with a T-0 burn knowing that. To load it all, hold the fill longer before moving on.`}
+        >
+          Aboard: {short.map((s) => `${s.label} ${s.percent} %`).join(', ')} of the fire load (the guide moves on at{' '}
+          {Math.round(LOADED_OF_TARGET * 100)} %; T-0 loads 100 %).
         </span>
       )}
       {!hasEngine && (

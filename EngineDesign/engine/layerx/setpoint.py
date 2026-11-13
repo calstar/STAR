@@ -114,7 +114,7 @@ class SetpointRequest:
     """With ``replay`` off: burn the answer again with the replay (and correct once)."""
     lockup_bounds_psia: Optional[Tuple[float, float]] = None
     """Hard window for the lockup. ``None``: 50 %-150 % of the starting lockup, and never above the
-    lowest tank MAWP on the drawing."""
+    lowest pressure a tank trips the stand at (the drawing's MAWP, or burst over the safety factor)."""
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "SetpointRequest":
@@ -198,7 +198,10 @@ def figures(res: Dict[str, Any], lockup_psia: Optional[float]) -> Dict[str, Any]
         and fu.get("residual_kg") is not None else None,
         "copv_end_psia": copv_end,
         "copv_spare_psi": (copv_end - spare_over) if copv_end is not None and spare_over else None,
+        # The replay's, on EngineDesign's feed_system (``chug_margin_basis``); these burns run no stability
+        # diagnostic, so the drawing-basis margin the Burn tab grades is not computed here.
         "chug_margin_min": dv.get("chug_margin_min"),
+        "chug_margin_basis": "config" if dv.get("chug_margin_min") is not None else None,
         "throat_area_growth": dv.get("throat_area_growth"),
         "depleted_side": s.get("depleted_side"),
         "failed_steps": s.get("failed_steps"),
@@ -243,19 +246,21 @@ def _fallback_limits(res: Dict[str, Any], prep: Any, config: Any, grading: Dict[
         else:
             rows.append({**_row(c["key"], c["label"], groups.get(c["key"], "model"), None, None, "min", "",
                                 "optimize.grade (fallback)", c.get("detail", "")), "grade": "bad"})
-    ambient_psia = float(d.get("ambient_pa") or 101325.0) / PSI
     s = res.get("summary") or {}
     roles = getattr(prep, "roles", {}) or {}
     mawp = d.get("tank_mawp_psi") or {}
+    ratings = d.get("vessel_ratings") or {}
     dr = getattr(config, "design_requirements", None)
     for side, block, cap_key in (("oxidiser", "ox", "max_lox_tank_pressure_psi"), ("fuel", "fuel", "max_fuel_tank_pressure_psi")):
         peak = (s.get(block) or {}).get("peak_psia")
         tank = roles.get(side)
         word = "LOX" if side == "oxidiser" else "Fuel"
         if tank in mawp:
-            rows.append(_row(f"tank_peak_mawp.{side}", f"{word} tank peak vs MAWP", "tanks", peak,
-                             mawp[tank] + ambient_psia, "max", "psia", f"drawing {tank} MAWP over the site's atmosphere",
-                             "MAWP is across the wall: held against the site's atmosphere"))
+            rows.append(_row(f"tank_peak_mawp.{side}", f"{word} tank peak vs rating", "tanks", peak,
+                             float(mawp[tank]), "max", "psia",
+                             f"the {(ratings.get(tank) or {}).get('words') or f'{float(mawp[tank]):.1f} psia'} {tank} "
+                             "trips the stand at (prepare.vessel_trip)",
+                             "the twin trips the stand above it (Session._check_limits), absolute"))
         cap = getattr(dr, cap_key, None) if dr is not None else None
         if cap:
             rows.append(_row(f"tank_peak_cap.{side}", f"{word} tank peak vs the design's cap", "tanks", peak, float(cap),
@@ -320,7 +325,8 @@ def _dome_per_1000psi_fill(prep: Any, lockup_psia: float, fill_psig: float) -> O
         span = (fill_psig + 250.0) - max(fill_psig - 250.0, lockup_psia)
         if hi is None or lo is None or span <= 0:
             return None
-        return (hi - lo) / span * 1000.0
+        # A readout to a thousandth of a psi per 1000 psi: two solved dials subtracted read 14.699999999999818.
+        return round((hi - lo) / span * 1000.0, 3)
     except Exception:  # noqa: BLE001 - a readout
         return None
 
@@ -348,18 +354,16 @@ def burn_point(args: Dict[str, Any]) -> Dict[str, Any]:
     extra_overrides (drawing restatements for this point only), grading {margin_psi, meop_psi},
     index, tag. Never raises: a failure is ``ok: False`` with the error."""
     from engine.layerx.analysis import run_prepared
-    from engine.layerx.prepare import prepare
+    from engine.layerx.prepare import at_operating_point, prepare
 
     started = time.perf_counter()
     base = {"index": args.get("index"), "tag": args.get("tag"), "lockup_psia": args.get("lockup_psia"),
             "fill_psig": args.get("fill_psig"), "replay": bool(args.get("replay", True))}
     try:
-        changes: Dict[str, Any] = {"replay": base["replay"], "card_center_psia": None}
-        if args.get("lockup_psia") is not None:
-            changes["tank_pressure_psia"] = float(args["lockup_psia"])
-        if args.get("fill_psig") is not None:
-            changes["copv_pressure_psig"] = float(args["fill_psig"])
-        settings = replace(args["settings"], **changes)
+        # At this lockup and fill whatever the rail's dome dial and bottle knob say: they win over a
+        # tank pressure and a gauge fill in prepare(), and every point burned the rail's otherwise.
+        settings = at_operating_point(replace(args["settings"], replay=base["replay"], card_center_psia=None),
+                                      lockup_psia=args.get("lockup_psia"), fill_psig=args.get("fill_psig"))
         config = args["config"]
         prep = prepare(config, None, args["drawing"], settings,
                        list(args.get("overrides") or []) + list(args.get("extra_overrides") or []))
@@ -722,6 +726,13 @@ def _changes(before: Dict[str, Any], final: Dict[str, Any], start: Dict[str, Any
     return rows
 
 
+def lockup_ceiling_psia(derived: Dict[str, Any]) -> float:
+    """The highest lockup the set point searches [psia]: the lowest pressure a tank trips the stand
+    at, as it is (``derived.tank_mawp_psi`` is absolute: ``prepare.vessel_trip``); ``inf`` when the
+    drawing rates no tank. It used to add the site's atmosphere on top, searching past the trip."""
+    return min((float(v) for v in (derived.get("tank_mawp_psi") or {}).values()), default=math.inf)
+
+
 def run_setpoint(config: Any, drawing: Any, settings: Any, overrides: List[Any], request: SetpointRequest, *,
                  progress: Optional[Progress] = None, cancelled: Callable[[], bool] = lambda: False,
                  workers: Optional[int] = None, evaluate: Optional[Evaluate] = None,
@@ -743,11 +754,13 @@ def run_setpoint(config: Any, drawing: Any, settings: Any, overrides: List[Any],
     say("Preparing", 0.01)
     lockup0 = getattr(settings, "tank_pressure_psia", None)
     cfg_lockup = float(getattr(getattr(config, "lox_tank", None), "initial_pressure_psi", 0.0) or 0.0)
+    # The rail's bottle knob writes the absolute fill (2026-10-07), which prepare() reads first.
+    fill_psia0 = getattr(settings, "copv_pressure_psia", None)
+    fill_psig0 = fill_psia0 - 101325.0 / PSI if fill_psia0 is not None else getattr(settings, "copv_pressure_psig", None)
     start = {"lockup_psia": lockup0 or cfg_lockup,
              "source": "the rail's tank pressure" if lockup0 else "config lox_tank.initial_pressure_psi",
-             "fill_psig": getattr(settings, "copv_pressure_psig", None),
-             "fill_source": "the rail's bottle pressure" if getattr(settings, "copv_pressure_psig", None) is not None
-             else "the drawing's bottle pressure"}
+             "fill_psig": fill_psig0,
+             "fill_source": "the rail's bottle pressure" if fill_psig0 is not None else "the drawing's bottle pressure"}
     reference_F = None
     max_fill = None
     mawp_cap = math.inf
@@ -759,12 +772,16 @@ def run_setpoint(config: Any, drawing: Any, settings: Any, overrides: List[Any],
             raise ValueError("Preflight failed: " + "; ".join(c.label for c in nominal.checks if c.status == "fail"))
         d = nominal.derived
         start["lockup_psia"] = float(d["target_lockup_psia"])
+        # Where the starting lockup came from, as prepare() decided it (the dome dial wins on the rail).
+        start["source"] = {"set on the rail": "the lockup the rail's dome dial gives",
+                           "solved for the rail's tank pressure": "the rail's tank pressure",
+                           "as drawn": "the lockup the drawing's dome dial gives",
+                           "solved for the design's tank pressure": "config lox_tank.initial_pressure_psi",
+                           }.get(str(d.get("dome_source")), start["source"])
         start["fill_psig"] = float(d["copv_psig"])
         max_fill = float(d.get("copv_drawn_psig") or d["copv_psig"])
         reference_F = float((nominal.link.reference or {}).get("F") or 0.0) if nominal.link else None
-        amb = float(d.get("ambient_pa") or 101325.0) / PSI
-        for v in (d.get("tank_mawp_psi") or {}).values():
-            mawp_cap = min(mawp_cap, float(v) + amb)
+        mawp_cap = lockup_ceiling_psia(d)
     elif stand:
         start["lockup_psia"] = float(stand.get("lockup_psia") or start["lockup_psia"])
         if stand.get("fill_psig") is not None:

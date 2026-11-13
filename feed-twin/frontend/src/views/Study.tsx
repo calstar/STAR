@@ -182,6 +182,17 @@ function NumberCell({
   );
 }
 
+/** What T-0 loads, tank by tank, each number with its unit: the fire load,
+ *  or what the tank holds at its full fraction when that is less (said in the
+ *  Notes; the burn is shorter). "load Eth-Tank 4.40 · LOX-Tank 6.61 kg" left
+ *  the first number without one. */
+export function loadLine(flight: readonly { label: string; fire_load_kg?: number | null; load_kg?: number }[]): string {
+  const held = (t: (typeof flight)[number]) => Math.min(t.fire_load_kg ?? 0, t.load_kg ?? Infinity);
+  const short = (t: (typeof flight)[number]) =>
+    held(t) < (t.fire_load_kg ?? 0) - 0.005 ? ` of ${fixed(t.fire_load_kg ?? 0, 2)} kg` : '';
+  return `load ${flight.map((t) => `${t.label} ${fixed(held(t), 2)} kg${short(t)}`).join(' · ')}`;
+}
+
 export function Study() {
   const { live, setup, artifacts, where, standDoc, model } = useStand();
   const [study, setStudy] = useState<StudyState | null>(null);
@@ -236,14 +247,7 @@ export function Study() {
   const ground = new Set(model?.ground ?? []);
   const flight = (live?.tanks ?? []).filter((t) => !ground.has(t.id));
   const fireLoaded = flight.length > 0 && flight.every((t) => (t.fire_load_kg ?? 0) > 0);
-  // What T-0 loads: the fire load, or what the tank holds at its full
-  // fraction when that is less (said in the Notes; the burn is shorter).
-  const held = (t: (typeof flight)[number]) => Math.min(t.fire_load_kg ?? 0, t.load_kg ?? Infinity);
-  const loadText = fireLoaded
-    ? `load ${flight
-        .map((t) => `${t.label} ${fixed(held(t), 2)}${held(t) < (t.fire_load_kg ?? 0) - 0.005 ? ` of ${fixed(t.fire_load_kg ?? 0, 2)}` : ''}`)
-        .join(' · ')} kg`
-    : `fill ${fixed(fill * 100, 0)} %`;
+  const loadText = fireLoaded ? loadLine(flight) : `fill ${fixed(fill * 100, 0)} %`;
 
   const edit = (i: number, patch: Partial<StudyCaseIn>) =>
     setCases((all) => all.map((c, k) => (k === i ? { ...c, ...patch } : c)));
@@ -412,7 +416,10 @@ function CaseTable({
               Bottle (L)
             </th>
             {fill !== null && (
-              <th className={th} title="Liquid over tank volume at T-0, for a tank the engine's fire load does not name">
+              <th
+                className={th}
+                title="Liquid over tank volume at T-0 for a tank the engine's fire load does not name; for one it names, the most it may hold, which cuts a fire load that does not fit. 50 to 99 %."
+              >
                 Fill (%)
               </th>
             )}

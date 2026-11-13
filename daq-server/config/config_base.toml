@@ -46,6 +46,7 @@ tabs = [
   "boards",
   "self-tests",
   "session",
+  "video",
   "config"
 ]
 
@@ -122,7 +123,7 @@ Chamber = [ "Chamber Mid PT 1", "Chamber Mid PT 2", "Chamber Throat PT 1", "Cham
 mode = "board-clock"
 window_seconds = 10
 max_plausible_gap_s = 60
-max_batch_age_s = 5
+max_batch_age_s = 20  # > one batch of a slow board: an LC packet spans ~12 s on old firmware
 resync_threshold_ms = 1000
 log_interval_s = 10
 
@@ -334,6 +335,73 @@ designated_survivor = false
 voltage_reference = 1
 active_connectors = [ 1, 2 ]
 
+# LabJack T7 (t7_bridge). A simulated run streams it as a stand-in device (t7_bridge --fake), and
+# test_integration.sh asserts on these exact channels — change them together.
+[boards.labjack_1]
+type = "T7"
+ip = "192.168.2.81"
+mac = "90:2e:87:01:24:f1"
+board_id = 81
+enabled = true
+scan_rate_hz = 100.0
+
+[[boards.labjack_1.channels]]
+ain = 1
+kind = "PT"
+role = "T7 Tank PT"
+signal = "4-20mA"
+shunt_ohms = 250.0
+full_scale = 1000.0
+
+[[boards.labjack_1.channels]]
+ain = 2
+kind = "TC"
+role = "T7 Nozzle TC"
+tc_type = "K"
+range = 0.1
+
+[[boards.labjack_1.channels]]
+ain = 3
+kind = "RTD"
+role = "T7 LOX RTD"
+r0_ohms = 1000.0      # Pt1000
+ljtr_ohms = 1000.0    # on an LJTick-Resistance-1k
+
+[[boards.labjack_1.channels]]
+ain = 4
+kind = "LC"
+role = "T7 Thrust LC"
+differential = true
+range = 0.1
+full_scale = 500.0
+sensitivity_mv_per_v = 2.0
+excitation_v = 10.0
+
+# Motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire), two valves on connectors 1
+# and 2. Each is commanded like an actuator through [actuator_roles] -- ["NC", 1, 71] and
+# ["NC", 2, 71]; a ball valve has no NO/NC -- and streams its position (4-20 mA) instead of a
+# current sense. A role's channel must be one of active_connectors. The board opens its valves
+# itself 5 s after server heartbeats stop, and is left out of the abort lists sent to actuator
+# boards.
+# Enabled here, the sim/test config, so the simulator, test_integration.sh and the Playwright stack
+# all carry it; disabled in every deployed profile until the board is on the stand. `mac` is the
+# retired protoboard's ESP32-WROOM-32; the Prop Receiver v2 (ESP32-S3) prints its own (Ethernet MAC =
+# base MAC + 3). No role
+# here: test_integration.sh names one in its own copy.
+[boards.ball_valve_board]
+type = "BALL_VALVE"
+ip = "192.168.2.71"
+mac = "fc:b4:67:73:cf:63"
+send_port = 5005
+listen_port = 5005
+board_id = 71
+enabled = true
+enable_serial_printing = 0
+necessary_for_abort = false
+designated_survivor = false
+voltage_reference = 0
+active_connectors = [ 1, 2 ]
+
 [sim_pt_targets]
 1 = 500
 2 = 450
@@ -390,10 +458,12 @@ active_connectors = [ 1, 2 ]
 # "Fuel Upstream" = 1000
 
 # Load cells support the same per-sensor model selection as PT, minus robust/blend (LC doesn't
-# learn drift): "cubic" (operator-captured fit, built from the calibration GUI) or "physics"
-# (datasheet sensitivity/PGA-gain conversion — [calibration.lc] below, or per-sensor overrides).
-# A role with no entry here defaults to "physics" (today's behavior; unchanged unless you opt a
-# role into "cubic"). Requires a [sensor_roles_<lc_board>] section naming that board's connectors.
+# learn drift): "linear" (a straight line through the operator's captures — the default), "cubic"
+# (a cubic through them) or "physics" (datasheet sensitivity/PGA-gain conversion — [calibration.lc]
+# below, or per-sensor overrides). A role with no entry here is "linear": a tare then cancels a
+# zero drift exactly, where a cubic evaluated outside its captured range bends. Until it has two
+# captured points a linear sensor streams physics, so an uncaptured load cell reads as it always
+# did. Requires a [sensor_roles_<lc_board>] section naming that board's connectors.
 # [sensor_roles_lc_board]
 # "Thrust" = 1
 #
@@ -409,6 +479,9 @@ active_connectors = [ 1, 2 ]
 # [calibration_full_scale_lc_board]
 # "Thrust" = 500
 
+# UNUSED today: these reach the actuator board in its config packet, but the firmware only reads
+# them in its PTAbort state, which is unreachable while ENABLE_ALL_STATE_TRANSITIONS = false
+# (firmware/Hotfire_Code/common/hotfire_config.h). No board aborts on them. Hidden in the GUI.
 [abort_pts]
 "Fuel Upstream" = 400
 "Ox Upstream" = 400
@@ -482,55 +555,67 @@ sensitivity_mv_per_v = 2
 pga_gain = 32
 full_scale_value = 300
 
+# NOP/MEOP/POP per system; top-bar gauges point here by their `limits` key. show_in_top_bar = false
+# hides that entry's NOP/MEOP lines and numbers on the top bar (the gauge still turns amber/red).
 [pressure_limits.GN2_High]
 NOP = 4000
 MEOP = 5000
 POP = 1000
+show_in_top_bar = true
 
 [pressure_limits.GN2_Regulated]
 NOP = 900
 MEOP = 1250
 POP = 9000
+show_in_top_bar = true
 
 [pressure_limits.Fuel_Upstream]
 NOP = 540
 MEOP = 650
 POP = 750
+show_in_top_bar = true
 
 [pressure_limits.Fuel_Downstream]
 NOP = 540
 MEOP = 650
 POP = 750
+show_in_top_bar = true
 
 [pressure_limits.Ox_Upstream]
 NOP = 505
 MEOP = 650
 POP = 750
+show_in_top_bar = true
 
 [pressure_limits.Ox_Downstream]
 NOP = 505
 MEOP = 650
 POP = 750
+show_in_top_bar = true
 
 [pressure_limits.GSE_Low]
 NOP = 130
 MEOP = 155
 POP = 800
+show_in_top_bar = true
 
 [pressure_limits.GSE_Mid]
 NOP = 1500
 MEOP = 2000
 POP = 5000
+show_in_top_bar = true
 
 [pressure_limits.GSE_High]
 NOP = 4000
 MEOP = 5000
 POP = 800
+show_in_top_bar = true
 
 [pressure_limits.Chamber]
 NOP = 500
 MEOP = 650
 POP = 800
+show_in_top_bar = true
 
 [state_machine]
 actuator_csv = "config/state_machine_actuators.csv"

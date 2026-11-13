@@ -6,7 +6,8 @@ import {
 } from 'recharts';
 import { CubicCalibrationChannel } from '@/lib/types';
 
-// The service supplies captured points, the cubic `polyCoeffs`, and a pre-sampled robust `fitCurve`.
+// The service supplies captured points, the linear and cubic fits (`fits`, with the active one also
+// as `polyCoeffs`), and a pre-sampled robust `fitCurve`.
 // Physics is a closed form the browser evaluates directly. The browser never fits — it only draws
 // the captured points plus each model's curve so you can compare them before choosing a model.
 
@@ -34,7 +35,8 @@ function physicsPsi(adc: number, p: PhysicsParams): number {
     const iMa = (vSense / (p.senseResistor ?? 120)) * 1000;
     return ((iMa - 4) / 16) * p.fullScale;
   }
-  return frac * p.fullScale;
+  // 0.5-4.5 V at 5 V excitation: 10 % of full code at zero, 90 % at full scale.
+  return ((frac - 0.1) / 0.8) * p.fullScale;
 }
 
 // LC datasheet conversion — mirrors convert_lc_adc_to_force: excitation is the ADC reference, so it
@@ -79,8 +81,10 @@ function physicsSpanAdc(physics?: PhysicsParams, lcPhysics?: LcPhysicsParams): n
  *
  * Exported for the test; the component is the only caller.
  */
+export type ChartModel = 'cubic' | 'robust' | 'physics' | 'linear';
+
 export function physicsSweepRangeForTests(
-  activeModel: 'cubic' | 'robust' | 'physics' | undefined,
+  activeModel: ChartModel | undefined,
   points: Array<{ adc: number }>,
   physics?: PhysicsParams,
   lcPhysics?: LcPhysicsParams,
@@ -108,7 +112,27 @@ function evalCubicNorm(adc: number, poly: number[], min: number, scale: number):
   return y;
 }
 
-interface Row { adc: number; psi?: number; op?: number; psiCubic?: number; psiRobust?: number; psiPhysics?: number }
+interface Row { adc: number; psi?: number; op?: number; psiCubic?: number; psiLinear?: number; psiRobust?: number; psiPhysics?: number }
+
+type FitForm = { poly: number[]; min: number; scale: number };
+
+/**
+ * The cubic and linear curves to draw, from the service's two fits. A file written before linear
+ * existed carries only the active fit (`polyCoeffs`), which was then always the cubic.
+ * Exported for the test; the component is the only caller.
+ */
+export function fitCurvesForTests(state?: CubicCalibrationChannel): { cubic?: FitForm; linear?: FitForm } {
+  if (!state) return {};
+  const form = (f?: { valid?: boolean; polyCoeffs?: number[]; adcNormMin?: number; adcNormScale?: number }) =>
+    f && f.valid && f.polyCoeffs && f.polyCoeffs.length >= 2
+      ? { poly: f.polyCoeffs, min: f.adcNormMin ?? 0, scale: f.adcNormScale ?? 1 }
+      : undefined;
+  if (state.fits) return { cubic: form(state.fits.cubic), linear: form(state.fits.linear) };
+  const legacy = state.polyCoeffs && state.polyCoeffs.length >= 2
+    ? { poly: state.polyCoeffs, min: state.adcNormMin, scale: state.adcNormScale }
+    : undefined;
+  return { cubic: legacy };
+}
 
 // Older captured points weigh less under robust RLS forgetting — fade them so recency reads at a
 // glance. This matters for reading a robust fit, and is harmless for cubic.
@@ -120,7 +144,7 @@ const AgeDot = (props: { cx?: number; cy?: number; payload?: Row }) => {
   );
 };
 
-const CURVE_COLORS = { cubic: '#38BDF8', robust: '#A78BFA', physics: '#FB923C' } as const;
+const CURVE_COLORS = { cubic: '#38BDF8', linear: '#34D399', robust: '#A78BFA', physics: '#FB923C' } as const;
 
 // Custom tooltip: recharts' default duplicates the numeric X value on a scatter/number axis, and
 // its label text renders black. We render the ADC once, then one row per present series.
@@ -148,8 +172,8 @@ function ChartTooltip({ active, payload, label, unit = 'psi' }: { active?: boole
 export interface CalibrationChartProps {
   state?: CubicCalibrationChannel;
   height?: number;
-  activeModel?: 'cubic' | 'robust' | 'physics';
-  show?: { cubic?: boolean; robust?: boolean; physics?: boolean };
+  activeModel?: ChartModel;
+  show?: { cubic?: boolean; linear?: boolean; robust?: boolean; physics?: boolean };
   physics?: PhysicsParams;
   /** LC datasheet physics params — mutually exclusive with `physics` (PT). */
   lcPhysics?: LcPhysicsParams;
@@ -159,12 +183,13 @@ export interface CalibrationChartProps {
 
 /**
  * Shared calibration chart for the merged page. Draws the captured points (age-faded) plus up to
- * three model overlays — cubic (from polyCoeffs), robust (service `fitCurve`), physics (closed
- * form) — with the active model emphasized. `show` gates each overlay; `physics`/`lcPhysics`
+ * four model overlays — cubic and linear (the service's two fits), robust (service `fitCurve`),
+ * physics (closed form) — with the active model emphasized. `show` gates each overlay; `physics`/`lcPhysics`
  * supplies the datasheet params from config (PT and LC use different physics formulas).
  */
 export function CalibrationChart({ state, height = 420, activeModel, show, physics, lcPhysics, unit = 'psi' }: CalibrationChartProps) {
   const showCubic = show?.cubic ?? true;
+  const showLinear = show?.linear ?? true;
   const showRobust = show?.robust ?? true;
   const showPhysics = show?.physics ?? true;
 
@@ -180,14 +205,16 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
     const [lo, hi] = physicsSweepRangeForTests(activeModel, pts, physics, lcPhysics);
 
     const N = 60;
-    const poly = state?.polyCoeffs;
-    const cubicOk = showCubic && poly && poly.length >= 2 && n >= 2;
+    const fits = fitCurvesForTests(state);
+    const cubic = showCubic && n >= 2 ? fits.cubic : undefined;
+    const linear = showLinear && n >= 2 ? fits.linear : undefined;
     const hasPhysics = showPhysics && (physics || lcPhysics);
-    if (cubicOk || hasPhysics) {
+    if (cubic || linear || hasPhysics) {
       for (let i = 0; i <= N; i++) {
         const adc = lo + ((hi - lo) * i) / N;
         const row: Row = { adc };
-        if (cubicOk) row.psiCubic = evalCubicNorm(adc, poly!, state!.adcNormMin, state!.adcNormScale);
+        if (cubic) row.psiCubic = evalCubicNorm(adc, cubic.poly, cubic.min, cubic.scale);
+        if (linear) row.psiLinear = evalCubicNorm(adc, linear.poly, linear.min, linear.scale);
         if (hasPhysics) row.psiPhysics = lcPhysics ? physicsKg(adc, lcPhysics) : physicsPsi(adc, physics!);
         rows.push(row);
       }
@@ -196,10 +223,10 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
       for (const c of state?.fitCurve ?? []) rows.push({ adc: c.adc, psiRobust: c.psi });
     }
     return rows.sort((a, b) => a.adc - b.adc);
-  }, [state, showCubic, showRobust, showPhysics, physics, lcPhysics, activeModel]);
+  }, [state, showCubic, showLinear, showRobust, showPhysics, physics, lcPhysics, activeModel]);
 
-  const w = (m: 'cubic' | 'robust' | 'physics') => (activeModel === m ? 3 : 1.5);
-  const dash = (m: 'cubic' | 'robust' | 'physics') => (activeModel && activeModel !== m ? '4 3' : undefined);
+  const w = (m: ChartModel) => (activeModel === m ? 3 : 1.5);
+  const dash = (m: ChartModel) => (activeModel && activeModel !== m ? '4 3' : undefined);
 
   return (
     <div className="border border-gray-800 rounded bg-card p-2" style={{ height }}>
@@ -219,6 +246,11 @@ export function CalibrationChart({ state, height = 420, activeModel, show, physi
             <Line type="monotone" dataKey="psiCubic" stroke={CURVE_COLORS.cubic} dot={false}
                   strokeWidth={w('cubic')} strokeDasharray={dash('cubic')} connectNulls
                   isAnimationActive={false} name="cubic" />
+          )}
+          {showLinear && (
+            <Line type="monotone" dataKey="psiLinear" stroke={CURVE_COLORS.linear} dot={false}
+                  strokeWidth={w('linear')} strokeDasharray={dash('linear')} connectNulls
+                  isAnimationActive={false} name="linear" />
           )}
           {showRobust && (
             <Line type="monotone" dataKey="psiRobust" stroke={CURVE_COLORS.robust} dot={false}

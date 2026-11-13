@@ -27,14 +27,16 @@ import { isValidScriptFilename } from './state-script-names.js';
 /** Ceiling on a dynamic state's script timeout. Mirrors sequencer::kMaxScriptTimeoutMs. */
 const MAX_SCRIPT_TIMEOUT_MS = 600000;
 export const CONFIG_PAGE_LABELS = {
+    profile: 'Config profile',
     boards: 'Boards',
     roles: 'Roles',
     gui: 'Top Bar & Limits',
     controller: 'Controller',
     state: 'State Machine',
     calibration: 'Calibration',
-    system: 'System',
 };
+/** The config editor's tabs, in order: every page id but 'profile'. */
+export const CONFIG_TAB_IDS = Object.keys(CONFIG_PAGE_LABELS).filter((id) => id !== 'profile');
 export const parseCsvGrid = (text) => {
     const lines = text.split('\n').map((l) => l.replace(/\r$/, '')).filter((l) => l.trim() !== '');
     if (lines.length === 0)
@@ -63,14 +65,40 @@ export const diffKeys = (have, want) => ({
 // ── Boards ───────────────────────────────────────────────────────────────────
 const BOARD_TYPE_LABEL = {
     PT: 'PT', ACTUATOR: 'Actuator', LC: 'LC', TC: 'TC', RTD: 'RTD', ENCODER: 'Encoder',
-    ENVIRONMENTAL: 'Environmental',
+    ENVIRONMENTAL: 'Environmental', BALL_VALVE: 'Ball Valve', T7: 'LabJack T7',
 };
+/** [boards.*].type of a motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire). */
+export const BALL_VALVE_TYPE = 'BALL_VALVE';
 /**
- * Friendly board name for display: "PT Board #2" rather than the raw `pt_board_2` config key.
- * Numbered by position among boards of the same type, so it tracks what is actually configured
- * instead of parsing digits out of the key.
+ * board_ids of every [boards.*] with type BALL_VALVE, enabled or not. An actuator role whose
+ * board_id is in this set is a ball valve: no NO/NC (1 is open on the wire), no PWM, and its
+ * position (not a current) is what shows under it.
+ */
+export const ballValveBoardIds = (config) => {
+    const boards = (config?.boards && typeof config.boards === 'object')
+        ? config.boards : {};
+    const ids = new Set();
+    for (const b of Object.values(boards)) {
+        if (String(b?.type ?? '').toUpperCase() !== BALL_VALVE_TYPE)
+            continue;
+        const id = Number(b?.board_id ?? b?.id);
+        if (Number.isInteger(id))
+            ids.add(id);
+    }
+    return ids;
+};
+/** The name an operator gave a board ([boards.*].name), trimmed; '' when it has none. */
+export const boardGivenName = (board) => typeof board?.name === 'string' ? board.name.trim() : '';
+/**
+ * Friendly board name for display: its given name ([boards.*].name) when it has one, else
+ * "PT Board #2" rather than the raw `pt_board_2` config key — numbered by position among boards
+ * of the same type, so it tracks what is actually configured instead of parsing digits out of
+ * the key.
  */
 export const boardDisplayName = (boards, boardKey) => {
+    const given = boardGivenName(boards?.[boardKey]);
+    if (given)
+        return given;
     const type = boards?.[boardKey]?.type;
     if (typeof type !== 'string' || !type)
         return boardKey;
@@ -119,6 +147,298 @@ export const boardSlotIssue = (boards, boardKey) => {
     }
     return null;
 };
+/** The field a calibrated T7 channel publishes, by kind; VOLTAGE has no calibrated table. */
+export const T7_CAL_FIELD = {
+    PT: 'pressure_psi', TC: 'temperature_c', LC: 'force_kg', RTD: 'temperature_c',
+};
+export const T7_PT_SIGNALS = ['0-5V', '0.5-4.5V', '1-5V', '0-10V', '4-20mA'];
+export const T7_RANGES = [10, 1, 0.1, 0.01];
+export const T7_MAX_AIN = 13;
+/** AIN14 is the T7's internal temperature sensor, streamed raw for thermocouple CJC. */
+export const T7_CJC_AIN = 14;
+const t7SlotOf = (id) => (id % 10 === 0 ? 10 : id % 10);
+/**
+ * Every T7 channel in `boards`, in config order, with the tables t7_bridge publishes it to.
+ * Disabled boards are included (enabled: false) so an editor can still show them; anything that
+ * subscribes or lists live sensors filters them out. Malformed entries (no integer ain, no
+ * integer board_id) are skipped — t7BoardIssues() is what reports them.
+ */
+export function t7Channels(boards) {
+    const out = [];
+    for (const [boardKey, b] of Object.entries(boards ?? {})) {
+        if (String(b?.type ?? '').toUpperCase() !== 'T7')
+            continue;
+        const boardId = Number(b.board_id);
+        if (!Number.isInteger(boardId) || boardId < 1 || boardId > 255)
+            continue;
+        const slot = t7SlotOf(boardId);
+        const base = (slot - 1) * 0x20;
+        const channels = Array.isArray(b.channels) ? b.channels : [];
+        const common = { boardKey, boardId, boardIp: String(b.ip ?? ''), enabled: b.enabled !== false, slot };
+        let hasTc = false;
+        for (const c of channels) {
+            const ain = Number(c?.ain);
+            if (!Number.isInteger(ain) || ain < 0 || ain > T7_MAX_AIN)
+                continue;
+            const kind = String(c?.kind ?? '');
+            if (kind === 'TC')
+                hasTc = true;
+            const calField = T7_CAL_FIELD[kind] ?? null;
+            out.push({
+                ...common, ain, kind, role: String(c?.role ?? ''),
+                rawLow: base + ain, entity: `T7${slot}.AIN${ain}`,
+                calLow: calField ? base + 0x10 + ain : null,
+                calEntity: calField ? `T7${slot}_Cal.AIN${ain}` : null,
+                calField,
+            });
+        }
+        if (hasTc) {
+            out.push({
+                ...common, ain: T7_CJC_AIN, kind: 'CJC', role: '',
+                rawLow: base + T7_CJC_AIN, entity: `T7${slot}.AIN${T7_CJC_AIN}`,
+                calLow: null, calEntity: null, calField: null,
+            });
+        }
+    }
+    return out;
+}
+/**
+ * What is wrong with one T7 board, as plain sentences; [] for a fine one or a non-T7. Mirrors
+ * parse_t7_boards() in lib/src/config/T7Config.cpp check for check, so the editor and the session
+ * gate refuse exactly what t7_bridge would.
+ */
+export function t7BoardIssues(boards, boardKey) {
+    return [...t7BoardSettingsIssues(boards, boardKey), ...t7ChannelIssues(boards, boardKey)];
+}
+/** The part of t7BoardIssues() about the board itself (identity, network, stream) — the Boards tab. */
+export function t7BoardSettingsIssues(boards, boardKey) {
+    const b = boards?.[boardKey];
+    if (!b || String(b.type ?? '').toUpperCase() !== 'T7')
+        return [];
+    const out = [];
+    const num = (v, d) => (typeof v === 'number' ? v : d);
+    const enabled = b.enabled !== false;
+    const id = b.board_id;
+    if (!Number.isInteger(id) || id < 1 || id > 255)
+        out.push('board_id must be an integer from 1 to 255.');
+    if (enabled) {
+        if (!b.ip)
+            out.push('ip is required.');
+        else if (!/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(String(b.ip))
+            || String(b.ip).split('.').some((o) => Number(o) > 255))
+            out.push(`ip "${b.ip}" is not an IPv4 address.`);
+    }
+    const rate = num(b.scan_rate_hz, 100);
+    if (!(rate > 0))
+        out.push('scan_rate_hz must be positive.');
+    const res = num(b.resolution_index, 0);
+    if (!Number.isInteger(res) || res < 0 || res > 8)
+        out.push('resolution_index must be 0-8.');
+    if (num(b.settling_us, 0) < 0)
+        out.push('settling_us cannot be negative.');
+    if (num(b.scans_per_read, 0) < 0)
+        out.push('scans_per_read cannot be negative.');
+    const cjc = num(b.cjc_offset_k, -3.0);
+    if (!Number.isFinite(cjc) || Math.abs(cjc) > 20)
+        out.push('cjc_offset_k must be within ±20 K.');
+    if (enabled) {
+        const channels = Array.isArray(b.channels) ? b.channels : [];
+        if (rate * channels.length > 100000)
+            out.push(`scan_rate_hz × channels = ${Math.round(rate * channels.length)} samples/s, beyond the T7's 100000.`);
+        out.push(...t7StreamLimitIssues(channels, rate, res, num(b.settling_us, 0)));
+    }
+    return out;
+}
+/** The part of t7BoardIssues() about the channel table — the Roles tab, where the table lives. */
+export function t7ChannelIssues(boards, boardKey) {
+    const b = boards?.[boardKey];
+    if (!b || String(b.type ?? '').toUpperCase() !== 'T7')
+        return [];
+    const out = [];
+    const num = (v, d) => (typeof v === 'number' ? v : d);
+    const enabled = b.enabled !== false;
+    const channels = Array.isArray(b.channels) ? b.channels : [];
+    if (b.channels !== undefined && !Array.isArray(b.channels))
+        out.push('channels must be a list of tables.');
+    // Roles are unique across every T7 (the GUI keys a sensor by its role).
+    const roleOwners = new Map();
+    for (const [k, ob] of Object.entries(boards)) {
+        if (k === boardKey || String(ob?.type ?? '').toUpperCase() !== 'T7')
+            continue;
+        for (const c of Array.isArray(ob?.channels) ? ob.channels : [])
+            if (c?.role && c?.kind !== 'VOLTAGE' && !roleOwners.has(c.role))
+                roleOwners.set(c.role, k);
+    }
+    const ainOwner = new Map();
+    channels.forEach((c, i) => {
+        const p = `channel ${i + 1}: `;
+        const kind = String(c?.kind ?? '');
+        const ain = c?.ain;
+        if (!Number.isInteger(ain) || ain < 0 || ain > T7_MAX_AIN) {
+            out.push(`${p}ain must be 0-${T7_MAX_AIN}.`);
+        }
+        else {
+            const claim = (n) => {
+                const prev = ainOwner.get(n);
+                if (prev !== undefined)
+                    out.push(`${p}AIN${n} is already used by channel ${prev + 1}.`);
+                else
+                    ainOwner.set(n, i);
+            };
+            claim(ain);
+            if (c?.differential === true) {
+                if (ain % 2 !== 0)
+                    out.push(`${p}a differential input must be an even AIN (it pairs with the odd one above it).`);
+                else
+                    claim(ain + 1);
+            }
+        }
+        if (!['PT', 'TC', 'LC', 'RTD', 'VOLTAGE'].includes(kind))
+            out.push(`${p}kind "${kind}" must be one of PT, TC, LC, RTD, VOLTAGE.`);
+        const range = num(c?.range, kind === 'TC' ? 0.1 : 10);
+        if (!T7_RANGES.some((r) => Math.abs(r - range) < 1e-9))
+            out.push(`${p}range must be one of 10, 1, 0.1, 0.01 (volts).`);
+        if (kind === 'TC' && c?.tc_type !== 'K')
+            out.push(`${p}tc_type "${c?.tc_type ?? ''}": only type K thermocouples are converted so far.`);
+        if (kind !== 'TC' && c?.tc_type !== undefined && c?.tc_type !== '')
+            out.push(`${p}tc_type is only meaningful on kind = "TC".`);
+        if (kind !== 'VOLTAGE' && kind !== '') {
+            if (!c?.role)
+                out.push(`${p}a ${kind} channel needs a role (its name).`);
+            else if (roleOwners.has(c.role))
+                out.push(`${p}role "${c.role}" is already used by [boards.${roleOwners.get(c.role)}].`);
+            else
+                roleOwners.set(c.role, boardKey);
+        }
+        const fs = num(c?.full_scale, 0), shunt = num(c?.shunt_ohms, 0);
+        const sens = num(c?.sensitivity_mv_per_v, 0), exc = num(c?.excitation_v, 0);
+        const signal = c?.signal ?? '';
+        if (kind === 'PT') {
+            if (!(fs > 0))
+                out.push(`${p}a PT needs full_scale (psi at full output).`);
+            if (!T7_PT_SIGNALS.includes(signal))
+                out.push(`${p}a PT needs signal, one of ${T7_PT_SIGNALS.join(' ')}.`);
+            if (signal === '4-20mA') {
+                if (!(shunt > 0))
+                    out.push(`${p}a 4-20mA PT needs shunt_ohms.`);
+            }
+            else if (shunt !== 0)
+                out.push(`${p}shunt_ohms is only meaningful on a 4-20mA PT.`);
+        }
+        if (kind === 'LC') {
+            if (!(fs > 0))
+                out.push(`${p}an LC needs full_scale (kg at rated output).`);
+            if (!(sens > 0))
+                out.push(`${p}an LC needs sensitivity_mv_per_v.`);
+            if (!(exc > 0))
+                out.push(`${p}an LC needs excitation_v.`);
+        }
+        // RTD through an LJTick-Resistance: Vout = vref_v * ljtr_ohms / (ljtr_ohms + R_rtd).
+        const r0 = num(c?.r0_ohms, 0), ljtr = num(c?.ljtr_ohms, 0);
+        const vrefSet = c?.vref_v !== undefined && c?.vref_v !== null && c?.vref_v !== '';
+        const vref = num(c?.vref_v, 2.5);
+        if (kind === 'RTD') {
+            if (!(r0 > 0))
+                out.push(`${p}an RTD needs r0_ohms (100 for a Pt100, 1000 for a Pt1000).`);
+            if (!(ljtr > 0))
+                out.push(`${p}an RTD needs ljtr_ohms (the LJTick-Resistance's fixed resistor).`);
+            if (!(vref > 0 && vref <= 10))
+                out.push(`${p}vref_v must be within (0, 10] V.`);
+            if (!(range >= vref))
+                out.push(`${p}an RTD's range must cover vref_v (use 10).`);
+        }
+        else if (r0 !== 0 || ljtr !== 0 || vrefSet) {
+            out.push(`${p}r0_ohms, ljtr_ohms and vref_v are only meaningful on an RTD.`);
+        }
+        if (kind !== 'PT' && (signal !== '' || shunt !== 0))
+            out.push(`${p}signal and shunt_ohms are only meaningful on a PT.`);
+        if (kind !== 'LC' && (sens !== 0 || exc !== 0))
+            out.push(`${p}sensitivity_mv_per_v and excitation_v are only meaningful on an LC.`);
+        if (kind !== 'PT' && kind !== 'LC' && fs !== 0)
+            out.push(`${p}full_scale is only meaningful on a PT or LC.`);
+    });
+    if (enabled && channels.length === 0)
+        out.push('an enabled T7 needs at least one channel.');
+    return out;
+}
+// Datasheet A-1-1 (support.labjack.com/docs/a-1-1-stream-data-rates-t-series-datasheet). Mirrors
+// stream_limit_issues() in lib/src/config/T7Config.cpp.
+/** Table A.1.7, first column: a single-address stream's max scan rate at resolution 1-8. */
+const T7_SINGLE_ADDRESS_MAX_HZ = [100000, 48000, 22000, 11000, 5500, 2500, 1200, 600];
+/** Table A.1.8: interchannel delay (µs) by range, resolution 1-8; 0 = not supported in a
+ *  multi-channel stream. Summed over a scan it estimates (fast-side) the shortest scan period. */
+const T7_INTERCHANNEL_US = {
+    '10': [15, 25, 45, 90, 170, 335, 670, 1335],
+    '1': [210, 220, 545, 585, 1200, 2415, 2750, 3415],
+    '0.1': [1040, 2105, 0, 0, 0, 0, 0, 0],
+    '0.01': [0, 0, 0, 0, 0, 0, 0, 0],
+};
+function t7StreamLimitIssues(channels, rate, res, settlingUs) {
+    const out = [];
+    if (channels.length === 0 || !(rate > 0) || !Number.isInteger(res) || res < 0 || res > 8)
+        return out;
+    const eff = res === 0 ? 1 : res;
+    const rangeOf = (c) => (typeof c?.range === 'number' ? c.range : String(c?.kind) === 'TC' ? 0.1 : 10);
+    const key = (r) => (['10', '1', '0.1', '0.01'].find((k) => Math.abs(Number(k) - r) < 1e-9));
+    const delay = (r) => { const k = key(r); return k === undefined ? undefined : T7_INTERCHANNEL_US[k][eff - 1]; };
+    const hasTc = channels.some((c) => String(c?.kind) === 'TC');
+    const ranges = channels.map(rangeOf);
+    if (hasTc)
+        ranges.push(10);
+    if (ranges.length === 1) {
+        const max = T7_SINGLE_ADDRESS_MAX_HZ[eff - 1];
+        if (rate > max)
+            out.push(`one channel at resolution_index ${res} streams at most ${max} scans/s (datasheet A-1-1).`);
+        return out;
+    }
+    let unsupported = false;
+    for (const c of channels) {
+        const r = rangeOf(c);
+        if (delay(r) === 0) {
+            unsupported = true;
+            out.push(`AIN${c?.ain}: range ${Math.abs(r - 0.01) < 1e-9 ? '0.01' : '0.1'} V is not supported in a multi-channel stream` +
+                `${Math.abs(r - 0.1) < 1e-9 ? ' above resolution_index 2' : ' at any resolution'} (datasheet A-1-1, Table A.1.7).`);
+        }
+    }
+    if (unsupported || ranges.some((r) => delay(r) === undefined))
+        return out;
+    const scanUs = ranges.reduce((t, r) => t + Math.max(delay(r), settlingUs), 0);
+    const max = 1e6 / scanUs;
+    if (rate > max)
+        out.push(`scan_rate_hz ${Math.floor(rate)} is beyond what this scan list can do at resolution_index ${res}: ` +
+            `about ${Math.floor(max)} scans/s at most (${ranges.length} addresses, datasheet A-1-1 Table A.1.8).`);
+    return out;
+}
+/**
+ * Enabled T7 inputs whose role an ESP32 sensor ([sensor_roles_<board>]) already has. The GUI finds
+ * a sensor by its role (sensorByRole, [gui.groups], pressure bars) and calibration files it by
+ * role, so a shared name would make one of the two unreachable.
+ */
+export function t7RoleClashes(config) {
+    const boards = config?.boards ?? {};
+    const esp32Roles = new Map();
+    for (const key of Object.keys(boards)) {
+        if (boards[key]?.enabled === false)
+            continue;
+        for (const role of Object.keys((config?.[`sensor_roles_${key}`] ?? {})))
+            if (!esp32Roles.has(role))
+                esp32Roles.set(role, key);
+    }
+    const out = [];
+    for (const ch of t7Channels(boards)) {
+        if (!ch.enabled || !ch.role || ch.calEntity === null)
+            continue;
+        const other = esp32Roles.get(ch.role);
+        if (other)
+            out.push({
+                boardKey: ch.boardKey, ain: ch.ain,
+                message: `AIN${ch.ain} role "${ch.role}" is also a sensor on ` +
+                    `${boardDisplayName(boards, other)} (${other}); the GUI shows sensors by role, so one of ` +
+                    'them would be hidden.',
+            });
+    }
+    return out;
+}
 // ── The rule set ─────────────────────────────────────────────────────────────
 /**
  * Every reason this config is unfit to run, in the order an operator would work through them.
@@ -128,6 +448,18 @@ export const boardSlotIssue = (boards, boardKey) => {
  * state-machine rules for the same reason — that is a different and much louder problem, and
  * burying it under fifty derived complaints helps nobody.
  */
+/**
+ * Where a board sits when no DHCP server answered it: 169.254.<1 + mac[4] % 254>.<mac[5]>.
+ * Must match BoardNet::recoveryAddress (firmware/Hotfire_Code/common/board_net.h),
+ * firmware/tools/ota_upload.py and deploy/dhcp/generate_dhcp_config.py. Null for a malformed MAC.
+ */
+export function recoveryAddress(mac) {
+    const parts = mac.trim().split(/[:-]/);
+    if (parts.length !== 6 || !parts.every((p) => /^[0-9a-fA-F]{2}$/.test(p)))
+        return null;
+    const b = parts.map((p) => parseInt(p, 16));
+    return `169.254.${1 + (b[4] % 254)}.${b[5]}`;
+}
 export function validateConfigForRun(config, csv) {
     const issues = [];
     const add = (page, level, message) => issues.push({ page, level, message });
@@ -138,6 +470,57 @@ export function validateConfigForRun(config, csv) {
         const msg = boardSlotIssue(boards, key);
         if (msg)
             add('boards', 'error', `${boardDisplayName(boards, key)} (${key}): ${msg}`);
+        // t7_bridge refuses to start on any of these, so the session would run without the T7. The
+        // channel table is edited on the Roles tab, so its problems point there.
+        for (const m of t7BoardSettingsIssues(boards, key))
+            add('boards', 'error', `${boardDisplayName(boards, key)} (${key}): ${m}`);
+        for (const m of t7ChannelIssues(boards, key))
+            add('roles', 'error', `${boardDisplayName(boards, key)} (${key}): ${m}`);
+    }
+    // ── Board names ───────────────────────────────────────────────────────────
+    // A name is how a board is picked on the Roles tab; two boards with one name are two identical
+    // entries in that list.
+    const nameOwner = new Map();
+    for (const key of Object.keys(boards)) {
+        const given = boardGivenName(boards[key]);
+        if (!given)
+            continue;
+        const other = nameOwner.get(given.toLowerCase());
+        if (other !== undefined)
+            add('boards', 'warn', `${other} and ${key} are both named "${given}"; give one another name.`);
+        else
+            nameOwner.set(given.toLowerCase(), key);
+    }
+    // ── T7 roles vs every other sensor's ──────────────────────────────────────
+    for (const { boardKey, message } of t7RoleClashes(config))
+        add('roles', 'error', `${boardDisplayName(boards, boardKey)} (${boardKey}): ${message}`);
+    // ── DHCP identity (boards with a mac = line) ──────────────────────────────
+    // star-dhcp-sync refuses these too, leaving the served reservations stale, so
+    // they are caught here, where they can be fixed. The board takes its ID from
+    // its DHCP address (firmware board_net.h), so board_id and ip must agree; and
+    // two boards on one recovery address could not be reflashed if DHCP failed.
+    const recoveryOwner = new Map();
+    for (const key of Object.keys(boards)) {
+        const b = boards[key] ?? {};
+        const mac = typeof b.mac === 'string' ? b.mac.trim() : '';
+        if (!mac || typeof b.ip !== 'string')
+            continue;
+        const name = `${boardDisplayName(boards, key)} (${key})`;
+        const octet = Number(b.ip.split('.').pop());
+        if (b.board_id !== undefined && Number(b.board_id) !== octet)
+            add('boards', 'error', `${name}: board_id ${b.board_id} but ip ${b.ip}. The board takes its ID from its address, ` +
+                `so set board_id to ${octet} or change the ip.`);
+        const rec = recoveryAddress(mac);
+        if (rec === null) {
+            add('boards', 'error', `${name}: mac "${mac}" is not a MAC address (aa:bb:cc:dd:ee:ff).`);
+            continue;
+        }
+        const other = recoveryOwner.get(rec);
+        if (other)
+            add('boards', 'error', `${name} and ${other} would share the recovery address ${rec} (their MACs end alike), so ` +
+                'neither could be reflashed there if DHCP failed. Check both mac = lines.');
+        else
+            recoveryOwner.set(rec, name);
     }
     // ── Roles vs active_connectors ────────────────────────────────────────────
     // active_connectors is wire-level: config_broadcast packs it into the packet sent to the
@@ -160,8 +543,10 @@ export function validateConfigForRun(config, csv) {
         // A disabled board samples nothing, so nothing about its channels can be wrong.
         if (b.enabled === false)
             continue;
-        // An ACTUATOR board names its channels in [actuator_roles], not sensor_roles_<board>.
-        if (String(b.type ?? '').toUpperCase() === 'ACTUATOR')
+        // ACTUATOR and BALL_VALVE boards name their channels in [actuator_roles], not
+        // sensor_roles_<board>.
+        const type = String(b.type ?? '').toUpperCase();
+        if (type === 'ACTUATOR' || type === BALL_VALVE_TYPE)
             continue;
         const declared = Array.isArray(b.active_connectors)
             ? b.active_connectors.map(Number).filter((n) => Number.isFinite(n))
@@ -174,6 +559,52 @@ export function validateConfigForRun(config, csv) {
             add('boards', 'warn', `${boardDisplayName(boards, key)} (${key}): ${orphans.join(', ')} name channel(s) the ` +
                 'board is not told to sample, so those roles can never show data. Add them to Active ' +
                 'Connectors, or remove the roles.');
+        }
+    }
+    // ── Actuator roles on a board that is not declared ───────────────────────
+    // A role is ["kind", channel, board_id]. The board's IP, and whether it is an actuator or a ball
+    // valve, come only from its [boards.*] entry, so a role on an undeclared board commands nothing
+    // and nothing said so -- e.g. a ball valve role on board 71 in a profile copied before the ball
+    // valve board was added to the shipped ones.
+    const declaredIds = new Set(Object.values(boards).map((b) => Number(b?.board_id ?? b?.id)).filter((n) => Number.isFinite(n)));
+    for (const [role, tup] of Object.entries((config?.actuator_roles ?? {}))) {
+        if (!Array.isArray(tup) || tup.length < 3)
+            continue;
+        const id = Number(tup[2]);
+        if (!Number.isFinite(id) || declaredIds.has(id))
+            continue;
+        add('roles', 'error', `${role} is on board ${tup[2]}, which is not in Boards. Add board ${tup[2]} under Boards ` +
+            `(type ACTUATOR, or BALL_VALVE for a motorized ball valve), or move the role.`);
+    }
+    // ── Ball valve roles ──────────────────────────────────────────────────────
+    // A ball valve has no polarity: the sequencer would invert a "NO" role on the wire, so 1 would
+    // close it. The C++ forces pass-through anyway; this says so where it can be fixed. Nor is it a
+    // PWM output: a 4th element would hand it to the controller and skip it in the fire state.
+    // Nor can a role name a valve the board does not have: active_connectors is the only statement
+    // of which valves exist, and a channel outside it has no position to show and no command table.
+    const bvIds = ballValveBoardIds(config);
+    if (bvIds.size > 0) {
+        const bvConnectors = new Map();
+        for (const b of Object.values(boards)) {
+            if (String(b?.type ?? '').toUpperCase() !== BALL_VALVE_TYPE)
+                continue;
+            const id = Number(b?.board_id ?? b?.id);
+            const declared = Array.isArray(b?.active_connectors)
+                ? b.active_connectors.map(Number).filter((n) => Number.isFinite(n))
+                : [];
+            bvConnectors.set(id, declared);
+        }
+        for (const [role, tup] of Object.entries((config?.actuator_roles ?? {}))) {
+            if (!Array.isArray(tup) || !bvIds.has(Number(tup[2])))
+                continue;
+            const declared = bvConnectors.get(Number(tup[2])) ?? [];
+            if (!declared.includes(Number(tup[1])))
+                add('roles', 'error', `${role} is valve ${tup[1]} on ball valve board ${tup[2]}, which lists active_connectors ` +
+                    `[${declared.join(', ')}]. Add ${tup[1]} to the board's Active Connectors, or move the role.`);
+            if (String(tup[0] ?? '').toUpperCase() === 'NO')
+                add('roles', 'error', `${role} is on ball valve board ${tup[2]} and is marked NO. A ball valve has no NO/NC — 1 opens it — so set it to NC.`);
+            if (tup.length >= 4 && String(tup[3] ?? '') !== '')
+                add('roles', 'error', `${role} is on ball valve board ${tup[2]} but is assigned to the controller (${tup[3]}). A ball valve is not a PWM output.`);
         }
     }
     // ── Controller PWM assignment ─────────────────────────────────────────────
@@ -195,6 +626,8 @@ export function validateConfigForRun(config, csv) {
         const nameDupes = dupes(stateList.map((s) => s?.name));
         if (idDupes.length)
             add('state', 'error', `Duplicate state id(s): ${idDupes.join(', ')} — the later entry wins and the earlier state disappears.`);
+        if (stateList.some((s) => !Number.isInteger(s?.id) || s.id < 1 || s.id > 254))
+            add('state', 'error', 'A state has no id (or one outside 1-254), so the sequencer cannot load it — use "Fix the ids" on the State Machine tab.');
         if (nameDupes.length)
             add('state', 'error', `Duplicate state name(s): ${nameDupes.join(', ')} — CSV columns resolve by name, so one of them is unreachable.`);
         if (stateList.some((s) => !String(s?.name ?? '').trim()))

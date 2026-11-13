@@ -12,6 +12,7 @@
  * built dynamically from config.toml sensor_roles / actuator_roles.
  */
 
+import { t7Channels } from './config-validation';
 import { create } from 'zustand';
 import { useCallback, useEffect, useMemo } from 'react';
 import {
@@ -32,6 +33,7 @@ import {
   BoardLogTotals,
 } from './types';
 import type { VoltageRefNominals } from './voltageRef';
+import { ballValveBoardIds } from './config-validation';
 import { recordSensorUpdate, isSensorKeyFresh, setDeliveryLagAllowanceMs } from './sensor-rate';
 interface SensorData {
   [key: string]: number; // entity.component -> value
@@ -162,6 +164,9 @@ export function buildAliasesFromConfig(config: any): void {
   const rtdComponents = ['temperature_c', 'raw_adc_counts', 'raw_adc'];
   const lcComponents = ['force_kg', 'force_kg_tared', 'force_n', 'raw_adc_counts', 'raw_adc'];
   const actComponents = ['raw_adc_counts', 'actuator_state_commanded', 'current_a', 'status'];
+  // Ball valve boards stream position, not current, under their own BV* entities.
+  const bvRawComponents = ['raw_adc_counts'];
+  const bvCalComponents = ['position_pct', 'raw_adc', 'cal_status'];
   const actCmdComponents = ['actuator_state_commanded'];
 
   // Helper: add aliases for a sensor role with multiple prefixes and components
@@ -241,11 +246,30 @@ export function buildAliasesFromConfig(config: any): void {
     }
   }
 
+  // LabJack T7 channels (t7_bridge): a PT / TC / LC on a T7 answers to the same role keys an
+  // ESP32 sensor of that kind does — PT_Cal.<Role>, TC_Cal.<Role>, LC_Cal.<Role> and the raw
+  // <KIND>.<Role> — plus its own T7<slot>_Cal.<Role>. Its streams are T7<slot>_Cal.AIN<n>.<field>
+  // (psi / °C / kg, plus raw_uv) and T7<slot>.AIN<n>.volts.
+  for (const ch of t7Channels(boards)) {
+    if (!ch.enabled || !ch.calEntity || !ch.calField || !ch.role) continue;
+    const role = ch.role.replace(/\s+/g, '_');
+    const t7Cal = `T7${ch.slot}_Cal`, t7Raw = `T7${ch.slot}`;
+    for (const comp of [ch.calField, 'raw_uv']) {
+      addAlias(`${ch.kind}_Cal.${role}.${comp}`, `${ch.calEntity}.${comp}`);
+      addAlias(`${t7Cal}.${role}.${comp}`, `${ch.calEntity}.${comp}`);
+    }
+    addAlias(`${ch.kind}.${role}.volts`, `${ch.entity}.volts`);
+    addAlias(`${t7Raw}.${role}.volts`, `${ch.entity}.volts`);
+  }
+
   // (HP PT board reads its own [sensor_roles_<boardKey>] section in the generic loop above —
   // no special sensor_roles_pt2 handling needed; prefix comes from board_id % 10.)
 
-  // Actuator roles — board-namespaced: ACT2.CH1, ACT4.CH3
+  // Actuator roles — board-namespaced: ACT2.CH1, ACT4.CH3. A role on a BALL_VALVE board lives under
+  // BV<n>.CH<m> / BV<n>_Cal.CH<m> / BV_CMD.B<n>.CH<m> instead (its own Elodin namespace), but keeps
+  // the same ACT.{Role} / ACT_Cal.{Role} names here so every actuator display reads it unchanged.
   const actRoles = config.actuator_roles as Record<string, any> | undefined;
+  const bvBoardIds = ballValveBoardIds(config);
   if (actRoles && typeof actRoles === 'object') {
     for (const [name, value] of Object.entries(actRoles)) {
       const arr = Array.isArray(value) ? value : [];
@@ -257,6 +281,14 @@ export function buildAliasesFromConfig(config: any): void {
       if (!isFinite(localCh) || localCh < 1) continue;
       const entityName = name.replace(/\s+/g, '_');
       const roleEntity = `ACT.${entityName}`;
+      if (bvBoardIds.has(boardId)) {
+        roleToCmdEntity[roleEntity] = `BV_CMD.B${boardNumber}.CH${localCh}`;
+        for (const comp of bvRawComponents)
+          addAlias(`ACT.${entityName}.${comp}`, `BV${boardNumber}.CH${localCh}.${comp}`);
+        for (const comp of bvCalComponents)
+          addAlias(`ACT_Cal.${entityName}.${comp}`, `BV${boardNumber}_Cal.CH${localCh}.${comp}`);
+        continue;
+      }
       roleToCmdEntity[roleEntity] = `ACT_CMD.B${boardNumber}.CH${localCh}`;
       for (const comp of actComponents) {
         addAlias(`ACT${boardNumber}.${entityName}.${comp}`, `ACT${boardNumber}.CH${localCh}.${comp}`);
@@ -310,7 +342,8 @@ export function resetEncoderAcceptTimestampsForTests(): void {
   _encoderLastAcceptedTs = {};
 }
 
-/** True if any key in this stream’s alias chain had a SENSOR_UPDATE within SENSOR_DATA_STALE_MS. */
+/** True if any key in this stream’s alias chain is fresh: a SENSOR_UPDATE within its staleness
+ *  window (SENSOR_DATA_STALE_MS, stretched for slow channels; see staleWindowMsFor). */
 export function isSensorStreamFresh(entity: string, component: string): boolean {
   const key = `${entity}.${component}`;
   if (isSensorKeyFresh(key)) return true;

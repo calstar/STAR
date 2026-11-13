@@ -46,6 +46,25 @@ std::vector<std::pair<uint8_t, uint8_t>> calibrated_sensor_tables(
     const std::vector<BoardChannels>& rtd_boards, const std::vector<BoardChannels>& lc_boards,
     const std::vector<BoardChannels>& enc_boards, const std::vector<BoardChannels>& act_boards);
 
+/**
+ * Ball valve boards (BALL_VALVE) have their own type_hi bytes, so a valve never shares a key with
+ * an ACTUATOR board on the same board_id % 10 slot (board 71 and actuator board 11 are both slot
+ * 1): 0x33 raw position counts   BV<n>.CH<m>          raw_adc_counts 0x34 calibrated position
+ * BV<n>_Cal.CH<m>      position_pct, raw_adc, cal_status 0x35 commanded state BV_CMD.B<n>.CH<m>
+ * actuator_state (0 closed, 1 open) Low bytes follow the other boards: raw/cmd (n-1)*0x20 + m,
+ * calibrated (n-1)*0x20 + 0x10 + m.
+ */
+constexpr uint8_t kBallValveRawHi = 0x33;
+constexpr uint8_t kBallValveCalHi = 0x34;
+constexpr uint8_t kBallValveCmdHi = 0x35;
+
+std::vector<std::pair<uint8_t, uint8_t>> ball_valve_raw_tables(
+    const std::vector<BoardChannels>& bv_boards);
+std::vector<std::pair<uint8_t, uint8_t>> ball_valve_calibrated_tables(
+    const std::vector<BoardChannels>& bv_boards);
+std::vector<std::pair<uint8_t, uint8_t>> ball_valve_cmd_tables(
+    const std::vector<BoardChannels>& bv_boards);
+
 /** Non-sensor tables, named rather than spelled as literals at each use site. */
 constexpr std::pair<uint8_t, uint8_t> kTableSequencerState{0x50, 0x00};
 constexpr std::pair<uint8_t, uint8_t> kTableControllerState{0x43, 0x00};
@@ -104,6 +123,44 @@ public:
      */
     static bool register_self_test_tables(ElodinClient& client,
                                           const std::vector<uint8_t>& board_ids);
+
+    /**
+     * @brief Register one LabJack T7's RAW VTables (t7_bridge).
+     *
+     * Per AIN: table {0x26, (slot-1)*0x20 + ain}, entity T7<slot>.AIN<ain>, fields timestamp_ns,
+     * channel_id, volts (f32), sample_ts_ms, status — T7RawMessage. With `cjc`, also the
+     * cold-junction table {0x26, (slot-1)*0x20 + 0x0F}, entity T7<slot>.CJC, field
+     * temperature_c (f32) in the same layout.
+     */
+    static bool register_t7_raw_tables(ElodinClient& client, uint8_t slot,
+                                       const std::vector<uint8_t>& ains, bool cjc);
+
+    /**
+     * @brief Register one LabJack T7's CALIBRATED VTables (calibration_service).
+     *
+     * Per input: table {0x26, (slot-1)*0x20 + 0x10 + ain}, entity T7<slot>_Cal.AIN<ain>, fields
+     * timestamp_ns, channel_id, <cal_field> (f32: pressure_psi / temperature_c / force_kg),
+     * raw_uv (i32: the reading in µV, the "ADC code" calibration works in), cal_status — the
+     * ESP32 calibrated layout.
+     */
+    struct T7Table {
+        uint8_t ain;
+        std::string cal_field;
+    };
+    static bool register_t7_calibrated_tables(ElodinClient& client, uint8_t slot,
+                                              const std::vector<T7Table>& tables);
+
+    /** @brief Register ball valve RAW position VTables [0x33] (daq_bridge). */
+    static bool register_ball_valve_tables(ElodinClient& client,
+                                           const std::vector<BoardChannels>& bv_boards);
+
+    /** @brief Register ball valve CALIBRATED position VTables [0x34] (calibration_service). */
+    static bool register_ball_valve_calibrated_tables(ElodinClient& client,
+                                                      const std::vector<BoardChannels>& bv_boards);
+
+    /** @brief Register ball valve commanded-state VTables [0x35] (sequencer_service). */
+    static bool register_ball_valve_cmd_tables(ElodinClient& client,
+                                               const std::vector<BoardChannels>& bv_boards);
 
     /** @brief Register sequencer/controller and ACT_CMD tables */
     static bool register_non_sensor_tables(ElodinClient& client,

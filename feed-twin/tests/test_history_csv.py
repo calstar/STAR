@@ -90,7 +90,7 @@ def test_endpoint_serves_a_live_session():
         r = client.get(f"/api/session/{sid}/history.csv")
         assert r.status_code == 200, r.text
         assert r.headers["content-type"].startswith("text/csv")
-        assert f"feed-twin-{sid}-" in r.headers["content-disposition"]
+        assert f"hotbench-{sid}-" in r.headers["content-disposition"]
         lines = r.text.split("\n")
         assert lines[0].startswith("t_s,state,")
         full = client.get(
@@ -102,3 +102,35 @@ def test_endpoint_serves_a_live_session():
         assert client.get("/api/session/nope/history.csv").status_code == 404
     finally:
         main.library.remove(diagram)
+
+
+def test_an_unread_thermocouple_is_an_empty_column_not_absolute_zero():
+    """The twin models no temperature where some thermocouples sit, and the wire
+    sends 0 K for them -- which no sensor reads. Written as 0 it was a column of
+    absolute zero in the spreadsheet."""
+    history = {
+        "times_s": [0.0, 0.5],
+        "channels": [
+            {"id": "tc1", "tag": "TC-1", "unit": "K", "values": [0.0, 0.0]},
+            {"id": "tc2", "tag": "TC-2", "unit": "K", "values": [290.0, 291.0]},
+        ],
+        "events": [],
+    }
+    lines = history_csv(history, {}, "Idle").splitlines()
+    assert lines[1] == "0.000,Idle,,290"
+    assert lines[2] == "0.500,Idle,,291"
+
+
+def test_a_state_change_rounded_to_the_millisecond_labels_its_own_sample():
+    """/history rounds an event to the millisecond and keeps a sample's time
+    whole: the first Fire sample at 0.7577 s came with its event at 0.758 and
+    was labelled Ready. Before the first change the state is blank."""
+    history = {
+        "times_s": [0.5, 0.7577, 1.0],
+        "channels": [],
+        "events": [{"t": 0.6, "label": "Ready"}, {"t": 0.758, "label": "Fire"}],
+    }
+    states = [
+        line.split(",")[1] for line in history_csv(history, {}, "Fire").splitlines()[1:]
+    ]
+    assert states == ["", "Fire", "Fire"]

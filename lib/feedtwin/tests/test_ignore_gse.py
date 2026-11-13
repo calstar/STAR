@@ -171,6 +171,194 @@ def test_the_rocket_fills_at_the_settings_not_through_the_cart() -> None:
 
 
 @needs_tables
+def test_a_bottle_being_charged_gives_what_the_network_draws() -> None:
+    """The built-in charge and the network's draw land in one step: dm/dt =
+    charge - draw. The charge branch returned before the draw was applied, so a
+    press valve opened during GN2 High Press filled the LOX ullage from gas the
+    COPV never lost -- 290 g of nitrogen from nothing on LE4 (3), booked by no
+    vessel and opened by the watcher as "Mass not accounted for"."""
+    ids = _ids()
+    session = _session(True)
+    copv = session.bottles[ids["COPV"]]
+    lox = session.tanks[ids["LOX-Tank"]]
+    session.state = "GN2 High Press"
+    for _ in range(4):
+        session.step(0.5)
+    assert copv.filling
+    session.set_valve(session.binding.to_symbol["LOX Press"], True)
+    before = lox.state.ullage.mass
+    for _ in range(8):
+        session.step(0.5)
+    assert copv.filling, "still charging: the draw happened during the charge"
+    assert lox.state.ullage.mass - before > 0.2, "the press valve drew gas"
+    last = session.solver_log[-1]
+    assert abs(last.mass_error_kg - last.guard_kg) < 1e-6
+
+
+@needs_tables
+def test_a_bottle_charging_is_not_down_to_anything() -> None:
+    """GN2 High Press from empty: the COPV climbs, and the console said it was
+    "down to 107 psia, 3% of what it was filled to" on every tick of the first
+    quarter of the charge. A bottle is down only from what it has held."""
+    ids = _ids()
+    session = _session(True)
+    session.setup = replace(session.setup, copv_target_psi=4000.0)
+    copv = session.bottles[ids["COPV"]]
+    session.state = "GN2 High Press"
+    for _ in range(12):  # 3 s: past 2 atm, short of a quarter of the target
+        notes = session.step(0.25).notes
+        assert not [n for n in notes if "down to" in n], notes
+    assert copv.charged and psig(copv.pressure) < 0.25 * 4000.0 + 200.0
+    for _ in range(40):  # to the target
+        session.step(0.5)
+    assert psig(copv.pressure) == pytest.approx(4000.0, abs=40.0)
+    # Blown down to a tenth of it, it is down to something, and says from what.
+    session.state = "Press Standby"
+    copv.state = copv.volume.initial_state(
+        pressure=from_psig(400.0), temperature=copv.state.wall_temperature
+    )
+    (low,) = [n for n in session.step(0.02).notes if "down to" in n]
+    assert low.startswith("COPV is down to 415 psia, 10% of the 4,01"), low
+    # Dumped and charged again, part way, then paused: it has only gained
+    # since the dump. What it held before is not what this charge filled it
+    # to, and "down to 8xx psia, 2x% of the 4,01x psia" read as a leak.
+    copv.state = copv.volume.initial_state(
+        pressure=from_psig(0.0), temperature=copv.state.wall_temperature
+    )
+    session.state = "GN2 High Press"
+    for _ in range(8):  # 2 s: a few hundred psi, short of a quarter
+        session.step(0.25)
+    assert 2.0 * 14.7 < psig(copv.pressure) < 0.25 * 4000.0
+    session.state = "Press Standby"
+    for _ in range(20):  # it cools from the charge and sags
+        notes = session.step(0.25).notes
+        assert not [n for n in notes if "down to" in n], notes
+
+
+@needs_tables
+def test_a_bottle_dumped_at_atmosphere_stays_at_atmosphere() -> None:
+    """Emergency Abort opens the built-in COPV dump. On a bottle already at the
+    air it read 14.4 psia: the dump kept taking a ninth of the gas a second, the
+    floor put it back at the wall's density with none of its energy, and every
+    step the gas cooled and the bottle sank under atmosphere. A bottle open to
+    the air reads the air, and nothing flows out of it."""
+    ids = _ids()
+    session = _session(True)
+    copv = session.bottles[ids["COPV"]]
+    session.state = "Emergency Abort"
+    session.step(0.02)
+    assert copv.venting, "the abort row opens the built-in dump"
+    held = copv.state.mass
+    for _ in range(40):  # 2 s
+        session.step(0.05)
+    assert psig(copv.pressure) == pytest.approx(0.0, abs=0.02)
+    assert copv.volume.temperature(copv.state) == pytest.approx(293.0, abs=1.0)
+    assert copv.state.mass == pytest.approx(held, rel=1e-3)
+
+
+@needs_tables
+def test_a_bottle_at_the_air_drawn_on_reads_the_air() -> None:
+    """The floor itself, apart from the dump: a bottle at atmosphere that a
+    step draws 5 % of its gas from is put back at an atmosphere, mass and
+    energy together. Floored at the wall's density with the energy left as it
+    was, it kept the mass and lost the heat that left with it, and read a psi
+    under the air after one step (the dump test above passes on the old floor
+    once the dump stops at the air: this is the floor's own check)."""
+    ids = _ids()
+    copv = _session(True).bottles[ids["COPV"]]
+    assert psig(copv.pressure) == pytest.approx(0.0, abs=1e-3), "starts at the air"
+    held = copv.state.mass
+    for _ in range(3):
+        copv.advance(0.02, mdot_out=0.05 * held / 0.02)
+        assert psig(copv.pressure) == pytest.approx(0.0, abs=1e-3)
+    # The floor books what it put back.
+    assert copv.fixed_kg == pytest.approx(copv.state.mass - held + 0.15 * held)
+
+
+@needs_tables
+def test_a_primed_bottle_is_down_from_its_prime() -> None:
+    """T-0 sets the bottle; it does not reach it. A bottle charged to 4,000
+    psig and then primed at 400 psig (a Study case, a second T-0 at a lower
+    charge) kept the 4,000 as the most it had held, and the console read
+    "down to 415 psia, 10% of the 4,015 psia it was filled to" of gas nobody had
+    taken out of it."""
+    ids = _ids()
+    session = _session(True)
+    copv = session.bottles[ids["COPV"]]
+    session.prime(fill_fraction=0.5, tank_psi=500.0, copv_psi=4000.0, state="Ready")
+    session.step(0.02)
+    assert copv.peak == pytest.approx(from_psig(4000.0), rel=1e-5)
+    session.prime(fill_fraction=0.5, tank_psi=300.0, copv_psi=400.0, state="Ready")
+    assert copv.pressure < 0.25 * copv.target, "low enough for the note"
+    notes = session.step(0.02).notes
+    assert not [n for n in notes if "down to" in n], notes
+    # Nor once a burn has drawn a little of it: a bottle that never held a
+    # quarter of its target is not "down to" anything a psi under its prime
+    # ("down to 414 psia, 100% of the 414.7 psia it was filled to").
+    copv.state = copv.volume.initial_state(
+        pressure=from_psig(399.0), temperature=copv.state.wall_temperature
+    )
+    assert copv.pressure < copv.peak
+    notes = session.step(0.02).notes
+    assert not [n for n in notes if "down to" in n], notes
+
+
+@needs_tables
+def test_a_poured_load_displaces_the_ullage_without_cooling_it() -> None:
+    """The built-in load raised the liquid and shrank the ullage with no p dV
+    work on the gas; the vent then took the displaced gas at its enthalpy, and
+    what stayed behind lost p v per kilogram vented: the fuel ullage cooled
+    293 -> 285 K during a 15 s pour onto a 293 K tank at atmosphere. By hand,
+    an adiabatic displacement at constant pressure leaves the gas where it
+    was -- the liquid's work on the gas pays the flow work leaving."""
+    ids = _ids()
+    session = _session(True)
+    fuel = session.tanks[ids["Eth-Tank"]]
+    session.state = "Fuel Fill"
+    coldest = 293.15
+    for _ in range(36):  # 18 s: the whole pour
+        session.step(0.5)
+        coldest = min(coldest, fuel.tank.gas_temperature(fuel.state))
+    assert fuel.state.liquid_mass > 3.0, "poured"
+    assert psig(fuel.pressure) == pytest.approx(0.0, abs=0.1), "on its vent"
+    assert coldest > 292.0, f"the displaced ullage cooled to {coldest:.2f} K"
+
+
+@needs_tables
+def test_a_vented_lox_load_keeps_its_ullage_over_the_liquid() -> None:
+    """A LOX load on its vent, chilled: the nitrogen ullage sits between the
+    90 K liquid and the 92 K wall, gas leaves through the vent, and no guard
+    books anything. Each time the tank dipped a hundredth of a psi under the
+    air, the floor restated the ullage's energy at a whole atmosphere of
+    nitrogen while it shared the tank with oxygen vapour -- colder, by
+    nitrogen's departure from ideal near its dew line -- and the ratchet took
+    the ullage to 77 K, drew ~1 g/s of "air" in through a vent blowing out, and
+    booked hundreds of grams as clamps: the Solver tab failed three of five
+    checks after every pad run (LE4 (3): 77.4 K, 0.70 kg drawn, -0.60 kg)."""
+    ids = _ids()
+    session = _session(True)
+    lox = session.tanks[ids["LOX-Tank"]]
+    session.state = "Ox Fill"
+    session.step(0.25)
+    assert session.skip_chilldown() == ["LOX-Tank"]
+    coldest = float("inf")
+    for _ in range(200):  # 50 s of the load
+        session.step(0.25)
+        state = lox.state
+        surfaces = min(
+            state.ullage.wall_temperature,
+            state.surface_temperature or state.liquid_temperature,
+        )
+        coldest = min(coldest, lox.tank.gas_temperature(state) - surfaces)
+    assert lox.state.liquid_mass > 0.5, "loading"
+    assert coldest > -0.5, f"the ullage went {-coldest:.1f} K under its surfaces"
+    assert abs(lox.fixed_kg) < 1e-4, lox.fixed_kg
+    assert lox.vent_drawn_kg < 1e-3, "air drawn in through a vent blowing out"
+    last = session.solver_log[-1]
+    assert abs(last.guard_kg) < 1e-3
+
+
+@needs_tables
 def test_the_cart_actuators_drive_nothing() -> None:
     bound = _session(True).binding.to_symbol
     assert "GSE High Press Control" not in bound, "the built-in charge's command"
@@ -295,6 +483,21 @@ def _dome_press_machine() -> Any:
         a for a in aborts if a in standby
     ]
     return machine_from_dict(table)
+
+
+def test_the_rockets_dome_valve_is_no_vent_with_the_cart_cut() -> None:
+    """Rocket only, DR-CTRL-R sits on DPR_HP's dome line between the dome port
+    and the capped DR-QD-B. The loader went with the cart, so the dome line was
+    not found, and the solenoid was reported as a vent to atmosphere with its
+    dome side -- where DR-PT-R reads -- pinned there. The cart's vent line
+    stays a vent."""
+    ids = _ids()
+    cut = _model(True).built
+    assert not [w for w in cut.warnings if "venting" in w and "DR-CTRL-R" in w]
+    branch = cut.network.branches[ids["DR-CTRL-R"]]
+    for end in (branch.upstream, branch.downstream):
+        assert cut.network.nodes[end].pressure is None, end
+    assert [w for w in cut.warnings if "venting" in w and "FV-SOL" in w]
 
 
 def _dome(session: Any) -> float:

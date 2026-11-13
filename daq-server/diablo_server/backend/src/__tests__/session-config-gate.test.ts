@@ -27,6 +27,9 @@ vi.mock('../service-controller.js', () => ({
     async start() {}
     async stop() {}
     async resume() {}
+    pipelineConfigPath() {
+      return null; // mock mode: the pipeline reads whatever it was started on
+    }
   },
 }));
 

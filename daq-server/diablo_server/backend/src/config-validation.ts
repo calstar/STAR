@@ -68,7 +68,7 @@ export function validateActiveProfile(): ConfigValidationResult {
     return { profile, issues, ...countByLevel(issues) };
   } catch (e) {
     const issues: ConfigIssue[] = [{
-      page: 'system',
+      page: 'profile',
       level: 'error',
       message: `The active config profile "${profile}" could not be read: ${(e as Error)?.message ?? String(e)}`,
     }];

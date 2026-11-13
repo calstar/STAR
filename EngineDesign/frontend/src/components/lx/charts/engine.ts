@@ -51,6 +51,25 @@ const isLog = (d: ChartData) => !!d.xLog;
 /** On the burn's clock (the page cursor), or an axis of its own. */
 export const isTimeAxis = (d: Pick<ChartData, 'xTime' | 'xLog'>) => d.xTime !== false && !d.xLog;
 
+/**
+ * Where a chart with a cursor of its own starts it. On the clock: the first sample. On an axis of
+ * its own (along the engine, a lag sweep): the event it marks (the lag the burn used), else the
+ * peak of its first series, so the readout opens on the point the chart is about. It opened on the
+ * first sample: "Peak 3.9 MW/m²" at the chamber head of a chart whose peak is 28 at the throat.
+ */
+export function ownCursorStart(d: Pick<ChartData, 't' | 'series' | 'events' | 'xTime' | 'xLog'>): number {
+  const t0 = d.t[0] ?? 0;
+  if (isTimeAxis(d)) return t0;
+  const mark = d.events?.find((e) => Number.isFinite(e.t));
+  if (mark) return mark.t;
+  const first = d.series.find((s) => !s.ghost);
+  let best = -1;
+  first?.values.forEach((v, i) => {
+    if (v !== null && v !== undefined && Number.isFinite(v) && (best < 0 || v > (first.values[best] as number))) best = i;
+  });
+  return best >= 0 ? d.t[best] ?? t0 : t0;
+}
+
 /** Everything about the chart that needs a new plot when it changes (not the values). */
 function structureOf(d: ChartData): string {
   return JSON.stringify([d.yUnit, d.xLabel ?? 's', !!d.xLog, isTimeAxis(d),
@@ -232,7 +251,7 @@ export class ChartEngine {
     if (!this.ownStore) {
       this.ownStore = createTimeStore();
       this.ownStore.setSeries(this.data.t);
-      this.ownStore.setT(this.data.t[0] ?? 0);
+      this.ownStore.setT(ownCursorStart(this.data));
       this.ownStore.flush();
     }
     return this.ownStore;
@@ -583,8 +602,8 @@ export class ChartEngine {
     }
     ctx.setLineDash([]);
 
-    // Events: faint ticks standing on the time axis.
-    if (d.events?.length && isTimeAxis(d)) {
+    // Events: faint ticks standing on the x axis (the clock, or a linear axis of its own: a lag sweep's nominal).
+    if (d.events?.length && !isLog(d)) {
       ctx.strokeStyle = this.colors.get(TEXT_3);
       ctx.globalAlpha = 0.7;
       ctx.lineWidth = pxr;
@@ -703,7 +722,7 @@ export class ChartEngine {
       const size = { w: this.annoEl.offsetWidth || textWidth(d.worst.text, AXIS_FONT) + 6, h: this.annoEl.offsetHeight || 14 };
       const limitsY = (d.limits ?? []).map((l) => top + u.valToPos(l.value, 'y'));
       // The event ticks along the bottom are text-like: keep the note off them.
-      const eventsStrip: Box[] = d.events?.length && isTimeAxis(d) ? [{ x: left, y: top + height - 7, w: width, h: 7 }] : [];
+      const eventsStrip: Box[] = d.events?.length && !isLog(d) ? [{ x: left, y: top + height - 7, w: width, h: 7 }] : [];
       const box = placeNote(worst, size, { x: left + 1, y: top + 1, w: width - 2, h: height - 2 },
         { polylines: this.polylines(u), hlines: limitsY, boxes: eventsStrip }, RING);
       this.annoEl.style.transform = `translate(${Math.round(box.x)}px, ${Math.round(box.y)}px)`;

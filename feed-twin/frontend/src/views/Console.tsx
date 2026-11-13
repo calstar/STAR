@@ -960,8 +960,10 @@ export function Console() {
             </section>
             {/* The rest of the column. On a window too short for every row of
                 states it scrolls inside itself rather than spill into the
-                sequence strip below. */}
-            <section className="flex min-h-0 flex-1 flex-col overflow-y-auto py-5">
+                sequence strip below. Its bottom margin is the diagram's own,
+                inside the scroll: this panel's padding did not scroll, and the
+                last row came to rest against the edge. */}
+            <section className="flex min-h-0 flex-1 flex-col overflow-y-auto pt-5">
               {machine ? (
                 <StateMachineDiagram
                   machine={machine}

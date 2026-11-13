@@ -15,10 +15,10 @@
  *   bash test/test_integration.sh --only=sensor_data
  *
  * --only runs a subset of tests (comma-separated). IDs: sensor_config, sensor_data,
- * cal_stability, cal_lc_tare, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
+ * cal_stability, cal_lc_tare, cal_lc_linear, raw_cal_presence, heartbeat, board_status (Boards pane: all enabled boards connected),
  * selftest, state_transition,
  * state_debug, actuator_ws, actuator_udp, elodin_sync, controller, timestamps,
- * conservation, config_validate, environmental — or numbers 1–6, 10–12, 14–15
+ * conservation, config_validate, environmental, ball_valve, t7 — or numbers 1–6, 10–12, 14–15
  * (same as printed test labels). Env INTEGRATION_ONLY is equivalent to --only.
  * Most IDs still need the full integration stack (Elodin, DAQ, calibration, backend);
  * state/actuator/elodin_sync need sequencer; controller needs controller_service; selftest
@@ -95,11 +95,11 @@ function parseOnlyTests(): Set<string> | null {
   const allowed = new Set([
     'sensor_config', 'sensor_data', 'cal_stability', 'raw_cal_presence',
     'cal_values', 'cal_model_select', 'cal_robust_learn', 'cal_shared_points', 'cal_clear', 'cal_lc_capture',
-    'cal_lc_tare',
+    'cal_lc_tare', 'cal_lc_linear',
     'heartbeat', 'board_status', 'selftest', 'backend_debug_api',
     'state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync',
     'controller', 'timestamps', 'conservation', 'board_logs', 'board_log_mode',
-    'config_validate', 'environmental',
+    'config_validate', 'environmental', 'ball_valve', 't7',
   ]);
   for (const id of out) {
     if (!allowed.has(id)) {
@@ -1894,6 +1894,121 @@ async function testUdpActuatorCommands(): Promise<void> {
   }
 }
 
+// ── Ball valve: the whole loop ───────────────────────────────────────────────
+//
+// test_integration.sh enables [boards.ball_valve_board] (board 71 @ 127.0.0.71) with the role
+// "Main Ball Valve", closed in every state. The simulated valve binds the actuator command port on
+// its own address, so unlike the other actuators (whose 192.168.2.x is unroutable here) its
+// commands actually arrive, and it moves: a 3 s stroke, reported as a 4-20 mA position.
+//
+// One command therefore crosses everything this board added: WS → backend → sequencer (BV_CMD
+// [0x35]) → UDP → board → daq_bridge ([0x33]) → calibration (position_pct, [0x34]) → backend → WS.
+// Board 71 shares slot 1 with actuator board 11, so it must never surface as ACT1.* or
+// ACT_CMD.B1.*; board 11 is disabled in config_base, so any such update is the valve leaking.
+
+const BALL_VALVE_ROLE = 'Main Ball Valve';
+const BALL_VALVE_CMD = 'BV_CMD.B1.CH1';
+const BALL_VALVE_CAL = 'BV1_Cal.CH1';
+const BALL_VALVE_TRAVEL_TIMEOUT_MS = 12000;  // 3 s stroke + pipeline + GUI downsampling
+
+async function testBallValve(ws: WebSocket): Promise<void> {
+  console.log('\n🟢 Test: Ball Valve (command → board → % open, own Elodin namespace)');
+
+  const leaked: string[] = [];
+  const onMsg = (data: WebSocket.RawData) => {
+    try {
+      const m = JSON.parse(data.toString());
+      const e = m?.payload?.entity;
+      if (m?.type === MessageType.SENSOR_UPDATE && typeof e === 'string'
+          && (/^ACT1(_Cal)?\.CH/.test(e) || /^ACT_CMD\.B1\./.test(e))) {
+        if (!leaked.includes(e)) leaked.push(e);
+      }
+    } catch { /* not JSON */ }
+  };
+  ws.on('message', onMsg);
+
+  const position = (pred: (pct: number) => boolean) =>
+    waitForMessage(ws, MessageType.SENSOR_UPDATE, BALL_VALVE_TRAVEL_TIMEOUT_MS,
+      (p) => p.entity === BALL_VALVE_CAL && p.component === 'position_pct' && pred(p.value));
+  const commanded = (state: number) =>
+    waitForMessage(ws, MessageType.SENSOR_UPDATE, COMMAND_TIMEOUT_MS,
+      (p) => p.entity === BALL_VALVE_CMD && p.component === 'actuator_state_commanded' && p.value === state);
+  const command = (state: ActuatorState) => send(ws, {
+    type: MessageType.SEND_COMMAND,
+    timestamp: Date.now(),
+    payload: { commandType: 'actuator', data: { actuatorName: BALL_VALVE_ROLE, actuatorState: state } },
+  });
+
+  try {
+    try {
+      const { payload } = await position(() => true);
+      assert(true, `Ball valve position streams as ${BALL_VALVE_CAL}.position_pct (${payload.value.toFixed(1)} %)`);
+    } catch {
+      assert(false, `Ball valve: no ${BALL_VALVE_CAL}.position_pct within ${BALL_VALVE_TRAVEL_TIMEOUT_MS} ms (sim → daq_bridge [0x33] → calibration [0x34] → backend)`);
+      return;
+    }
+
+    const debug = waitForMessage(ws, MessageType.STATE_UPDATE, COMMAND_TIMEOUT_MS, (p) => p.debugMode === true);
+    send(ws, {
+      type: MessageType.SEND_COMMAND,
+      timestamp: Date.now(),
+      payload: { commandType: 'debug_mode', data: { debugMode: true } },
+    });
+    try {
+      await debug;
+    } catch {
+      assert(false, 'Ball valve: could not enter debug mode for manual commands');
+      return;
+    }
+
+    // OPEN: commanded state on BV_CMD, then the valve itself travels to the end.
+    const openCmd = commanded(1);
+    const openPos = position((pct) => pct >= 95);
+    command(ActuatorState.OPEN);
+    try {
+      await openCmd;
+      assert(true, `Ball valve OPEN recorded on ${BALL_VALVE_CMD}`);
+    } catch {
+      assert(false, `Ball valve OPEN: no ${BALL_VALVE_CMD}.actuator_state_commanded = 1 (sequencer [0x35])`);
+    }
+    try {
+      const { payload } = await openPos;
+      assert(true, `Ball valve reached open: ${payload.value.toFixed(1)} % (command reached the board)`);
+    } catch {
+      assert(false, `Ball valve never reported >= 95 % open within ${BALL_VALVE_TRAVEL_TIMEOUT_MS} ms of OPEN`);
+    }
+
+    // CLOSE: and back.
+    const closeCmd = commanded(0);
+    const closePos = position((pct) => pct <= 5);
+    command(ActuatorState.CLOSED);
+    try {
+      await closeCmd;
+      assert(true, `Ball valve CLOSE recorded on ${BALL_VALVE_CMD}`);
+    } catch {
+      assert(false, `Ball valve CLOSE: no ${BALL_VALVE_CMD}.actuator_state_commanded = 0`);
+    }
+    try {
+      const { payload } = await closePos;
+      assert(true, `Ball valve reached closed: ${payload.value.toFixed(1)} % open`);
+    } catch {
+      assert(false, `Ball valve never reported <= 5 % open within ${BALL_VALVE_TRAVEL_TIMEOUT_MS} ms of CLOSE`);
+    }
+
+    assert(leaked.length === 0, leaked.length === 0
+      ? 'Ball valve never surfaced under actuator board 11\'s slot-1 entities (ACT1.*, ACT_CMD.B1.*)'
+      : `Ball valve leaked into actuator slot 1: ${leaked.join(', ')}`);
+  } finally {
+    ws.removeListener('message', onMsg);
+    send(ws, {
+      type: MessageType.SEND_COMMAND,
+      timestamp: Date.now(),
+      payload: { commandType: 'debug_mode', data: { debugMode: false } },
+    });
+    await new Promise(r => setTimeout(r, 500));
+  }
+}
+
 // ── Test 10: Calibrated Data Stability ────────────────────────────────────────
 
 async function testCalibratedDataStability(ws: WebSocket): Promise<void> {
@@ -2088,16 +2203,17 @@ async function testCalibratedValueCorrectness(ws: WebSocket): Promise<void> {
   const ADC_MAX = 2147483648; // 2^31
 
   // test_integration.sh sets "GSE Low" (pt_board conn 2 → CH2) to physics; pt_board is 0-5V
-  // ratiometric with the default 1000 PSI full scale, so PT_Cal = (adc/2^31)*1000.
+  // ratiometric (0.5-4.5 V of 5 V) with the default 1000 PSI full scale, so
+  // PT_Cal = (adc/2^31 - 0.1)/0.8*1000.
   const phCal = cal.get(2), phAdc = adc.get(2);
   if (!phCal || phCal.length < 3 || !phAdc || phAdc.length < 3) {
     assert(false, 'cal_values: no PT1_Cal.CH2 (physics sensor) samples'); return;
   }
-  const a2 = median(phAdc), psi2 = median(phCal), expected2 = (a2 / ADC_MAX) * 1000;
+  const a2 = median(phAdc), psi2 = median(phCal), expected2 = ((a2 / ADC_MAX - 0.1) / 0.8) * 1000;
   const tol2 = Math.max(Math.abs(expected2) * 0.03, 5);
   assert(Math.abs(psi2) > 1, 'cal_values: physics CH2 is not 0 (datasheet conversion active)');
   assert(Math.abs(psi2 - expected2) <= tol2,
-    `cal_values: physics CH2 = ${psi2.toFixed(1)} ≈ (adc/2^31)*1000 = ${expected2.toFixed(1)} (adc ${a2.toFixed(0)}, tol ${tol2.toFixed(1)})`);
+    `cal_values: physics CH2 = ${psi2.toFixed(1)} ≈ (adc/2^31-0.1)/0.8*1000 = ${expected2.toFixed(1)} (adc ${a2.toFixed(0)}, tol ${tol2.toFixed(1)})`);
 
   // A cubic sensor with no captured points reads nothing. CH1 (Fuel Upstream) is cubic + uncalibrated.
   const c1 = cal.get(1);
@@ -2249,13 +2365,22 @@ async function testLcTare(ws: WebSocket): Promise<void> {
   // This channel is put in CUBIC mode by test_integration.sh. That matters: on the datasheet
   // physics conversion (every load cell's default) a capture cannot move the curve at all, so
   // the re-derivation this test exists to prove would be unobservable. Build a curve first.
+  // A batch is resent until at least one capture lands: the service refuses a capture whose last
+  // second holds fewer than 3 samples, and CI's 5 Hz simulator usually gives 4 with gaps to 2, so a
+  // whole 1.2 s batch can be refused (2026-11-08: the 250 kg batch landed nothing and the curve
+  // never moved).
   const captureAt = async (ref: number) => {
-    for (let i = 0; i < 10; i++) {
-      send(ws, { type: 'calibration_command', timestamp: Date.now(),
-        payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
-      await sleep(120);
+    const pointsNow = () => (readCalRecord(UID)?.numPoints as number | undefined) ?? 0;
+    const before = pointsNow();
+    for (let batch = 0; batch < 3; batch++) {
+      for (let i = 0; i < 10; i++) {
+        send(ws, { type: 'calibration_command', timestamp: Date.now(),
+          payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
+        await sleep(120);
+      }
+      await sleep(1500);
+      if (pointsNow() > before) return;
     }
-    await sleep(1500);
   };
   await captureAt(100);
 
@@ -2270,10 +2395,14 @@ async function testLcTare(ws: WebSocket): Promise<void> {
     `cal_lc_tare: untared, tared trace tracks absolute (gross ${grossBefore.toFixed(2)} vs tared ${taredBefore.toFixed(2)})`);
 
   // ── 2. tare: display goes to ~0, archive keeps the real load ───────────────
-  send(ws, { type: 'calibration_command', timestamp: Date.now(),
-    payload: { commandType: 'tare_lc', sensorId: CH, boardId: BOARD } });
+  // Retried like a capture: the service refuses a tare whose last second holds fewer than 3 samples
+  // (CaptureWindow), and CI's simulator streams at 5 Hz, so one second sometimes holds 2.
   let rec: Record<string, unknown> | null = null;
-  for (let i = 0; i < 12; i++) { rec = readTareRecord(ENTITY); if (rec) break; await sleep(400); }
+  for (let attempt = 0; attempt < 5 && !rec; attempt++) {
+    send(ws, { type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'tare_lc', sensorId: CH, boardId: BOARD } });
+    for (let i = 0; i < 8; i++) { rec = readTareRecord(ENTITY); if (rec) break; await sleep(400); }
+  }
   if (!rec) { assert(false, `cal_lc_tare: service wrote no tare for ${ENTITY} (uid ${UID})`); return; }
   const offset1 = rec.offset_kg as number;
   const adcAtTare = rec.adc_at_tare as number;
@@ -2315,6 +2444,14 @@ async function testLcTare(ws: WebSocket): Promise<void> {
   let gone = false;
   for (let i = 0; i < 12; i++) { if (!readTareRecord(ENTITY)) { gone = true; break; } await sleep(400); }
   assert(gone, 'cal_lc_tare: clearing removes the tare from the store');
+  // The store file drops the record before the cleared trace reaches the WebSocket; let it
+  // land before averaging, or the window straddles the step (seen as 208 vs 250 under load).
+  // A tare that never clears still fails below.
+  for (let i = 0; i < 10; i++) {
+    const t = await meanOf(ws, ENTITY, 'force_kg_tared', 300);
+    const g = await meanOf(ws, ENTITY, 'force_kg', 300);
+    if (t !== null && g !== null && Math.abs(t - g) < 0.5) break;
+  }
   const taredCleared = await meanOf(ws, ENTITY, 'force_kg_tared', SETTLE_MS);
   const grossCleared = await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS);
   assert(taredCleared !== null && grossCleared !== null && Math.abs(taredCleared - grossCleared) < 0.5,
@@ -2370,6 +2507,101 @@ async function testClearToNothing(ws: WebSocket): Promise<void> {
   assert(fc.length === 0, `cal_clear: robust preview curve cleared (${fc.length} samples)`);
 }
 
+// ── Test: the load-cell `linear` model — the default, end to end ─────────────────────────────
+//
+// A load cell with no [calibration_model_*] entry is `linear`: a straight-line fit through its
+// captures, so a tare (an ADC code evaluated through the curve) cancels a zero drift exactly. Why
+// that matters is proved in lib/test/test_lc_linear_fit.cpp; the sim holds each channel's ADC
+// constant, so drift itself cannot be staged here. What this proves is the plumbing, through
+// every process, on a channel the harness leaves unconfigured (lc_board_2 CH6):
+//   1. the default reaches the service: the store records active_model "linear";
+//   2. with no fit it streams the datasheet physics conversion — what an unconfigured load cell
+//      read before linear existed — and one point is not a fit, so it still does;
+//   3. a second point makes a line: the stream moves to the fit, and the record carries the
+//      line (degree 1) as the active fit, plus both candidate fits for the calibration page;
+//   4. clearing returns it to physics.
+async function testLcLinear(ws: WebSocket): Promise<void> {
+  console.log('\n📏 Test 23: LC linear model (the default) end-to-end');
+  const CH = 6, BOARD = 42, UID = BOARD * 100 + CH;       // lc_board_2 CH6: no role, no model
+  const ENTITY = 'LC2_Cal.CH6';
+  const SETTLE_MS = 2500;
+  // config_base [calibration.lc]: the physics conversion every unconfigured load cell streams.
+  const SENS_MV_PER_V = 2, PGA = 32, FULL_SCALE_KG = 300;
+  const physicsKg = (adc: number) => (adc / ((SENS_MV_PER_V / 1000) * PGA * 2 ** 31)) * FULL_SCALE_KG;
+
+  const pointsNow = () => (readCalRecord(UID)?.numPoints as number | undefined) ?? 0;
+  // ONE capture, waited on until the store has it: the "one point is not a line" step needs
+  // exactly one, and a capture can be refused when the window has no fresh samples.
+  const captureOne = async (ref: number): Promise<boolean> => {
+    const before = pointsNow();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      send(ws, { type: 'calibration_command', timestamp: Date.now(),
+        payload: { commandType: 'capture_point', sensorId: CH, boardId: BOARD, referencePressure: ref } });
+      for (let i = 0; i < 10; i++) { await sleep(300); if (pointsNow() > before) return true; }
+    }
+    return false;
+  };
+  // The store file is written before the stream switches to the new curve, so give the stream a
+  // second to move before averaging it; otherwise the mean straddles the switch (under ASan it
+  // came out 80 % of the way there: 66.985 kg for a 75 kg fit).
+  const readings = async () => {
+    await sleep(1000);
+    return {
+      kg: await meanOf(ws, ENTITY, 'force_kg', SETTLE_MS),
+      adc: await meanOf(ws, ENTITY, 'raw_adc', SETTLE_MS),
+    };
+  };
+
+  // ── 1. the default ────────────────────────────────────────────────────────
+  const rec0 = readCalRecord(UID);
+  if (!rec0) { assert(false, `cal_lc_linear: no store record for LC uid ${UID}`); return; }
+  assert(rec0.active_model === 'linear',
+    `cal_lc_linear: an LC with no model in config is "linear" (store says ${String(rec0.active_model)})`);
+
+  // ── 2. no fit → physics, and one point is still no fit ────────────────────
+  const r0 = await readings();
+  if (r0.kg === null || r0.adc === null) {
+    assert(false, `cal_lc_linear: no ${ENTITY} traffic (force_kg=${r0.kg} raw_adc=${r0.adc})`);
+    return;
+  }
+  const phys = physicsKg(r0.adc);
+  console.log(`  uncaptured: force_kg=${r0.kg.toFixed(3)} physics(${r0.adc.toFixed(0)})=${phys.toFixed(3)}`);
+  assert(Math.abs(r0.kg - phys) < 0.05 + 0.01 * Math.abs(phys),
+    `cal_lc_linear: uncaptured linear streams physics (${r0.kg.toFixed(3)} vs ${phys.toFixed(3)} kg)`);
+
+  // A reference well away from what physics reads, so "streams the fit" cannot pass by accident.
+  const REF = Math.round(phys) + 40;
+  if (!(await captureOne(REF))) { assert(false, 'cal_lc_linear: first capture never landed'); return; }
+  const r1 = await readings();
+  const rec1 = readCalRecord(UID);
+  console.log(`  1 point: force_kg=${r1.kg?.toFixed(3)} status=${String(rec1?.status)}`);
+  assert(rec1?.status === 'PENDING', `cal_lc_linear: one point is PENDING (${String(rec1?.status)})`);
+  assert(r1.kg !== null && Math.abs(r1.kg - phys) < 0.05 + 0.01 * Math.abs(phys),
+    `cal_lc_linear: one point is not a line — still physics (${r1.kg?.toFixed(3)} vs ${phys.toFixed(3)} kg)`);
+
+  // ── 3. two points → the line streams ──────────────────────────────────────
+  if (!(await captureOne(REF))) { assert(false, 'cal_lc_linear: second capture never landed'); return; }
+  const r2 = await readings();
+  const rec2 = readCalRecord(UID) ?? {};
+  const fits = (rec2.fits ?? {}) as { linear?: { valid?: boolean; degree?: number }; cubic?: { valid?: boolean } };
+  console.log(`  2 points: force_kg=${r2.kg?.toFixed(3)} degree=${String(rec2.degree)} status=${String(rec2.status)}`);
+  assert(rec2.status === 'OK' && rec2.degree === 1,
+    `cal_lc_linear: two points fit a line (status ${String(rec2.status)}, degree ${String(rec2.degree)})`);
+  assert(fits.linear?.valid === true && fits.linear?.degree === 1 && fits.cubic?.valid === true,
+    `cal_lc_linear: the record carries both fits for the page (${JSON.stringify(fits)})`);
+  assert(r2.kg !== null && Math.abs(r2.kg - REF) < 0.5,
+    `cal_lc_linear: the stream moved to the fit (${r2.kg?.toFixed(3)} kg, captured at ${REF})`);
+
+  // ── 4. clear → physics again (and the shared store is left as found) ─────
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: CH, boardId: BOARD } });
+  for (let i = 0; i < 10 && pointsNow() !== 0; i++) await sleep(300);
+  const r3 = await readings();
+  assert(pointsNow() === 0, `cal_lc_linear: clear wiped the points (${pointsNow()})`);
+  assert(r3.kg !== null && r3.adc !== null && Math.abs(r3.kg - physicsKg(r3.adc)) < 0.05 + 0.01 * Math.abs(phys),
+    `cal_lc_linear: cleared, back to physics (${r3.kg?.toFixed(3)} kg)`);
+}
+
 // ── Test: LC capture builds a cubic fit (mirrors testSharedPoints for a load cell uid). LC has no
 // robust learner (no drift-learning), so unlike a PT capture this must NOT populate fitCurve.
 async function testLcCapture(ws: WebSocket): Promise<void> {
@@ -2397,6 +2629,108 @@ async function testLcCapture(ws: WebSocket): Promise<void> {
   let cleared: Record<string, unknown> | null = null;
   for (let i = 0; i < 8; i++) { cleared = readCalRecord(UID); if (cleared && (cleared.numPoints as number ?? -1) === 0) break; await sleep(400); }
   assert(!!cleared && (cleared.numPoints as number) === 0, `cal_lc_capture: LC clear wiped points (numPoints ${cleared?.numPoints})`);
+}
+
+// ── Test: a LabJack T7 is one more board, end to end ──────────────────────────────────────────
+//
+// config_base.toml's labjack_1 (board_id 81 → slot 1) streams from `t7_bridge --fake`, which
+// test_integration.sh starts beside daq_bridge. Its inputs must reach the GUI exactly like an ESP32
+// sensor's, calibrated by the same calibration_service: listed by role in /api/sensor-config, live
+// psi / °C / kg over the WebSocket, the µV calibration code alongside, the Boards pane counting the
+// T7 as connected (its data is its heartbeat), and the capture / tare commands working on a T7
+// uid (board_id*100 + AIN). The fake signals: PT 30 % of 1000 psi ±3 %, TC ~60 °C ±10, LC 20 %
+// of 500 kg ±2 %. "T7 Thrust LC" is put in cubic mode by test_integration.sh so a capture is
+// observable (physics is every load cell's default and a capture cannot move it).
+async function getJson(path: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const req = http.get(`http://127.0.0.1:${WS_PORT}${path}`, (res) => {
+      let data = '';
+      res.on('data', (c) => { data += c; });
+      res.on('end', () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
+    });
+    req.on('error', reject);
+    req.setTimeout(5000, () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+async function testLabJackT7(ws: WebSocket): Promise<void> {
+  console.log('\n🧪 Test 24: LabJack T7 — t7_bridge → calibration_service → GUI');
+  const BOARD = 81, PT = 1, TC = 2, LC = 4;
+  let sensors: any[] = [];
+  try { sensors = (await getJson('/api/sensor-config')).sensors ?? []; } catch (e: any) {
+    assert(false, `t7: /api/sensor-config failed: ${e.message}`); return;
+  }
+  const t7 = sensors.filter((x) => x.source === 'T7');
+  const byRole = (r: string) => t7.find((x) => x.role === r);
+  const pt = byRole('T7 Tank PT'), tc = byRole('T7 Nozzle TC'), lc = byRole('T7 Thrust LC');
+  const rtd = byRole('T7 LOX RTD');
+  assert(!!pt && pt.type === 'PT' && pt.calEntity === 'T71_Cal.AIN1' && pt.inCalibrationSequence === true,
+    `t7: "T7 Tank PT" listed as a PT on T71_Cal.AIN1, in the calibration sequence (${JSON.stringify(pt)})`);
+  assert(!!tc && tc.type === 'TC' && tc.calEntity === 'T71_Cal.AIN2',
+    `t7: "T7 Nozzle TC" listed as a TC on T71_Cal.AIN2`);
+  assert(!!lc && lc.type === 'LC' && lc.calEntity === 'T71_Cal.AIN4' && lc.inCalibrationSequence === true,
+    `t7: "T7 Thrust LC" listed as an LC on T71_Cal.AIN4, in the calibration sequence`);
+  assert(!!rtd && rtd.type === 'RTD' && rtd.calEntity === 'T71_Cal.AIN3' && rtd.inCalibrationSequence === false,
+    `t7: "T7 LOX RTD" listed as an RTD on T71_Cal.AIN3`);
+
+  const psi = await meanOf(ws, 'T71_Cal.AIN1', 'pressure_psi', 3000);
+  assert(psi !== null && psi >= 260 && psi <= 340, `t7: PT reads psi from the 4-20 mA fake (${psi?.toFixed(1)} psi)`);
+  const code = await meanOf(ws, 'T71_Cal.AIN1', 'raw_adc_counts', 3000);
+  assert(code !== null && code > 2.0e6 && code < 2.4e6,
+    `t7: the PT's calibration code is its µV reading (${code?.toFixed(0)} µV ≈ 2.2 V across the shunt)`);
+  const volts = await meanOf(ws, 'T71.AIN1', 'volts', 3000);
+  assert(volts !== null && volts > 2.0 && volts < 2.4, `t7: raw volts reach the GUI (${volts?.toFixed(3)} V)`);
+  const temp = await meanOf(ws, 'T71_Cal.AIN2', 'temperature_c', 3000);
+  assert(temp !== null && temp >= 45 && temp <= 75,
+    `t7: TC reads °C through the bridge's cold junction (${temp?.toFixed(1)} °C)`);
+  const rtdC = await meanOf(ws, 'T71_Cal.AIN3', 'temperature_c', 3000);
+  assert(rtdC !== null && rtdC >= -171 && rtdC <= -129,
+    `t7: RTD reads °C through the LJTick-Resistance divider and IEC 60751 (${rtdC?.toFixed(1)} °C)`);
+
+  try {
+    const dbg = await getJson('/api/debug');
+    const hz = dbg?.boardScanRateHz?.t71;
+    assert(typeof hz === 'number' && hz > 0, `t7: /api/debug boardScanRateHz.t71 > 0 (${hz})`);
+  } catch (e: any) { assert(false, `t7: /api/debug failed: ${e.message}`); }
+
+  // LC in cubic mode: uncalibrated it reads 0; one capture is a constant fit at the reference.
+  const lcBefore = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg', 2000);
+  assert(lcBefore !== null && Math.abs(lcBefore) < 1e-6,
+    `t7: an uncalibrated cubic T7 load cell reads 0, as an ESP32 one does (${lcBefore})`);
+  for (let i = 0; i < 10; i++) {
+    send(ws, { type: 'calibration_command', timestamp: Date.now(),
+      payload: { commandType: 'capture_point', sensorId: LC, boardId: BOARD, referencePressure: 100 } });
+    await sleep(120);
+  }
+  await sleep(2000);
+  const rec = readCalRecord(BOARD * 100 + LC);
+  assert(!!rec && (rec.numPoints as number) >= 1 && rec.rawUnit === 'uV' && rec.logicalCh === 132,
+    `t7: the capture is stored for uid 8104 as a µV channel on logical 132 (${JSON.stringify(rec && { n: rec.numPoints, unit: rec.rawUnit, lch: rec.logicalCh })})`);
+  const lcAfter = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg', 2500);
+  assert(lcAfter !== null && Math.abs(lcAfter - 100) < 1,
+    `t7: after the capture the load cell reads the reference (${lcAfter?.toFixed(2)} kg)`);
+
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'tare_lc', sensorId: LC, boardId: BOARD } });
+  let tare: Record<string, unknown> | null = null;
+  for (let i = 0; i < 12; i++) { tare = readTareRecord('T71_Cal.AIN4'); if (tare) break; await sleep(400); }
+  assert(!!tare && Math.abs((tare.offset_kg as number) - 100) < 1,
+    `t7: a tare is filed under T71_Cal.AIN4 at the load it held (${tare?.offset_kg})`);
+  // The backend picks the tare file up on an mtime poll: wait for the trace to drop before
+  // averaging, or the window straddles the step (100 kg × 1/7 samples = 14.3 kg).
+  for (let i = 0; i < 10; i++) {
+    const t = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg_tared', 300);
+    if (t !== null && Math.abs(t) < 1) break;
+  }
+  const tared = await meanOf(ws, 'T71_Cal.AIN4', 'force_kg_tared', 2500);
+  assert(tared !== null && Math.abs(tared) < 1, `t7: the tared trace reads ~0 (${tared?.toFixed(3)} kg)`);
+
+  // Leave the stores as we found them.
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'clear_tare_lc', sensorId: LC, boardId: BOARD } });
+  send(ws, { type: 'calibration_command', timestamp: Date.now(),
+    payload: { commandType: 'new_calibration', sensorId: LC, boardId: BOARD } });
+  await sleep(1500);
 }
 
 // ── Test: the robust stack actually learns (and the cubic channel is unaffected) ─
@@ -2846,9 +3180,17 @@ async function testSensorConfigEntityFormat(): Promise<void> {
   const badCalEntities: string[] = [];
   const typesSeen = new Set<string>();
 
+  const t7Entity = /^T7\d+\.AIN\d+$/, t7CalEntity = /^T7\d+_Cal\.AIN\d+$/;
   for (const s of sensors) {
     const entity = s.entity as string;
     const calEntity = s.calEntity as string;
+
+    // A LabJack T7 input is named by its AIN (T7<slot>.AIN<n>), not a connector.
+    if (s.source === 'T7') {
+      if (!t7Entity.test(entity)) badEntities.push(entity);
+      if (!t7CalEntity.test(calEntity)) badCalEntities.push(calEntity);
+      continue;
+    }
 
     // Extract sensor type (strip board number: "PT1" → "PT")
     const dotIdx = entity.indexOf('.');
@@ -3126,11 +3468,21 @@ async function testSampleConservation(): Promise<void> {
   if (sent <= 0) return;
 
   const backendStats = await fetchBackendStats();
-  const ingested = Number((backendStats as any)?.rawPrimarySamplesIngested);
-  if (!Number.isFinite(ingested)) {
+  const ingestedAll = Number((backendStats as any)?.rawPrimarySamplesIngested);
+  if (!Number.isFinite(ingestedAll)) {
     assert(false, 'Backend /stats has no rawPrimarySamplesIngested — stale backend build?');
     return;
   }
+  // The board simulator is the ground truth for ESP32 boards only. A LabJack T7 (t7_bridge --fake)
+  // is ingested too, under its own group (t7<slot>), and must come out of both sides of the
+  // comparison: left in, its ~100 scans/s inflate "ingested" past "sent", and they would also pad
+  // the loss floor below enough to hide genuinely lost ESP32 packets.
+  const byGroupAll: Record<string, number> = (backendStats as any)?.rawPrimarySamplesByGroup ?? {};
+  const t7Ingested = Object.entries(byGroupAll)
+    .filter(([g]) => /^t7\d+$/.test(g))
+    .reduce((sum, [, n]) => sum + (Number(n) || 0), 0);
+  const ingested = ingestedAll - t7Ingested;
+  if (t7Ingested > 0) console.log(`  (excluding ${t7Ingested.toLocaleString()} LabJack T7 samples, which the board simulator does not send)`);
 
   // Per-group breakdown (always printed): pinpoints WHICH stream loses samples.
   // Sim board names → backend board-scan groups.
@@ -3142,6 +3494,7 @@ async function testSampleConservation(): Promise<void> {
     if (/^tc/.test(name)) return 'tc';
     if (/^encoder/.test(name)) return 'enc';
     if (/^actuator/.test(name)) return 'act';
+    if (/^ball_valve/.test(name)) return 'bv';
     return 'other';
   };
   const sentByGroup: Record<string, number> = {};
@@ -3398,7 +3751,7 @@ async function main(): Promise<void> {
   }
 
   if (ONLY_TESTS) {
-    const needsSeq = ['state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync']
+    const needsSeq = ['state_transition', 'state_debug', 'actuator_ws', 'actuator_udp', 'elodin_sync', 'ball_valve']
       .some(id => ONLY_TESTS!.has(id));
     if (needsSeq && !canRunCommandTests) {
       console.error('❌ Selected tests require sequencer_service (integration must start sequencer or pass --has-sequencer)');
@@ -3438,6 +3791,7 @@ async function main(): Promise<void> {
       if (runTest('state_debug')) await testStateTransitionDebugMode(ws);
       if (runTest('actuator_ws')) await testActuatorCommands(ws);
       if (runTest('actuator_udp')) await testUdpActuatorCommands();
+      if (runTest('ball_valve')) await testBallValve(ws);
       if (runTest('elodin_sync')) await testElodinStateSync();
     } else if (!ONLY_TESTS) {
       console.log('\n🔄 Test 2: State Transition — SKIPPED (thin backend requires sequencer_service)');
@@ -3461,6 +3815,8 @@ async function main(): Promise<void> {
     if (IS_THIN && canRunCommandTests && runTest('cal_clear')) await testClearToNothing(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_capture')) await testLcCapture(ws);
     if (IS_THIN && canRunCommandTests && runTest('cal_lc_tare')) await testLcTare(ws);
+    if (IS_THIN && canRunCommandTests && runTest('t7')) await testLabJackT7(ws);
+    if (IS_THIN && canRunCommandTests && runTest('cal_lc_linear')) await testLcLinear(ws);
     // Injected packets are not in the simulator's counters. Keep this after
     // conservation and the other read-only checks against simulator ground truth.
     if (IS_THIN && runTest('environmental')) await testEnvironmentalDataFlow(ws);

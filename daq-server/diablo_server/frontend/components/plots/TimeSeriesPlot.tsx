@@ -58,8 +58,6 @@ export default function TimeSeriesPlot({
   const plotInstanceRef = useRef<uPlot | null>(null);
   const initializedRef = useRef(false);
   const [isInitialized, setIsInitialized] = useState(false);
-  const [legendFontSize, setLegendFontSize] = useState(14);
-  const legendRef = useRef<HTMLDivElement>(null);
 
   const updateConnectionStatus = useSensorStore((s) => s.updateConnectionStatus);
   const connectionStatus       = useSensorStore((s) => s.connectionStatus);
@@ -240,28 +238,6 @@ export default function TimeSeriesPlot({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entitiesKey, colorsKey, component, yLabel, windowSeconds]); // height intentionally omitted
 
-  // Scale legend text to fill one row
-  useEffect(() => {
-    const el = legendRef.current;
-    if (!el) return;
-    const fit = () => {
-      requestAnimationFrame(() => {
-        if (!el) return;
-        const client = el.clientWidth, scroll = el.scrollWidth;
-        if (client <= 0) return;
-        setLegendFontSize(prev => {
-          const ratio = client / scroll;
-          if (Math.abs(ratio - 1) < 0.02) return prev;
-          return Math.min(24, Math.max(8, prev * ratio));
-        });
-      });
-    };
-    fit();
-    const ro = new ResizeObserver(fit);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [entities, labels, legendFontSize]);
-
   return (
     <div
       className={`w-full h-full flex flex-col min-h-0 min-w-0 ${height ? '' : 'flex-1'} ${className ?? ''}`}
@@ -285,10 +261,9 @@ export default function TimeSeriesPlot({
           </div>
         )}
       </div>
-      <div
-        ref={legendRef}
-        className="flex flex-nowrap gap-x-3 gap-y-0 px-1.5 py-1.5 flex-shrink-0 overflow-hidden min-h-0"
-      >
+      {/* Wraps onto more lines rather than shrinking to fit one: the old fit-to-one-row
+          scaling bottomed out at 8 px on a narrow screen and clipped whatever was left. */}
+      <div className="flex flex-shrink-0 flex-wrap gap-x-3 gap-y-1 px-1.5 py-1.5">
         {entities.map((e, i) => (
           <div
             key={e}
@@ -298,7 +273,7 @@ export default function TimeSeriesPlot({
               className="w-3 h-[2px] inline-block flex-shrink-0"
               style={{ background: colors[i] || '#3498DB' }}
             />
-            <span className="font-mono uppercase tracking-[0.06em] text-ink-2 whitespace-nowrap" style={{ fontSize: `${legendFontSize}px` }}>
+            <span className="whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.06em] text-ink-2 xl:text-[12px]">
               {labels?.[i] ?? e.split('.').pop() ?? e}
             </span>
           </div>

@@ -161,3 +161,100 @@ def test_a_hookup_made_for_another_drawing_does_not_stop_the_stand(
         )
     finally:
         main.library.remove(diagram)
+
+
+@pytest.fixture
+def drawing(client: TestClient) -> Iterator[str]:
+    """The shipped ethalox stand's drawing, in the library for one test."""
+    from backend import main
+
+    stand_file = (
+        Path(main.__file__).resolve().parent / "diagrams" / "ethalox_stand.json"
+    )
+    diagram: str = client.post(
+        "/api/library/diagrams",
+        files={"file": (stand_file.name, stand_file.read_bytes(), "application/json")},
+    ).json()["artifact"]["id"]
+    try:
+        yield diagram
+    finally:
+        main.library.remove(diagram)
+
+
+def _open(
+    client: TestClient, diagram: str, ref: dict[str, str], headers: dict[str, str]
+) -> Any:
+    return client.post(
+        "/api/session",
+        params={"diagram": diagram},
+        headers=headers,
+        json={"state": "Idle", "stand": ref},
+    )
+
+
+def test_anyone_may_run_the_featured_stand(client: TestClient, drawing: str) -> None:
+    """A fresh browser lands on the featured stand and opens a session on it
+    (stand.tsx landOnStand -> reopen). The store lets everyone view it; the
+    session open allowed only the owner and the share list, so behind Caddy
+    every other person's console came up 'failed'. Its runs still
+    file under the stand's owner."""
+    from backend import main
+
+    doc_id = _create(client)
+    ref = {"id": doc_id, "owner": A["X-Auth-Email"]}
+    carol = {"X-Auth-Email": "carol@berkeley.edu"}
+    # Not featured, not shared: refused, as before.
+    assert _open(client, drawing, ref, carol).status_code == 403
+    # What scripts/demo.sh does, and what an admin's PUT writes.
+    stands.store.write_featured({"owner": A["X-Auth-Email"], "id": doc_id})
+    assert client.get(f"{BASE}/{doc_id}/load", headers=B, params=OWNER_A).is_success
+    r = _open(client, drawing, ref, B)
+    assert r.status_code == 200, r.text
+    opened = main._OPENED[r.json()["id"]]
+    assert opened.user == "bob@berkeley.edu"
+    assert opened.stand is not None
+    assert opened.stand["owner"] == "alice@berkeley.edu"
+    # Featuring another stand takes it away again.
+    other = _create(client)
+    stands.store.write_featured({"owner": A["X-Auth-Email"], "id": other})
+    assert _open(client, drawing, ref, B).status_code == 403
+
+
+def test_a_refused_stand_leaves_the_server_as_it_was(
+    client: TestClient, drawing: str
+) -> None:
+    """The stand was checked after the session was built, seated and
+    registered: every refused retry held a seat with no run record behind it,
+    and could close someone else's idle stand to make room."""
+    from backend import main
+
+    doc_id = _create(client)
+    before = (set(main._SESSIONS), set(main._TOUCHED), set(main._OPENED))
+    refused = _open(client, drawing, {"id": doc_id, "owner": A["X-Auth-Email"]}, B)
+    assert refused.status_code == 403
+    missing = _open(client, drawing, {"id": "no-such-stand"}, A)
+    assert missing.status_code == 404
+    assert (set(main._SESSIONS), set(main._TOUCHED), set(main._OPENED)) == before
+
+
+def test_an_admin_chooses_the_featured_stand(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Nobody could choose it: no ``is_admin`` was wired into the store, so
+    the PUT was 403 for every caller, the team's admins included. Admins are
+    stardesign's list plus ``STAR_ADMINS`` -- ``local`` on an install with no
+    sign-in."""
+    monkeypatch.setenv("STAR_ADMINS", "carol@berkeley.edu")
+    carol = {"X-Auth-Email": "carol@berkeley.edu"}
+    doc_id = _create(client)
+    choose = {"owner": A["X-Auth-Email"], "id": doc_id}
+    assert client.put(f"{BASE}/featured", headers=B, json=choose).status_code == 403
+    assert client.get(f"{BASE}/featured", headers=carol).json()["isAdmin"] is True
+    r = client.put(f"{BASE}/featured", headers=carol, json=choose)
+    assert r.status_code == 200, r.text
+    featured = client.get(f"{BASE}/featured", headers=B).json()["featured"]
+    assert featured["id"] == doc_id
+    assert client.delete(f"{BASE}/featured", headers=B).status_code == 403
+    assert client.delete(f"{BASE}/featured", headers=carol).status_code == 200
+    monkeypatch.setenv("STAR_ADMINS", "local")
+    assert client.get(f"{BASE}/featured").json()["isAdmin"] is True

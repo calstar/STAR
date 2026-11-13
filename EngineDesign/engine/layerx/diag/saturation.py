@@ -58,6 +58,11 @@ DEFAULT_FLAG_MARGIN_PSI = 25.0
 dynamic head at full flow (25.0 psi, AUDIT 9.6 B4), room for the transients the twin does not
 resolve (valve opening, line acoustics); no source."""
 
+DEAD_LEG_KG_S = 1.0e-3
+"""Peak flow through a liquid node over the firing steps under which it is a dead leg and is not
+graded [kg/s]. 1 g/s is 0.05 % of LE4's ~1.8 kg/s LOX feed: a node carrying less is not on the feed.
+The twin's dead legs carry exactly zero (a shut valve, a capped port); the margin is a judgement."""
+
 DEFAULT_CAVITATION_MARGIN = 0.2
 """K / K_crit under 1 + this is flagged as near cavitation. Assumed: K_crit is a model value
 (Nurick's onset for the vena contracta at vapour pressure) and incipient cavitation appears above
@@ -121,8 +126,22 @@ def _branch_bore(prep: Any, bid: str) -> Optional[float]:
         return None
 
 
+def _peak_flow(net: Mapping[str, Any], nid: str, n: int, firing: np.ndarray) -> float:
+    """The largest |mass flow| [kg/s] through any branch at node ``nid`` over the firing steps."""
+    peak = 0.0
+    for br in (net.get("branches") or {}).values():
+        if nid not in (br.get("from"), br.get("to")):
+            continue
+        m = np.abs(arr(br.get("mdot"), n))[firing]
+        m = m[np.isfinite(m)]
+        if m.size:
+            peak = max(peak, float(m.max()))
+    return peak
+
+
 def build_saturation(result: Mapping[str, Any], prep: Any = None, config: Any = None, *,
-                     flag_margin_psi: float = DEFAULT_FLAG_MARGIN_PSI) -> Dict[str, Any]:
+                     flag_margin_psi: float = DEFAULT_FLAG_MARGIN_PSI,
+                     dead_leg_kg_s: float = DEAD_LEG_KG_S) -> Dict[str, Any]:
     """``diagnostics.saturation``. Never raises."""
     try:
         net = result.get("network")
@@ -136,6 +155,14 @@ def build_saturation(result: Mapping[str, Any], prep: Any = None, config: Any = 
         skipped: List[str] = []
         for nid, nd in net["nodes"].items():
             if nd.get("phase") != "liquid" or nd.get("kind") == "chamber":
+                continue
+            if firing.any() and _peak_flow(net, nid, n, firing) < dead_leg_kg_s:
+                # A dead leg (a capped disconnect, a dump valve's outlet, a stub behind a shut valve): no
+                # propellant moves through it while firing, so nothing there can cavitate or flash into
+                # the feed. The twin holds an isolated one at 101.325 kPa, where LOX at 90.19 K sits on its
+                # own saturation line: it "boiled" by construction on every LOX burn (OF-QD-B and
+                # Ox-Dump-R outlets on LE4 (3), -0.003 psi, amber).
+                skipped.append(f"{nd.get('label') or nid} (no flow through it while firing: a dead leg)")
                 continue
             side = nd.get("side")
             fluid = node_fluid(prep, result, nid, side)
@@ -207,9 +234,13 @@ def build_saturation(result: Mapping[str, Any], prep: Any = None, config: Any = 
                     "no local accelerations below the line bore (valve throats, orifice vena contracta) -- the "
                     "orifices are graded by the cavitation block instead",
                     "pure anhydrous ethanol (no water fraction, AUDIT D15)",
+                    "a liquid node no branch carries flow through while firing (a dead leg: a capped disconnect, a "
+                    "shut dump valve's outlet) is not graded; it is listed under skipped",
                 ],
                 {"flag_margin_psi": inp(flag_margin_psi, "psi",
-                                        "assumed: ~one LOX-line dynamic head (AUDIT 9.6 B4); no source")},
+                                        "assumed: ~one LOX-line dynamic head (AUDIT 9.6 B4); no source"),
+                 "dead_leg_kg_s": inp(dead_leg_kg_s, "kg/s",
+                                      "assumed: 0.05 % of LE4's LOX feed; the twin's dead legs carry exactly zero")},
             ),
         }
     except Exception as exc:  # noqa: BLE001

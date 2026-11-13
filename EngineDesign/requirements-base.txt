@@ -12,8 +12,8 @@
 numpy
 scipy
 pandas
-# Layer X's 'Every signal (Parquet)' export (engine/layerx/export.py to_parquet); without it
-# the button and design-mcp's layerx_export(fmt='parquet') answer 501.
+# Layer X's "Every signal (Parquet)" export (engine/layerx/export.py::to_parquet). Without it the
+# button the UI offers answered HTTP 501 in the shipped image, and CI skipped the test that reads it.
 pyarrow
 matplotlib
 pydantic

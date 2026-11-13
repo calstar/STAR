@@ -24,6 +24,9 @@ type Draft = { value: string; unc: string; source: string; provenance: OverrideE
 
 const key = (r: { target: string; parameter: string }) => `${r.target}.${r.parameter}`;
 
+/** The unit a row is shown and typed in: psia for an absolute pressure (ADR 0007), else the drawing's. */
+const unitOf = (r: ParameterRow) => (r.psia !== undefined ? 'psia' : r.unit);
+
 export function ParametersPanel({ drawingId, open, onClose, onSaved }: {
   drawingId: string; open: boolean; onClose: () => void; onSaved: (count: number) => void;
 }) {
@@ -47,7 +50,9 @@ export function ParametersPanel({ drawingId, open, onClose, onSaved }: {
       const d: Record<string, Draft> = {};
       for (const o of r.data.overrides) {
         if (!present.has(key(o))) continue;
-        d[key(o)] = { value: String(o.value), unc: o.uncertainty == null ? '' : String(o.uncertainty), source: o.source,
+        // An absolute pressure reads back in psia, as it is typed (a restatement saved as a bare psi was gauge).
+        const value = o.psia !== undefined ? Number(o.psia.toPrecision(10)) : o.value;
+        d[key(o)] = { value: String(value), unc: o.uncertainty == null ? '' : String(o.uncertainty), source: o.source,
                       provenance: o.provenance, date: o.date ?? '' };
       }
       setDrafts(d);
@@ -73,7 +78,8 @@ export function ParametersPanel({ drawingId, open, onClose, onSaved }: {
     for (const [k, d] of restated) {
       const row = byKey.get(k);
       if (!row) continue;
-      overrides.push({ target: row.target, parameter: row.parameter, value: Number(d.value), unit: row.unit,
+      // An absolute pressure is typed in psia and saved so: the twin reads a bare psi as gauge (ADR 0004).
+      overrides.push({ target: row.target, parameter: row.parameter, value: Number(d.value), unit: unitOf(row),
                        source: d.source.trim(), provenance: d.provenance,
                        uncertainty: d.unc.trim() === '' ? null : Number(d.unc), date: d.date || null });
     }
@@ -126,7 +132,7 @@ export function ParametersPanel({ drawingId, open, onClose, onSaved }: {
                 <th className="px-2 py-1.5 font-normal">Parameter</th>
                 <th className="px-2 py-1.5 font-normal text-right">Drawing</th>
                 <th className="px-2 py-1.5 font-normal">Basis</th>
-                <th className="px-2 py-1.5 font-normal w-24">Your value</th>
+                <th className="px-2 py-1.5 font-normal w-32" title="In the unit beside each box: an absolute pressure in psia">Your value</th>
                 <th className="px-2 py-1.5 font-normal w-16" title="One standard uncertainty, in the row's unit">± (1σ)</th>
                 <th className="px-2 py-1.5 font-normal w-28">As</th>
                 <th className="px-2 py-1.5 font-normal w-56">Source</th>
@@ -141,13 +147,17 @@ export function ParametersPanel({ drawingId, open, onClose, onSaved }: {
                   <tr key={k} className="border-t border-[var(--color-border)]/50 align-top">
                     <td className="px-2 py-1 text-[var(--color-text-secondary)]">{r.label}<span className="text-[var(--color-text-muted)]"> {r.type}</span></td>
                     <td className="px-2 py-1 text-[var(--color-text-secondary)]">{r.parameter}</td>
-                    <td className="px-2 py-1 text-right text-[var(--color-text-primary)] whitespace-nowrap">{sig(r.value)} <span className="text-[var(--color-text-muted)]">{r.unit}</span></td>
+                    <td className="px-2 py-1 text-right text-[var(--color-text-primary)] whitespace-nowrap"
+                        title={r.psia !== undefined ? `Drawn as ${sig(r.value)} ${r.unit}${r.unit === 'psia' ? '' : ' (a bare psi on an absolute pressure is gauge)'}` : undefined}>
+                      {sig(r.psia ?? r.value)} <span className="text-[var(--color-text-muted)]">{unitOf(r)}</span></td>
                     <td className="px-2 py-1 text-[var(--color-text-muted)] max-w-[16rem]">
                       <span title={mark.title} style={{ color: mark.color }}>{mark.mark}</span> {r.source}
                       {r.reference && <span className="block truncate" title={r.reference}>{r.reference}</span>}
                     </td>
-                    <td className="px-2 py-1"><input className={cell} inputMode="decimal" value={d?.value ?? ''} placeholder="—" aria-label={`${r.label} ${r.parameter}, measured value`}
-                      onChange={(e) => set(k, { value: e.target.value.replace(/[^0-9.eE-]/g, '') })} /></td>
+                    <td className="px-2 py-1"><span className="flex items-center gap-1">
+                      <input className={cell} inputMode="decimal" value={d?.value ?? ''} placeholder="—" aria-label={`${r.label} ${r.parameter}, measured value${unitOf(r) ? `, ${unitOf(r)}` : ''}`}
+                        onChange={(e) => set(k, { value: e.target.value.replace(/[^0-9.eE-]/g, '') })} />
+                      <span className="shrink-0 text-[11px] text-[var(--color-text-muted)]">{unitOf(r)}</span></span></td>
                     <td className="px-2 py-1"><input className={cell} inputMode="decimal" value={d?.unc ?? ''} placeholder="—" aria-label={`${r.label} ${r.parameter}, one-sigma uncertainty`}
                       onChange={(e) => set(k, { unc: e.target.value.replace(/[^0-9.eE-]/g, '') })} /></td>
                     <td className="px-2 py-1">

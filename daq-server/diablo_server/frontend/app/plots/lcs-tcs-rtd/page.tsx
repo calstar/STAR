@@ -240,7 +240,7 @@ export default function LCS_TCS_RTDPage() {
 
   const loadChannelConfig = useCallback(() => {
     Promise.all([
-      fetch(`${getApiBaseUrl()}/api/config`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${getApiBaseUrl()}/api/config/running`).then((r) => (r.ok ? r.json() : null)),
       fetch(`${getApiBaseUrl()}/api/sensor-config`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
     ]).then(([configRes, sensorRes]) => {
       const config = configRes?.config;
@@ -282,6 +282,7 @@ export default function LCS_TCS_RTDPage() {
           const role = sensorConfig?.find((s) => s.calEntity === r.calEntity)?.role;
           return role ?? r.label;
         }));
+        // calibration_service's uid: board_id*100 + connector, or + AIN for a LabJack T7.
         setLcUids(lc.map((r) => r.boardId * 100 + r.channel));
       }
     }).catch(() => {});

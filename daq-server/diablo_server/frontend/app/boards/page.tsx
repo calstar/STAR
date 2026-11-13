@@ -11,17 +11,72 @@ import BoardLogModal from '@/components/dashboard/BoardLogModal';
 // Per-board logging / serial-print mode byte (0..3). Sent to the board in its
 // config packet; the firmware interprets it as: bit0 = USB verbose, mode>=2 =
 // stream Tier-1 to the server, mode 3 = stream Tier-1+2.
+// Only modes 2 and 3 send anything to the Log window: 0 and 1 switch the network
+// stream off once the board receives its config ("USB verbose" is not "more logging here").
 const LOG_MODE_OPTIONS: { value: number; label: string }[] = [
-  { value: 0, label: 'USB only' },
-  { value: 1, label: 'USB verbose' },
-  { value: 2, label: 'Stream T1' },
-  { value: 3, label: 'Stream T1+2' },
+  { value: 0, label: 'USB only · no network log' },
+  { value: 1, label: 'USB verbose · no network log' },
+  { value: 2, label: 'Network log' },
+  { value: 3, label: 'Network log + verbose' },
 ];
 
 function formatConfigSentAt(ms: number | undefined): string {
   if (ms == null) return '';
   const d = new Date(ms);
   return d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function formatAckTime(ms: number): string {
+  const d = new Date(ms);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? formatConfigSentAt(ms)
+    : d.toLocaleString(undefined, { hour12: false, month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/**
+ * How this board got its address, from star-dhcp's served reservations and DHCPACK log
+ * (backend/src/dhcp-status.ts). A board whose DHCP request goes unanswered falls back to
+ * the same static address and looks healthy, so only an ACK counts as "served by DHCP".
+ * Hidden when star-dhcp is not installed.
+ */
+function DhcpRow({ status: b }: { status: BoardStatus }) {
+  const d = b.dhcp;
+  if (!d) return null;
+  let tone: string;
+  let text: string;
+  let title: string;
+  if (d.syncError) {
+    tone = 'text-red-400';
+    text = 'DHCP reservations out of date · config refused';
+    title = `star-dhcp-sync refused the deployed config, so the DHCP server is still serving the `
+      + `previous reservations: ${d.syncError}`;
+  } else if (!d.reserved) {
+    tone = 'text-gray-500';
+    text = 'Static · no DHCP reservation';
+    title = `star-dhcp has no reservation for ${b.ip}. Add this board's MAC as mac = on its board in the `
+      + 'config editor; the reservation is served as soon as the config is saved.';
+  } else if (d.lastAckMs == null) {
+    tone = 'text-amber-400';
+    text = 'DHCP reserved · no handshake yet';
+    title = `Reserved for ${d.mac}, but star-dhcp has not served it yet. The board is off, on static-IP `
+      + 'firmware, or on its recovery address (it keeps asking and moves here when it is answered).';
+  } else if (d.lastAckIp !== b.ip) {
+    tone = 'text-red-400';
+    text = `At ${d.lastAckIp} · reboot to move to ${b.ip}`;
+    title = `This board (${d.mac}) was last given ${d.lastAckIp}, before its reservation for ${b.ip} `
+      + 'existed. A board takes its address at boot: power-cycle it to move it.';
+  } else {
+    tone = 'text-emerald-400';
+    text = `DHCP · ACK ${formatAckTime(d.lastAckMs)}`;
+    title = `star-dhcp handed ${b.ip} to ${d.mac} (${d.hostname}). A board reboot after this time `
+      + 'with no new ACK means it fell back to its static address.';
+  }
+  return (
+    <div className={`text-sm font-mono mb-2 truncate ${tone}`} title={title} data-testid="boards-dhcp-status">
+      Network: {text}
+    </div>
+  );
 }
 
 // Subtle accent hues per card (left border + light tint)
@@ -51,7 +106,7 @@ export default function BoardsPage() {
   const [openLogsBoardId, setOpenLogsBoardId] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch(`${getApiBaseUrl()}/api/config`)
+    fetch(`${getApiBaseUrl()}/api/config/running`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { config?: { boards?: Record<string, { board_id?: number; enabled?: boolean; active_connectors?: number[]; enable_serial_printing?: number | boolean }> } } | null) => {
         const boards = data?.config?.boards;
@@ -77,16 +132,32 @@ export default function BoardsPage() {
       .catch(() => {});
   }, []);
 
+  /** Board whose last log-mode change was refused, with the reason (cleared on the next attempt). */
+  const [logModeError, setLogModeError] = useState<{ boardId: number; message: string } | null>(null);
+
   const setLogMode = useCallback((boardId: number, mode: number) => {
-    setLogModeById((prev) => ({ ...prev, [boardId]: mode })); // optimistic
+    let previous: number | undefined;
+    setLogModeById((prev) => { previous = prev[boardId]; return { ...prev, [boardId]: mode }; }); // optimistic
+    setLogModeError(null);
+    // A refused change used to be swallowed, leaving the select showing a mode the board never got.
+    const revert = (message: string) => {
+      setLogModeById((prev) => ({ ...prev, [boardId]: previous ?? 0 }));
+      setLogModeError({ boardId, message });
+    };
     fetch(`${getApiBaseUrl()}/api/board-log-mode`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ boardId, mode }),
-    }).catch(() => {});
+    })
+      .then(async (r) => {
+        if (r.ok) return;
+        const body = await r.json().catch(() => null) as { error?: string } | null;
+        revert(body?.error ?? `HTTP ${r.status}`);
+      })
+      .catch((e: unknown) => revert(e instanceof Error ? e.message : 'request failed'));
   }, []);
 
-  const TYPE_ORDER = ['ACTUATOR', 'PT', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL'];
+  const TYPE_ORDER = ['ACTUATOR', 'BALL_VALVE', 'PT', 'LC', 'TC', 'RTD', 'ENCODER', 'ENVIRONMENTAL', 'T7'];
 
   const boardsByType = useMemo(() => {
     const map = boardsMap ?? {};
@@ -161,14 +232,16 @@ export default function BoardsPage() {
             return (
               <section key={boardType}>
                 <h2 className="text-lg font-bold text-text-muted uppercase tracking-wider mb-4">
-                  {boardType}
+                  {boardType.replace(/_/g, ' ')}
                 </h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   {boards.map((b, index) => {
                     const stale = isBoardLiveTelemetryStale(b);
                     const testKeys = Object.keys(sensorData).filter((k) => k.startsWith(`SELF_TEST.BOARD_${b.id}.`));
+                    // No self-test on an environmental board, a ball valve board (neither firmware
+                    // sends SELF_TEST) or a LabJack T7 (not ESP32 firmware).
                     let testStatus: 'Untested' | 'Passed' | 'Failed' | 'Pending' | 'N/A' =
-                      b.type === 'ENVIRONMENTAL' ? 'N/A' : 'Untested';
+                      b.type === 'ENVIRONMENTAL' || b.type === 'BALL_VALVE' || b.type === 'T7' ? 'N/A' : 'Untested';
                     if (testStatus !== 'N/A' && testKeys.length > 0) {
                       const anyFail = testKeys.some(k => sensorData[k] === 0);
                       const expected = expectedCountById[b.id] ?? 0;
@@ -186,6 +259,9 @@ export default function BoardsPage() {
                     else if (b.boardState === 2) boardStateLabel = 'Active';
                     else if (b.boardState === 3) boardStateLabel = 'Abort';
                     else if (b.boardState === 4) boardStateLabel = 'Abort done';
+                    // A LabJack T7 has no board state machine; its "heartbeat" is its data
+                    // (server.ts noteT7Alive), so fresh data means it is streaming: Active.
+                    if (b.type === 'T7') boardStateLabel = 'Active';
                     if (stale) boardStateLabel = '---';
                     const engineLabel = stale ? '---' : engineStateCodeToLabel(b.engineState);
                     const liveConnected = !stale && (b.operational ?? b.connected);
@@ -273,11 +349,18 @@ export default function BoardsPage() {
                                 <option key={o.value} value={o.value}>{o.value} · {o.label}</option>
                               ))}
                             </select>
+                            {logModeError?.boardId === b.id && (
+                              <div className="text-xs text-red-400 font-mono mt-1" title={logModeError.message}>
+                                Not changed: {logModeError.message}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="text-sm text-text-muted font-mono mb-2">
                           Engine: {engineLabel}
                         </div>
+                        <DhcpRow status={b} />
+
                         {b.configured !== undefined && (
                           <div className="flex items-center gap-2 mb-2">
                             <span
@@ -338,6 +421,7 @@ export default function BoardsPage() {
 
       <BoardLogModal
         boardId={openLogsBoardId}
+        logMode={openLogsBoardId != null ? logModeById[openLogsBoardId] : undefined}
         title={openLogsBoardId != null ? (() => {
           const b = boardsMap?.[openLogsBoardId];
           if (!b) return `Board ${openLogsBoardId}`;

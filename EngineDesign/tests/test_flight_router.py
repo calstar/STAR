@@ -101,7 +101,8 @@ def test_optimize_refuses_a_target_above_the_ceiling():
     t, F, mO, mF = header_curve()
     req = FlightOptimizeRequest(time_array=t.tolist(), thrust_array=F.tolist(), mdot_O_array=mO.tolist(),
                                 mdot_F_array=mF.tolist(), target_apogee_m=3500.0, apogee_tolerance_m=15.0)
-    session = types.SimpleNamespace(app_state=types.SimpleNamespace(has_config=lambda: True, config=cfg))
+    session = types.SimpleNamespace(app_state=types.SimpleNamespace(has_config=lambda: True, config=cfg,
+                                                                    snapshot=lambda: (cfg, None)))
     out = asyncio.run(optimize_flight_altitude(req, session))
     assert out.success is False and "ceiling" in out.infeasible_reason and out.simulations_run == 0
 
@@ -157,7 +158,10 @@ def test_reference_pressure_is_the_session_pad_not_the_tabs():
     cfg = shipped()
     env = EnvironmentConfig(latitude=35.35, longitude=-117.81, elevation=1500.0, date=[2026, 1, 30, 18])
     r = _simulate(cfg, _request(cfg, environment=env))
-    p_pad = 101325.0 * math.exp(-0.0289644 * 9.80665 * cfg.environment.elevation / (8.31447 * 288.15))
+    from engine.core.runner import compute_ambient_pressure_from_elevation
+
+    # the engine solver's ambient at the SESSION pad (ISA 1976, checked by hand in test_ambient_isa.py)
+    p_pad = compute_ambient_pressure_from_elevation(cfg.environment.elevation)
     assert r.report["reference_pressure_pa"] == pytest.approx(p_pad, rel=1e-9)
     stated = _simulate(cfg, _request(cfg, reference_pressure_pa=90000.0))
     assert stated.report["reference_pressure_pa"] == 90000.0

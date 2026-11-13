@@ -38,9 +38,20 @@ function trackedConfigs(): string[] {
 
 type Board = Record<string, unknown>;
 
-function boardsOf(path: string): Array<[string, Board]> {
+function allBoardsOf(path: string): Array<[string, Board]> {
     const cfg = parse(readFileSync(path, 'utf-8')) as Record<string, unknown>;
     return Object.entries((cfg.boards ?? {}) as Record<string, Board>);
+}
+
+// The ESP32 boards, whose channel list goes on the wire as `active_connectors`. A LabJack T7
+// (type "T7") is not one: no SensorConfigPacket is ever sent to it, and its inputs are the
+// `[[boards.<name>.channels]]` table that t7_bridge streams (lib/include/config/T7Config.hpp).
+function boardsOf(path: string): Array<[string, Board]> {
+    return allBoardsOf(path).filter(([, b]) => b.type !== 'T7');
+}
+
+function t7BoardsOf(path: string): Array<[string, Board]> {
+    return allBoardsOf(path).filter(([, b]) => b.type === 'T7');
 }
 
 describe('deployed config: active_connectors is the only channel list', () => {
@@ -68,6 +79,16 @@ describe('deployed config: active_connectors is the only channel list', () => {
                 .filter(([, b]) => !Array.isArray(b.active_connectors) || (b.active_connectors as unknown[]).length === 0)
                 .map(([k]) => k);
             expect(offenders).toEqual([]);
+        });
+
+        it(`${name}: a T7 lists its inputs in channels, and only there`, () => {
+            // The same one-list rule for a T7: `channels` is what is streamed, so an
+            // active_connectors beside it would be a second list that nothing reads.
+            for (const [key, b] of t7BoardsOf(file)) {
+                expect('active_connectors' in b, `${key} declares active_connectors`).toBe(false);
+                expect(Array.isArray(b.channels) && (b.channels as unknown[]).length > 0,
+                    `${key} has no [[boards.${key}.channels]]`).toBe(true);
+            }
         });
 
         it(`${name}: channels are distinct connector numbers in 1..10`, () => {
