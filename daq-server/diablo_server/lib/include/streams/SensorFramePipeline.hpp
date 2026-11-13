@@ -67,6 +67,13 @@ public:
     };
     std::optional<SwitchStatusSample> get_last_switch_status();
 
+    // SWITCH_COMMAND_RESULT (type 18): what the env board did with an operator's command.
+    struct SwitchResultSample {
+        daq::SwitchCommandResultPacket result;
+        std::string source_ip;
+    };
+    std::optional<SwitchResultSample> get_last_switch_result();
+
 private:
     std::unique_ptr<daq_comms::transport::UDPSocket> socket_;
     std::vector<uint8_t> receive_buffer_;
@@ -80,6 +87,7 @@ private:
     std::string last_log_source_ip_;
     std::optional<EnvironmentalSample> last_environmental_;
     std::optional<SwitchStatusSample> last_switch_status_;
+    std::optional<SwitchResultSample> last_switch_result_;
 
     static constexpr size_t RECEIVE_BUFFER_SIZE = 8192;
 };

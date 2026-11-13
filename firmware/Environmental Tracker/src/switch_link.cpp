@@ -111,9 +111,37 @@ bool connectTo(const uint8_t mac[6]) {
     return true;
 }
 
+// Write one operator command to its switch's Output characteristic, with
+// response. The switch confirms through its own Output/Status notifications.
+bool writeOutput(const uint8_t mac[6], uint8_t output) {
+    NimBLEClient *c = NimBLEDevice::getClientByPeerAddress(toAddress(mac));
+    if (!c || !c->isConnected()) return false;
+    NimBLERemoteService *svc = c->getService(daq::bt_switch::SERVICE_UUID);
+    NimBLERemoteCharacteristic *out = svc ? svc->getCharacteristic(daq::bt_switch::OUTPUT_UUID) : nullptr;
+    return out && out->writeValue(&output, 1, true);
+}
+
 void task(void *) {
     uint32_t lastRssi = 0;
     for (;;) {
+        // Commands first: an operator is waiting. The relay hands out only what
+        // the DAQ sent; nothing here decides to write.
+        for (;;) {
+            daq::SwitchCommandPacket cmd;
+            uint8_t mac[6];
+            bool have;
+            {
+                Guard g;
+                have = relay.takeCommand(cmd, mac);
+            }
+            if (!have) break;
+            bool ok = writeOutput(mac, cmd.output);
+            Serial.printf("[switch] %02X%02X command %u %s: %s\n", mac[4], mac[5], cmd.command_id,
+                          cmd.output ? "ARM" : "DISARM", ok ? "written" : "write failed");
+            Guard g;
+            relay.finishCommand(cmd, ok);
+        }
+
         if (pendingSet) {
             uint8_t mac[6];
             memcpy(mac, pendingMac, 6);
@@ -183,6 +211,18 @@ void applyConfig(const daq::SwitchConfig &config, uint32_t hash) {
         NimBLEClient *c = NimBLEDevice::getClientByPeerAddress(toAddress(drop[i]));
         if (c && c->isConnected()) c->disconnect();
     }
+}
+
+void submitCommand(const daq::SwitchCommandPacket &cmd) {
+    if (!started) return;
+    Guard g;
+    relay.submitCommand(cmd);
+}
+
+size_t collectResults(daq::SwitchCommandResultPacket *out, size_t max) {
+    if (!started) return 0;
+    Guard g;
+    return relay.collectResults(out, max);
 }
 
 size_t collectReports(uint32_t nowMs, daq::SwitchStatusReport *out, size_t max) {

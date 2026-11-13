@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useControlMode } from '@/lib/control-mode';
+import { commandSettled, commandView, newCommandId, type PendingCommand } from '@/lib/switch-command';
 import { MessageType } from '@/lib/types';
 import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
 import { useSensorValue } from '@/lib/store';
@@ -52,6 +54,74 @@ function Field({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-xs uppercase tracking-wide text-text-muted">{label}</dt>
       <dd className="font-mono">{value}</dd>
+    </div>
+  );
+}
+
+/** Arm / Disarm, with a confirm step. Needs control unlocked; the backend enforces it too. */
+function SwitchControls({ sw, connected, output }: { sw: SwitchRoleConfig; connected: boolean; output: number | null }) {
+  const { controlEnabled } = useControlMode();
+  const [confirm, setConfirm] = useState<0 | 1 | null>(null);
+  const [pending, setPending] = useState<PendingCommand | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const cmdId = useSensorValue(`SW${sw.role}`, 'cmd_id');
+  const cmdResult = useSensorValue(`SW${sw.role}`, 'cmd_result');
+
+  // The env board's answer to *this* command (it echoes our id).
+  useEffect(() => {
+    if (pending && pending.result == null && cmdId === pending.id && cmdResult != null) {
+      setPending({ ...pending, result: cmdResult });
+    }
+  }, [pending, cmdId, cmdResult]);
+
+  useEffect(() => {
+    if (!pending) return;
+    if (commandSettled(pending, output)) { setPending(null); return; }
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [pending, output]);
+
+  const send = (o: 0 | 1) => {
+    const id = newCommandId();
+    setConfirm(null);
+    setNow(Date.now());
+    setPending({ id, output: o, sentAt: Date.now(), result: null });
+    getWebSocketClient().sendCommand({ commandType: 'switch', data: { switchRole: sw.role, switchOutput: o, switchCommandId: id } });
+  };
+
+  const view = commandView(pending, output, now);
+  const busy = view.kind === 'waiting';
+  const disabled = !controlEnabled || !connected || busy;
+  const why = !controlEnabled ? 'Unlock control as an approved operator to arm or disarm.'
+    : !connected ? 'Not connected: a command would not be sent.' : null;
+
+  return (
+    <div className="mt-4 border-t border-gray-700 pt-3">
+      {confirm === null ? (
+        <div className="flex gap-2">
+          <button type="button" disabled={disabled} onClick={() => setConfirm(1)}
+            className="rounded bg-red-700 px-4 py-2 font-semibold text-white disabled:opacity-40">Arm</button>
+          <button type="button" disabled={disabled} onClick={() => setConfirm(0)}
+            className="rounded bg-gray-600 px-4 py-2 font-semibold text-white disabled:opacity-40">Disarm</button>
+        </div>
+      ) : (
+        <div role="alertdialog" aria-label={`Confirm ${confirm ? 'arm' : 'disarm'}`} className="rounded border border-amber-500 p-3">
+          <p className="mb-2 text-sm">
+            {confirm
+              ? `Arm ${sw.name}? This powers the altimeter. It stays armed until someone disarms it; losing the link does not disarm.`
+              : `Disarm ${sw.name}? This cuts the altimeter's power.`}
+          </p>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => send(confirm)}
+              className="rounded bg-red-700 px-4 py-2 font-semibold text-white">{confirm ? 'Arm' : 'Disarm'} {sw.name}</button>
+            <button type="button" onClick={() => setConfirm(null)} className="rounded bg-gray-600 px-4 py-2 text-white">Cancel</button>
+          </div>
+        </div>
+      )}
+      {why && <p className="mt-2 text-xs text-text-muted">{why}</p>}
+      {view.kind === 'waiting' && <p className="mt-2 text-sm text-amber-300">{view.text}</p>}
+      {view.kind === 'refused' && <p className="mt-2 text-sm text-amber-300">{view.text}</p>}
+      {view.kind === 'fault' && <p className="mt-2 rounded bg-red-700 px-3 py-2 text-sm text-white">{view.text}</p>}
     </div>
   );
 }
@@ -114,6 +184,7 @@ export function SwitchCard({ sw }: { sw: SwitchRoleConfig }) {
       {haveStatus && (flags! & FLAG_RESTORED) !== 0 && (
         <p className="mt-3 text-sm text-amber-300">Output restored after an MCU reset.</p>
       )}
+      <SwitchControls sw={sw} connected={up} output={haveStatus ? output : null} />
     </section>
   );
 }

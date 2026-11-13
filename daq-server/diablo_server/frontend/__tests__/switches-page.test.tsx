@@ -1,6 +1,13 @@
 import React from 'react';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+let controlEnabled = true;
+const sendCommand = vi.fn();
+vi.mock('@/lib/control-mode', () => ({ useControlMode: () => ({ controlEnabled }) }));
+vi.mock('@/lib/websocket', async (orig) => ({
+  ...(await orig<typeof import('@/lib/websocket')>()),
+  getWebSocketClient: () => ({ on: () => () => {}, send: vi.fn(), sendCommand }),
+}));
 import SwitchesPage, { SwitchCard, switchRolesFromConfig } from '@/app/switches/page';
 import { useSensorStore } from '@/lib/store';
 import { NAV_ITEMS } from '@/lib/nav-items';
@@ -22,7 +29,11 @@ function feed(role: number, fields: Record<string, number>) {
 }
 
 describe('switches page', () => {
-  beforeEach(() => useSensorStore.setState({ boards: {}, sensorData: {} }));
+  beforeEach(() => {
+    useSensorStore.setState({ boards: {}, sensorData: {} });
+    controlEnabled = true;
+    sendCommand.mockClear();
+  });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
   it('reads roles from config, sorted, and only while the service is on', () => {
@@ -54,7 +65,55 @@ describe('switches page', () => {
     await waitFor(() => expect(screen.getByText(/Armed, but no power is reaching the output/)).toBeInTheDocument());
 
     feed(0, { link: 0, age_ms: 9000 });
-    await waitFor(() => expect(screen.getByText(/Not connected/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/the environmental board is looking for it/)).toBeInTheDocument());
     expect(screen.getByText(/last known, 9 s old/)).toBeInTheDocument();
+  });
+
+  const SW = { key: 'main', role: 0, name: 'Main altimeter', mac: '58:cf:79:01:3f:2a' };
+  const DISARMED = { link: 1, rssi: -60, age_ms: 0, status_valid: 1, output: 0, sense: 2, flags: 3,
+    supply_mv: 8400, current_ma: 10, uptime_s: 5, reset_reason: 1 };
+
+  it('arms only after a confirm, sends one absolute command, and waits for the switch', async () => {
+    render(<SwitchCard sw={SW} />);
+    feed(0, DISARMED);
+    await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Arm' }));
+    expect(sendCommand).not.toHaveBeenCalled();  // the confirm step first
+    fireEvent.click(screen.getByRole('button', { name: 'Arm Main altimeter' }));
+    expect(sendCommand).toHaveBeenCalledTimes(1);
+    const { data } = sendCommand.mock.calls[0][0];
+    expect(data).toMatchObject({ switchRole: 0, switchOutput: 1 });
+    expect(screen.getByText('Arming…')).toBeInTheDocument();
+    expect(screen.getByText('DISARMED')).toBeInTheDocument();  // nothing optimistic
+
+    feed(0, { cmd_id: data.switchCommandId, cmd_output: 1, cmd_result: 0 });
+    expect(screen.getByText('Arming…')).toBeInTheDocument();   // written is not armed
+    feed(0, { output: 1, sense: 3 });
+    await waitFor(() => expect(screen.getByText('ARMED')).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText('Arming…')).not.toBeInTheDocument());
+  });
+
+  it('shows "not connected" when the env board refuses', async () => {
+    render(<SwitchCard sw={SW} />);
+    feed(0, DISARMED);
+    await waitFor(() => expect(screen.getByText('DISARMED')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Disarm' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Disarm Main altimeter' }));
+    const { data } = sendCommand.mock.calls[0][0];
+    feed(0, { cmd_id: data.switchCommandId, cmd_output: 0, cmd_result: 1 });
+    await waitFor(() => expect(screen.getByText('Not sent: switch not connected.')).toBeInTheDocument());
+  });
+
+  it('cannot arm with control locked, or with the link down', async () => {
+    controlEnabled = false;
+    const { unmount } = render(<SwitchCard sw={SW} />);
+    feed(0, DISARMED);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Arm' })).toBeDisabled());
+    expect(screen.getByText(/Unlock control/)).toBeInTheDocument();
+    unmount();
+    controlEnabled = true;
+    render(<SwitchCard sw={SW} />);
+    feed(0, { ...DISARMED, link: 0 });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Arm' })).toBeDisabled());
   });
 });

@@ -180,6 +180,19 @@ export function parseElodinPacket(
     return fields.map(([component, value]) => ({ entity, component, value, timestamp }));
   }
 
+  // Bluetooth switch command result [0x28, role], same entity SW<role>: what the env board did
+  // with an operator's command (SwitchCommandResultMessage, 12 bytes).
+  if (high === 0x28) {
+    if (low > 4 || payload.length !== 12) return [];
+    const entity = `SW${low}`;
+    const timestamp = Number(payload.readBigUInt64LE(0) / 1000000n);
+    return [
+      { entity, component: 'cmd_id', value: payload.readUInt16LE(8), timestamp },
+      { entity, component: 'cmd_output', value: payload.readUInt8(10), timestamp },
+      { entity, component: 'cmd_result', value: payload.readUInt8(11), timestamp },
+    ];
+  }
+
   // ── Generic sensor type decoder ──────────────────────────────────────────
   // New packet ID scheme: low byte = (board_number - 1) * 0x20 + channel (raw)
   //                                   (board_number - 1) * 0x20 + 0x10 + channel (calibrated)

@@ -353,6 +353,31 @@ enum class SwitchLink : uint8_t {
   UP = 1,   // connected
 };
 
+/** SWITCH_COMMAND body: set a role's output. Absolute, never a toggle, so a repeated or
+ *  duplicated packet cannot flip the switch back. */
+struct __attribute__((packed)) SwitchCommandPacket {
+  uint16_t command_id; // chosen by the DAQ; echoed in the result
+  uint8_t role;
+  uint8_t output;      // 1 = arm (output on), 0 = disarm
+};
+
+enum class SwitchCommandResult : uint8_t {
+  WRITTEN = 0,      // the switch accepted the write (its status says what it did)
+  NO_LINK = 1,      // that switch is not connected; nothing was sent, nothing queued
+  WRITE_FAILED = 2, // connected, but the write was not acknowledged
+  UNKNOWN_ROLE = 3, // no switch is listed under that role
+  NO_CONFIG = 4,    // the env board holds no switch list yet
+  BAD_COMMAND = 5,  // output other than 0/1, or the relay was busy
+};
+
+/** SWITCH_COMMAND_RESULT body. */
+struct __attribute__((packed)) SwitchCommandResultPacket {
+  uint16_t command_id;
+  uint8_t role;
+  uint8_t output; // as requested
+  SwitchCommandResult result;
+};
+
 /** One role's link and its switch's last status, as the env board holds them.
  *  `status` is the switch's StatusPacket bytes untouched (SwitchStatus.h);
  *  `status_len` is 0 until the first one arrives. While the link is down the

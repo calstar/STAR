@@ -366,4 +366,20 @@ size_t create_switch_status_packet(const SwitchStatusReport &report, uint32_t ti
 bool parse_switch_status_packet(const uint8_t *buffer, size_t buffer_size,
                                 PacketHeader &header_out, SwitchStatusReport &report_out);
 
+
+/** SWITCH_COMMAND (17): PacketHeader + SwitchCommandPacket. 0 on error. */
+size_t create_switch_command_packet(const SwitchCommandPacket &cmd, uint32_t timestamp_ms,
+                                    uint8_t *buffer, size_t buffer_size);
+/** @return false on a wrong type or size, a role out of range, or output not 0/1. */
+bool parse_switch_command_packet(const uint8_t *buffer, size_t buffer_size,
+                                 PacketHeader &header_out, SwitchCommandPacket &cmd_out);
+
+/** SWITCH_COMMAND_RESULT (18): PacketHeader + SwitchCommandResultPacket. 0 on error. */
+size_t create_switch_command_result_packet(const SwitchCommandResultPacket &res,
+                                           uint32_t timestamp_ms, uint8_t *buffer,
+                                           size_t buffer_size);
+bool parse_switch_command_result_packet(const uint8_t *buffer, size_t buffer_size,
+                                        PacketHeader &header_out,
+                                        SwitchCommandResultPacket &res_out);
+
 } // namespace daq

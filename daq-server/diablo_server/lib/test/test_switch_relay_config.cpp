@@ -94,6 +94,26 @@ int main() {
         require(!parse_mac("58:cf:79:01:3f:2a:00", m), "too long");
         require(!parse_mac("58cf:79:01:3f:2a:0", m), "misplaced separator");
     }
+    {  // operator commands from the backend
+        auto c = load_from_string(
+            ENV_BOARD + SERVICE + role("main", "role = 0\nmac = \"58:cf:79:01:3f:2a\"") +
+            role("backup", "role = 3\nmac = \"58:cf:79:01:11:22\""));
+        require(c.switch_relay.command_port == 8094, "default command port");
+        daq::SwitchCommandPacket cmd{};
+        std::string why;
+        require(parse_switch_command("513 3 1", c.switch_relay, cmd, why) && cmd.command_id == 513 &&
+                    cmd.role == 3 && cmd.output == 1,
+                "arm role 3");
+        require(parse_switch_command("0 0 0\n", c.switch_relay, cmd, why) && cmd.output == 0,
+                "disarm role 0, trailing newline");
+        require(!parse_switch_command("1 1 1", c.switch_relay, cmd, why) &&
+                    why.find("not in [switch_roles]") != std::string::npos,
+                "unlisted role refused");
+        require(!parse_switch_command("1 0 2", c.switch_relay, cmd, why), "output 2 (no toggle)");
+        require(!parse_switch_command("70000 0 1", c.switch_relay, cmd, why), "id too big");
+        require(!parse_switch_command("1 0 1 x", c.switch_relay, cmd, why), "trailing junk");
+        require(!parse_switch_command("arm main", c.switch_relay, cmd, why), "words");
+    }
     if (failures) {
         std::cerr << failures << " failure(s)\n";
         return 1;

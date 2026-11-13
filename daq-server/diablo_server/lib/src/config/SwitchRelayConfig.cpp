@@ -46,6 +46,35 @@ daq::SwitchConfig switch_config_for(const SwitchRelayConfig& relay) {
     return wire;
 }
 
+bool parse_switch_command(const std::string& line, const SwitchRelayConfig& relay,
+                          daq::SwitchCommandPacket& out, std::string& why) {
+    long long id = -1, role = -1, output = -1;
+    char extra = 0;
+    if (std::sscanf(line.c_str(), "%lld %lld %lld %c", &id, &role, &output, &extra) != 3) {
+        why = "expected \"<command_id> <role> <output>\"";
+        return false;
+    }
+    if (id < 0 || id > 0xFFFF) {
+        why = "command_id out of range";
+        return false;
+    }
+    if (output != 0 && output != 1) {
+        why = "output must be 1 (arm) or 0 (disarm)";
+        return false;
+    }
+    bool listed = false;
+    for (const auto& r : relay.roles)
+        listed = listed || r.role == role;
+    if (!listed) {
+        why = "role " + std::to_string(role) + " is not in [switch_roles]";
+        return false;
+    }
+    out.command_id = static_cast<uint16_t>(id);
+    out.role = static_cast<uint8_t>(role);
+    out.output = static_cast<uint8_t>(output);
+    return true;
+}
+
 const BoardConfig* switch_relay_board(const Config& cfg) {
     for (const auto& b : cfg.boards)
         if (b.section == "boards." + cfg.switch_relay.env_board && b.type == "ENVIRONMENTAL" &&
@@ -63,6 +92,8 @@ SwitchRelayConfig parse_switch_relay(const toml::table& root) {
     c.interval_ms = static_cast<uint32_t>(
         std::max<int64_t>(100, svc["interval_ms"].value<int64_t>().value_or(1000)));
     c.env_board = svc["env_board"].value<std::string>().value_or("environmental_board");
+    c.command_port =
+        static_cast<uint16_t>(svc["command_port"].value<int64_t>().value_or(c.command_port));
 
     std::set<int64_t> roles;
     std::set<std::array<uint8_t, 6>> macs;

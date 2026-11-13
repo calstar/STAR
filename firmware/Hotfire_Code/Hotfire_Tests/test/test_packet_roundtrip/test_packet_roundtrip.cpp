@@ -668,6 +668,44 @@ void test_switch_status_rejects_bad_packets() {
     TEST_ASSERT_EQUAL(0, daq::create_switch_status_packet(in, 0, buf, sizeof(buf)));
 }
 
+
+void test_switch_command_roundtrip() {
+    daq::SwitchCommandPacket in{0xBEEF, 3, 1};
+    uint8_t buf[64];
+    size_t n = daq::create_switch_command_packet(in, 9, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 4, n);
+    daq::PacketHeader hdr;
+    daq::SwitchCommandPacket out;
+    TEST_ASSERT_TRUE(daq::parse_switch_command_packet(buf, n, hdr, out));
+    TEST_ASSERT_EQUAL(daq::PacketType::SWITCH_COMMAND, hdr.packet_type);
+    TEST_ASSERT_EQUAL_HEX16(0xBEEF, out.command_id);
+    TEST_ASSERT_EQUAL(3, out.role);
+    TEST_ASSERT_EQUAL(1, out.output);
+
+    TEST_ASSERT_FALSE(daq::parse_switch_command_packet(buf, n - 1, hdr, out));
+    daq::SwitchCommandPacket toggle{1, 0, 2};  // only 0 and 1: there is no "toggle"
+    n = daq::create_switch_command_packet(toggle, 0, buf, sizeof(buf));
+    TEST_ASSERT_FALSE(daq::parse_switch_command_packet(buf, n, hdr, out));
+    daq::SwitchCommandPacket badRole{1, daq::MAX_SWITCHES, 0};
+    n = daq::create_switch_command_packet(badRole, 0, buf, sizeof(buf));
+    TEST_ASSERT_FALSE(daq::parse_switch_command_packet(buf, n, hdr, out));
+}
+
+void test_switch_command_result_roundtrip() {
+    daq::SwitchCommandResultPacket in{42, 1, 0, daq::SwitchCommandResult::NO_LINK};
+    uint8_t buf[64];
+    size_t n = daq::create_switch_command_result_packet(in, 9, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 5, n);
+    daq::PacketHeader hdr;
+    daq::SwitchCommandResultPacket out;
+    TEST_ASSERT_TRUE(daq::parse_switch_command_result_packet(buf, n, hdr, out));
+    TEST_ASSERT_EQUAL(42, out.command_id);
+    TEST_ASSERT_EQUAL(1, out.role);
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_LINK, (int)out.result);
+    buf[n - 1] = 99;  // unknown result code
+    TEST_ASSERT_FALSE(daq::parse_switch_command_result_packet(buf, n, hdr, out));
+}
+
 int main(int argc, char** argv) {
     UNITY_BEGIN();
 
@@ -720,6 +758,8 @@ int main(int argc, char** argv) {
     RUN_TEST(test_switch_config_rejects_bad_packets);
     RUN_TEST(test_switch_status_roundtrip);
     RUN_TEST(test_switch_status_rejects_bad_packets);
+    RUN_TEST(test_switch_command_roundtrip);
+    RUN_TEST(test_switch_command_result_roundtrip);
     RUN_TEST(test_parse_null_buffer);
 
     return UNITY_END();

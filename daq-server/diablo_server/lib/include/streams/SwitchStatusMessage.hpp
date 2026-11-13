@@ -38,5 +38,18 @@ inline SwitchStatusMessage make_switch_status_message(const daq::SwitchStatusRep
                                st.reset_reason, r.status_len ? r.status[0] : 0);
 }
 
+// Elodin [0x28, role], same entity SW<role>: what the env board did with an operator's command.
+//   0 u64 timestamp_ns   8 u16 cmd_id   10 u8 cmd_output (as requested)   11 u8 cmd_result
+//   (daq::SwitchCommandResult: 0 written, 1 no link, 2 write failed, 3 unknown role,
+//    4 no config, 5 bad command)
+using SwitchCommandResultMessage = comms::CommsMessage<uint64_t, uint16_t, uint8_t, uint8_t>;
+static_assert(SwitchCommandResultMessage::nbytes() == 12);
+
+inline SwitchCommandResultMessage make_switch_command_result_message(
+    const daq::SwitchCommandResultPacket& r, uint64_t timestamp_ns) {
+    return SwitchCommandResultMessage(timestamp_ns, r.command_id, r.output,
+                                      static_cast<uint8_t>(r.result));
+}
+
 }  // namespace streams
 }  // namespace fsw

@@ -293,7 +293,10 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
         if (sw.switch_service?.enabled === true && sw.switch_roles && typeof sw.switch_roles === 'object') {
             for (const raw of Object.values(sw.switch_roles as Record<string, unknown>)) {
                 const role = Number((raw as { role?: unknown })?.role);
-                if (Number.isInteger(role) && role >= 0 && role <= 4) addUnique(0x27, role);
+                if (Number.isInteger(role) && role >= 0 && role <= 4) {
+                    addUnique(0x27, role);  // status
+                    addUnique(0x28, role);  // command results
+                }
             }
         }
     } catch (e) {

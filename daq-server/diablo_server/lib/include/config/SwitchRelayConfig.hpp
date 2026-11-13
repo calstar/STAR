@@ -28,6 +28,7 @@ struct SwitchRelayConfig {
     bool enabled = false;
     uint32_t interval_ms = 1000;  // SWITCH_CONFIG resend period
     std::string env_board;        // key of the [boards.<key>] that relays them
+    uint16_t command_port = 8094; // loopback UDP the backend sends operator commands to
     std::vector<SwitchRole> roles;  // sorted by role
     std::vector<std::string> errors;
 };
@@ -37,6 +38,12 @@ bool parse_mac(const std::string& text, std::array<uint8_t, 6>& out);
 
 /** The list as the env board receives it. */
 daq::SwitchConfig switch_config_for(const SwitchRelayConfig& relay);
+
+/** An operator command from the backend, as it arrives on command_port: one line,
+ *  "<command_id> <role> <output>", output 1 = arm, 0 = disarm. Returns false (with why) for
+ *  anything else, a role not in the list, or an id outside 0..65535. */
+bool parse_switch_command(const std::string& line, const SwitchRelayConfig& relay,
+                          daq::SwitchCommandPacket& out, std::string& why);
 
 /** The enabled ENVIRONMENTAL board named by env_board, or nullptr. */
 const BoardConfig* switch_relay_board(const Config& cfg);

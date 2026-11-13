@@ -22,6 +22,11 @@ bool running();
 // A SWITCH_CONFIG from the server. Ignored when its hash is the one held.
 void applyConfig(const daq::SwitchConfig &config, uint32_t hash);
 
+// An operator's command from the DAQ. Answered by a result, never queued for a
+// link that is down (see SwitchRelay::submitCommand).
+void submitCommand(const daq::SwitchCommandPacket &cmd);
+size_t collectResults(daq::SwitchCommandResultPacket *out, size_t max);
+
 // Reports due now (see SwitchRelay::collectReports).
 size_t collectReports(uint32_t nowMs, daq::SwitchStatusReport *out, size_t max);
 

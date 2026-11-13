@@ -950,4 +950,52 @@ bool parse_switch_status_packet(const uint8_t *buffer, size_t buffer_size,
   return true;
 }
 
+
+size_t create_switch_command_packet(const SwitchCommandPacket &cmd, uint32_t timestamp_ms,
+                                    uint8_t *buffer, size_t buffer_size) {
+  const size_t total = sizeof(PacketHeader) + sizeof(SwitchCommandPacket);
+  if (!buffer || buffer_size < total) return 0;
+  put_header(buffer, PacketType::SWITCH_COMMAND, timestamp_ms);
+  memcpy(buffer + sizeof(PacketHeader), &cmd, sizeof cmd);
+  return total;
+}
+
+bool parse_switch_command_packet(const uint8_t *buffer, size_t buffer_size,
+                                 PacketHeader &header_out, SwitchCommandPacket &cmd_out) {
+  PacketHeader hdr;
+  if (!get_header(buffer, buffer_size, PacketType::SWITCH_COMMAND, hdr)) return false;
+  if (buffer_size != sizeof(PacketHeader) + sizeof(SwitchCommandPacket)) return false;
+  SwitchCommandPacket cmd;
+  memcpy(&cmd, buffer + sizeof(PacketHeader), sizeof cmd);
+  if (cmd.role >= MAX_SWITCHES || cmd.output > 1) return false;
+  header_out = hdr;
+  cmd_out = cmd;
+  return true;
+}
+
+size_t create_switch_command_result_packet(const SwitchCommandResultPacket &res,
+                                           uint32_t timestamp_ms, uint8_t *buffer,
+                                           size_t buffer_size) {
+  const size_t total = sizeof(PacketHeader) + sizeof(SwitchCommandResultPacket);
+  if (!buffer || buffer_size < total) return 0;
+  put_header(buffer, PacketType::SWITCH_COMMAND_RESULT, timestamp_ms);
+  memcpy(buffer + sizeof(PacketHeader), &res, sizeof res);
+  return total;
+}
+
+bool parse_switch_command_result_packet(const uint8_t *buffer, size_t buffer_size,
+                                        PacketHeader &header_out,
+                                        SwitchCommandResultPacket &res_out) {
+  PacketHeader hdr;
+  if (!get_header(buffer, buffer_size, PacketType::SWITCH_COMMAND_RESULT, hdr)) return false;
+  if (buffer_size != sizeof(PacketHeader) + sizeof(SwitchCommandResultPacket)) return false;
+  SwitchCommandResultPacket res;
+  memcpy(&res, buffer + sizeof(PacketHeader), sizeof res);
+  if (static_cast<uint8_t>(res.result) > static_cast<uint8_t>(SwitchCommandResult::BAD_COMMAND))
+    return false;
+  header_out = hdr;
+  res_out = res;
+  return true;
+}
+
 } // namespace daq

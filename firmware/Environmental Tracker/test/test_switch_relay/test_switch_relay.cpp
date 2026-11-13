@@ -165,6 +165,127 @@ void test_oversized_status_is_cut_and_max_is_honoured() {
     TEST_ASSERT_EQUAL(1, out[0].role);
 }
 
+
+// ---- commands --------------------------------------------------------------
+
+static daq::SwitchCommandResult only_result(SwitchRelay &r, uint16_t id) {
+    daq::SwitchCommandResultPacket out[10];
+    size_t n = r.collectResults(out, 10);
+    TEST_ASSERT_EQUAL(1, n);
+    TEST_ASSERT_EQUAL(id, out[0].command_id);
+    return out[0].result;
+}
+
+void test_command_without_config_is_refused() {
+    SwitchRelay r;
+    r.submitCommand({1, 0, 1});
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_CONFIG, (int)only_result(r, 1));
+}
+
+void test_command_to_unlisted_role_is_refused() {
+    SwitchRelay r;
+    apply(r, list({{0, A}}));
+    r.submitCommand({2, 3, 1});
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::UNKNOWN_ROLE, (int)only_result(r, 2));
+}
+
+void test_command_with_link_down_is_refused_not_queued() {
+    SwitchRelay r;
+    apply(r, list({{0, A}}));
+    r.submitCommand({3, 0, 1});
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_LINK, (int)only_result(r, 3));
+    r.onConnected(A);  // the link coming back must not deliver it late
+    daq::SwitchCommandPacket c;
+    uint8_t mac[6];
+    TEST_ASSERT_FALSE(r.takeCommand(c, mac));
+}
+
+void test_connected_command_is_written_once_and_answered() {
+    SwitchRelay r;
+    apply(r, list({{0, A}}));
+    r.onConnected(A);
+    r.submitCommand({4, 0, 1});
+    daq::SwitchCommandResultPacket res[4];
+    TEST_ASSERT_EQUAL(0, r.collectResults(res, 4));  // no answer until it's written
+
+    daq::SwitchCommandPacket c;
+    uint8_t mac[6];
+    TEST_ASSERT_TRUE(r.takeCommand(c, mac));
+    TEST_ASSERT_EQUAL(1, c.output);
+    TEST_ASSERT_EQUAL_MEMORY(A, mac, 6);
+    TEST_ASSERT_FALSE(r.takeCommand(c, mac));  // once
+    r.finishCommand(c, true);
+    TEST_ASSERT_EQUAL(1, r.collectResults(res, 4));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::WRITTEN, (int)res[0].result);
+    TEST_ASSERT_EQUAL(1, res[0].output);
+    r.submitCommand({5, 0, 0});
+    TEST_ASSERT_TRUE(r.takeCommand(c, mac));
+    r.finishCommand(c, false);
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::WRITE_FAILED, (int)only_result(r, 5));
+}
+
+void test_link_lost_before_the_write_answers_no_link() {
+    SwitchRelay r;
+    apply(r, list({{0, A}}));
+    r.onConnected(A);
+    r.submitCommand({6, 0, 1});
+    r.onDisconnected(A);
+    daq::SwitchCommandPacket c;
+    uint8_t mac[6];
+    TEST_ASSERT_FALSE(r.takeCommand(c, mac));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_LINK, (int)only_result(r, 6));
+}
+
+void test_new_list_cannot_redirect_a_queued_command() {
+    SwitchRelay r;
+    apply(r, list({{0, A}, {1, B}}));
+    r.onConnected(A);
+    r.onConnected(B);
+    r.submitCommand({7, 0, 1});  // meant for A
+    apply(r, list({{0, B}}));    // B now sits under role 0
+    daq::SwitchCommandPacket c;
+    uint8_t mac[6];
+    TEST_ASSERT_FALSE(r.takeCommand(c, mac));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::UNKNOWN_ROLE, (int)only_result(r, 7));
+}
+
+void test_full_queue_and_bad_output_are_refused() {
+    SwitchRelay r;
+    apply(r, list({{0, A}}));
+    r.onConnected(A);
+    for (uint16_t i = 0; i < SwitchRelay::MAX_QUEUED; ++i) r.submitCommand({i, 0, 1});
+    r.submitCommand({99, 0, 1});
+    r.submitCommand({100, 0, 2});
+    daq::SwitchCommandResultPacket res[4];
+    TEST_ASSERT_EQUAL(2, r.collectResults(res, 4));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::BAD_COMMAND, (int)res[0].result);
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::BAD_COMMAND, (int)res[1].result);
+}
+
+// The board never writes on its own: through config, connects, statuses, lost links,
+// reconnects (an env board reboot looks like this), new lists and reports, nothing is
+// ever handed to the BLE task to write.
+void test_nothing_is_written_without_a_command() {
+    SwitchRelay r;
+    daq::SwitchCommandPacket c;
+    uint8_t mac[6];
+    daq::SwitchStatusReport rep[5];
+    uint8_t armed[17] = {1, 1, 3, 3};
+    apply(r, list({{0, A}, {1, B}}));
+    r.onConnected(A);
+    r.onStatus(A, armed, 17, 0);
+    r.onDisconnected(A);
+    r.onConnected(A);
+    r.onStatus(A, armed, 17, 100);
+    r.onConnected(B);
+    apply(r, list({{1, A}}));
+    r.collectReports(5000, rep, 5);
+    apply(r, list({{1, A}}));
+    TEST_ASSERT_FALSE(r.takeCommand(c, mac));
+    daq::SwitchCommandResultPacket res[4];
+    TEST_ASSERT_EQUAL(0, r.collectResults(res, 4));
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_no_config_connects_to_nothing);
@@ -176,5 +297,13 @@ int main(int, char **) {
     RUN_TEST(test_lost_link_keeps_last_status_and_ages_it);
     RUN_TEST(test_unlisted_switch_is_ignored);
     RUN_TEST(test_oversized_status_is_cut_and_max_is_honoured);
+    RUN_TEST(test_command_without_config_is_refused);
+    RUN_TEST(test_command_to_unlisted_role_is_refused);
+    RUN_TEST(test_command_with_link_down_is_refused_not_queued);
+    RUN_TEST(test_connected_command_is_written_once_and_answered);
+    RUN_TEST(test_link_lost_before_the_write_answers_no_link);
+    RUN_TEST(test_new_list_cannot_redirect_a_queued_command);
+    RUN_TEST(test_full_queue_and_bad_output_are_refused);
+    RUN_TEST(test_nothing_is_written_without_a_command);
     return UNITY_END();
 }

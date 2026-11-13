@@ -30,6 +30,8 @@ elodin_port = 2240
 enabled = false
 interval_ms = 1000
 env_board = "environmental_board"
+# Loopback port the backend sends operator Arm/Disarm to (gated: approved operator, control on).
+command_port = 8094
 
 # One table per switch: role 0-4 is what goes on the wire, the name stays here. The MAC is the
 # switch's Bluetooth MAC (its console prints it; its name ends in the last two bytes).

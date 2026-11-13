@@ -113,7 +113,7 @@ void loop() {
     ota_server.poll();
     StarOTA::printTestMessage();
 
-    // Receive UDP: SWITCH_CONFIG for the relay, SERVER_HEARTBEAT logged,
+    // Receive UDP: SWITCH_CONFIG / SWITCH_COMMAND for the relay, SERVER_HEARTBEAT logged,
     // everything else discarded
     int pkt_size = udp.parsePacket();
     if (pkt_size > 0) {
@@ -125,6 +125,20 @@ void loop() {
             uint32_t hash;
             if (daq::parse_switch_config_packet(pkt_buf, bytes_read, hdr, cfg, hash))
                 switch_link::applyConfig(cfg, hash);  // no-op when the hash is the one held
+        } else if (bytes_read > 0 && static_cast<daq::PacketType>(pkt_buf[0]) ==
+                                         daq::PacketType::SWITCH_COMMAND) {
+            daq::PacketHeader hdr;
+            daq::SwitchCommandPacket cmd;
+            if (daq::parse_switch_command_packet(pkt_buf, bytes_read, hdr, cmd)) {
+                if (switch_link::running()) {
+                    switch_link::submitCommand(cmd);
+                } else {  // still answer: no Bluetooth means no link to anything
+                    daq::SwitchCommandResultPacket res{cmd.command_id, cmd.role, cmd.output,
+                                                       daq::SwitchCommandResult::NO_LINK};
+                    send_to_server(pkt_buf, daq::create_switch_command_result_packet(
+                                                res, millis(), pkt_buf, sizeof(pkt_buf)));
+                }
+            }
         } else if (bytes_read > 0 && static_cast<daq::PacketType>(pkt_buf[0]) ==
                                   daq::PacketType::SERVER_HEARTBEAT) {
             daq::PacketHeader hdr;
@@ -175,6 +189,11 @@ void loop() {
     for (size_t i = 0; i < nrep; ++i)
         send_to_server(pkt_buf, daq::create_switch_status_packet(reports[i], now, pkt_buf,
                                                                  sizeof(pkt_buf)));
+    daq::SwitchCommandResultPacket results[daq::MAX_SWITCHES];
+    size_t nres = switch_link::collectResults(results, daq::MAX_SWITCHES);
+    for (size_t i = 0; i < nres; ++i)
+        send_to_server(pkt_buf, daq::create_switch_command_result_packet(results[i], now, pkt_buf,
+                                                                         sizeof(pkt_buf)));
     static unsigned long last_ble_report = 0;
     if (!switch_link::running() && now - last_ble_report >= ENV_BME_RETRY_INTERVAL_MS) {
         last_ble_report = now;

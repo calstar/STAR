@@ -702,6 +702,27 @@ int main(int argc, char* argv[]) {
                         ++elodin_drop_count;
                 }
             }
+            if (auto res = pipeline.get_last_switch_result()) {
+                const bool listed = std::find(switch_roles.begin(), switch_roles.end(),
+                                              res->result.role) != switch_roles.end();
+                if (listed && res->source_ip == switch_board_ip) {
+                    const uint64_t timestamp_ns =
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+                    std::cout << "[Switch] role " << int(res->result.role) << " command "
+                              << res->result.command_id << " ("
+                              << (res->result.output ? "arm" : "disarm") << "): result "
+                              << int(static_cast<uint8_t>(res->result.result)) << std::endl;
+                    const auto msg =
+                        fsw::streams::make_switch_command_result_message(res->result, timestamp_ns);
+                    if (elodin_connected && elodin_client.is_connected() &&
+                        elodin_client.publish({0x28, res->result.role}, msg))
+                        ++elodin_publish_count;
+                    else
+                        ++elodin_drop_count;
+                }
+            }
             // When last packet was a BOARD_HEARTBEAT, run discovery and broadcast config to that
             // board
             auto hb = pipeline.get_last_heartbeat();

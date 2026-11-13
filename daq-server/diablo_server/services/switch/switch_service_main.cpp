@@ -6,12 +6,19 @@
  * only when its hash differs from the one it holds, so the resend is free, and a board that
  * rebooted has its list back within one interval. The board keeps the list in memory only.
  *
+ * Operator commands arrive from the backend on loopback UDP [switch_service].command_port, one
+ * line "<command_id> <role> <output>", already gated there (approved operator, control on). Each
+ * becomes one SWITCH_COMMAND to the board; the board answers SWITCH_COMMAND_RESULT, which
+ * daq_bridge logs to Elodin [0x28, role]. Nothing is retried or queued here.
+ *
  * Status flows the other way through daq_bridge (SWITCH_STATUS -> Elodin [0x27, role]).
  *
- * The service never commands a switch on its own (docs: firmware/Environmental Tracker/README).
+ * The service never commands a switch on its own (docs: firmware/Environmental Tracker/README):
+ * every SWITCH_COMMAND it sends is a line the backend sent it.
  */
 
 #include <arpa/inet.h>
+#include <poll.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -92,15 +99,50 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    uint8_t buf[64];
-    while (g_running) {
-        size_t n = daq::create_switch_config_packet(wire, now_ms(), buf, sizeof buf);
-        if (n > 0 &&
-            sendto(sock, buf, n, 0, reinterpret_cast<sockaddr*>(&dst), sizeof dst) < 0)
-            perror("[SwitchService] sendto");
-        for (uint32_t waited = 0; g_running && waited < relay.interval_ms; waited += 50)
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    // Commands from the backend, loopback only.
+    int cmd_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_in local{};
+    local.sin_family = AF_INET;
+    local.sin_port = htons(relay.command_port);
+    local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    if (cmd_sock < 0 || bind(cmd_sock, reinterpret_cast<sockaddr*>(&local), sizeof local) < 0) {
+        perror("[SwitchService] bind command port");
+        return 1;
     }
+    std::cout << "[SwitchService] commands on 127.0.0.1:" << relay.command_port << "\n";
+
+    uint8_t buf[64];
+    uint32_t last_config = now_ms() - relay.interval_ms;
+    while (g_running) {
+        if (now_ms() - last_config >= relay.interval_ms) {
+            last_config = now_ms();
+            size_t n = daq::create_switch_config_packet(wire, last_config, buf, sizeof buf);
+            if (n > 0 &&
+                sendto(sock, buf, n, 0, reinterpret_cast<sockaddr*>(&dst), sizeof dst) < 0)
+                perror("[SwitchService] sendto");
+        }
+
+        pollfd p{cmd_sock, POLLIN, 0};
+        if (poll(&p, 1, 50) <= 0 || !(p.revents & POLLIN))
+            continue;
+        char line[128];
+        ssize_t got = recv(cmd_sock, line, sizeof line - 1, 0);
+        if (got <= 0)
+            continue;
+        line[got] = 0;
+        daq::SwitchCommandPacket cmd{};
+        std::string why;
+        if (!fsw::config::parse_switch_command(line, relay, cmd, why)) {
+            std::cerr << "[SwitchService] refused command \"" << line << "\": " << why << "\n";
+            continue;
+        }
+        size_t n = daq::create_switch_command_packet(cmd, now_ms(), buf, sizeof buf);
+        bool sent = n > 0 &&
+                    sendto(sock, buf, n, 0, reinterpret_cast<sockaddr*>(&dst), sizeof dst) >= 0;
+        std::cout << "[SwitchService] command " << cmd.command_id << ": role " << int(cmd.role)
+                  << (cmd.output ? " ARM" : " DISARM") << (sent ? "" : " (send failed)") << "\n";
+    }
+    close(cmd_sock);
     close(sock);
     return 0;
 }

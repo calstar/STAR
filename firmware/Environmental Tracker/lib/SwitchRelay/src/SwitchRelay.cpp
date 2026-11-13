@@ -128,3 +128,57 @@ size_t SwitchRelay::collectReports(uint32_t nowMs, daq::SwitchStatusReport *out,
     }
     return n;
 }
+
+void SwitchRelay::result(const daq::SwitchCommandPacket &cmd, daq::SwitchCommandResult r) {
+    if (nResults_ == sizeof results_ / sizeof results_[0]) {  // DAQ not draining: drop the oldest
+        memmove(results_, results_ + 1, (nResults_ - 1) * sizeof results_[0]);
+        --nResults_;
+    }
+    results_[nResults_++] = daq::SwitchCommandResultPacket{cmd.command_id, cmd.role, cmd.output, r};
+}
+
+void SwitchRelay::submitCommand(const daq::SwitchCommandPacket &cmd) {
+    using R = daq::SwitchCommandResult;
+    if (cmd.output > 1) return result(cmd, R::BAD_COMMAND);
+    if (!hasConfig_) return result(cmd, R::NO_CONFIG);
+    if (cmd.role >= daq::MAX_SWITCHES || !slots_[cmd.role].listed) return result(cmd, R::UNKNOWN_ROLE);
+    if (!slots_[cmd.role].up) return result(cmd, R::NO_LINK);
+    if (queued_ == MAX_QUEUED) return result(cmd, R::BAD_COMMAND);
+    queue_[queued_].cmd = cmd;
+    memcpy(queue_[queued_].mac, slots_[cmd.role].mac, 6);
+    ++queued_;
+}
+
+bool SwitchRelay::takeCommand(daq::SwitchCommandPacket &cmd, uint8_t mac[6]) {
+    while (queued_ > 0) {
+        Queued q = queue_[0];
+        memmove(queue_, queue_ + 1, (queued_ - 1) * sizeof queue_[0]);
+        --queued_;
+        // Still the same switch under that role? A new list may have moved or dropped it.
+        const Slot &s = slots_[q.cmd.role];
+        if (!s.listed || !same(s.mac, q.mac)) {
+            result(q.cmd, daq::SwitchCommandResult::UNKNOWN_ROLE);
+            continue;
+        }
+        if (!s.up) {
+            result(q.cmd, daq::SwitchCommandResult::NO_LINK);
+            continue;
+        }
+        cmd = q.cmd;
+        memcpy(mac, q.mac, 6);
+        return true;
+    }
+    return false;
+}
+
+void SwitchRelay::finishCommand(const daq::SwitchCommandPacket &cmd, bool written) {
+    result(cmd, written ? daq::SwitchCommandResult::WRITTEN : daq::SwitchCommandResult::WRITE_FAILED);
+}
+
+size_t SwitchRelay::collectResults(daq::SwitchCommandResultPacket *out, size_t max) {
+    size_t n = nResults_ < max ? nResults_ : max;
+    memcpy(out, results_, n * sizeof results_[0]);
+    memmove(results_, results_ + n, (nResults_ - n) * sizeof results_[0]);
+    nResults_ -= n;
+    return n;
+}

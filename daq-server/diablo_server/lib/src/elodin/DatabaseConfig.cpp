@@ -83,6 +83,23 @@ bool DatabaseConfig::register_switch_tables(ElodinClient& client,
         for (const auto& f : fields)
             ok = send_msg(client, set_component_name(prefix + f.name)) && ok;
         ok = send_msg(client, set_entity_name((0x27u << 8) | role, entity)) && ok;
+
+        // [0x28, role]: command results, on the same entity.
+        static const F results[] = {
+            {0, 8, PrimType::U64, "cmd_timestamp_ns"},
+            {8, 2, PrimType::U16, "cmd_id"},
+            {10, 1, PrimType::U8, "cmd_output"},
+            {11, 1, PrimType::U8, "cmd_result"},
+        };
+        VTableBuilder rb;
+        for (const auto& f : results)
+            rb.push_field(raw_field(f.off, f.len, schema(f.type(), {}, component(prefix + f.name))));
+        if (!send_msg(client, VTableMsg{.id = {0x28, role}, .vtable = rb.build()})) {
+            ok = false;
+            continue;
+        }
+        for (const auto& f : results)
+            ok = send_msg(client, set_component_name(prefix + f.name)) && ok;
     }
     return ok;
 }
