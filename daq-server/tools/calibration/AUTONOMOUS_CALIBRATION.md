@@ -4,7 +4,7 @@
 
 The Autonomous PT Calibration System automatically calibrates pressure transducers by:
 1. Listening for raw PT packets **directly from the boards over UDP**
-   (DiabloAvionics protocol — no Elodin or DAQ bridge in the loop)
+   (StarAvionics protocol — no Elodin or DAQ bridge in the loop)
 2. Collecting calibration points at known reference pressures
 3. Automatically fitting calibration polynomials
 4. Validating calibration quality
@@ -68,7 +68,7 @@ python3 tools/calibration/autonomous_pt_calibration.py \
 ## How It Works
 
 1. **Connection**: Binds a UDP socket on `0.0.0.0:<port>` and reads board
-   sensor-data packets directly (DiabloAvionics protocol). No Elodin
+   sensor-data packets directly (StarAvionics protocol). No Elodin
    subscription or DAQ bridge is involved.
 
 2. **Data Collection**: 
@@ -98,7 +98,7 @@ python3 tools/calibration/autonomous_pt_calibration.py \
 This tool talks to the boards directly over UDP, so it does **not** need Elodin
 or the DAQ bridge running — only that the PT board(s) are powered and sending
 sensor-data packets on the DAQ subnet, and that this host has an address on that
-subnet (see [../../docs/DIABLOAVIONICS_NETWORK_CONFIG.md](../../docs/DIABLOAVIONICS_NETWORK_CONFIG.md)).
+subnet (see [../../docs/STARAVIONICS_NETWORK_CONFIG.md](../../docs/STARAVIONICS_NETWORK_CONFIG.md)).
 To test without hardware, run the board simulator
 (`python sim/board_simulator.py --config config/config.toml --port 5006`).
 

@@ -1,6 +1,6 @@
-# Diablo DAQ System
+# STAR DAQ System
 
-Ground support data acquisition, monitoring, and control system for Diablo Avionics rocket test operations.
+Ground support data acquisition, monitoring, and control system for STAR rocket test operations.
 
 The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge → Elodin time-series DB → backend → web GUI. This is the `daq-server/` subproject of the STAR monorepo; the pipeline product code lives under `star_server/`.
 

@@ -297,8 +297,8 @@ export default function App() {
       <header className="topbar">
         {/* The DAQ console's header (star_server/frontend TabBar): its name with
             "a STAR project" under it, a hairline, then this view, underlined. */}
-        <span className="brand" title="Diablo DAQ: the stand's data acquisition and control. A STAR project.">
-          <span className="brand-name">Diablo DAQ</span>
+        <span className="brand" title="STAR DAQ: the stand's data acquisition and control. A STAR project.">
+          <span className="brand-name">STAR DAQ</span>
           <span className="brand-sub">a STAR project</span>
         </span>
         <h1>Run Viewer</h1>

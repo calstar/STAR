@@ -192,7 +192,7 @@ std::string SensorAssignmentManager::assign_board_ip(uint8_t board_id,
     BoardConfiguration& config = board_configs_[board_id];
     config.board_id = board_id;
     config.board_ip = assigned_ip;
-    config.board_port = 5005;  // Default DiabloAvionics port
+    config.board_port = 5005;  // Default StarAvionics port
     config.mac_address = mac_address;
     config.system_state = system_state;
     config.is_configured = false;

@@ -82,7 +82,7 @@ public:
     /// Load calibration from a JSON calibration file
     bool load_from_json(const std::string& json_path);
 
-    /// Load calibration from a CSV file (DiabloAvionics format)
+    /// Load calibration from a CSV file (StarAvionics format)
     bool load_from_csv(const std::string& csv_path);
 
     /// Auto-discover & load from default directories

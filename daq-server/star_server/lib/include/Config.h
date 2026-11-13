@@ -40,8 +40,8 @@ public:
         size_t buffer_size;
     };
 
-    // Diablo Sensor System config
-    struct DiabloSensorConfig {
+    // Sensor System config
+    struct SensorSystemConfig {
         std::string udp_bind_ip;
         int udp_listen_port;
         std::string publish_ip;
@@ -107,7 +107,7 @@ public:
     NetworkConfig network;
     HITLConfig hitl;
     TelemetryConfig telemetry;
-    DiabloSensorConfig diablo_sensor;
+    SensorSystemConfig sensor_system;
     NavigationConfig navigation;
     ControlConfig control;
     StateMachineConfig state_machine;

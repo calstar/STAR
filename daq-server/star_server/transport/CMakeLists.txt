@@ -1,5 +1,5 @@
 # CMakeLists.txt for daq_comms library
-# Transport + shared message types (on-wire Diablo framing lives in lib/daq-protocol only).
+# Transport + shared message types (on-wire board framing lives in lib/daq-protocol only).
 
 set(DAQ_COMMS_SOURCES
     src/transport/NetworkSocket.cpp

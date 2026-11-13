@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# check_env.sh — Diablo-FSW environment health checker
+# check_env.sh — Star-FSW environment health checker
 # Checks system tools, build artifacts, node/python deps, git state, and port conflicts.
 # Works on Linux, macOS, and WSL.
 

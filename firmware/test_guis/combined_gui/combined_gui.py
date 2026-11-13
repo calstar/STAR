@@ -5660,7 +5660,7 @@ class CombinedMainWindow(QtWidgets.QMainWindow):
         bind_address: str = "0.0.0.0",
     ):
         super().__init__()
-        self.setWindowTitle("Diablo Avionics – Sensor & Actuator")
+        self.setWindowTitle("STAR Avionics – Sensor & Actuator")
         # Event log storage: list of (time, type, details)
         self.event_log: List[Tuple[float, str, str]] = []
 

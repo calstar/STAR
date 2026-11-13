@@ -95,7 +95,7 @@ void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size
     board.current_ip = source_ip;
     board.last_seen = std::chrono::steady_clock::now();
     board.is_configured = false;
-    board.port = 5005;  // Default DiabloAvionics port
+    board.port = 5005;  // Default StarAvionics port
 
     // MAC address will be extracted from network layer or calculated from IP
     // For now, use IP-based hash
@@ -246,7 +246,7 @@ BoardDiscovery::BoardType BoardDiscovery::detect_board_type(
     }
 
     if (type_counts.size() == 1) {
-        // Single sensor type board (matching DiabloAvionics BoardType enum)
+        // Single sensor type board (matching StarAvionics BoardType enum)
         switch (type_counts.begin()->first) {
             case 1:
                 return BoardType::PT_BOARD;  // PRESSURE_TRANSDUCER = 1

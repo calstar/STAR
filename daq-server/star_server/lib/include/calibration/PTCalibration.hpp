@@ -81,7 +81,7 @@ public:
     bool load_from_json(const std::string& json_path, bool merge_missing_only = false);
 
     /**
-     * @brief Load calibration from CSV file (from DiabloAvionics)
+     * @brief Load calibration from CSV file (from StarAvionics)
      * @param csv_path Path to CSV calibration file
      * @return true if loaded successfully
      */

@@ -1,6 +1,6 @@
 # test_guis
 
-GUI tools for DiabloAvionics sensor and actuator testing.
+GUI tools for StarAvionics sensor and actuator testing.
 
 ## Sense Testing GUI (`sense_testing_gui.py`)
 

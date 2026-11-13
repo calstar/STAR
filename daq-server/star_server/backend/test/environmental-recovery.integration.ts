@@ -92,7 +92,7 @@ active_connectors = [1]
   assert.equal(db.exitCode, null, logs.get(db));
   const startBridge = async () => {
     const bridge = start(bridgeBinary!, [config]);
-    await until(() => logs.get(bridge)!.includes('Listening for DiabloAvionics packets'), 'bridge readiness');
+    await until(() => logs.get(bridge)!.includes('Listening for StarAvionics packets'), 'bridge readiness');
   };
   const server = start(process.execPath, ['--import', 'tsx', 'src/server.ts'], {
     ...process.env, CONFIG_PATH: config, ELODIN_PORT: String(dbPort), WS_PORT: String(wsPort),

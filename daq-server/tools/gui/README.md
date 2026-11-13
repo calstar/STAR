@@ -1,7 +1,7 @@
 # FSW Combined GUI
 
 A comprehensive ground station GUI for the FSW sensor system, modeled on the
-legacy DiabloAvionics test GUI but fully integrated with the FSW stack and the
+legacy StarAvionics test GUI but fully integrated with the FSW stack and the
 Elodin database. Entry point: `tools/gui/combined_fsw_gui.py`.
 
 ## Features
@@ -35,7 +35,7 @@ Elodin database. Entry point: `tools/gui/combined_fsw_gui.py`.
 ### Integration
 
 - **Elodin Database**: Primary data source for sensor data and command interface
-- **UDP Receiver**: Fallback for direct DiabloAvionics packet reception
+- **UDP Receiver**: Fallback for direct StarAvionics packet reception
 - **State Machine**: Commands sent via Elodin, FSW reads and executes
 - **Actuator Control**: Commands sent via Elodin or direct UDP
 
@@ -174,9 +174,9 @@ Matches FSW `PressureStateMachine::SystemState`:
 - Check Elodin connection status in GUI
 - Ensure state transition is allowed from current state
 
-## Similar to the legacy DiabloAvionics GUI
+## Similar to the legacy StarAvionics GUI
 
-This GUI matches the functionality and layout of the old DiabloAvionics test GUI:
+This GUI matches the functionality and layout of the old StarAvionics test GUI:
 
 - ✅ Same layout (sensor plot left, actuator control right)
 - ✅ Same top bar with pressure gauges

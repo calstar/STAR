@@ -2,7 +2,7 @@
 """
 Integration-only simulated board: SETUP heartbeats → wait for SENSOR_CONFIG (type 5) → send SELF_TEST.
 
-Matches Diablo PacketHeader (6B) + SelfTestPacket + N×SelfTestResult (DAQv2-Comms).
+Matches daq-protocol PacketHeader (6B) + SelfTestPacket + N×SelfTestResult (DAQv2-Comms).
 """
 
 from __future__ import annotations

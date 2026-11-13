@@ -1,5 +1,5 @@
 /**
- * Ethernet OTA firmware flash for DiabloAvionics ESP32-S3 boards.
+ * Ethernet OTA firmware flash for StarAvionics ESP32-S3 boards.
  * Protocol (from external/DiabloAvionics/Ethernet OTA Testing):
  *   1. TCP connect to board IP:port (default 3232)
  *   2. Send 4-byte firmware size (big-endian)

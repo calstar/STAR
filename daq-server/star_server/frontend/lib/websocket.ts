@@ -417,7 +417,7 @@ export class WebSocketClient {
 declare global {
   // Keep singleton stable across Next dev/HMR module reloads.
   // eslint-disable-next-line no-var
-  var __DIABLO_WS_CLIENT__: WebSocketClient | undefined;
+  var __STAR_WS_CLIENT__: WebSocketClient | undefined;
 }
 
 /** True when the page was served through a reverse proxy rather than fetched
@@ -453,7 +453,7 @@ export function getApiBaseUrl(): string {
 }
 
 export function getWebSocketClient(): WebSocketClient {
-  const existing = globalThis.__DIABLO_WS_CLIENT__;
+  const existing = globalThis.__STAR_WS_CLIENT__;
   const isStale = !!existing && (existing as any)._version !== WS_CLIENT_VERSION;
   if (isStale) {
     try {
@@ -461,18 +461,18 @@ export function getWebSocketClient(): WebSocketClient {
     } catch {
       // ignore stale instance disconnect errors
     }
-    globalThis.__DIABLO_WS_CLIENT__ = undefined;
+    globalThis.__STAR_WS_CLIENT__ = undefined;
     console.log(`[WS] ${JSON.stringify({ event: 'singleton_replaced_stale', ts: Date.now() })}`);
   }
 
-  if (!globalThis.__DIABLO_WS_CLIENT__) {
+  if (!globalThis.__STAR_WS_CLIENT__) {
     const urls = getWebSocketFallbackUrls();
     console.log(`🔧 Creating WebSocket client singleton with URLs: ${urls.join(', ')}`);
-    globalThis.__DIABLO_WS_CLIENT__ = new WebSocketClient(urls);
+    globalThis.__STAR_WS_CLIENT__ = new WebSocketClient(urls);
   } else {
     console.log('[WS] {"event":"singleton_reused","ts":' + Date.now() + '}');
   }
-  return globalThis.__DIABLO_WS_CLIENT__;
+  return globalThis.__STAR_WS_CLIENT__;
 }
 
 export function getWebSocketFallbackUrls(): string[] {

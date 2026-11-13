@@ -204,7 +204,7 @@ private:
     // Board discovery for getting board IPs
     std::shared_ptr<config::BoardDiscovery> board_discovery_;
 
-    // UDP socket for sending commands (reused, like DiabloAvionics GUI)
+    // UDP socket for sending commands (reused, like StarAvionics GUI)
     std::unique_ptr<daq_comms::transport::UDPSocket> command_socket_;
 
     // Actuator board IP and port (from config or discovery)

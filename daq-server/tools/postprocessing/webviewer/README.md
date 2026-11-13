@@ -322,7 +322,7 @@ shadow, labels and controls are small spaced monospace capitals, related buttons
 one hairline box (the console's segmented control: Play/step, the exports), and colour is
 kept for what it means: each channel's trace colour on the plot, amber for "not exact or
 not real" (a simulated run, a clip placed approximately). The header is the console's:
-"Diablo DAQ" with "a STAR project" under it, a hairline, then this view. Inter is served
+"STAR DAQ" with "a STAR project" under it, a hairline, then this view. Inter is served
 from `public/fonts` (the same files the DAQ ships, SIL OFL), so the viewer draws the same
 on the stand's offline network.
 

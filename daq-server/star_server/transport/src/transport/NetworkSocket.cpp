@@ -22,7 +22,7 @@ UDPSocket::UDPSocket(const std::string& bind_address, uint16_t bind_port)
         return;
     }
 
-    // Set SO_REUSEADDR to allow multiple processes to bind to same port (like DiabloAvionics GUI)
+    // Set SO_REUSEADDR to allow multiple processes to bind to same port (like StarAvionics GUI)
     int reuse = 1;
     if (setsockopt(socket_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0) {
         // Non-fatal, but log it

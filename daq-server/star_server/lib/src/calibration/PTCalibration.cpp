@@ -94,7 +94,7 @@ PTCalibrationManager::PTCalibrationManager(bool auto_load) {
 bool PTCalibrationManager::load_calibration() {
     calibrations_.clear();
 
-    // Default: load Diablo factory CSV first (stable), then GUI JSON exports. Override with
+    // Default: load board factory CSV first (stable), then GUI JSON exports. Override with
     // CAL_PT_JSON_FIRST=1 to prefer the newest JSON in scripts/calibration/calibrations/.
     const char* jf = std::getenv("CAL_PT_JSON_FIRST");
     const bool json_first =

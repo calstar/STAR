@@ -110,7 +110,7 @@ void signal_handler(int /* sig */) {
     std::cout << "\n[DAQ Bridge] Shutting down..." << std::endl;
 }
 
-// Board type enum (matches DiabloAvionics / config [boards.*])
+// Board type enum (matches StarAvionics / config [boards.*])
 using BoardType = fsw::config::ActiveBoardKind;
 
 struct BoardConfig {
@@ -308,7 +308,7 @@ int main(int argc, char* argv[]) {
     // Parse command line arguments
     std::string config_path = "config/config.toml";
     std::string bind_address = "0.0.0.0";
-    uint16_t bind_port = 5006;  // DiabloAvionics default sensor port
+    uint16_t bind_port = 5006;  // StarAvionics default sensor port
 
     if (argc > 1)
         config_path = argv[1];
@@ -317,7 +317,7 @@ int main(int argc, char* argv[]) {
     if (argc > 3)
         bind_port = static_cast<uint16_t>(std::stoi(argv[3]));
 
-    std::cout << "=== DAQ Bridge - DiabloAvionics Packet Receiver ===" << std::endl;
+    std::cout << "=== DAQ Bridge - StarAvionics Packet Receiver ===" << std::endl;
     std::cout << "Config: " << config_path << std::endl;
     std::cout << "Listening on: " << bind_address << ":" << bind_port << std::endl;
     std::cout << std::endl;
@@ -605,7 +605,7 @@ int main(int argc, char* argv[]) {
                   << std::endl;
     }
 
-    std::cout << "\n📡 Listening for DiabloAvionics packets...\n" << std::endl;
+    std::cout << "\n📡 Listening for StarAvionics packets...\n" << std::endl;
 
     // ── Main Loop ──
     size_t packet_count = 0;

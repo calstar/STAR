@@ -1,4 +1,4 @@
-# C++ services for the Diablo Server pipeline
+# C++ services for the star_server pipeline
 # Each service subdirectory contains only .cpp files (no public headers)
 
 set(COMMON_INCLUDES

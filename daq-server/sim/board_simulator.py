@@ -21,7 +21,7 @@ except ModuleNotFoundError:
             "Install one with `pip install tomli` (or use Python >= 3.11)."
         )
 
-# DiabloAvionics Packet Types (DAQv2-Comms DaqEnums.h)
+# StarAvionics Packet Types (DAQv2-Comms DaqEnums.h)
 PACKET_TYPE_HEARTBEAT = 1
 PACKET_TYPE_SERVER_HEARTBEAT = 2
 PACKET_TYPE_SENSOR_DATA = 3
@@ -638,7 +638,7 @@ class SimulatedBoard:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DiabloAvionics Board Simulator")
+    parser = argparse.ArgumentParser(description="StarAvionics Board Simulator")
     parser.add_argument(
         "--config", default="config/config.toml", help="Path to config.toml"
     )

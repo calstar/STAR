@@ -166,7 +166,7 @@ export default function MobileDashboard() {
         {/* Row 1: branding + connection + state + clock */}
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-ink">Diablo DAQ</span>
+            <span className="font-mono text-[13px] font-bold uppercase tracking-[0.2em] text-ink">STAR DAQ</span>
             <div className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${badge.dotClass}`} title={badge.title} />
             <span className="truncate font-mono text-[11px] uppercase tracking-[0.08em] text-ink-2" title={badge.title}>{badge.label}</span>
           </div>

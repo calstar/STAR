@@ -1222,7 +1222,7 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
                 return;
               }
               const firmwareBuffer = Buffer.from(firmwareBase64, 'base64');
-              const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'diablo-ota-'));
+              const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'star-ota-'));
               const fp = path.join(dir, 'firmware.bin');
               try {
                 fs.writeFileSync(fp, firmwareBuffer);

@@ -1,5 +1,5 @@
 /**
- * OTA Service — Ethernet firmware flash for DiabloAvionics ESP32-S3 boards.
+ * OTA Service — Ethernet firmware flash for StarAvionics ESP32-S3 boards.
  *
  * Listens on TCP port 9997 for commands:
  *   OTA_FLASH:<board_ip>:<firmware_path>   — flash existing .bin to board:3232

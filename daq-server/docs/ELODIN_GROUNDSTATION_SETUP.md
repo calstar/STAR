@@ -19,7 +19,7 @@ cd /path/to/STAR/daq-server
 ```
 
 Pipeline: `sim/board_simulator.py` → UDP :5006 → `build/bin/daq_bridge` →
-Elodin DB (:2240) → backend → web UI. The simulator emits DiabloAvionics-format
+Elodin DB (:2240) → backend → web UI. The simulator emits StarAvionics-format
 heartbeats and sensor data, so the whole server path exercises real parsing,
 routing, and calibration.
 

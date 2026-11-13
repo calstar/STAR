@@ -132,7 +132,7 @@ void sendExampleMessage() {
 }
 
 /**
- * @brief Creates and sends a Board Heartbeat packet using DiabloComms library
+ * @brief Creates and sends a Board Heartbeat packet using daq-protocol library
  * This uses the proper packet encoding format defined in the DAQv2-Comms
  * library
  * @return true if packet was sent successfully, false otherwise

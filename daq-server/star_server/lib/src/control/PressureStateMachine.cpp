@@ -58,7 +58,7 @@ bool PressureStateMachine::initialize(std::shared_ptr<elodin::ElodinClient> elod
     actuator_board_ip_ = board_ip;
     actuator_board_port_ = board_port;
 
-    // Create UDP socket for sending commands (reused, like DiabloAvionics GUI)
+    // Create UDP socket for sending commands (reused, like StarAvionics GUI)
     //
     // This is the one board-facing sender left unpinned to a NIC, because nothing constructs a
     // PressureStateMachine — it is dead code, and pinning a socket that never opens is churn. If
@@ -634,7 +634,7 @@ void PressureStateMachine::sendActuatorCommand(ActuatorID actuator, CommandType 
 
 void PressureStateMachine::sendActuatorCommandUDP(ActuatorID actuator, CommandType command,
                                                   float value) {
-    // Check if socket is valid (reused socket, like DiabloAvionics GUI)
+    // Check if socket is valid (reused socket, like StarAvionics GUI)
     if (!command_socket_ || !command_socket_->is_valid()) {
         std::cerr << "[PressureStateMachine] ERROR: UDP socket not valid for actuator "
                   << static_cast<int>(actuator) << std::endl;
@@ -642,7 +642,7 @@ void PressureStateMachine::sendActuatorCommandUDP(ActuatorID actuator, CommandTy
     }
 
     // Convert CommandType to actuator_state (0=OFF, 1=ON)
-    // Matching DiabloAvionics GUI: actuator_state: 0 = OFF, non-zero = ON
+    // Matching StarAvionics GUI: actuator_state: 0 = OFF, non-zero = ON
     uint8_t actuator_state = 0;
     if (command == CommandType::OPEN || command == CommandType::PULSE) {
         actuator_state = 1;  // ON
@@ -653,7 +653,7 @@ void PressureStateMachine::sendActuatorCommandUDP(ActuatorID actuator, CommandTy
     }
 
     // Map actuator ID to board channel (1-indexed, 1-10)
-    // Matching DiabloAvionics GUI: actuator_id: 1-10 (1-indexed)
+    // Matching StarAvionics GUI: actuator_id: 1-10 (1-indexed)
     // Actuator IDs map to channels: LOX_MAIN=1, FUEL_MAIN=2, LOX_VENT=3, etc.
     uint8_t actuator_channel =
         static_cast<uint8_t>(actuator) + 1;  // Convert 0-indexed to 1-indexed
@@ -679,7 +679,7 @@ void PressureStateMachine::sendActuatorCommandUDP(ActuatorID actuator, CommandTy
         return;
     }
 
-    // Send packet via UDP (reusing socket, like DiabloAvionics GUI)
+    // Send packet via UDP (reusing socket, like StarAvionics GUI)
     // Matching: self.command_sock.sendto(packet, (self.device_ip, self.device_port))
     ssize_t sent = command_socket_->send(packet.data(), packet.size());
     if (sent == static_cast<ssize_t>(packet.size())) {

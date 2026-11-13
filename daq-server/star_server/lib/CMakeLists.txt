@@ -1,4 +1,4 @@
-# Shared C++ library for the Diablo Server pipeline
+# Shared C++ library for the star_server pipeline
 # Builds fsw_daq_lib: config, routing, elodin, calibration, control logic
 
 set(FSW_SOURCES

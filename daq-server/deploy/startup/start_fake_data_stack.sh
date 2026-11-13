@@ -3,7 +3,7 @@
 # Validates: PT spiking behavior, actuator heartbeats, calibration, controller, etc.
 #
 # Pipeline: board_simulator → UDP:5006 → daq_bridge → Elodin DB → relay → backend → UI
-# Board simulator sends DiabloAvionics-format packets (heartbeats + sensor data).
+# Board simulator sends StarAvionics-format packets (heartbeats + sensor data).
 
 set -e
 PROJECT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

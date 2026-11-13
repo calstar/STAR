@@ -15,8 +15,11 @@ type PressureOption = {
   meop?: number;
 };
 
-const LEFT_STORAGE_KEY = 'diablo-livestream-left-pt';
-const RIGHT_STORAGE_KEY = 'diablo-livestream-right-pt';
+const LEFT_STORAGE_KEY = 'livestream-left-pt';
+const RIGHT_STORAGE_KEY = 'livestream-right-pt';
+// The keys before the rename, read when the new ones are empty so a console keeps its choice.
+const OLD_LEFT_STORAGE_KEY = 'diablo-livestream-left-pt';
+const OLD_RIGHT_STORAGE_KEY = 'diablo-livestream-right-pt';
 const CHROMA_KEY_BACKGROUND = '#000000';
 const DIAL_START_ANGLE = 230;
 const DIAL_END_ANGLE = 490;
@@ -234,8 +237,8 @@ export default function LivestreamStatsPane() {
     if (pressureOptions.length === 0) return;
 
     const validEntities = new Set(pressureOptions.map((option) => option.entity));
-    const storedLeft = typeof window !== 'undefined' ? window.localStorage.getItem(LEFT_STORAGE_KEY) : null;
-    const storedRight = typeof window !== 'undefined' ? window.localStorage.getItem(RIGHT_STORAGE_KEY) : null;
+    const storedLeft = typeof window !== 'undefined' ? (window.localStorage.getItem(LEFT_STORAGE_KEY) ?? window.localStorage.getItem(OLD_LEFT_STORAGE_KEY)) : null;
+    const storedRight = typeof window !== 'undefined' ? (window.localStorage.getItem(RIGHT_STORAGE_KEY) ?? window.localStorage.getItem(OLD_RIGHT_STORAGE_KEY)) : null;
     const defaultLeft = storedLeft && validEntities.has(storedLeft) ? storedLeft : pressureOptions[0]?.entity ?? null;
     const defaultRightCandidate = pressureOptions[1]?.entity ?? pressureOptions[0]?.entity ?? null;
     const defaultRight = storedRight && validEntities.has(storedRight) ? storedRight : defaultRightCandidate;
@@ -285,7 +288,7 @@ export default function LivestreamStatsPane() {
                   {timer.prefix} {timer.value}
                 </div>
                 <div className="mt-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-white/80">
-                  Diablo Hotifre Test
+                  Hotfire Test
                 </div>
               </div>
 

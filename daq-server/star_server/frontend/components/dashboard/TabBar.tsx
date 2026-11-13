@@ -68,9 +68,9 @@ export default function TabBar({ nav = true }: { nav?: boolean }) {
       <span className="flex flex-shrink-0 flex-col whitespace-nowrap border-r border-line pb-1.5 pr-4 font-mono leading-none sm:pr-5 min-[1400px]:pr-7">
         <span
           className="text-[15px] font-bold uppercase tracking-[0.34em] text-ink"
-          title="Diablo DAQ: the stand's data acquisition and control. A STAR project."
+          title="STAR DAQ: the stand's data acquisition and control. A STAR project."
         >
-          Diablo DAQ
+          STAR DAQ
         </span>
         <span className="mt-1 text-[9px] tracking-[0.08em] text-ink-3">a STAR project</span>
       </span>

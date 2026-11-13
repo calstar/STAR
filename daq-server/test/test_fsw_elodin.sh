@@ -1,6 +1,6 @@
 #!/bin/bash
 # Test script to verify FSW's Elodin integration works correctly
-# Sends fake DiabloEthernet packets to FSW and checks if they appear in Elodin
+# Sends fake board Ethernet packets to FSW and checks if they appear in Elodin
 
 set -e
 
@@ -75,10 +75,10 @@ echo ""
 echo "📝 Next steps:"
 echo "   1. Start FSW system (in another terminal):"
 echo "      cd $PROJECT_ROOT/FSW"
-echo "      ./build/diablo_fsw <config_file>"
+echo "      ./build/star_fsw <config_file>"
 echo ""
 echo "   2. Send test packets (in another terminal):"
-echo "      python3 $SCRIPT_DIR/fake_diablo_packet.py 127.0.0.1 $UDP_PORT"
+echo "      python3 $SCRIPT_DIR/fake_board_packet.py 127.0.0.1 $UDP_PORT"
 echo ""
 echo "   3. Open Elodin editor:"
 echo "      elodin editor $DB_PATH"

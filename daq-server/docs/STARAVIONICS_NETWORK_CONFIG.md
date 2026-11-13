@@ -1,4 +1,4 @@
-# DiabloAvionics Network Configuration
+# StarAvionics Network Configuration
 
 How the ESP32 avionics boards and the DAQ bridge are addressed on the wire. For
 the packet layout itself (header, packet types, serialize/parse helpers) see the

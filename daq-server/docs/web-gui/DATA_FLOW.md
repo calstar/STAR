@@ -22,7 +22,7 @@ React Frontend (Browser)
 
 ### 1. Sensor Data Collection
 - Boards collect sensor readings (PT, actuators, etc.)
-- Boards send data to the **DAQ Bridge** via UDP (DiabloAvionics protocol)
+- Boards send data to the **DAQ Bridge** via UDP (StarAvionics protocol)
 - **DAQ Bridge** registers components in **Elodin DB** using board-namespaced,
   channel-based entity names like:
   - `PT1.CH3` (raw), `PT1_Cal.CH3` (calibrated)

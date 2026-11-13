@@ -179,7 +179,7 @@ function FlashPageContent() {
       <div className="max-w-2xl">
         <h1 className="mb-2 font-mono text-[15px] font-semibold uppercase tracking-[0.32em] text-ink">Ethernet OTA Flash</h1>
         <p className="text-lg text-text-muted mb-8">
-          Flash firmware to ESP32-S3 boards over Ethernet (W5500). Build from DiabloAvionics projects or upload a .bin file.
+          Flash firmware to ESP32-S3 boards over Ethernet (W5500). Build from StarAvionics projects or upload a .bin file.
         </p>
 
         {/* Flash All - single button */}
@@ -263,7 +263,7 @@ function FlashPageContent() {
               className="w-full px-4 py-2 rounded-lg bg-gray-900 border border-gray-700 text-text font-mono focus:border-primary focus:ring-1 focus:ring-primary"
               disabled={flashing}
             />
-            <p className="text-xs text-text-muted mt-1">Default 3232 (DiabloAvionics Ethernet OTA)</p>
+            <p className="text-xs text-text-muted mt-1">Default 3232 (StarAvionics Ethernet OTA)</p>
           </div>
 
           <div>
@@ -293,7 +293,7 @@ function FlashPageContent() {
                   onChange={() => { setSourceMode('project'); setResult(null); }}
                   disabled={flashing}
                 />
-                <span>Build from DiabloAvionics project</span>
+                <span>Build from StarAvionics project</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
@@ -310,7 +310,7 @@ function FlashPageContent() {
             {sourceMode === 'project' ? (
               projects.length === 0 ? (
                 <p className="text-sm text-amber-500">
-                  No DiabloAvionics projects found. Ensure <code className="text-gray-400">external/DiabloAvionics</code> exists and run backend from sensor_system root.
+                  No StarAvionics projects found. Ensure <code className="text-gray-400">external/DiabloAvionics</code> exists and run backend from sensor_system root.
                 </p>
               ) : (
                 <select
