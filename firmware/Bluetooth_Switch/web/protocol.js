@@ -15,6 +15,7 @@ export const SENSE = ["unknown", "load present", "open", "live"];
 export const FLAG_INA_OK = 1 << 0;
 export const FLAG_READING_VALID = 1 << 1;
 export const FLAG_RESTORED = 1 << 2;
+export const FLAG_NO_BATTERY = 1 << 3;
 
 // esp_reset_reason_t
 const RESET_REASONS = [
@@ -52,6 +53,7 @@ export function decodeStatus(dv) {
     inaOk: !!(flags & FLAG_INA_OK),
     readingValid: !!(flags & FLAG_READING_VALID),
     restored: !!(flags & FLAG_RESTORED),
+    noBattery: !!(flags & FLAG_NO_BATTERY),
     supply_mV: dv.getUint16(4, true),
     current_mA: dv.getInt16(6, true),
     power_mW: dv.getUint16(8, true),
@@ -64,14 +66,18 @@ export function decodeStatus(dv) {
 // What the sense line says about the output, given what the output should be.
 // Returns {level: "ok" | "warn" | "bad", text}.
 export function senseVerdict(s) {
-  const name = SENSE[s.sense] ?? `sense ${s.sense}`;
+  if (s.noBattery) {
+    return s.output
+      ? { level: "bad", text: "Armed, but no battery is connected, so the load has no power." }
+      : { level: "warn", text: "No battery connected" };
+  }
   if (s.sense === 0) return { level: "warn", text: "Sense settling" };
   if (s.output) {
     return s.sense === 3
-      ? { level: "ok", text: "Armed: altimeter power live" }
-      : { level: "bad", text: `ARMED but sense reads ${name}: altimeters may be unpowered (switch or supply fault)` };
+      ? { level: "ok", text: "Armed: output live" }
+      : { level: "bad", text: "Armed, but no power is reaching the output. Check the battery; if it's fine, the switch may be faulty." };
   }
-  if (s.sense === 1) return { level: "ok", text: "Altimeter connected" };
-  if (s.sense === 2) return { level: "warn", text: "Nothing connected (open)" };
-  return { level: "bad", text: "DISARMED but altimeter power is live: switch stuck or back-fed" };
+  // Disarmed continuity can't see through the bridge board, so load and open both read as plain disarmed.
+  if (s.sense !== 3) return { level: "ok", text: "Disarmed" };
+  return { level: "bad", text: "Disarmed, but the output still has power. The switch may be stuck on." };
 }

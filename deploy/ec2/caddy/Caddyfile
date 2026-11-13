@@ -94,3 +94,18 @@
 		reverse_proxy analytics:8080
 	}
 }
+
+# ── Bluetooth switch web client ──────────────────────────────────────────────
+# Static Web Bluetooth page for the altimeter switch (firmware/Bluetooth_Switch/
+# web, mounted read-only). Public on purpose: the board itself takes commands
+# from anyone in radio range, so a login would protect nothing, and it would
+# stop the page loading at a pad with no signal. It proxies nothing, so no
+# X-Auth-* can reach anything. web/test/ is the decoder's test, not the page.
+{$SCHEME:http}://switch.{$BASE_DOMAIN:starberkeley.org} {
+	@tests path /test /test/*
+	respond @tests 404
+	# Revalidate every load, so a firmware PR's page change shows up at once.
+	header Cache-Control "no-cache"
+	root * /srv/switch
+	file_server
+}

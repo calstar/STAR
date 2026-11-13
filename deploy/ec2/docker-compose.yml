@@ -34,6 +34,9 @@ services:
       AUTH_UPSTREAM: auth:5000
     volumes:
       - ./caddy:/etc/caddy:ro
+      # Bluetooth switch web client (switch.* site), served straight from the
+      # checkout, so auto-update's git sync is its deploy.
+      - ../../firmware/Bluetooth_Switch/web:/srv/switch:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:

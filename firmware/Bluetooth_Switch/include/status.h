@@ -14,6 +14,7 @@ enum StatusFlags : uint8_t {
     FLAG_INA_OK = 1 << 0,       // INA260 answered with the right IDs at boot
     FLAG_READING_VALID = 1 << 1,  // supply/current fields are from the last conversion
     FLAG_RESTORED = 1 << 2,     // output was re-applied after a non-power-on reset
+    FLAG_NO_BATTERY = 1 << 3,   // J1-3 below BATTERY_PRESENT_MIN_MV (main.cpp)
 };
 
 // Status characteristic payload, little-endian, 17 bytes (fits the default

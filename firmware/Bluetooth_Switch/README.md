@@ -40,7 +40,7 @@ Status is 17 bytes, little-endian (`include/status.h`):
 | 0 | u8 | version (1) |
 | 1 | u8 | output, 0/1 |
 | 2 | u8 | sense: 0 unknown, 1 load present, 2 open, 3 live |
-| 3 | u8 | flags: bit0 INA260 ok, bit1 reading valid, bit2 restored after reset |
+| 3 | u8 | flags: bit0 INA260 ok, bit1 reading valid, bit2 restored after reset, bit3 no battery (J1-3 < 2.5 V) |
 | 4 | u16 | supply voltage, mV (J1-3) |
 | 6 | i16 | supply current, mA (load + board draw when not on USB) |
 | 8 | u16 | power, mW |
@@ -48,11 +48,12 @@ Status is 17 bytes, little-endian (`include/status.h`):
 | 12 | u32 | uptime, s |
 | 16 | u8 | reset reason (`esp_reset_reason_t`) |
 
-**Sense** reads VOUT through the continuity divider. With the output off, CONT_EN
-pulls VOUT up through 1 MΩ, so a connected altimeter reads "load present" and nothing
-connected reads "open". With the output on it should read "live". If it reads anything
-else, the switch or the supply has failed. The thresholds in `main.cpp` still need
-bench calibration.
+**Sense** reads VOUT through the continuity divider. With the output on it should
+read "live"; anything else means the switch or the supply has failed, and disarmed
+but live means the switch is stuck on. The firmware still reports load/open while
+disarmed, but neither the LED nor the web page shows it: the 1 MΩ continuity drive
+holds VOUT near 0.47 V, which can't push current through the bridge board's body
+diodes, so an altimeter behind it reads the same as nothing at all.
 
 ## Firmware hash
 
@@ -73,14 +74,17 @@ A hash that isn't in the registry is a local or PR build.
 
 ## Status LED (SK6805, GPIO5)
 
+Pure red, green or blue only. The SK6805 mixes colours badly (amber reads as red
+and green at once), so states differ by pattern.
+
 | State | LED |
 |---|---|
-| Disarmed, altimeter detected | dim green blip every 3 s |
-| Disarmed, nothing connected | dim amber blip every 3 s |
+| Disarmed, **no battery** on J1-3 (below 2.5 V) | one long (400 ms) dim blue pulse every 3 s |
+| Disarmed | one dim green blip every 3 s |
 | **Armed**, output live | red blink, 1 Hz |
-| Armed, restored after an MCU reset | red blink with an amber blip between, until the next arm/disarm |
-| **Fault**: armed but VOUT not live, or disarmed but live | red/amber alternating, 5 Hz |
-| INA260 missing | amber double blip every 3 s, on top of the above |
+| Armed, restored after an MCU reset | red blink plus a short red blip between, until the next arm/disarm |
+| **Fault**: armed but VOUT not live, or disarmed but live | red flicker, 5 Hz |
+| INA260 missing | blue double blip every 3 s, on top of the above |
 | Phone connects | one blue blip |
 | Arm / disarm command | one bright flash, red for armed, green for disarmed |
 
@@ -118,8 +122,21 @@ When the status layout changes, bump `STATUS_VERSION` in `include/status.h` *and
 `web/protocol.js`. The page refuses a version it doesn't know, and the test fails
 until both match.
 
-## Not done yet
+## Power
 
-- Light sleep. The prebuilt Arduino core doesn't enable power management or the
-  32 kHz crystal clock source. The current savings are an 80 MHz CPU, 1 s
-  advertising, a 300–400 ms connection interval and the INA260 in triggered mode.
+Built as ESP-IDF 4.4 with Arduino as a component (`framework = arduino, espidf`),
+because the prebuilt Arduino core has power management and BLE modem sleep off,
+which held the radio on at ~80 mA. `sdkconfig.defaults` is arduino-esp32 2.0.17's
+own C3 config with the overrides at the end: automatic light sleep, BLE modem
+sleep clocked from the main crystal, and a fixed app version so the digest doesn't
+follow `git describe`. IDF floats every pin during light sleep on the C3, so
+`main.cpp` exempts the pins it drives; GPIO4 is the arm line.
+
+The first build downloads IDF and takes ~10 minutes. After editing
+`sdkconfig.defaults`, delete the generated `sdkconfig.bluetooth_switch`: an
+existing sdkconfig wins over the defaults.
+
+The chip only light-sleeps on battery: while USB is plugged in it holds itself
+awake so the console and flashing work. The console's `status` line says which
+(`power=light sleep` / `awake for USB`). Other savings: 80 MHz CPU, 1 s
+advertising, 300–400 ms connection interval, INA260 in triggered mode.

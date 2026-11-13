@@ -30,12 +30,22 @@
   .name { font-weight: 600; }
   .link { font-size: 13px; color: var(--dim); }
   .link.down { color: var(--warn); }
-  .state { margin: 14px 0 10px; display: flex; align-items: center; gap: 12px; }
+  .state { margin: 14px 0 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  /* Read-only indicator styled as a toggle: green/right = yes, red/left = no. */
+  .load { display: flex; align-items: center; gap: 10px; font-size: 15px; }
+  .toggle { width: 50px; height: 28px; border-radius: 999px; background: var(--line); position: relative; flex: none;
+    transition: background .2s; }
+  .toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%;
+    background: #fff; transition: left .2s; }
+  .toggle.yes { background: var(--on); } .toggle.yes::after { left: 25px; }
+  .toggle.no { background: var(--bad); }
+  .toggle.unknown::after { left: 14px; background: var(--dim); }
   .pill { font-size: 28px; font-weight: 700; letter-spacing: .5px; padding: 6px 16px; border-radius: 999px; background: var(--off); }
   .pill.on { background: var(--bad); }  /* armed is the hazardous state: red, like the LED */
   .pill.unknown { background: var(--line); color: var(--dim); }
-  .verdict { font-size: 14px; padding: 8px 10px; border-radius: 8px; margin-bottom: 12px; border-left: 4px solid var(--dim); background: #ffffff08; }
-  .verdict.ok { border-color: var(--on); } .verdict.warn { border-color: var(--warn); } .verdict.bad { border-color: var(--bad); }
+  /* Filled in the alert colour, so a problem can't be missed at a glance. */
+  .verdict { font-size: 14px; font-weight: 600; padding: 10px 12px; border-radius: 8px; margin-bottom: 12px; background: var(--line); color: var(--text); }
+  .verdict.ok { background: var(--on); color: #fff; } .verdict.warn { background: var(--warn); color: #1a1300; } .verdict.bad { background: var(--bad); color: #fff; }
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
   .metric { background: #ffffff06; border-radius: 8px; padding: 8px; }
   .metric .k { font-size: 12px; color: var(--dim); } .metric .v { font-size: 17px; font-variant-numeric: tabular-nums; }
@@ -51,7 +61,6 @@
   .modal h2 { margin: 0 0 8px; font-size: 20px; }
   .modal p { color: var(--dim); margin: 0 0 18px; }
   .modal .actions button.go-on { background: var(--bad); } .modal .actions button.go-off { background: var(--on); }
-  footer { margin-top: 20px; font-size: 12px; color: var(--dim); }
 </style>
 </head>
 <body>
@@ -68,10 +77,6 @@
   </div>
   <div id="empty" class="notice">No switch connected. Power the board, then tap <b>Connect switch</b> and pick a <b>STAR-Switch-XXXX</b>.</div>
   <div id="cards"></div>
-  <footer>
-    Arming is latched: the altimeters stay powered until someone disarms. Closing this page or
-    losing Bluetooth does not disarm. Anyone in range can connect.
-  </footer>
 </main>
 
 <div id="confirm" class="modal" role="dialog" aria-modal="true">
@@ -93,6 +98,8 @@ import {
 
 const STALE_MS = 6000;  // status notifies every 2 s while connected
 const RECONNECT_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
+const CONFIRM_TIMEOUT_MS = 5000;  // reads take ~1 s at the board's 300-400 ms interval
+const CONFIRM_POLL_MS = 1000;
 
 const $ = (id) => document.getElementById(id);
 const switches = new Map();  // device.id -> Switch
@@ -135,7 +142,8 @@ class Switch {
     this.linkState = "connecting";
     this.forgotten = false;
     this.attempt = 0;
-    this.busy = false;
+    this.busy = false;     // false | "arming" | "disarming"
+    this.confirmWaiter = null;  // {on, resolve} while a command awaits the board
     this.firmware = null;  // {hex, text, level}
     this.el = this.render();
     device.addEventListener("gattserverdisconnected", () => this.onDisconnect());
@@ -204,12 +212,35 @@ class Switch {
     this.update();
   }
 
+  // Only ever called with a value the board sent (notify or read), so the pill
+  // never shows a state the switch hasn't reported.
   onOutput(dv) {
     if (dv.byteLength < 1) return;
     const on = dv.getUint8(0) === 1;
     if (this.status) this.status.output = on;
     else this.status = { output: on, sense: 0 };
+    if (this.confirmWaiter && this.confirmWaiter.on === on) this.confirmWaiter.resolve(true);
     this.update();
+  }
+
+  // Resolves true once the board reports `on`, false on timeout. The firmware
+  // notifies Output after it has switched; reads cover a missed notification.
+  waitForOutput(on, timeoutMs) {
+    return new Promise((resolve) => {
+      const finish = (ok) => {
+        clearTimeout(timer);
+        clearInterval(poll);
+        this.confirmWaiter = null;
+        resolve(ok);
+      };
+      this.confirmWaiter = { on, resolve: finish };
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      const poll = setInterval(async () => {
+        try {
+          if (this.outputChr) this.onOutput(await this.outputChr.readValue());
+        } catch { /* the next poll or the notification will do */ }
+      }, CONFIRM_POLL_MS);
+    });
   }
 
   onDisconnect() {
@@ -234,19 +265,23 @@ class Switch {
   async requestOutput(on) {
     const verb = on ? "Arm" : "Disarm";
     const body = on
-      ? "This powers the altimeters. They stay armed until someone disarms; closing this page or losing Bluetooth will not disarm."
-      : "This cuts power to the altimeters. They will stop recording and will not fire charges.";
+      ? "This powers the load. It stays on until someone disarms; closing this page or losing Bluetooth will not disarm."
+      : "This cuts power to the load. Anything it powers, such as an altimeter, turns off immediately.";
     const ok = await confirmAction(`${verb} ${this.name}?`, body, verb, on ? "go-on" : "go-off");
     if (!ok || !this.outputChr) return;
-    this.busy = true;
+    // The pill keeps the last confirmed state; only the button says it's waiting.
+    this.busy = on ? "arming" : "disarming";
     this.update();
     try {
+      const confirmed = this.waitForOutput(on, CONFIRM_TIMEOUT_MS);
       const v = new Uint8Array([on ? 1 : 0]);
       if (this.outputChr.writeValueWithResponse) await this.outputChr.writeValueWithResponse(v);
       else await this.outputChr.writeValue(v);
-      // The firmware notifies the output characteristic once it has switched.
-      this.onOutput(await this.outputChr.readValue());
+      if (!(await confirmed)) {
+        alert(`${this.name} did not confirm it ${on ? "armed" : "disarmed"}. Check the state shown before trying again.`);
+      }
     } catch (err) {
+      this.confirmWaiter?.resolve(false);
       alert(`Could not ${on ? "arm" : "disarm"} ${this.name}: ${err.message}`);
     } finally {
       this.busy = false;
@@ -267,10 +302,13 @@ class Switch {
     el.className = "card";
     el.innerHTML = `
       <div class="row"><span class="name"></span><span class="link"></span></div>
-      <div class="state"><span class="pill unknown">—</span></div>
+      <div class="state">
+        <span class="pill unknown">—</span>
+        <span class="load"><span class="load-label">Load —</span><span class="toggle unknown" role="img"></span></span>
+      </div>
       <div class="verdict" hidden></div>
       <div class="grid">
-        <div class="metric"><div class="k">Supply</div><div class="v" data-k="v">—</div></div>
+        <div class="metric"><div class="k">Battery</div><div class="v" data-k="v">—</div></div>
         <div class="metric"><div class="k">Current</div><div class="v" data-k="i">—</div></div>
         <div class="metric"><div class="k">Power</div><div class="v" data-k="p">—</div></div>
       </div>
@@ -306,6 +344,14 @@ class Switch {
       if (!live) pill.textContent += " (last seen)";
     }
 
+    // Output toggle: whether the output is live. Disarmed continuity is not shown.
+    const [loadText, loadState] = loadIndicator(s);
+    el.querySelector(".load-label").textContent = loadText;
+    const toggle = el.querySelector(".toggle");
+    toggle.className = `toggle ${loadState}`;
+    toggle.setAttribute("aria-label", loadText);
+
+    // The box below only speaks up for problems; the toggle covers the rest.
     const verdict = el.querySelector(".verdict");
     if (this.statusError) {
       verdict.hidden = false;
@@ -313,7 +359,7 @@ class Switch {
       verdict.textContent = this.statusError;
     } else if (s && s.version) {
       const v = senseVerdict(s);
-      verdict.hidden = false;
+      verdict.hidden = !(v.level === "bad" || s.noBattery);
       verdict.className = `verdict ${v.level}`;
       verdict.textContent = v.text;
     }
@@ -323,9 +369,10 @@ class Switch {
       el.querySelector('[data-k="v"]').textContent = valid ? `${(s.supply_mV / 1000).toFixed(2)} V` : "—";
       el.querySelector('[data-k="i"]').textContent = valid ? `${s.current_mA} mA` : "—";
       el.querySelector('[data-k="p"]').textContent = valid ? `${(s.power_mW / 1000).toFixed(2)} W` : "—";
-      const meta = [`up ${fmtUptime(s.uptime_s)}`, `last boot: ${resetReasonName(s.resetReason)}`, `sense ${s.sense_mV} mV`];
+      const meta = [`up ${fmtUptime(s.uptime_s)}`, `last boot: ${resetReasonName(s.resetReason)}`];
       let html = meta.map(esc).join(" · ");
       if (!s.inaOk) html += ` · <span class="flag">INA260 missing</span>`;
+      if (s.noBattery) html += ` · <span class="flag">no battery</span>`;
       if (s.restored) html += ` · <span class="flag">armed state restored after MCU reset</span>`;
       el.querySelector(".meta").innerHTML = html;
     }
@@ -339,9 +386,20 @@ class Switch {
     }
 
     const canWrite = live && !this.busy && !!this.outputChr;
-    el.querySelector(".actions .on").disabled = !canWrite || (s && s.output === true);
-    el.querySelector(".actions .off").disabled = !canWrite || (s && s.output === false);
+    const armBtn = el.querySelector(".actions .on"), disarmBtn = el.querySelector(".actions .off");
+    armBtn.textContent = this.busy === "arming" ? "Arming…" : "Arm";
+    disarmBtn.textContent = this.busy === "disarming" ? "Disarming…" : "Disarm";
+    armBtn.disabled = !canWrite || (s && s.output === true);
+    disarmBtn.disabled = !canWrite || (s && s.output === false);
   }
+}
+
+// [label, "yes" | "no" | "unknown"] for the load toggle.
+function loadIndicator(s) {
+  if (!s || !s.version || s.sense === 0) return ["Load —", "unknown"];
+  if (s.output) return s.sense === 3 ? ["Output live", "yes"] : ["Output not live", "no"];
+  if (s.sense !== 3) return ["Output off", "no"];
+  return ["Load —", "unknown"];  // disarmed but live: the fault box says why
 }
 
 function fmtUptime(t) {
