@@ -4,6 +4,7 @@
 #include "board_exti.h"
 #include "board_time.h"
 #include "cmsis_os2.h"
+#include "daq_task.h"
 #include "emmc_stm32.h"
 #include "health_task.h"
 #include "main.h"
@@ -17,6 +18,7 @@ static volatile bool want_active; /* written by the mode, read here */
 
 static void to_emmc(void* ctx, uint8_t type, const void* data, uint8_t len) {
     (void)ctx;
+    daq_record(type, data, len);
     /* Non-blocking; false outside ARMED/LAUNCHED/RECOVERY or when every
      * chunk is full (the log counts and reports drops itself). */
     (void)emmc_log_append(emmc_stm32_log(), type, osKernelGetTickCount(), data,

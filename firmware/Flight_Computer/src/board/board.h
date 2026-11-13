@@ -38,6 +38,9 @@ bool board_error_is_soft(void);
 /* Milliseconds since boot (HAL tick, TIM6). Wraps after ~49 days. */
 uint32_t board_now_ms(void);
 
+/* Factory UID words used to derive the Ethernet MAC. */
+void board_uid(uint32_t words[3]);
+
 /* True once now_ms has reached deadline_ms (modular comparison). */
 static inline bool board_deadline_passed(uint32_t deadline_ms) {
     return (int32_t)(board_now_ms() - deadline_ms) >= 0;

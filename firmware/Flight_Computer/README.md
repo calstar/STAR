@@ -128,3 +128,7 @@ The portable C coordinator lives in [`src/app/`](src/app/SELF_TEST.md). A C++ ad
 ## Health monitoring and startup report
 
 See [src/app/HEALTH-RADIO.md](src/app/HEALTH-RADIO.md): the health task (analog inputs to the log, task check-ins, IWDG1 through Idle sleep) and the SelfTest frame sent at start-up.
+
+## Ethernet DAQ transport
+
+See [src/app/ETHERNET-DAQ.md](src/app/ETHERNET-DAQ.md): the W5500 UDP task, DAQv2 packets, host tests, the open DHCP decision, and what the DAQ server still needs. Networking is off until #180 is signed off and the server can route the board.
