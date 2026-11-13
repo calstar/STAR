@@ -1,0 +1,19 @@
+[package]
+name = "star-fc-gui"
+version = "0.1.0"
+edition = "2021"
+description = "STAR Flight Computer: the bench app's window (Tauri)"
+publish = false
+
+[[bin]]
+name = "star-fc-gui"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+star-fc = { path = ".." }
+tauri = { version = "2.12", features = [] }
+tauri-plugin-dialog = "2.8"
+serde_json = "1"
