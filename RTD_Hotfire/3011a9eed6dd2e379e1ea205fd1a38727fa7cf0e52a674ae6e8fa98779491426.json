@@ -7,7 +7,8 @@
     "5309c5cc7402ba6c6ff0e4183613de8388a4f91f",
     "746988b58c57703d8a9ad0bc3ef5940ca4f6cc36",
     "83fa407ea526ce01d5eb03892e5b4b6a217fa605",
-    "a358774ce8b222e94cc559d1de0c38ed909a670e"
+    "a358774ce8b222e94cc559d1de0c38ed909a670e",
+    "cbda06b12badfdf8297a29978aa414ecff601c98"
   ],
   "file_sha256": "afe34e693835d7058d08ce86fd4db44d160ac301b9e4f4d2c6bfd18640078166",
   "first_run_id": "42748132055",
@@ -21,7 +22,7 @@
   "pio_env": "adafruit_feather_esp32s3",
   "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
   "run_attempt": "1",
-  "run_id": "43353378741",
-  "run_url": "https://github.com/calstar/STAR/actions/runs/43353378741",
-  "subject": "Encoder Board Firmware  (#202)"
+  "run_id": "43353838674",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/43353838674",
+  "subject": "Bluetooth switch firmware (WifiSwitch board) (#218)"
 }
