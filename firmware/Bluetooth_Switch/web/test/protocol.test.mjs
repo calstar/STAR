@@ -17,14 +17,20 @@ assert.equal(bytes.length, P.STATUS_LENGTH);
 
 const s = P.decodeStatus(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength));
 assert.deepEqual(s, {
-  version: 1, output: true, sense: 3, flags: 7, inaOk: true, readingValid: true, restored: true,
-  supply_mV: 8412, current_mA: -123, power_mW: 1035, sense_mV: 2471, uptime_s: 0x01020304, resetReason: 9,
+  version: 1, output: true, sense: 3, flags: 15, inaOk: true, readingValid: true, restored: true,
+  noBattery: true, supply_mV: 8412, current_mA: -123, power_mW: 1035, sense_mV: 2471,
+  uptime_s: 0x01020304, resetReason: 9,
 });
 assert.equal(P.resetReasonName(9), "brownout");
+assert.equal(P.senseVerdict(s).level, "bad");  // armed with no battery
+assert.equal(P.senseVerdict({ ...s, output: false }).level, "warn");
+assert.match(P.senseVerdict({ ...s, output: false, sense: 1 }).text, /No battery/);  // beats "connected"
+s.noBattery = false;
 assert.equal(P.senseVerdict(s).level, "ok");
 assert.equal(P.senseVerdict({ ...s, sense: 2 }).level, "bad");
 assert.equal(P.senseVerdict({ ...s, output: false, sense: 3 }).level, "bad");
-assert.equal(P.senseVerdict({ ...s, output: false, sense: 1 }).level, "ok");
+assert.equal(P.senseVerdict({ ...s, output: false, sense: 1 }).text, "Disarmed");
+assert.equal(P.senseVerdict({ ...s, output: false, sense: 2 }).text, "Disarmed");  // no load is not a warning
 
 const bad = new Uint8Array(bytes); bad[0] = 2;
 assert.throws(() => P.decodeStatus(new DataView(bad.buffer)), /version 2/);

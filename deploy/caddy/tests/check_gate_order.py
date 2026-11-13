@@ -28,7 +28,10 @@ import sys
 #:   checks a STARProject bearer token on every /mcp request itself
 #:   (design-mcp/star_design_mcp/server.py, BearerAuth) and serves /files/* only
 #:   on a signed, expiring link; the site strips X-Auth-* before proxying.
-PUBLIC_HOSTS = {"auth", "mcp"}
+#:   switch -- (EC2 Caddyfile) the Bluetooth switch's static web client. It
+#:   proxies nothing; the board it drives is open to anyone in radio range, and
+#:   the page must load at a launch site without a login.
+PUBLIC_HOSTS = {"auth", "mcp", "switch"}
 
 #: Path prefixes that are public by design on an otherwise gated host, keyed by
 #: the host's first label. A route is exempt only if EVERY path it matches lies

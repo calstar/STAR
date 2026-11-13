@@ -54,6 +54,19 @@ OpenProject vars in `.env` (`OPENPROJECT_SECRET_KEY_BASE`, SES creds), then
 `docker compose --profile legacy up -d openproject`. Its data is intact on the
 external `openproject_pgdata` / `openproject_assets` volumes (+ S3 backups).
 
+## Bluetooth switch web client
+
+`switch.starberkeley.org` serves `firmware/Bluetooth_Switch/web/` (the altimeter
+switch's Web Bluetooth page) from the checkout, through Caddy, with no login. No
+image: auto-update's git sync is the deploy, so a page change on `main` is live
+within one timer tick (5 min). The tick that first brings in the mount also runs
+`docker compose up -d`, which recreates Caddy with it. One-time setup:
+
+1. Tunnel → **Add published application**: `switch.starberkeley.org` → `http://caddy:80`.
+
+**Verify:** `curl -sI https://switch.starberkeley.org/` returns `200` (no redirect
+to auth), and `/test/protocol.test.mjs` returns `404`.
+
 ## Server analytics
 
 `analytics.starberkeley.org` (services `analytics` and `analytics-agent`) shows

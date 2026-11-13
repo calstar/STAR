@@ -13,7 +13,9 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <driver/gpio.h>
+#include <esp_rom_gpio.h>
 #include <esp_mac.h>
+#include <esp_pm.h>
 #include <esp_system.h>
 
 #include "../../Hotfire_Code/common/firmware_hash.h"
@@ -25,18 +27,27 @@
 
 namespace {
 
-// Sense thresholds on the CONT_ADC node (half of VOUT after D2). Open reads
-// ~0.9 V with CONT_EN driving; the zener clamps a live output near 2.5 V.
-// Bench-calibrate these against a real altimeter.
+// Sense thresholds on the CONT_ADC node (about half of VOUT after D2). Open
+// measured 260-425 mV on the bench (no battery, so U3's QOD pull-down is off).
+// Live is (VOUT - D2) / 2: ~1.5 V from a flat 1S at 3.3 V, clamped by the zener
+// near 2.5 V for 2S and up, so the cut sits well below a flat 1S.
 constexpr uint32_t SENSE_LOAD_MAX_MV = 150;
-constexpr uint32_t SENSE_LIVE_MIN_MV = 1800;
+constexpr uint32_t SENSE_LIVE_MIN_MV = 1000;
+
+// The board needs 3.5 V in; an empty J1-3 floats at 0.3-0.55 V.
+constexpr uint16_t BATTERY_PRESENT_MIN_MV = 2500;
 
 constexpr uint32_t STATUS_PERIOD_CONNECTED_MS = 2000;
-constexpr uint32_t STATUS_PERIOD_IDLE_MS = 30000;
+// Short enough for the LED to follow a battery being plugged in or pulled.
+constexpr uint32_t STATUS_PERIOD_IDLE_MS = 3000;
 constexpr uint32_t SENSE_SETTLE_MS = 500;  // 1M into C5 + C23, tau ~100 ms
 
 constexpr uint32_t LOOP_PERIOD_MS = 20;
 constexpr uint32_t LED_SENSE_PERIOD_MS = 250;  // how often the LED re-reads the sense line
+
+// USB has to be gone this long before the chip may light-sleep (it stops the
+// USB console, so it only sleeps on battery).
+constexpr uint32_t USB_GONE_MS = 2000;
 
 constexpr uint32_t RTC_MAGIC_ON = 0x53574F4E;   // "SWON"
 constexpr uint32_t RTC_MAGIC_OFF = 0x53574F46;  // "SWOF"
@@ -46,10 +57,15 @@ INA260 ina;
 bool inaOk = false;
 bool outputOn = false;
 bool restoredAfterReset = false;
+bool noBattery = false;  // only claimed from a valid INA260 reading
 esp_reset_reason_t resetReason = ESP_RST_UNKNOWN;
 
 // Written from the NimBLE host task, applied in loop().
 volatile int8_t pendingOutput = -1;
+
+esp_pm_lock_handle_t usbAwakeLock = nullptr;
+bool usbAwakeHeld = false;
+uint32_t usbLastSeenMs = 0;
 
 uint32_t lastStatusMs = 0;
 uint32_t senseValidAtMs = 0;
@@ -62,11 +78,17 @@ uint32_t lastLedSenseMs = 0;
 Sense ledSense = Sense::Unknown;
 led::Rgb ledShown{1, 1, 1};  // not a real colour, so the first write always lands
 
+// GPIO4 comes out of reset as MTMS (JTAG), not GPIO, so the pad has to be
+// switched to its GPIO function or the output never reaches the pin. Level and
+// direction are set while the pad is still held, so releasing the hold is the
+// only moment it can change.
 void driveOutputPad(bool on) {
-    gpio_hold_dis(static_cast<gpio_num_t>(PIN_OUT_EN));
-    gpio_set_level(static_cast<gpio_num_t>(PIN_OUT_EN), on ? 1 : 0);
-    gpio_set_direction(static_cast<gpio_num_t>(PIN_OUT_EN), GPIO_MODE_OUTPUT);
-    gpio_hold_en(static_cast<gpio_num_t>(PIN_OUT_EN));
+    const gpio_num_t pin = static_cast<gpio_num_t>(PIN_OUT_EN);
+    gpio_set_level(pin, on ? 1 : 0);
+    esp_rom_gpio_pad_select_gpio(PIN_OUT_EN);
+    gpio_set_direction(pin, GPIO_MODE_OUTPUT);
+    gpio_hold_dis(pin);
+    gpio_hold_en(pin);
 }
 
 void setOutput(bool on) {
@@ -119,7 +141,7 @@ void updateLed(uint32_t now) {
         ledSense = readSense(analogReadMilliVolts(PIN_CONT_ADC));
     }
     led::Inputs in{outputOn,          ledSense, restoredAfterReset, inaOk,
-                   since(lastCommandMs, now), since(lastConnectMs, now)};
+                   since(lastCommandMs, now), since(lastConnectMs, now), noBattery};
     led::Rgb c = led::color(in, now);
     if (!(c == ledShown)) {
         neopixelWrite(PIN_LED, c.r, c.g, c.b);  // SK6805 is GRB; neopixelWrite reorders
@@ -142,7 +164,11 @@ StatusPacket buildStatus() {
         pkt.supply_mV = r.bus_mV;
         pkt.current_mA = static_cast<int16_t>(constrain(r.current_mA, INT16_MIN, INT16_MAX));
         pkt.power_mW = static_cast<uint16_t>(min<uint32_t>(r.power_mW, UINT16_MAX));
+        noBattery = r.bus_mV < BATTERY_PRESENT_MIN_MV;
+    } else if (!inaOk) {
+        noBattery = false;  // can't tell; the LED shows the INA260 fault instead
     }
+    if (noBattery) pkt.flags |= FLAG_NO_BATTERY;
 
     uint32_t mv = analogReadMilliVolts(PIN_CONT_ADC);
     pkt.sense_mV = static_cast<uint16_t>(mv);
@@ -152,11 +178,44 @@ StatusPacket buildStatus() {
 
 void printStatus(const StatusPacket &p) {
     static const char *SENSE_NAMES[] = {"unknown", "load", "open", "live"};
-    Serial.printf("[status] out=%s sense=%s (%u mV) supply=%u mV I=%d mA P=%u mW%s%s\n",
+    const char *power = !usbAwakeLock ? "no light sleep" : usbAwakeHeld ? "awake for USB" : "light sleep";
+    Serial.printf("[status] out=%s sense=%s (%u mV) supply=%u mV I=%d mA P=%u mW power=%s%s%s%s\n",
                   p.output ? "ARMED" : "DISARMED", SENSE_NAMES[p.sense < 4 ? p.sense : 0], p.sense_mV,
-                  p.supply_mV, p.current_mA, p.power_mW,
+                  p.supply_mV, p.current_mA, p.power_mW, power,
                   (p.flags & FLAG_INA_OK) ? "" : " [INA260 missing]",
-                  (p.flags & FLAG_RESTORED) ? " [restored after reset]" : "");
+                  (p.flags & FLAG_RESTORED) ? " [restored after reset]" : "",
+                  (p.flags & FLAG_NO_BATTERY) ? " [no battery]" : "");
+}
+
+// Light sleep between BLE events cuts idle draw from ~80 mA to a few mA (see
+// sdkconfig.defaults). Starts held awake so the console works from boot.
+void beginPowerSave() {
+    // IDF puts every pin in its sleep config (not driving) during light sleep;
+    // keep these on their normal config so they hold their level through sleep.
+    for (int pin : {PIN_OUT_EN, PIN_CONT_EN, PIN_LED}) gpio_sleep_sel_dis(static_cast<gpio_num_t>(pin));
+    esp_pm_config_esp32c3_t cfg = {};
+    cfg.max_freq_mhz = 80;
+    // No scaling while awake: the RMT that drives the LED times bits off APB and
+    // IDF 4.4 doesn't hold it at 80 MHz, so a write at 40 MHz garbles the colour.
+    cfg.min_freq_mhz = 80;
+    cfg.light_sleep_enable = true;
+    esp_err_t err = esp_pm_configure(&cfg);
+    if (err == ESP_OK) err = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "usb", &usbAwakeLock);
+    if (err == ESP_OK) err = esp_pm_lock_acquire(usbAwakeLock);
+    usbAwakeHeld = err == ESP_OK;
+    usbLastSeenMs = millis();
+    if (err != ESP_OK) Serial.printf("[power] light sleep unavailable: %s\n", esp_err_to_name(err));
+}
+
+// Stay awake while USB is plugged in; sleep once it has been gone a while.
+void updatePowerSave(uint32_t now) {
+    if (!usbAwakeLock) return;
+    if (HWCDC::isPlugged()) {
+        usbLastSeenMs = now;
+        if (!usbAwakeHeld) usbAwakeHeld = esp_pm_lock_acquire(usbAwakeLock) == ESP_OK;
+    } else if (usbAwakeHeld && now - usbLastSeenMs >= USB_GONE_MS) {
+        usbAwakeHeld = esp_pm_lock_release(usbAwakeLock) != ESP_OK;
+    }
 }
 
 void onOutputRequest(bool on) { pendingOutput = on ? 1 : 0; }
@@ -196,6 +255,7 @@ void setup() {
     senseValidAtMs = millis() + SENSE_SETTLE_MS;
 
     Serial.begin(115200);
+    beginPowerSave();
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 100000);
     inaOk = ina.begin(Wire, INA260_ADDR);
 
@@ -224,6 +284,7 @@ void loop() {
 
     handleSerial();
     updateLed(millis());
+    updatePowerSave(millis());
 
     uint32_t period = ble_link::connected() ? STATUS_PERIOD_CONNECTED_MS : STATUS_PERIOD_IDLE_MS;
     uint32_t now = millis();

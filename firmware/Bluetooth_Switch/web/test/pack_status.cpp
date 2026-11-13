@@ -7,7 +7,7 @@ int main() {
     p.version = STATUS_VERSION;
     p.output = 1;
     p.sense = static_cast<uint8_t>(Sense::Live);
-    p.flags = FLAG_INA_OK | FLAG_READING_VALID | FLAG_RESTORED;
+    p.flags = FLAG_INA_OK | FLAG_READING_VALID | FLAG_RESTORED | FLAG_NO_BATTERY;
     p.supply_mV = 8412;
     p.current_mA = -123;
     p.power_mW = 1035;
