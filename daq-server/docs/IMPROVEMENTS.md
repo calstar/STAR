@@ -272,7 +272,7 @@ is the part worth keeping:
   reads** — deleted rather than suppressed. Two scoped suppressions remain and are deliberate: the
   archived Elodin headers are now `SYSTEM` includes (`db.hpp` was the only remaining source of that
   warning), and `daqv2_comms` carries `-Wno-stringop-overflow` for the GCC 13 false positive on the
-  guarded `vector::resize` calls at `DiabloPacketUtils.cpp:748,769`. The tree builds at **0
+  guarded `vector::resize` calls at `DaqPacketUtils.cpp:748,769`. The tree builds at **0
   warnings**.
 
 - **`-DSANITIZE=ON` builds with ASan + UBSan**, and the new `address-sanitizer` CI job points it at

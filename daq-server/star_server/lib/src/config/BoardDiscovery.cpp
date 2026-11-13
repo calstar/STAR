@@ -17,8 +17,8 @@
 #include <optional>
 #include <sstream>
 
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
+#include "DaqPacketUtils.h"
+#include "DaqPackets.h"
 #include "fsw/BoardTypeWire.hpp"
 #include "util/IpFromMac.hpp"
 

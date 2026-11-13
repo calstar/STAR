@@ -5,8 +5,8 @@
 #include <iostream>
 #include <thread>
 
-#include "DiabloEnums.h"
-#include "DiabloPackets.h"
+#include "DaqEnums.h"
+#include "DaqPackets.h"
 
 namespace fsw {
 namespace fsw {

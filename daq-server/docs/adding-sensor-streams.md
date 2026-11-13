@@ -56,7 +56,7 @@ collision instead of picking a free byte).
 
 ## Environmental board `[0x25, board_id]`
 
-The BME280 firmware sends packet type 13 to UDP port 5006 at 5 Hz. `lib/daq-protocol/src/DiabloPacketUtils.h` provides the parser. `SensorFramePipeline` decodes the packet, and `daq_bridge` resolves its source IP against enabled `ENVIRONMENTAL` boards before publishing it. Unknown sources, disabled boards, wrong protocol versions, incorrect packet lengths, non-finite values, humidity outside 0–100 %RH, and zero pressure do not produce rows.
+The BME280 firmware sends packet type 13 to UDP port 5006 at 5 Hz. `lib/daq-protocol/src/DaqPacketUtils.h` provides the parser. `SensorFramePipeline` decodes the packet, and `daq_bridge` resolves its source IP against enabled `ENVIRONMENTAL` boards before publishing it. Unknown sources, disabled boards, wrong protocol versions, incorrect packet lengths, non-finite values, humidity outside 0–100 %RH, and zero pressure do not produce rows.
 
 Each board has one BME280 on logical connector 1. Configure `active_connectors = [1]`; an empty list disables its data stream. The firmware streams on its own and does not use `SENSOR_CONFIG` or ADC calibration. The readings already use °C, absolute Pa, and %RH. The bridge preserves the pressure as `uint32`, including its units.
 

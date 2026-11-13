@@ -24,7 +24,7 @@
 #include <thread>
 #include <vector>
 
-#include "DiabloPacketUtils.h"
+#include "DaqPacketUtils.h"
 
 namespace daqtest {
 

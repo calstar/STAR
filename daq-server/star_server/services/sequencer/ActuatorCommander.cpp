@@ -20,7 +20,7 @@
 #include "elodin/DatabaseConfig.hpp"
 
 // daqv2comms — all packet construction goes through here
-#include "DiabloPacketUtils.h"
+#include "DaqPacketUtils.h"
 #include "comms/CommsMessage.hpp"
 
 namespace sequencer {

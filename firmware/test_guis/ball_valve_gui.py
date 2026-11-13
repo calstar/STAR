@@ -29,7 +29,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 # ---------------------- Protocol constants (DAQv2-Comms) ----------------------
 
-DIABLO_COMMS_VERSION = 0
+COMMS_VERSION = 0
 PACKET_HEADER_FORMAT = "<BBI"  # packet_type, version, timestamp_ms
 PACKET_HEADER_SIZE = 6
 
@@ -63,7 +63,7 @@ POLL_MS = 50
 
 def _header(packet_type: int) -> bytes:
     ts = int(time.time() * 1000) & 0xFFFFFFFF
-    return struct.pack(PACKET_HEADER_FORMAT, packet_type, DIABLO_COMMS_VERSION, ts)
+    return struct.pack(PACKET_HEADER_FORMAT, packet_type, COMMS_VERSION, ts)
 
 
 def build_server_heartbeat() -> bytes:

@@ -22,8 +22,8 @@
 #include <string>
 #include <thread>
 
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
+#include "DaqPacketUtils.h"
+#include "DaqPackets.h"
 #include "control/StateMachine.hpp"
 #include "daq-protocol.h"
 #include "elodin/DatabaseConfig.hpp"

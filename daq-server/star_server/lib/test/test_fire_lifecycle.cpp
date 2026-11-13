@@ -30,7 +30,7 @@
 #include <thread>
 #include <vector>
 
-#include "DiabloPacketUtils.h"
+#include "DaqPacketUtils.h"
 #include "control/ActuatorCommander.hpp"
 #include "control/HoldTimer.hpp"
 #include "control/StateMachine.hpp"

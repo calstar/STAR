@@ -5,9 +5,9 @@
 #include <cstring>
 #include <iostream>
 
-#include "DiabloEnums.h"
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
+#include "DaqEnums.h"
+#include "DaqPacketUtils.h"
+#include "DaqPackets.h"
 #include "daq-protocol.h"
 
 namespace fsw {
@@ -52,7 +52,7 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
     if (peek.packet_type == daq::PacketType::ENVIRONMENTAL_DATA) {
         daq::PacketHeader header{};
         daq::EnvironmentalDataPacket data{};
-        if (peek.version != DIABLO_COMMS_VERSION ||
+        if (peek.version != COMMS_VERSION ||
             received != static_cast<ssize_t>(sizeof(header) + sizeof(data)) ||
             !daq::parse_environmental_data_packet(receive_buffer_.data(), received, header, data) ||
             !std::isfinite(data.temperature_c) || !std::isfinite(data.humidity_rh) ||

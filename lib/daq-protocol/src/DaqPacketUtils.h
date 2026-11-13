@@ -1,7 +1,7 @@
 #pragma once
 
-#include "DiabloEnums.h"   // For enums like PacketType
-#include "DiabloPackets.h" // For all packet data structures
+#include "DaqEnums.h"   // For enums like PacketType
+#include "DaqPackets.h" // For all packet data structures
 #include <stdint.h>        // For standard integer types
 #include <vector>          // For std::vector
 

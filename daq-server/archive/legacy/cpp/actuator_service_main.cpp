@@ -29,20 +29,20 @@
 #include <thread>
 #include <vector>
 
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
+#include "DaqPacketUtils.h"
+#include "DaqPackets.h"
 
 namespace {
 std::atomic<bool> g_running{true};
 
 std::vector<uint8_t> build_actuator_command_udp_packet(
-    const std::vector<Diablo::ActuatorCommand>& commands) {
+    const std::vector<daq::ActuatorCommand>& commands) {
     uint8_t buf[512];
     uint32_t ts_ms = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                                std::chrono::steady_clock::now().time_since_epoch())
                                                .count() &
                                            0xFFFFFFFFu);
-    size_t len = Diablo::create_actuator_command_packet(commands, ts_ms, buf, sizeof(buf));
+    size_t len = daq::create_actuator_command_packet(commands, ts_ms, buf, sizeof(buf));
     if (len == 0)
         return {};
     return std::vector<uint8_t>(buf, buf + len);
@@ -445,7 +445,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "[ActuatorService] Unknown actuator: " << act_name << std::endl;
             return false;
         }
-        Diablo::ActuatorCommand cmd;
+        daq::ActuatorCommand cmd;
         cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
         int hw = (am->second.is_no) ? (1 - pos) : pos;
         cmd.actuator_state = static_cast<uint8_t>(hw);
@@ -561,7 +561,7 @@ int main(int argc, char* argv[]) {
         }
 
         // No delays: group commands by board IP and send in batch
-        std::map<std::string, std::vector<Diablo::ActuatorCommand>> by_board;
+        std::map<std::string, std::vector<daq::ActuatorCommand>> by_board;
         for (const auto& [act_name, pos] : it->second) {
             if (is_fire_state && skip_in_fire(act_name))
                 continue;
@@ -569,7 +569,7 @@ int main(int argc, char* argv[]) {
             if (am == actuator_map.end())
                 continue;
 
-            Diablo::ActuatorCommand cmd;
+            daq::ActuatorCommand cmd;
             cmd.actuator_id = static_cast<uint8_t>(am->second.channel);
             int hw = (am->second.is_no) ? (1 - pos) : pos;
             cmd.actuator_state = static_cast<uint8_t>(hw);

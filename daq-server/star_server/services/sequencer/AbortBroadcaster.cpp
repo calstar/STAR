@@ -13,8 +13,8 @@
 #include <thread>
 
 // daqv2comms — PacketHeader + PacketType
-#include "DiabloEnums.h"
-#include "DiabloPackets.h"
+#include "DaqEnums.h"
+#include "DaqPackets.h"
 #include "net/DaqInterface.hpp"
 
 namespace sequencer {
@@ -74,7 +74,7 @@ AbortBroadcaster::~AbortBroadcaster() {
 void AbortBroadcaster::sendPacket(uint8_t packet_type_byte) {
     daq::PacketHeader hdr{};
     hdr.packet_type = static_cast<daq::PacketType>(packet_type_byte);
-    hdr.version = 0;  // DIABLO_COMMS_VERSION
+    hdr.version = 0;  // COMMS_VERSION
     hdr.timestamp = host_timestamp_ms();
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);

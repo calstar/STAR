@@ -19,13 +19,13 @@ PACKET_SELF_TEST = 12
 BOARD_TYPE_PT = 1  # minimal type for heartbeat body
 BOARD_STATE_SETUP = 1
 ENGINE_SAFE = 0
-DIABLO_VERSION = 0
+COMMS_VERSION = 0
 
 
 def build_board_heartbeat(_board_type: int, board_id: int, ts_ms: int) -> bytes:
     """DAQv2 BoardHeartbeatPacket: 32B hash + board_id + engine_state + board_state."""
     header = struct.pack(
-        "<BBI", PACKET_BOARD_HEARTBEAT, DIABLO_VERSION, ts_ms & 0xFFFFFFFF
+        "<BBI", PACKET_BOARD_HEARTBEAT, COMMS_VERSION, ts_ms & 0xFFFFFFFF
     )
     firmware_hash = bytes(32)
     body = firmware_hash + struct.pack(
@@ -37,7 +37,7 @@ def build_board_heartbeat(_board_type: int, board_id: int, ts_ms: int) -> bytes:
 def build_self_test_packet(sensor_results: list[tuple[int, int]]) -> bytes:
     """sensor_results: list of (sensor_id, result) result 1=pass 0=fail."""
     ts_ms = int(time.time() * 1000) & 0xFFFFFFFF
-    header = struct.pack("<BBI", PACKET_SELF_TEST, DIABLO_VERSION, ts_ms)
+    header = struct.pack("<BBI", PACKET_SELF_TEST, COMMS_VERSION, ts_ms)
     n = min(len(sensor_results), 255)
     adc_good = 1  # SelfTestPacket.adc_good — required on wire before num_sensors
     body = struct.pack("BB", adc_good, n)

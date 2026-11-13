@@ -7,8 +7,8 @@
 #include <iostream>
 #include <thread>
 
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
+#include "DaqPacketUtils.h"
+#include "DaqPackets.h"
 #include "comms/messages/control/ControlMessages.hpp"
 #include "comms/messages/control/ControllerMessages.hpp"
 #include "db.hpp"

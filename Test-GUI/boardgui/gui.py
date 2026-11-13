@@ -548,7 +548,7 @@ class BoardMonitorWindow(QtWidgets.QMainWindow):
         """Editable copy of every field that goes into SENSOR_CONFIG.
 
         The wire layout is (see protocol.build_sensor_config and
-        lib/DAQv2-Comms/src/DiabloPackets.h ``SensorConfigData``):
+        lib/DAQv2-Comms/src/DaqPackets.h ``SensorConfigData``):
             num_sensors, sensor_ids[N], reference_voltage, necessary_for_abort,
             [controller_ip if necessary_for_abort], enable_serial_printing
         Defaults come from the BoardProfile; change them here to send something

@@ -37,7 +37,7 @@ std::vector<uint8_t> build_server_heartbeat_packet() {
                                             .count() &
                                         0xFFFFFFFF);
     pkt[0] = SERVER_HEARTBEAT_PACKET_TYPE;
-    pkt[1] = DIABLO_COMMS_VERSION;
+    pkt[1] = COMMS_VERSION;
     pkt[2] = static_cast<uint8_t>(ts & 0xFF);
     pkt[3] = static_cast<uint8_t>((ts >> 8) & 0xFF);
     pkt[4] = static_cast<uint8_t>((ts >> 16) & 0xFF);
@@ -512,7 +512,7 @@ int main(int argc, char* argv[]) {
         synthetic.board_state = daq::BoardState::SETUP;
         daq::PacketHeader syn_hdr{};
         syn_hdr.packet_type = daq::PacketType::BOARD_HEARTBEAT;
-        syn_hdr.version = DIABLO_COMMS_VERSION;
+        syn_hdr.version = COMMS_VERSION;
         syn_hdr.timestamp =
             static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now().time_since_epoch())

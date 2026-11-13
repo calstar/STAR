@@ -41,7 +41,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 # daq-protocol: wire protocol library (subtree at repo-root lib/daq-protocol)
 add_library(daqv2_comms STATIC
-    ../lib/daq-protocol/src/DiabloPacketUtils.cpp
+    ../lib/daq-protocol/src/DaqPacketUtils.cpp
 )
 target_include_directories(daqv2_comms PUBLIC
     ../lib/daq-protocol/src
@@ -51,7 +51,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(daqv2_comms PRIVATE "-include" "cstddef")
 endif()
 # GCC 13 reports -Wstringop-overflow inside libstdc++'s inlined vector::resize here, claiming a
-# write "into a region of size 0". Both call sites (DiabloPacketUtils.cpp:748,769) are guarded by
+# write "into a region of size 0". Both call sites (DaqPacketUtils.cpp:748,769) are guarded by
 # `if (N)` and a MAX_ bound, so the count cannot be zero; this is the known GCC 13 false positive.
 # Scoped to this target so the warning keeps working everywhere else.
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

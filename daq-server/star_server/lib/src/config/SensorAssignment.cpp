@@ -8,7 +8,7 @@
 #include <iostream>
 #include <sstream>
 
-#include "DiabloPacketUtils.h"
+#include "DaqPacketUtils.h"
 
 namespace fsw {
 namespace config {

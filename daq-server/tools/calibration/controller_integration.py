@@ -19,7 +19,7 @@ from collections import deque
 logger = logging.getLogger(__name__)
 
 # ── DiabloAvionics Protocol Constants (from combined_gui.py) ─────────────
-DIABLO_COMMS_VERSION = 0
+COMMS_VERSION = 0
 MAX_PACKET_SIZE = 512
 
 
@@ -155,7 +155,7 @@ class ActuatorComm:
 
         # Packet header
         packet_type = PacketType.ACTUATOR_COMMAND
-        version = DIABLO_COMMS_VERSION
+        version = COMMS_VERSION
         timestamp = (
             int(time.time() * 1000) & 0xFFFFFFFF
         )  # 32-bit timestamp in milliseconds

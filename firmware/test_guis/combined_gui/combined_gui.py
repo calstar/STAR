@@ -102,11 +102,11 @@ except ImportError as e:
         print(f"   Files in path: {os.listdir(_calib_path)[:5]}")
 
 # Protocol constants from DAQv2-Comms.h
-DIABLO_COMMS_VERSION = 0
+COMMS_VERSION = 0
 MAX_PACKET_SIZE = 512
 
 
-# PacketType enum from DiabloEnums.h
+# PacketType enum from DaqEnums.h
 class PacketType:
     BOARD_HEARTBEAT = 1
     SERVER_HEARTBEAT = 2
@@ -949,7 +949,7 @@ def create_actuator_command_packet(commands: List[Tuple[int, int]]) -> bytes:
 
     # Packet header
     packet_type = PacketType.ACTUATOR_COMMAND
-    version = DIABLO_COMMS_VERSION
+    version = COMMS_VERSION
     timestamp = int(time.time() * 1000) & 0xFFFFFFFF  # 32-bit timestamp in milliseconds
 
     struct.pack_into(
@@ -1002,7 +1002,7 @@ def create_pwm_actuator_command_packet(
         packet,
         offset,
         PacketType.PWM_ACTUATOR_COMMAND,
-        DIABLO_COMMS_VERSION,
+        COMMS_VERSION,
         int(time.time() * 1000) & 0xFFFFFFFF,
     )
     offset += PACKET_HEADER_SIZE
@@ -1825,7 +1825,7 @@ class SensorPlotWidget(QtWidgets.QWidget):
             self.demo_start_time,
             self.stats_start_time,
             packet_type=PacketType.SENSOR_DATA,
-            version=DIABLO_COMMS_VERSION,
+            version=COMMS_VERSION,
             max_packet_size=MAX_PACKET_SIZE,
             psi_min=0.0,
             psi_max=700.0,

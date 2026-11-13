@@ -5,8 +5,8 @@
 #include <cstdint>
 #include <map>
 
-#include "DiabloEnums.h"
-#include "DiabloPackets.h"
+#include "DaqEnums.h"
+#include "DaqPackets.h"
 #include "elodin/ElodinClient.hpp"
 
 namespace fsw {

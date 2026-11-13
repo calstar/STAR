@@ -1,6 +1,6 @@
 #pragma once
 
-#include "DiabloEnums.h"
+#include "DaqEnums.h"
 #include <stdint.h>
 #include <vector>
 

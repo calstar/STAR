@@ -1,4 +1,4 @@
-#include "DiabloPacketUtils.h"
+#include "DaqPacketUtils.h"
 #include "daq-protocol.h"
 #include <cstring> // For memcpy
 #include <cstddef> // For size_t
@@ -26,7 +26,7 @@ size_t create_board_heartbeat_packet(const BoardHeartbeatPacket &data,
   // Create the packet header
   PacketHeader header;
   header.packet_type = PacketType::BOARD_HEARTBEAT;
-  header.version = DIABLO_COMMS_VERSION; // Current protocol version
+  header.version = COMMS_VERSION; // Current protocol version
   header.timestamp = timestamp_ms;
   
   // Copy header to buffer
@@ -57,7 +57,7 @@ size_t create_sensor_data_packet(const std::vector<SensorDataChunkCollection> &c
   // Prepare header
   PacketHeader header;
   header.packet_type = PacketType::SENSOR_DATA;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   // Write header
@@ -133,7 +133,7 @@ size_t create_actuator_command_packet(const std::vector<ActuatorCommand> &comman
   // Header
   PacketHeader header;
   header.packet_type = PacketType::ACTUATOR_COMMAND;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   uint8_t *ptr = buffer;
@@ -176,7 +176,7 @@ size_t create_self_test_packet(uint8_t adc_good,
   // Header
   PacketHeader header;
   header.packet_type = PacketType::SELF_TEST;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   uint8_t *ptr = buffer;
@@ -213,7 +213,7 @@ size_t create_environmental_data_packet(float temperature_c,
 
   PacketHeader header;
   header.packet_type = PacketType::ENVIRONMENTAL_DATA;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   EnvironmentalDataPacket body;
@@ -241,7 +241,7 @@ size_t create_stacklight_command_packet(const StacklightCommandPacket &data,
 
   PacketHeader header;
   header.packet_type = PacketType::STACKLIGHT_COMMAND;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   uint8_t *ptr = buffer;
@@ -465,7 +465,7 @@ size_t create_pwm_actuator_packet(const std::vector<PWMActuatorCommand> &command
   // Header
   PacketHeader header;
   header.packet_type = PacketType::PWM_ACTUATOR_COMMAND;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   uint8_t *ptr = buffer;
@@ -544,7 +544,7 @@ size_t create_sensor_config_packet(const std::vector<uint8_t> &sensor_ids,
 
   PacketHeader header;
   header.packet_type = PacketType::SENSOR_CONFIG;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   uint8_t *ptr = buffer;
@@ -674,7 +674,7 @@ size_t create_actuator_config_packet(
 
   PacketHeader header;
   header.packet_type = PacketType::ACTUATOR_CONFIG;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   uint8_t *ptr = buffer;
@@ -788,7 +788,7 @@ size_t create_log_packet(uint8_t flags, const uint8_t *text, uint16_t text_len,
 
   PacketHeader header;
   header.packet_type = PacketType::LOGS;
-  header.version = DIABLO_COMMS_VERSION;
+  header.version = COMMS_VERSION;
   header.timestamp = timestamp_ms;
 
   uint8_t *ptr = buffer;

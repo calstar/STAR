@@ -46,9 +46,9 @@ void signalHandler(int /*sig*/) {
 }
 
 constexpr uint8_t SERVER_HEARTBEAT_TYPE = 2;
-constexpr uint8_t DIABLO_VERSION = 0;
+constexpr uint8_t COMMS_VERSION = 0;
 
-// ── sequencer::State → EngineState (DiabloEnums.h) ───────────────────────────
+// ── sequencer::State → EngineState (DaqEnums.h) ───────────────────────────
 // EngineState: SAFE=0, PRESSURIZING=1, LOX_FILL=2, FIRING=3, POST_FIRE=4
 // sequencer::State enum values (StateMachine.hpp):
 //   DEBUG=0, IDLE=1, ARMED=2, FUEL_FILL=3, OX_FILL=4, GN2_LOW_PRESS=5,
@@ -160,7 +160,7 @@ std::vector<uint8_t> buildHeartbeatPacket(uint8_t engine_state) {
         0xFFFFFFFFu;
     return {
         SERVER_HEARTBEAT_TYPE,
-        DIABLO_VERSION,
+        COMMS_VERSION,
         static_cast<uint8_t>(ms >> 0),
         static_cast<uint8_t>(ms >> 8),
         static_cast<uint8_t>(ms >> 16),

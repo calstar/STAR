@@ -10,8 +10,8 @@
 #include <vector>
 
 // DAQv2-Comms
-#include "DiabloEnums.h"
-#include "DiabloPackets.h"
+#include "DaqEnums.h"
+#include "DaqPackets.h"
 
 // ===========================================================================
 // Constructor and basic operations
