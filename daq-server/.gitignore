@@ -259,3 +259,7 @@ video/buffer/
 video/recordings/
 # ...but not the GUI's Recordings view, which the bare `recordings/` rule above would hide.
 !diablo_server/frontend/app/recordings/
+
+# Generated, never committed
+build-clang-ci/
+diablo_server/backend/dist/
