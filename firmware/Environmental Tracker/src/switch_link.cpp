@@ -18,6 +18,11 @@ constexpr uint16_t CONN_INTERVAL_MIN = 240;  // 1.25 ms units
 constexpr uint16_t CONN_INTERVAL_MAX = 320;
 constexpr uint16_t CONN_LATENCY = 4;
 constexpr uint16_t CONN_TIMEOUT = 600;        // 10 ms units
+// Connect and discover at a fast interval (discovery is several round trips:
+// at 400 ms and latency 4 it takes seconds), then step down to the slow one.
+constexpr uint16_t FAST_INTERVAL_MIN = 12;  // 15 ms
+constexpr uint16_t FAST_INTERVAL_MAX = 24;  // 30 ms
+constexpr uint16_t FAST_LATENCY = 0;
 constexpr uint8_t CONNECT_TIMEOUT_S = 4;
 constexpr uint32_t RSSI_PERIOD_MS = 1000;
 constexpr uint32_t TASK_PERIOD_MS = 50;
@@ -57,6 +62,13 @@ void onStatusNotify(NimBLERemoteCharacteristic *chr, uint8_t *data, size_t len, 
 }
 
 class ClientCallbacks : public NimBLEClientCallbacks {
+    // The switch asks for its slow parameters as soon as anyone connects (for
+    // phones). Decline: this board sets those same parameters itself once
+    // discovery is done, and accepting now would make discovery take seconds.
+    bool onConnParamsUpdateRequest(NimBLEClient *, const ble_gap_upd_params *) override {
+        return false;
+    }
+
     void onDisconnect(NimBLEClient *c) override {
         uint8_t mac[6];
         toMac(c->getPeerAddress(), mac);
@@ -92,7 +104,7 @@ bool connectTo(const uint8_t mac[6]) {
         if (NimBLEDevice::getClientListSize() >= CONFIG_BT_NIMBLE_MAX_CONNECTIONS) return false;
         c = NimBLEDevice::createClient();
         c->setClientCallbacks(&clientCallbacks, false);
-        c->setConnectionParams(CONN_INTERVAL_MIN, CONN_INTERVAL_MAX, CONN_LATENCY, CONN_TIMEOUT);
+        c->setConnectionParams(FAST_INTERVAL_MIN, FAST_INTERVAL_MAX, FAST_LATENCY, CONN_TIMEOUT);
         c->setConnectTimeout(CONNECT_TIMEOUT_S);
     }
     if (!c->connect(toAddress(mac))) return false;
@@ -105,6 +117,8 @@ bool connectTo(const uint8_t mac[6]) {
         return false;
     }
     NimBLEAttValue v = st->readValue();  // don't wait up to 2 s for the first notification
+    // Discovery done: settle on the switch's own slow, power-saving parameters.
+    c->updateConnParams(CONN_INTERVAL_MIN, CONN_INTERVAL_MAX, CONN_LATENCY, CONN_TIMEOUT);
     Guard g;
     relay.onConnected(mac);
     if (v.length()) relay.onStatus(mac, v.data(), v.length(), millis());
@@ -185,6 +199,10 @@ bool begin() {
     NimBLEScan *s = NimBLEDevice::getScan();
     s->setAdvertisedDeviceCallbacks(&scanCallbacks, false);
     s->setActiveScan(false);  // the service UUID is in the advertisement itself
+    // Keep no results: the callback is all we use, and a scan that runs until a
+    // missing switch turns up would otherwise store every phone at the pad
+    // (the default keeps up to 255 and NimBLE allocates each one).
+    s->setMaxResults(0);
     s->setInterval(100);      // listen 50 ms of every 100 ms, only while a switch is missing
     s->setWindow(50);
     started = xTaskCreate(task, "switch_link", 6144, nullptr, 2, nullptr) == pdPASS;

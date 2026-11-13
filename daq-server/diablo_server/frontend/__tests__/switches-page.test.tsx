@@ -116,4 +116,18 @@ describe('switches page', () => {
     feed(0, { ...DISARMED, link: 0 });
     await waitFor(() => expect(screen.getByRole('button', { name: 'Arm' })).toBeDisabled());
   });
+
+  it('shows five switches, each with its own link', async () => {
+    const roles = Object.fromEntries([0, 1, 2, 3, 4].map((r) => [`s${r}`, { role: r, name: `Switch ${r}`, mac: `58:cf:79:01:00:0${r}` }]));
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ config: { switch_service: { enabled: true }, switch_roles: roles } }) })));
+    render(<SwitchesPage />);
+    await waitFor(() => expect(screen.getAllByRole('region')).toHaveLength(5));
+    for (const r of [0, 1, 2, 4]) feed(r, { ...DISARMED });
+    feed(3, { ...DISARMED, link: 0, age_ms: 6000 });
+    await waitFor(() => expect(screen.getAllByText(/^Connected/)).toHaveLength(4));
+    const lost = screen.getByRole('region', { name: 'Switch 3' });
+    expect(lost).toHaveTextContent('the environmental board is looking for it');
+    expect(screen.getByRole('region', { name: 'Switch 2' })).not.toHaveTextContent('looking for it');
+  });
 });
+

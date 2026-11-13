@@ -16,10 +16,12 @@ export const COMMAND_RESULT_TEXT: Record<number, string> = {
   5: 'the environmental board refused it (busy or malformed)',
 };
 
-/** No answer from the env board within this: the command is presumed lost. */
-export const NO_ANSWER_MS = 4000;
+/** No answer from the env board within this: the command is presumed lost. Allows for the board's
+ *  BLE task finishing another switch's reconnect first (connect timeout 4 s) and for the switch
+ *  listening only every ~2 s (latency 4). */
+export const NO_ANSWER_MS = 8000;
 /** Written, but the switch still reports the other state this long after the press: a fault. */
-export const DISAGREE_MS = 5000;
+export const DISAGREE_MS = 8000;
 
 export interface PendingCommand {
   id: number;

@@ -24,9 +24,11 @@ pio test -e native                    # switch relay logic, on the host
   (role index + MAC, from `[switch_roles.*]` in the DAQ's `config.toml`; names stay on the
   server). The board applies it only when its hash differs from the one it holds, and keeps it in
   memory only: after a reboot it connects to nothing until the next one arrives.
-- **Persistent connections.** One link per listed switch (at most 5), at the switch's own
-  300-400 ms interval and latency 4. The board scans only while a listed switch is not connected,
-  and reconnects by itself.
+- **Persistent connections.** One link per listed switch (at most 5). It connects and discovers
+  at 15-30 ms (declining the switch's own early request for slow parameters, which would make
+  discovery take seconds), then settles on the switch's 300-400 ms interval and latency 4. The
+  board scans only while a listed switch is not connected, keeps no scan results (a pad full of
+  phones would fill RAM), and reconnects by itself.
 - **Status passes through untouched.** Each switch's 17-byte status (`lib/daq-protocol/src/SwitchStatus.h`)
   goes to the DAQ in `SWITCH_STATUS` with the link state, RSSI, its age and the held list's hash:
   on every notification, and at least once a second per switch. While a link is down the last

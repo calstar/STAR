@@ -286,6 +286,70 @@ void test_nothing_is_written_without_a_command() {
     TEST_ASSERT_EQUAL(0, r.collectResults(res, 4));
 }
 
+
+// ---- five switches -----------------------------------------------------------
+
+static const uint8_t M[5][6] = {
+    {0x58, 0xCF, 0x79, 0x01, 0x00, 0x01}, {0x58, 0xCF, 0x79, 0x01, 0x00, 0x02},
+    {0x58, 0xCF, 0x79, 0x01, 0x00, 0x03}, {0x58, 0xCF, 0x79, 0x01, 0x00, 0x04},
+    {0x58, 0xCF, 0x79, 0x01, 0x00, 0x05}};
+
+static daq::SwitchConfig five() {
+    daq::SwitchConfig c;
+    c.count = 5;
+    for (uint8_t i = 0; i < 5; ++i) {
+        c.entries[i].role = i;
+        memcpy(c.entries[i].mac, M[i], 6);
+    }
+    return c;
+}
+
+void test_five_switches_scan_until_the_last_one_is_up() {
+    SwitchRelay r;
+    apply(r, five());
+    for (int i = 0; i < 5; ++i) {
+        TEST_ASSERT_TRUE(r.wantsScan());
+        r.onConnected(M[i]);
+    }
+    TEST_ASSERT_FALSE(r.wantsScan());
+    r.onDisconnected(M[2]);  // one drops: scan again, for it alone
+    TEST_ASSERT_TRUE(r.wantsScan());
+    TEST_ASSERT_TRUE(r.shouldConnect(M[2]));
+    TEST_ASSERT_FALSE(r.shouldConnect(M[1]));
+    r.onConnected(M[2]);
+    TEST_ASSERT_FALSE(r.wantsScan());
+}
+
+void test_one_lost_link_is_reported_at_once_and_alone() {
+    SwitchRelay r;
+    apply(r, five());
+    for (int i = 0; i < 5; ++i) r.onConnected(M[i]);
+    daq::SwitchStatusReport out[5];
+    TEST_ASSERT_EQUAL(5, r.collectReports(0, out, 5));
+    r.onDisconnected(M[3]);
+    TEST_ASSERT_EQUAL(1, r.collectReports(10, out, 5));  // not waiting for the 1 s tick
+    TEST_ASSERT_EQUAL(3, out[0].role);
+    TEST_ASSERT_EQUAL((int)daq::SwitchLink::DOWN, (int)out[0].link);
+    TEST_ASSERT_EQUAL(5, r.collectReports(1010, out, 5));  // then every role, every second
+    for (int i = 0; i < 5; ++i)
+        TEST_ASSERT_EQUAL(i == 3 ? (int)daq::SwitchLink::DOWN : (int)daq::SwitchLink::UP, (int)out[i].link);
+}
+
+void test_commands_reach_only_their_own_switch() {
+    SwitchRelay r;
+    apply(r, five());
+    for (int i = 0; i < 5; ++i) r.onConnected(M[i]);
+    r.submitCommand({1, 4, 1});
+    r.submitCommand({2, 0, 0});
+    daq::SwitchCommandPacket c;
+    uint8_t mac[6];
+    TEST_ASSERT_TRUE(r.takeCommand(c, mac));
+    TEST_ASSERT_EQUAL(4, c.role);
+    TEST_ASSERT_EQUAL_MEMORY(M[4], mac, 6);
+    TEST_ASSERT_TRUE(r.takeCommand(c, mac));
+    TEST_ASSERT_EQUAL_MEMORY(M[0], mac, 6);
+}
+
 int main(int, char **) {
     UNITY_BEGIN();
     RUN_TEST(test_no_config_connects_to_nothing);
@@ -305,5 +369,8 @@ int main(int, char **) {
     RUN_TEST(test_new_list_cannot_redirect_a_queued_command);
     RUN_TEST(test_full_queue_and_bad_output_are_refused);
     RUN_TEST(test_nothing_is_written_without_a_command);
+    RUN_TEST(test_five_switches_scan_until_the_last_one_is_up);
+    RUN_TEST(test_one_lost_link_is_reported_at_once_and_alone);
+    RUN_TEST(test_commands_reach_only_their_own_switch);
     return UNITY_END();
 }
