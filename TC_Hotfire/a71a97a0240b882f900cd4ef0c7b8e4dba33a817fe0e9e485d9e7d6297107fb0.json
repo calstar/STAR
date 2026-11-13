@@ -6,7 +6,8 @@
     "3710ba43c801a9c838281323af7b59b1b22bc041",
     "5309c5cc7402ba6c6ff0e4183613de8388a4f91f",
     "746988b58c57703d8a9ad0bc3ef5940ca4f6cc36",
-    "83fa407ea526ce01d5eb03892e5b4b6a217fa605"
+    "83fa407ea526ce01d5eb03892e5b4b6a217fa605",
+    "a358774ce8b222e94cc559d1de0c38ed909a670e"
   ],
   "file_sha256": "1abd6a8505f8bf03285a525ae23972eb2360f95dfc3f8667e071e6c11d176f2b",
   "first_run_id": "42748132055",
@@ -20,7 +21,7 @@
   "pio_env": "adafruit_feather_esp32s3",
   "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
   "run_attempt": "1",
-  "run_id": "43351815017",
-  "run_url": "https://github.com/calstar/STAR/actions/runs/43351815017",
-  "subject": "Flight computer: health task, IWDG through Idle sleep, SelfTest frame at start-up (#179)"
+  "run_id": "43353378741",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/43353378741",
+  "subject": "Encoder Board Firmware  (#202)"
 }
