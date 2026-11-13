@@ -49,7 +49,7 @@ describe('csvKind', () => {
   });
 
   it('falls back to the file name only when there is no data row', () => {
-    expect(csvKind(',Idle,Fire\n', 'diablo_transitions.csv')).toBe('transitions');
+    expect(csvKind(',Idle,Fire\n', 'engine_transitions.csv')).toBe('transitions');
     expect(csvKind(',Idle,Fire\n', 'notes.csv')).toBeNull();
     // A data row that is neither is refused whatever the file is called: read
     // as transitions it would wipe every move.
@@ -184,13 +184,13 @@ describe('heldShut', () => {
 describe('groupTableWarnings', () => {
   it('folds the "X -> Fire" warnings into one line and keeps the first sentence of the rest', () => {
     const out = groupTableWarnings([
-      'Idle commands LOX Press OPEN in diablo_actuators.csv as the DAQ reads it. A cold stand has nothing open.',
-      'Ox Press -> Fire is permitted by diablo_transitions.csv, bypassing Ready.',
-      'Fuel Press -> Fire is permitted by diablo_transitions.csv, bypassing Ready.',
+      'Idle commands LOX Press OPEN in engine_actuators.csv as the DAQ reads it. A cold stand has nothing open.',
+      'Ox Press -> Fire is permitted by engine_transitions.csv, bypassing Ready.',
+      'Fuel Press -> Fire is permitted by engine_transitions.csv, bypassing Ready.',
     ]);
     expect(out.map((w) => w.text)).toEqual([
       '2 states can go straight to Fire without Ready: Ox Press, Fuel Press.',
-      'Idle commands LOX Press OPEN in diablo_actuators.csv as the DAQ reads it.',
+      'Idle commands LOX Press OPEN in engine_actuators.csv as the DAQ reads it.',
     ]);
     expect(out[1].detail).toContain('A cold stand');
   });

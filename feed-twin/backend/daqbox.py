@@ -62,7 +62,7 @@ KIND_OF_BOARD = {b.id: b.kind for b in BOARDS}
 HIGH_RANGE_PSIG = 1500.0
 
 #: The DAQ's own cabling (``[actuator_roles]``), copied beside its tables.
-REFERENCE = Path(__file__).parent / "statemachines" / "diablo_channels.json"
+REFERENCE = Path(__file__).parent / "statemachines" / "engine_channels.json"
 
 
 @dataclass(frozen=True, slots=True)

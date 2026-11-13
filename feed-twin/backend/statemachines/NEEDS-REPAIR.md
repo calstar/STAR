@@ -1,4 +1,4 @@
-# `diablo_transitions.csv` — rows one cell short, and the stand reads them anyway
+# `engine_transitions.csv` — rows one cell short, and the stand reads them anyway
 
 This file was byte-identical to the DAQ's `state_transitions.csv`
 (`daq-server/config/profiles/default/` and `profiles/server/`) until the twin-side
@@ -50,7 +50,7 @@ today and will need its expectations updated when they are gone; that is the poi
 
 ## The actuator table has its own problems
 
-`diablo_actuators.csv` is well-formed (21 cells per row) and is read exactly as
+`engine_actuators.csv` is well-formed (21 cells per row) and is read exactly as
 written. Four cells cannot be what anybody meant:
 
 | state | commands OPEN | why it is wrong |

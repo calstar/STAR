@@ -790,7 +790,7 @@ it (`components/pid/vents.ts`) and feedtwin now reads the same rule. Assert:
 ### 3.4 The state machine must fail closed
 
 `can_go` on a state whose row could not be parsed must refuse every non-abort target,
-while **aborts stay reachable**. The shipped Diablo table has 9 rows one cell short
+while **aborts stay reachable**. The shipped engine table has 9 rows one cell short
 (the DAQ's own copy, 10); they are read left-aligned as the DAQ reads them, and that
 is expected and documented in `feed-twin/backend/statemachines/NEEDS-REPAIR.md`.
 
@@ -799,7 +799,7 @@ ignition is what fail-open allowed.
 
 ### 3.5 The actuator table, and hand holds
 
-`diablo_actuators.csv` opens **Fuel Main and LOX Press in Idle** and **both mains in
+`engine_actuators.csv` opens **Fuel Main and LOX Press in Idle** and **both mains in
 Engine/Emergency Abort**, as the DAQ reads it. The twin obeys the aborts and warns;
 **Idle it holds shut** (the de-energised state — read literally, a full bottle pressed
 the LOX tank before anybody armed; see `NEEDS-REPAIR.md`). Asserted:
@@ -848,7 +848,7 @@ next minute pin it. The session says in its notes whenever the bottle gas is > 1
 above its wall, and the fill supply is a bank at ambient (`FILL_SUPPLY_T`) rather than
 the bottle's own warming wall.
 `Setup.bottle_delivered` (default off) starts the bottle full and cold instead, for a
-supplier's cylinder — but the Diablo table opens `LOX Press` in Idle, so a full
+supplier's cylinder — but the engine table opens `LOX Press` in Idle, so a full
 bottle would have pressed the LOX tank in Idle had the table been obeyed there (§3.5).
 
 ---

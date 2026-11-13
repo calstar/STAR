@@ -36,7 +36,7 @@ EMPTY: dict[str, Any] = {
     "diagram": "",
     "engine": "",
     "fluid_set": "hotfire",
-    "machine": "diablo",
+    "machine": "engine",
     "setup": {},
     "hookup": {},
     "operating_point": {},
@@ -49,7 +49,7 @@ class StandPayload(BaseModel):
     diagram: str = ""
     engine: str = ""
     fluid_set: str = "hotfire"
-    machine: str = "diablo"
+    machine: str = "engine"
     setup: dict[str, Any] = Field(default_factory=dict)
     hookup: dict[str, Any] = Field(default_factory=dict)
     operating_point: dict[str, Any] = Field(default_factory=dict)

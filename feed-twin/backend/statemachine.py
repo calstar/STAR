@@ -12,16 +12,24 @@ from __future__ import annotations
 from pathlib import Path
 
 from feedtwin.session import statemachine as _machines
-from feedtwin.session.statemachine import Binding, StateMachine, bind
+from feedtwin.session.statemachine import Binding, StateMachine, bind, canonical
 
-__all__ = ["TABLES", "Binding", "StateMachine", "available", "bind", "load_machine"]
+__all__ = [
+    "TABLES",
+    "Binding",
+    "StateMachine",
+    "available",
+    "bind",
+    "canonical",
+    "load_machine",
+]
 
 #: Shipped tables, copied verbatim from daq-server/config.
 TABLES = Path(__file__).parent / "statemachines"
 
 
 def load_machine(
-    name: str = "diablo",
+    name: str = "engine",
     *,
     actuators: Path | None = None,
     transitions: Path | None = None,

@@ -306,8 +306,18 @@ def _read_matrix(path: Path) -> tuple[list[str], list[str], list[list[str]]]:
     return header, labels, body
 
 
+#: Machines that were renamed, old name to new. A saved stand or a run record
+#: still says the old one; it loads the same tables under the new name.
+RENAMED: Mapping[str, str] = {"diablo": "engine"}
+
+
+def canonical(name: str) -> str:
+    """The current name of a machine, given a name a stand or run once saved."""
+    return RENAMED.get(name, name)
+
+
 def load_machine(
-    name: str = "diablo",
+    name: str = "engine",
     *,
     actuators: Path | None = None,
     transitions: Path | None = None,
@@ -325,6 +335,7 @@ def load_machine(
             f"load_machine({name!r}) needs the table directory or both table "
             "paths; feedtwin ships no state machines of its own"
         )
+    name = canonical(name)
     act_path = actuators or Path(str(tables)) / f"{name}_actuators.csv"
     trans_path = transitions or Path(str(tables)) / f"{name}_transitions.csv"
 
@@ -361,7 +372,7 @@ def load_machine(
             warnings.append(
                 f"{trans_path.name} has {len(ragged)} row(s) with the wrong "
                 f"number of columns: {', '.join(ragged)}. Read left-aligned, "
-                "exactly as the Diablo DAQ reads them, so the twin permits and "
+                "exactly as the DAQ reads them, so the twin permits and "
                 "refuses the same moves as the stand. Fix the file and both "
                 "tools change together."
             )

@@ -122,7 +122,7 @@ FEEDTWIN_ENGINE_NAMED="d8d0f8b3073b=ethalox-7200n-doublet"
 FEEDTWIN_STANDS="local/le4-3-rocket-gn2"
 # The demo stand's own state table (_curate): the DAQ's table with the rows of
 # these states changed to close these valves. The DAQ's file
-# (feed-twin/backend/statemachines/diablo_actuators.csv) is not touched; see
+# (feed-twin/backend/statemachines/engine_actuators.csv) is not touched; see
 # docs/investor/demo-runbook.md, "The stand's state table".
 DEMO_ABORT_STATES="Engine Abort|Emergency Abort"
 DEMO_ABORT_CLOSES="Fuel Main|LOX Main|Fuel Press|LOX Press"
