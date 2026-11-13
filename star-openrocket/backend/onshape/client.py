@@ -142,13 +142,24 @@ class OnshapeClient:
 
     # -- requests -------------------------------------------------------------
 
-    def get_json(self, path: str, params: dict[str, Any] | None = None) -> Any:
+    def get_json(self, path: str, params: dict[str, Any] | None = None, *, cache: bool = True) -> Any:
         """GET an API path relative to the pinned base URL, with caching.
 
         `params` values that are ``None`` are dropped, so callers can pass
         optional arguments like ``linkDocumentId`` unconditionally.
+
+        ``cache=False`` is for the few reads whose answer changes over time -- what a
+        workspace currently points at. The disk cache is keyed by request, so caching
+        one of those would answer "the workspace as it was on the first build" forever.
         """
         params = {k: v for k, v in (params or {}).items() if v is not None}
+        if not cache:
+            if self.offline:
+                raise OnshapeError(
+                    f"offline=True but {path} must be asked live (it changes as the "
+                    "document is edited); build from a /v/ or /m/ URL to run offline"
+                )
+            return self._get_with_retry(path, params)
         cache_path = self._cache_path(path, params)
 
         if cache_path is not None and cache_path.exists():

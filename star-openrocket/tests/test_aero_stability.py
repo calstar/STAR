@@ -252,3 +252,25 @@ def test_detect_outer_surface_rejects_fin_plane():
     picked = set(guess.faces)
     assert ("occ:body", "F_outer") in picked
     assert ("occ:body", "F_fin") not in picked
+
+
+def test_reference_diameter_uses_the_tube_axis_not_a_vertex_fit():
+    """An asymmetric feature on the skin (LE4 SD's camera shrouds and rail lugs) tilts
+    a principal-axis fit of the vertices; on a long body that tilt reads as extra
+    radius at the ends. LE4 SD's 203.4 mm airframe came out 216.5 mm. The tubes'
+    own cylinder axis is the centreline the outer-surface preview already draws."""
+    L, R = 5.0, 0.1
+    z = np.linspace(0.0, L, 400)
+    tube = _sor_face("occ:tube", "F_tube", surface_of_revolution(z, np.full_like(z, R)), R)
+    # A dense flat patch hugging one side of the forward tube, inside the skin.
+    xs, zs = np.meshgrid(np.linspace(-0.02, 0.02, 40), np.linspace(0.2, 1.2, 200))
+    pts = np.stack([xs.ravel(), np.full(xs.size, 0.095), zs.ravel()], axis=1)
+    tris = np.stack([pts[:-2], pts[1:-1], pts[2:]], axis=1)
+    patch = FaceGeometry("occ:shroud", "part", "F_patch", tris, "PLANE", None, None, None)
+    store = StubStore([tube, patch])
+
+    result = compute_stability(
+        store, [{"key": "m", "mass": 1.0, "centroidWorld": [0, 0, 2.0]}],
+        outer_faces=[("occ:tube", "F_tube"), ("occ:shroud", "F_patch")],
+    )
+    assert result.ref_diameter == pytest.approx(2 * R, rel=1e-6)

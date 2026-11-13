@@ -294,6 +294,12 @@ function PartProperties({
         )}
       </Section>
 
+      {part.massOverridden && !overridden && (
+        <p className="m-3 rounded bg-[var(--color-bg-secondary)] px-2 py-1 text-sm text-[var(--color-text-muted)]">
+          Mass set by hand in Onshape (the part&apos;s Mass property), not computed from a material.
+        </p>
+      )}
+
       {part.materialDefaulted && !overridden && !chosen && (
         <p className="m-3 rounded bg-red-500/15 px-2 py-1 text-sm text-red-300">
           No material assigned in Onshape, so this part has no mass and is left out of the centre

@@ -158,26 +158,52 @@ def count_fins(faces: list[FaceGeometry], axis: Axis, gap_deg: float = 25.0) -> 
 def _edges_over_strips(
     s: np.ndarray, rho: np.ndarray, body_radius: float, span: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Leading/trailing axial edge at each root->tip strip, root extrapolated."""
-    # Bin the actual fin vertices by radius; per bin the outline is [min s, max s].
-    dmin, dmax = float(rho.min()), float(rho.max())
+    """Leading/trailing axial edge at each root->tip strip, root extrapolated.
+
+    ``s``/``rho`` are per-triangle-vertex, shape (T, 3). The outline is read by
+    *slicing the triangles* at each station radius, not by binning vertices: a flat
+    plate is tessellated with vertices only at its outline corners, so once a
+    through-the-wall tab is clipped off, the only exposed vertices are the two tip
+    corners -- a hair apart in radius, which made the root extrapolation slope
+    ~chord/1e-7 and threw the fin kilometres down the axis.
+    """
+    e0 = np.concatenate([s, rho], axis=1)  # (T, 6): s0 s1 s2 rho0 rho1 rho2
+    pairs = ((0, 1), (1, 2), (2, 0))
+    es0 = np.concatenate([e0[:, a] for a, _ in pairs])
+    es1 = np.concatenate([e0[:, b] for _, b in pairs])
+    er0 = np.concatenate([e0[:, 3 + a] for a, _ in pairs])
+    er1 = np.concatenate([e0[:, 3 + b] for _, b in pairs])
+
+    # Stations over the fin surface that exists outside the tube (a tab inside it
+    # is not aerodynamic; a fillet gap above it is extrapolated below).
+    rho_lo = max(float(rho.min()), body_radius)
+    rho_hi = float(rho.max())
     nb = max(8, DIVISIONS)
-    edges = np.linspace(dmin, dmax, nb + 1)
-    idx = np.clip(np.digitize(rho, edges) - 1, 0, nb - 1)
-    lead_bin = np.full(nb, np.inf)
-    trail_bin = np.full(nb, -np.inf)
-    np.minimum.at(lead_bin, idx, s)
-    np.maximum.at(trail_bin, idx, s)
-    centres = 0.5 * (edges[:-1] + edges[1:])
-    ok = np.isfinite(lead_bin) & np.isfinite(trail_bin)
-    cs, lead_v, trail_v = centres[ok], lead_bin[ok], trail_bin[ok]
+    extent = max(rho_hi - rho_lo, 1e-9)
+    # The top station sits just inside the tip (0.5 % of span), not on it: a tip
+    # edge tilted by tessellation noise has a single apex vertex at rho_hi, where a
+    # slice reads a zero chord.
+    cs = np.linspace(rho_lo + 1e-6 * extent, rho_hi - 5e-3 * extent, nb)
+    lead_v = np.full(nb, np.nan)
+    trail_v = np.full(nb, np.nan)
+    dr = er1 - er0
+    for k, r in enumerate(cs):
+        cross = (er0 - r) * (er1 - r) <= 0.0
+        if not cross.any():
+            continue
+        d = dr[cross]
+        t = np.where(np.abs(d) > 1e-15, (r - er0[cross]) / np.where(d == 0, 1.0, d), 0.0)
+        sk = es0[cross] + np.clip(t, 0.0, 1.0) * (es1[cross] - es0[cross])
+        lead_v[k], trail_v[k] = float(sk.min()), float(sk.max())
+    ok = np.isfinite(lead_v)
+    cs, lead_v, trail_v = cs[ok], lead_v[ok], trail_v[ok]
 
     rho_out = body_radius + np.linspace(0.0, span, DIVISIONS)
 
     def resample(vals: np.ndarray) -> np.ndarray:
         out = np.interp(rho_out, cs, vals)  # np.interp clamps outside [cs0, csN]
         # Linear-extrapolate the root gap (rho below the cleanest data) using the
-        # slope of the lowest two valid bins, so a fillet does not set the root.
+        # slope of the lowest two stations, so a fillet does not set the root.
         if len(cs) >= 2:
             slope = (vals[1] - vals[0]) / (cs[1] - cs[0])
             below = rho_out < cs[0]
@@ -203,8 +229,16 @@ def _fin_groups(faces: list[FaceGeometry], axis: Axis) -> tuple[list[list[FaceGe
             groups[-1].append(fg)
         else:
             groups.append([fg])
+    # A fin straddling 0/360 deg lands at both ends of the sort; join it back into
+    # one group, or it is drawn twice and reads as an asymmetric (N+1)-fin set.
+    if len(groups) > 1 and azimuth(groups[0][0]) + 360.0 - azimuth(groups[-1][-1]) < 25.0:
+        groups[0] = groups.pop() + groups[0]
 
-    azimuths = [float(np.mean([azimuth(fg) for fg in g])) for g in groups]
+    def mean_azimuth(g: list[FaceGeometry]) -> float:
+        rad = np.radians([azimuth(fg) for fg in g])
+        return float(np.degrees(np.arctan2(np.sin(rad).mean(), np.cos(rad).mean())) % 360.0)
+
+    azimuths = [mean_azimuth(g) for g in groups]
     return groups, azimuths
 
 
@@ -229,18 +263,15 @@ def extract_fin_planform(
     # planform is one fin, not N overlaid.
     groups, azimuths = _fin_groups(faces, axis)
     fin = groups[_largest_group(groups)]
-    verts = np.concatenate([fg.triangles.reshape(-1, 3) for fg in fin])
-    s, rho = axis.axial_radial(verts)
+    tris = np.concatenate([fg.triangles for fg in fin])
+    s, rho = axis.axial_radial(tris.reshape(-1, 3))
+    s, rho = s.reshape(-1, 3), rho.reshape(-1, 3)
 
-    # Clip to the EXPOSED fin: a through-the-wall mounting tab sits inside the tube
-    # (radius < body radius) and is not aerodynamic surface. OpenRocket's fin
-    # starts at the body surface, so drop everything at or below it before reading
-    # the planform, otherwise the tab (often a different chord) skews the root.
-    exposed = rho >= body_radius * 0.999
-    if exposed.sum() < 3:
-        raise ValueError("no fin surface outside the body radius; check the axis/selection")
-    s, rho = s[exposed], rho[exposed]
-
+    # Only the EXPOSED fin counts: a through-the-wall mounting tab sits inside the
+    # tube (radius < body radius) and is not aerodynamic surface. OpenRocket's fin
+    # starts at the body surface, so the outline is sliced from there outward
+    # (``_edges_over_strips``), otherwise the tab (often a different chord) skews
+    # the root.
     span = float(rho.max()) - body_radius
     if span <= 0:
         raise ValueError("fin tip is not outside the body radius; check the axis/selection")

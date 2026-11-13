@@ -4,12 +4,18 @@ orkv2.md 3.3 requires building against something immutable, so that the GLB and
 the manifest cannot be generated from two different states of the model. It
 names versions as the way to get that.
 
-Versions are not the only immutable handle, and on real documents they are often
-not an available one -- the BART document this was built against has exactly one
-version, cut at document creation, containing zero instances. Microversions are
-equally immutable and always exist, so when no usable version is present the
-resolver pins the workspace's *current* microversion and builds against that.
-The result is just as reproducible; it is only less human-meaningful.
+Versions are not the only immutable handle. Microversions are equally immutable
+and always exist, so a workspace URL is pinned to the workspace's *current*
+microversion: the model as it stands now, frozen for the length of the build.
+
+A workspace URL used to resolve to the newest *version* that had geometry. That
+built whatever someone last named -- LE4 SD's "V61", a week stale, while the team
+had been editing it all day -- and nothing on screen said so. A /w/ link is
+someone pointing at the live model; to build a named version, paste its /v/ URL.
+
+The lookup of the current microversion is never served from the disk cache: the
+cache is keyed by request, so a cached answer would pin the first build's state
+forever.
 """
 
 from __future__ import annotations
@@ -92,8 +98,7 @@ def resolve(client: OnshapeClient, ref: DocumentRef, element_id: str | None = No
 
     Resolution order:
       * ``/v/`` or ``/m/`` -- already immutable, used as-is.
-      * ``/w/`` -- prefer the newest version that actually contains geometry;
-        otherwise pin the workspace's current microversion and warn.
+      * ``/w/`` -- pinned to the workspace's current microversion (asked live).
     """
     eid = element_id or ref.element_id
     if not eid:
@@ -113,44 +118,19 @@ def resolve(client: OnshapeClient, ref: DocumentRef, element_id: str | None = No
 
 
 def _resolve_workspace(client: OnshapeClient, did: str, wid: str, eid: str) -> ResolvedRef:
-    warnings: list[str] = []
-
-    versions = client.get_json(f"/documents/d/{did}/versions")
-    # The API returns versions oldest-first; the creation-time version is the
-    # one we most want to avoid silently selecting.
-    candidates = [v for v in reversed(versions) if v.get("id")]
-
-    for version in candidates:
-        vid = version["id"]
-        if _assembly_is_populated(client, did, "v", vid, eid):
-            return ResolvedRef(
-                did, eid, "v", vid, "version", version_id=vid,
-                warnings=[f"Resolved workspace to version {version.get('name')!r} ({vid})."],
-            )
-        warnings.append(
-            f"Version {version.get('name')!r} ({vid}) contains no geometry for this "
-            "assembly; skipped."
-        )
-
-    # No version has anything in it. Pin the workspace's current microversion --
-    # immutable, so the build stays reproducible, just not tied to a named version.
-    assembly = _get_assembly(client, did, "w", wid, eid)
-    microversion = assembly.get("rootAssembly", {}).get("documentMicroversion")
+    payload = client.get_json(f"/documents/d/{did}/w/{wid}/currentmicroversion", cache=False)
+    microversion = (payload or {}).get("microversion")
     if not microversion:
         raise OnshapeError(
-            f"Workspace {wid} returned an assembly with no documentMicroversion; "
-            "cannot pin an immutable build."
+            f"Workspace {wid} reported no current microversion; cannot pin an immutable build."
         )
-
-    warnings.append(
-        f"No version of this document contains geometry, so the build is pinned to the "
-        f"workspace's current microversion {microversion}. This is immutable and "
-        f"reproducible, but it is not a named version -- cut a version in Onshape for a "
-        f"human-meaningful build key."
-    )
     return ResolvedRef(
         did, eid, "m", microversion, "workspace-microversion",
-        microversion_id=microversion, warnings=warnings,
+        microversion_id=microversion,
+        warnings=[
+            f"Built the workspace as it stands now (microversion {microversion}). "
+            "To build a named version instead, use that version's /v/ URL."
+        ],
     )
 
 
@@ -163,17 +143,3 @@ def _get_assembly(client: OnshapeClient, did: str, wvm: str, wvmid: str, eid: st
             "excludeSuppressed": "true",
         },
     )
-
-
-def _assembly_is_populated(client: OnshapeClient, did: str, wvm: str, wvmid: str, eid: str) -> bool:
-    """True if this ref's assembly actually has occurrences.
-
-    A version cut before any modelling happened returns HTTP 200 with an empty
-    instance list, which would otherwise build a valid, empty, useless model.
-    """
-    try:
-        assembly = _get_assembly(client, did, wvm, wvmid, eid)
-    except OnshapeError:
-        # The element may not exist at that version at all.
-        return False
-    return bool(assembly.get("rootAssembly", {}).get("occurrences"))

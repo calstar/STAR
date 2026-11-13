@@ -31,6 +31,17 @@ Everything the build learned from Onshape is written to `cache/<model>/raw/`
 before it is parsed, so rebuilding the same microversion costs **zero** API
 calls.
 
+**Which state of the model gets built.** A workspace link (`/w/`) builds the
+model *as it stands now*: the build asks Onshape for the workspace's current
+microversion (never from the cache) and pins to it. Paste a `/v/` link to build a
+named version, or an `/m/` link to rebuild an exact earlier state offline.
+
+**Mass typed into Onshape counts.** A part whose mass is overridden in its
+Onshape properties (the motor, parachutes, shock cords and other space claims)
+gets that mass, and the viewer says so; Onshape's per-part mass call ignores
+these overrides, so without this the build fails to reconcile against the
+assembly total.
+
 ### API quota
 
 Onshape bills per request against a finite quota, which shapes several
@@ -44,7 +55,8 @@ decisions here and is worth knowing before you use the app:
 | Pressing "search Onshape" in the picker | **1** |
 | Expanding a document for the first time | **1** (free on every later visit) |
 | Building a model, cold | **7 + 3 × (unique part studios)** |
-| Rebuilding the same microversion | **0** |
+| Rebuilding the same microversion (`/m/` link) | **0** |
+| Rebuilding a `/w/` link nobody has edited since | **1** (asks for the current microversion) |
 
 Measured cold builds: 16 calls for a 3-part assembly, 22 for the 26-part
 reference rocket, 39 for a 29-part payload assembly. Every build writes its own

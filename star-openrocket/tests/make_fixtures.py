@@ -200,13 +200,6 @@ def main() -> int:
     tessellation = pick(is_tessellation, name_contains=MAIN_PART_STUDIO)
     write("tessellation.json", trim_tessellation(tessellation) if tessellation else None)
 
-    # The empty creation-time version, which the resolver must decline to build
-    # against. Deliberately kept: it is the reason the workspace fallback exists.
-    for path, payload in responses:
-        if is_assembly(payload) and not payload["rootAssembly"].get("occurrences"):
-            write("assembly_empty_version.json", payload)
-            break
-
     # Per-source fixtures, so the end-to-end build test sees all five Part
     # Studios rather than the main one repeated. Without these the build finds
     # 15 of 26 parts and the reconciliation check cannot be exercised at all.

@@ -31,6 +31,7 @@ from .fins import (
     is_fin_face,
     planform_outline_3d,
 )
+from .outer_surface import detect_axis_from_cylinders
 from .profile import build_profile
 
 
@@ -256,6 +257,14 @@ def aero_core(
     if not faces:
         raise ValueError("no geometry resolved for the selected outer faces")
     triangles = np.concatenate([fg.triangles for fg in faces], axis=0)
+
+    if axis is None:
+        # The tubes' own cylinder axes, as the outer-surface preview draws. Left to
+        # build_profile, the axis is a principal-axis fit of the skin's vertices,
+        # which asymmetric features (camera shrouds, rail lugs) pull off-centre:
+        # on LE4 SD 1.9 mm and 0.08 deg, worth 6.5 mm of radius at the tail, so the
+        # 203.4 mm airframe read as 216.5 mm and every margin shrank by 6 %.
+        axis = detect_axis_from_cylinders(faces)
 
     profile, axis = build_profile(triangles, axis=axis)
     aero = body_aero(

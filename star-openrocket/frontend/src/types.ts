@@ -24,6 +24,9 @@ export interface Part {
   material: Material | null
   /** True when Onshape had no material for this part, so it carries no mass. */
   materialDefaulted: boolean
+  /** The mass was typed into the part's "Mass" property in Onshape (an override), not
+   * computed from a material. Absent on manifests built before it was read. */
+  massOverridden?: boolean
   /** kg, straight from Onshape. Zero whenever `materialDefaulted` is true. */
   mass: number
   volume: number
