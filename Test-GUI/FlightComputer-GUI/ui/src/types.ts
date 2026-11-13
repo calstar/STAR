@@ -106,6 +106,7 @@ export interface View {
   live: LiveView;
   config: ConfigView;
   flights: FlightsView;
+  ground: GroundView;
 }
 
 /** The `live` event: samples since the last one. `y` has a value per line of chart `plot`. */
@@ -141,7 +142,9 @@ export type Command =
   | { cmd: "flight_open"; session: number }
   | { cmd: "flight_reveal"; session: number | null }
   | { cmd: "flight_wipe"; confirm: string }
-  | { cmd: "dismiss_notice" };
+  | { cmd: "dismiss_notice" }
+  | { cmd: "ground_arm" }
+  | { cmd: "ground_unarm" };
 
 /** Native file dialogs (Rust side); the chosen path goes straight to the backend. */
 export type Pick = "config_import" | "config_export" | "flight_folder";
@@ -170,4 +173,19 @@ export interface Stage {
   does: string;
   status: "done" | "current" | "next" | "later";
   how: string | null;
+}
+
+/** The Ground tab: a receiver board's view of the rocket (see ground.rs). */
+export interface GroundView {
+  show: boolean;
+  rocket: [string, Tone] | null;
+  heard: string;
+  signal: string;
+  battery: string;
+  adc: { name: string; counts: number; pin_v: string; value: string }[];
+  chips: { name: string; result: [string, Tone]; value: string; expected: string; when: string }[];
+  telemetry: string;
+  log: { t: string; kind: string; seq: number; rssi: string; summary: string }[];
+  command: string;
+  busy: boolean;
 }

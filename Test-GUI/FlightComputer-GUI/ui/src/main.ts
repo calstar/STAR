@@ -7,17 +7,18 @@
 import { html, nothing, render, type TemplateResult } from "lit-html";
 import { connect, type Api } from "./api";
 import { FlightPlots, LivePlots } from "./plots";
-import type { Command, Reading, ConfigView, FieldView, FlightsView, HeartbeatRow, Pick, Row, StatusView, Tone, View } from "./types";
+import type { Command, Reading, ConfigView, FieldView, FlightsView, GroundView, HeartbeatRow, Pick, Row, StatusView, Tone, View } from "./types";
 import "./style.css";
 import logoBlue from "./assets/star-logo-blue.png";
 import logoWhite from "./assets/star-logo-white.png";
 
-type Tab = "status" | "live" | "config" | "flights";
+type Tab = "status" | "live" | "config" | "flights" | "ground";
 const TABS: [Tab, string][] = [
   ["status", "Status"],
   ["live", "Live"],
   ["config", "Config"],
   ["flights", "Flights"],
+  ["ground", "Ground"],
 ];
 
 const ui = {
@@ -26,6 +27,7 @@ const ui = {
   wipeOpen: false,
   wipeText: "",
   readings: [] as Reading[],
+  armConfirm: false, // the Ground tab's Arm waits for a second click
 };
 
 let api: Api;
@@ -89,9 +91,9 @@ function topbar(v: View) {
   </header>`;
 }
 
-function tabs() {
+function tabs(v: View) {
   return html`<nav class="tabs" role="tablist">
-    ${TABS.map(
+    ${TABS.filter(([t]) => t !== "ground" || v.ground.show).map(
       ([t, name]) =>
         html`<button role="tab" aria-selected=${ui.tab === t ? "true" : "false"} @click=${() => set({ tab: t })}>${name}</button>`,
     )}
@@ -321,6 +323,60 @@ function configTab(c: ConfigView) {
 
 // ---------------------------------------------------------------- flights
 
+// ---------------------------------------------------------------- ground
+
+function groundTab(g: GroundView) {
+  const c = (x: [string, Tone] | null) => (x ? chip(x[0], x[1]) : html`<span class="muted">—</span>`);
+  return html`<div class="ground" data-testid="ground">
+    <div class="col">
+      ${card(
+        "Rocket",
+        html`<dl class="rows">
+            <dt>Rocket state</dt><dd>${c(g.rocket)}</dd>
+            <dt>Last heard</dt><dd>${g.heard}</dd>
+            <dt>Signal</dt><dd>${g.signal}</dd>
+            <dt>Battery</dt><dd>${g.battery}</dd>
+            ${g.telemetry ? html`<dt>Telemetry</dt><dd>${g.telemetry}</dd>` : nothing}
+          </dl>
+          <div class="ground-actions">
+            ${ui.armConfirm
+              ? html`<button class="danger" ?disabled=${g.busy} @click=${() => (set({ armConfirm: false }), send({ cmd: "ground_arm" }))}>
+                    Confirm: arm the rocket
+                  </button>
+                  <button class="ghost" @click=${() => set({ armConfirm: false })}>Cancel</button>`
+              : html`<button ?disabled=${g.busy} @click=${() => set({ armConfirm: true })}>Arm</button>`}
+            <button ?disabled=${g.busy} @click=${() => send({ cmd: "ground_unarm" })}>Un-arm</button>
+          </div>
+          ${g.command ? html`<p class="muted" data-testid="ground-command">${g.command}</p>` : nothing}`,
+      )}
+      ${card(
+        "Status report",
+        g.chips.length
+          ? html`<table class="ground-table">
+                <thead><tr><th>Chip</th><th>Result</th><th>Read</th><th>Expected</th><th></th></tr></thead>
+                <tbody>${g.chips.map(
+                  (r) => html`<tr><td>${r.name}</td><td>${chip(r.result[0], r.result[1])}</td><td>${r.value}</td><td>${r.expected}</td><td class="muted">${r.when}</td></tr>`,
+                )}</tbody>
+              </table>
+              <table class="ground-table">
+                <thead><tr><th>ADC</th><th>Counts</th><th>At the pin</th><th></th></tr></thead>
+                <tbody>${g.adc.map((r) => html`<tr><td>${r.name}</td><td>${r.counts}</td><td>${r.pin_v}</td><td>${r.value}</td></tr>`)}</tbody>
+              </table>`
+          : html`<p class="muted">Waiting for the rocket's first Status report (after each heartbeat, ~10 s in Idle).</p>`,
+      )}
+    </div>
+    <div class="col">
+      ${card(
+        "Heard, newest first",
+        html`<div class="ground-log"><table class="ground-table">
+          <thead><tr><th>Time</th><th>Frame</th><th>Seq</th><th>Signal</th><th></th></tr></thead>
+          <tbody>${g.log.map((r) => html`<tr><td>${r.t}</td><td>${r.kind}</td><td>${r.seq}</td><td>${r.rssi}</td><td>${r.summary}</td></tr>`)}</tbody>
+        </table></div>`,
+      )}
+    </div>
+  </div>`;
+}
+
 function flightsTab(f: FlightsView) {
   const sel = f.entries.find((e) => e.session === ui.selected) ?? null;
   const openRow = (s: number, downloaded: boolean) =>
@@ -459,12 +515,13 @@ function noticeDialog(v: View) {
 function page(v: View): TemplateResult {
   // Every tab stays in the page (hidden when not shown) so the charts keep
   // their data and canvas across tab switches.
-  return html`${topbar(v)}${tabs()}
+  return html`${topbar(v)}${tabs(v)}
     <main>
       <div class="panel" ?hidden=${ui.tab !== "status"}>${statusTab(v.status)}</div>
       <div class="panel live" ?hidden=${ui.tab !== "live"}>${liveTab(v)}</div>
       <div class="panel" ?hidden=${ui.tab !== "config"}>${configTab(v.config)}</div>
       <div class="panel" ?hidden=${ui.tab !== "flights"}>${flightsTab(v.flights)}</div>
+      <div class="panel" ?hidden=${ui.tab !== "ground" || !v.ground.show}>${groundTab(v.ground)}</div>
     </main>
     ${noticeDialog(v)}`;
 }

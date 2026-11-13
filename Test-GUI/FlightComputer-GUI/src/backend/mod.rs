@@ -17,6 +17,7 @@
 pub mod config;
 pub mod flights;
 pub mod format;
+pub mod ground;
 pub mod heartbeats;
 pub mod live;
 pub mod stages;
@@ -41,17 +42,37 @@ use format::Tone;
 pub enum Purpose {
     Status,
     Stream,
-    ConfigRead { then_editor: bool },
-    ConfigSet { vals: Values, save: bool },
-    ConfigReadback { vals: Values, save: bool },
-    ConfigSave { vals: Values },
-    ConfigSavedReadback { vals: Values },
+    ConfigRead {
+        then_editor: bool,
+    },
+    ConfigSet {
+        vals: Values,
+        save: bool,
+    },
+    ConfigReadback {
+        vals: Values,
+        save: bool,
+    },
+    ConfigSave {
+        vals: Values,
+    },
+    ConfigSavedReadback {
+        vals: Values,
+    },
     ConfigRevert,
-    LogInfo { gen: u32 },
-    LogSessions { gen: u32 },
-    LogRead { id: u32 },
+    LogInfo {
+        gen: u32,
+    },
+    LogSessions {
+        gen: u32,
+    },
+    LogRead {
+        id: u32,
+    },
     LogAbort,
     LogWipe,
+    /// RADIO_ARM / RADIO_UNARM to a receiver board.
+    Ground,
 }
 
 /// Everything the window can ask for. Each is checked here before anything is
@@ -113,6 +134,9 @@ pub enum Command {
         confirm: String,
     },
     DismissNotice,
+    /// Receiver board: Arm / Un-arm the rocket, retried until it shows it.
+    GroundArm,
+    GroundUnarm,
 }
 
 /// Where the controller sends what the window should know. The Tauri app emits
@@ -159,6 +183,7 @@ pub struct View {
     pub live: live::LiveView,
     pub config: config::ConfigView,
     pub flights: flights::FlightsView,
+    pub ground: ground::GroundView,
 }
 
 /// What every part may touch: the link, the notice queue, what the board said.
@@ -224,6 +249,7 @@ pub struct Controller {
     pub heartbeats: heartbeats::Heartbeats,
     pub config: config::ConfigState,
     pub flights: flights::FlightsState,
+    pub ground: ground::GroundState,
     pub messages: std::collections::VecDeque<String>,
     pub ports: Vec<(String, String)>,
     pub port: String,
@@ -247,6 +273,7 @@ impl Controller {
             heartbeats: heartbeats::Heartbeats::default(),
             config: config::ConfigState::new(),
             flights: flights::FlightsState::default(),
+            ground: ground::GroundState::default(),
             messages: Default::default(),
             ports: Vec::new(),
             port: String::new(),
@@ -331,6 +358,11 @@ impl Controller {
             FlightOpenFolder { path } => self.flights.open_folder(&mut self.sh, &path),
             FlightReveal { session } => self.flights.reveal(session),
             FlightWipe { confirm } => self.flights.wipe(&mut self.sh, &confirm),
+            GroundArm | GroundUnarm => {
+                if ready && self.receiver() {
+                    self.ground.command(&mut self.sh, c == GroundArm)
+                }
+            }
             DismissNotice => {
                 if !self.sh.notices.is_empty() {
                     self.sh.notices.remove(0);
@@ -352,6 +384,7 @@ impl Controller {
                     self.conn = format!("Connected: {}  ·  firmware {}", self.port_label(&self.port), info.fw_git);
                     self.live.restart();
                     self.heartbeats.clear();
+                    self.ground.clear();
                     self.sh.client.request(msg::GET_STATUS, &[], Purpose::Status);
                     self.live.push_stream(&mut self.sh);
                     self.config.read_board(&mut self.sh, true);
@@ -374,6 +407,7 @@ impl Controller {
                     }
                 }
                 Event::Sample(t, d) => self.live.on_sample(&self.sh, t, &d),
+                Event::Radio(r) => self.ground.on_radio(&self.sh, &mut self.live, r),
                 Event::Text(line) => {
                     if self.messages.len() == status::TEXT_LINES {
                         self.messages.pop_front();
@@ -385,6 +419,7 @@ impl Controller {
                 Event::Block(..) => {}
             }
         }
+        self.ground.tick(&mut self.sh); // Arm/Un-arm: confirmed yet, or send again
     }
 
     fn route(&mut self, purpose: Purpose, res: Result<Frame, String>) {
@@ -399,6 +434,7 @@ impl Controller {
             | ConfigSavedReadback { .. }
             | ConfigRevert => self.config.on_reply(&mut self.sh, purpose, res),
             LogInfo { .. } | LogSessions { .. } | LogRead { .. } | LogAbort | LogWipe => self.flights.on_reply(&mut self.sh, purpose, res),
+            Ground => self.ground.on_reply(&mut self.sh, res),
         }
     }
 
@@ -424,18 +460,25 @@ impl Controller {
             live: self.live_view(),
             config: self.config.view(&self.sh),
             flights: self.flights.view(&self.sh),
+            ground: self.ground.view(self.receiver()),
         }
     }
 
     /// SELF_TEST and IDLE show the heartbeats; graphs from ARMED on, or
     /// whenever samples arrive (the bench build, the simulated board).
     fn live_view(&self) -> live::LiveView {
-        let quiet = self.sh.state().is_some_and(|s| s == p::state::SELF_TEST || s == p::state::IDLE);
+        // A receiver's Live tab is the rocket's telemetry, not its own heartbeats.
+        let quiet = !self.receiver() && self.sh.state().is_some_and(|s| s == p::state::SELF_TEST || s == p::state::IDLE);
         live::LiveView {
             heartbeats: quiet.then(|| self.heartbeats.rows()),
             show_graphs: !quiet || self.live.receiving(),
             ..self.live.view()
         }
+    }
+
+    /// The connected board's role (its "role" row) is the receiver.
+    fn receiver(&self) -> bool {
+        self.sh.value("role").and_then(|v| v.label()) == Some("RECEIVER")
     }
 
     pub fn shutdown(&mut self) {

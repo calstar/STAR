@@ -9,5 +9,6 @@ pub mod fake_board;
 pub mod link;
 pub mod lora;
 pub mod protocol;
+pub mod radio;
 pub mod records;
 pub mod transport;

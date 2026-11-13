@@ -43,6 +43,7 @@ a Mac or `COMn` on Windows, and the port list puts ST's USB IDs first.
 | **Live** | The board sends its newest sample of each sensor at 1–100 Hz; plots of accel, gyro, high-g, baro altitude and GNSS altitude, last 30 s. A debug view: the full-rate data goes to the eMMC. |
 | **Config** | Every setting with the value on the board next to it: LoRa (frequency, SF, bandwidth, coding rate, power, preamble, sync word, heartbeat intervals), GNSS (rate, dynamic model, constellations), IMU (ODR, accel and gyro range), high-g ODR, baro oversampling. *Apply* runs it, *Save to flash* makes the board boot with it. Shows LoRa time on air, duty and sensitivity as you edit. Import/export as JSON. |
 | **Flights** | The eMMC as a file list: one row per flight (Arm to Un-arm) with start time (UTC, if GPS had a fix), length and size. *Download* saves a folder per flight under `Documents/STAR Flights/` with the raw blocks, CSVs per sensor and an events file, then plots it. *Wipe card* needs you to type WIPE. |
+| **Ground** | Only on a board whose Role is Receiver. The rocket as the receiver hears it: state, signal, last Status report (each chip's value read back vs expected, every ADC count with volts), the frames heard newest first, and **Arm / Un-arm**, sent again until the rocket's own frames show the new state (there is no radio ACK). The rocket's telemetry draws the Live tab. PROTOCOL.md section 8. |
 
 ## How it works
 

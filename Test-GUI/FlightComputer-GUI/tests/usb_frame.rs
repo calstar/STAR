@@ -10,6 +10,7 @@ use std::process::Command;
 
 use star_fc::config::{self, by_key, defaults, fields};
 use star_fc::protocol::{decode_frame, encode_frame, Value};
+use star_fc::radio::{Status, Telemetry};
 
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -42,6 +43,7 @@ fn firmware_io() -> Option<PathBuf> {
                 .arg(src.join("fc_config.c"))
                 .arg(src.join("emmc_log.c"))
                 .arg(src.join("flight_state.c"))
+                .arg(src.join("status_report.c"))
                 .arg("-I")
                 .arg(&src)
                 .status()
@@ -110,4 +112,20 @@ fn the_app_and_the_firmware_agree_on_the_config() {
     }
     let bad = config::pack(&defaults().with("highg_odr_hz", 1000)).unwrap();
     assert_eq!(run(&exe, &["check", &hex(&bad)]).trim(), by_key("highg_odr_hz").id.to_string());
+}
+
+#[test]
+fn the_app_reads_the_rockets_radio_reports_as_the_firmware_packs_them() {
+    let Some(exe) = firmware_io() else { return };
+    let out = run(&exe, &["reports"]);
+    let lines: Vec<Vec<u8>> = out.lines().map(unhex).collect();
+    let s = Status::unpack(&lines[0]).unwrap();
+    assert_eq!((s.state, s.uptime_ms, s.heartbeat, s.battery_mv, s.on_usb, s.live_mask), (1, 123456, 42, 7920, true, 0x97));
+    assert_eq!(s.adc, [1000, 2000, 3000, 4000, 5000, 6000, 7000]);
+    assert_eq!((s.chips[0], s.chips[7], s.radio_device_errors), ((1, 0x6B), (2, 9), 0x20));
+    let t = Telemetry::unpack(&lines[1]).unwrap();
+    assert_eq!((t.state, t.uptime_ms, t.fresh, t.fix_type, t.num_sv), (2, 5000, 0x05, 3, 11));
+    assert_eq!(i16::from_le_bytes([t.imu[16], t.imu[17]]), 2049, "rec_imu_t accel z, as-is");
+    assert_eq!(i32::from_le_bytes(t.baro[8..12].try_into().unwrap()), 101325, "rec_baro_t pressure");
+    assert_eq!((t.lat_e7, t.hmsl_mm), (-123456789, 150000));
 }

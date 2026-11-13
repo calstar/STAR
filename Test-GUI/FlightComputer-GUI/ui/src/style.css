@@ -953,3 +953,24 @@ button.small {
   padding: 0 12px;
   font-size: 12.5px;
 }
+
+/* ---- Ground tab */
+.ground {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+.ground-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.ground-table {
+  width: 100%;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.ground-log {
+  max-height: 70vh;
+  overflow-y: auto;
+}

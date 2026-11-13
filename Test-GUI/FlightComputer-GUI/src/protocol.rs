@@ -106,6 +106,9 @@ pub mod msg {
     pub const LOG_BLOCK: u8 = 0xA2; // u32 index, 512 raw bytes
     pub const SAMPLE: u8 = 0xB0; // u8 record type, record bytes (records.h)
     pub const TEXT: u8 = 0xB1; // UTF-8 debug line
+    pub const RADIO_RX: u8 = 0xB2; // receiver: one radio frame heard (radio.rs)
+    pub const RADIO_ARM: u8 = 0x40; // receiver -> ACK after sending the Arm pair
+    pub const RADIO_UNARM: u8 = 0x41; // receiver -> ACK after sending Un-arm twice
 }
 
 pub mod result {

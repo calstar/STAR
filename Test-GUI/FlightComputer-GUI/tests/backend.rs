@@ -131,6 +131,29 @@ fn idle_shows_its_heartbeats_newest_first() {
 }
 
 #[test]
+fn ground_arms_the_rocket_retrying_until_it_shows_it() {
+    let r = Rig::new();
+    // Role = receiver (on the board it takes a reboot; the simulator switches at once).
+    r.send(Command::ConfigEdit { key: "role".into(), text: "1".into() });
+    r.send(Command::ConfigApply);
+    assert!(r.wait(5.0, |v| v.ground.show), "a receiver shows the Ground tab");
+    assert!(r.wait(5.0, |v| v.ground.chips.len() == 8), "the rocket's Status report arrives");
+    let g = r.b.view().ground;
+    assert_eq!(g.rocket.as_ref().map(|x| x.0.as_str()), Some("IDLE"));
+    assert_eq!((g.chips[0].value.as_str(), g.chips[0].expected.as_str()), ("0x6B (WHO_AM_I)", "0x6B"));
+    assert_eq!(g.chips[3].when, "boot", "the W5500 is held in reset in Idle");
+    assert_eq!(g.adc[0].value, "5.03 V supply", "VBAT 31000 counts: battery_counts_to_mv gives 5025.6 mV");
+    // The simulated rocket never hears the first Arm: the app sends again.
+    r.send(Command::GroundArm);
+    assert!(r.wait(15.0, |v| v.ground.command.starts_with("Armed")), "{}", r.b.view().ground.command);
+    assert!(r.b.view().ground.command.contains("after 2 tries"), "{}", r.b.view().ground.command);
+    assert!(r.wait(5.0, |v| v.live.show_graphs), "the rocket's telemetry draws the Live graphs");
+    r.send(Command::GroundUnarm);
+    assert!(r.wait(10.0, |v| v.ground.command.starts_with("Un-armed")), "{}", r.b.view().ground.command);
+    assert_eq!(r.b.view().ground.log[0].kind, "Status", "newest first: the Idle report after the heartbeat");
+}
+
+#[test]
 fn download_a_flight() {
     let r = Rig::new();
     assert!(r.wait(10.0, |v| v.flights.entries.len() == 2));

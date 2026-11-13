@@ -197,6 +197,18 @@ pub struct FakeBoard {
     read_job: Option<ReadJob>,
     /// The card mounts on Arm or on the first log request.
     pub mounted: bool,
+    /// Role = receiver: the rocket it hears (state, next frames, Arm tries).
+    rocket: SimRocket,
+}
+
+#[derive(Default)]
+struct SimRocket {
+    state: u8,
+    next_hb: f64,
+    next_tel: f64,
+    arm_tries: u32,
+    seq: u16,
+    heartbeats: u32,
 }
 
 impl FakeBoard {
@@ -223,6 +235,7 @@ impl FakeBoard {
             next_status: 0.0,
             read_job: None,
             mounted: false,
+            rocket: SimRocket::default(),
         };
         b.boot();
         b
@@ -362,6 +375,23 @@ impl FakeBoard {
                 self.active = self.saved.as_deref().and_then(|b| cfg::unpack(b).ok()).unwrap_or_else(cfg::defaults);
                 self.ack(&fr, result::OK, 0);
             }
+            msg::RADIO_ARM | msg::RADIO_UNARM => {
+                if !self.receiver() {
+                    return self.ack(&fr, result::WRONG_STATE, 0xFF);
+                }
+                if fr.ty == msg::RADIO_ARM {
+                    // A sniffing rocket misses a preamble now and then: the
+                    // first Arm here is never heard, so the app must retry.
+                    self.rocket.arm_tries += 1;
+                    if self.rocket.arm_tries >= 2 {
+                        self.rocket.state = state::ARMED;
+                    }
+                } else {
+                    self.rocket.state = state::IDLE;
+                    self.rocket.next_hb = 0.0; // a heartbeat on entering Idle
+                }
+                self.ack(&fr, result::OK, 0);
+            }
             msg::LOG_INFO | msg::LOG_SESSIONS | msg::LOG_READ => {
                 self.mounted = true;
                 self.handle_log(fr);
@@ -481,7 +511,9 @@ impl FakeBoard {
         // A 2S LiPo near full, judged OK; the real board converts and judges.
         let battery_mv = (7_900 + (self.rng.uniform() * 20.0) as i32 - 10) as u32;
         let rows: Vec<(&str, u8, u32, &str, &str)> = vec![
-            ("state", U8, self.state() as u32, "", "SELF_TEST,IDLE,ARMED,LAUNCHED,RECOVERY"),
+            ("role", U8, self.active["role"] as u32, "", "TRANSMITTER,RECEIVER"),
+            // A receiver runs the radio only and stays in SELF_TEST (ground_task.c).
+            ("state", U8, if self.receiver() { 0 } else { self.state() as u32 }, "", "SELF_TEST,IDLE,ARMED,LAUNCHED,RECOVERY"),
             ("flags", U8, flags as u32, "", ""),
             ("uptime", U32, (self.uptime() * 1000.0) as u64 as u32, "ms", ""),
             ("battery", U16, battery_mv, "mV", ""),
@@ -550,9 +582,79 @@ impl FakeBoard {
             self.next_status = now + 1.0;
             self.send_values();
         }
+        if self.receiver() {
+            self.hear_rocket(now);
+        }
         if self.stream_rate > 0 && now >= self.next_sample {
             self.next_sample = now + 1.0 / self.stream_rate as f64;
             self.stream_samples(now);
+        }
+    }
+
+    fn receiver(&self) -> bool {
+        self.active["role"] == 1
+    }
+
+    /// What the simulated rocket sends, as a receiver forwards it (RADIO_RX):
+    /// Heartbeat + Status every second in Idle, Telemetry every 0.5 s armed.
+    fn hear_rocket(&mut self, now: f64) {
+        let r = &mut self.rocket;
+        if r.state == 0 {
+            r.state = state::IDLE;
+        }
+        let up_ms = (now * 1000.0) as u32;
+        let mut frames: Vec<(u8, Vec<u8>)> = Vec::new();
+        if r.state == state::IDLE && now >= r.next_hb {
+            r.next_hb = now + 1.0;
+            r.heartbeats += 1;
+            let mut hb = vec![r.state, 0, 0];
+            hb.extend_from_slice(&(up_ms / 1000).to_le_bytes());
+            frames.push((0x01, hb));
+            let mut st = vec![r.state];
+            st.extend_from_slice(&up_ms.to_le_bytes());
+            st.extend_from_slice(&r.heartbeats.to_le_bytes());
+            for c in [31_000u16, 16_000, 0, 0, 11_500, 100, 150] {
+                st.extend_from_slice(&c.to_le_bytes());
+            }
+            st.extend_from_slice(&5060u16.to_le_bytes());
+            st.extend_from_slice(&[1, 0b1001_0111]); // on USB; live: IMU, high-g, baro, radio, eMMC
+            for (res, val) in [(1, 0x6B), (1, 0x32), (1, 0x09), (1, 0), (1, 0), (1, 0), (1, 0), (1, 4)] {
+                st.extend_from_slice(&[res, val]);
+            }
+            st.extend_from_slice(&0u16.to_le_bytes());
+            frames.push((0x03, st));
+        }
+        if r.state == state::ARMED && now >= r.next_tel {
+            r.next_tel = now + 0.5;
+            let mut t = vec![r.state];
+            t.extend_from_slice(&up_ms.to_le_bytes());
+            t.push(0x07); // IMU, high-g, baro new
+            t.extend_from_slice(&(up_ms * 1000).to_le_bytes()); // rec_imu_t
+            t.extend_from_slice(&0i16.to_le_bytes());
+            for v in [0i16, 0, 0, 0, 0, 2049] {
+                t.extend_from_slice(&v.to_le_bytes()); // gyro x3, accel x3: ~1 g on z at +-16 g
+            }
+            t.extend_from_slice(&(up_ms * 1000).to_le_bytes()); // rec_highg_t
+            t.extend_from_slice(&[0, 0, 1]);
+            t.extend_from_slice(&(up_ms * 1000).to_le_bytes()); // rec_baro_t
+            t.extend_from_slice(&2150i32.to_le_bytes());
+            t.extend_from_slice(&101_325i32.to_le_bytes());
+            for v in [374_000_000i32, -1_222_000_000, 50_000] {
+                t.extend_from_slice(&v.to_le_bytes());
+            }
+            t.extend_from_slice(&[3, 9]);
+            frames.push((0x20, t));
+        }
+        for (ty, payload) in frames {
+            let r = &mut self.rocket;
+            let mut f = vec![ty];
+            f.extend_from_slice(&r.seq.to_le_bytes());
+            r.seq = r.seq.wrapping_add(1);
+            f.extend_from_slice(&(-40i16).to_le_bytes()); // RSSI -20 dBm
+            f.extend_from_slice(&44i16.to_le_bytes()); // SNR 11 dB
+            f.push(payload.len() as u8);
+            f.extend_from_slice(&payload);
+            self.send(msg::RADIO_RX, 0, &f);
         }
     }
 

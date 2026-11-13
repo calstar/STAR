@@ -126,6 +126,8 @@ pub enum Event<P> {
     /// One row of the board's value table.
     Value(p::Value),
     Sample(u8, Vec<u8>),
+    /// A receiver board heard this radio frame from the rocket.
+    Radio(crate::radio::RadioRx),
     Text(String),
     /// The answer to a request: the reply frame, or why there is none (timeout).
     Reply(P, Result<Frame, String>),
@@ -240,6 +242,11 @@ impl<P: Clone> Client<P> {
                 }
                 msg::SAMPLE if !fr.payload.is_empty() => self.events.push(Event::Sample(fr.payload[0], fr.payload[1..].to_vec())),
                 msg::TEXT => self.events.push(Event::Text(String::from_utf8_lossy(&fr.payload).into_owned())),
+                msg::RADIO_RX => {
+                    if let Ok(r) = crate::radio::RadioRx::unpack(&fr.payload) {
+                        self.events.push(Event::Radio(r));
+                    }
+                }
                 _ => {}
             }
             return;

@@ -5,11 +5,13 @@
  *   usb_frame_io decode HEX   "type seq payload-hex", or "bad"
  *   usb_frame_io defaults     the firmware's default config blob, hex
  *   usb_frame_io check HEX    "bad-blob", or the first bad field (0 = ok)
+ *   usb_frame_io reports      a Status then a Telemetry payload, hex
  */
 #include <stdio.h>
 #include <string.h>
 
 #include "fc_config.h"
+#include "status_report.h"
 #include "usb_frame.h"
 
 static void print_hex(const uint8_t* b, size_t n) {
@@ -33,6 +35,38 @@ int main(int argc, char** argv) {
         memset(p, 0xAB, 300); /* a run longer than one COBS block */
         encode(0xB0, p, 300);
         encode(0x7F, p, 0);
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "reports") == 0) {
+        status_report_t r = {0};
+        r.state = 1;
+        r.uptime_ms = 123456;
+        r.sequence = 42;
+        for (int i = 0; i < STATUS_ADC_COUNT; ++i) r.adc[i] = (uint16_t)(1000 * (i + 1));
+        r.battery_mv = 7920;
+        r.flags = STATUS_ON_USB;
+        r.live_mask = 0x97;
+        r.chips[0] = (status_chip_t){1, 0x6B};
+        r.chips[7] = (status_chip_t){2, 9};
+        r.radio_device_errors = 0x0020;
+        uint8_t s[STATUS_REPORT_LEN];
+        status_report_pack(&r, s);
+        print_hex(s, sizeof s);
+        printf("\n");
+        telemetry_t t = {0};
+        t.state = 2;
+        t.uptime_ms = 5000;
+        t.fresh = TELEMETRY_IMU | TELEMETRY_BARO;
+        t.imu.accel[2] = 2049;
+        t.baro.pressure_pa = 101325;
+        t.lat_e7 = -123456789;
+        t.hmsl_mm = 150000;
+        t.fix_type = 3;
+        t.num_sv = 11;
+        uint8_t b[TELEMETRY_LEN];
+        telemetry_pack(&t, b);
+        print_hex(b, sizeof b);
+        printf("\n");
         return 0;
     }
     if (argc == 2 && strcmp(argv[1], "defaults") == 0) {
