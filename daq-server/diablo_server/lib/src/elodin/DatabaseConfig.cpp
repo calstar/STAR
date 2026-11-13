@@ -51,6 +51,42 @@ bool DatabaseConfig::register_environmental_tables(ElodinClient& client,
     return ok;
 }
 
+bool DatabaseConfig::register_switch_tables(ElodinClient& client,
+                                           const std::vector<uint8_t>& roles) {
+    struct F {
+        uint16_t off, len;
+        PrimType (*type)();
+        const char* name;
+    };
+    static const F fields[] = {
+        {0, 8, PrimType::U64, "timestamp_ns"}, {8, 1, PrimType::U8, "link"},
+        {9, 1, PrimType::I8, "rssi"},          {10, 2, PrimType::U16, "age_ms"},
+        {12, 4, PrimType::U32, "config_hash"}, {16, 1, PrimType::U8, "status_valid"},
+        {17, 1, PrimType::U8, "output"},       {18, 1, PrimType::U8, "sense"},
+        {19, 1, PrimType::U8, "flags"},        {20, 2, PrimType::U16, "supply_mv"},
+        {22, 2, PrimType::I16, "current_ma"},  {24, 2, PrimType::U16, "power_mw"},
+        {26, 2, PrimType::U16, "sense_mv"},    {28, 4, PrimType::U32, "uptime_s"},
+        {32, 1, PrimType::U8, "reset_reason"}, {33, 1, PrimType::U8, "status_version"},
+    };
+    bool ok = true;
+    for (uint8_t role : roles) {
+        const std::string entity = "SW" + std::to_string(role);
+        const std::string prefix = entity + ".";
+        VTableBuilder b;
+        for (const auto& f : fields)
+            b.push_field(raw_field(f.off, f.len, schema(f.type(), {}, component(prefix + f.name))));
+        auto vt = b.build();
+        if (!send_msg(client, VTableMsg{.id = {0x27, role}, .vtable = vt})) {
+            ok = false;
+            continue;
+        }
+        for (const auto& f : fields)
+            ok = send_msg(client, set_component_name(prefix + f.name)) && ok;
+        ok = send_msg(client, set_entity_name((0x27u << 8) | role, entity)) && ok;
+    }
+    return ok;
+}
+
 // ── Helper: register one raw-sensor VTable for a single channel ────────────
 // All raw sensor messages share the same 21-byte layout:
 //   u64 timestamp_ns | u8 channel_id | u8[3] pad | u32 raw_adc | u32 sample_ts | u8 status

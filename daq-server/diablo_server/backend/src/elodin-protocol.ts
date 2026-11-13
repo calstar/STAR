@@ -153,6 +153,33 @@ export function parseElodinPacket(
     ];
   }
 
+  // Bluetooth switch [0x27, role], entity SW<role> (lib/include/streams/SwitchStatusMessage.hpp):
+  // what the environmental board relays for one switch. Plain fields; the Switches page decides
+  // what they mean (frontend/lib/switch-verdict.ts).
+  if (high === 0x27) {
+    if (low > 4 || payload.length !== 34) return [];
+    const entity = `SW${low}`;
+    const timestamp = Number(payload.readBigUInt64LE(0) / 1000000n);
+    const fields: Array<[string, number]> = [
+      ['link', payload.readUInt8(8)],
+      ['rssi', payload.readInt8(9)],
+      ['age_ms', payload.readUInt16LE(10)],
+      ['config_hash', payload.readUInt32LE(12)],
+      ['status_valid', payload.readUInt8(16)],
+      ['output', payload.readUInt8(17)],
+      ['sense', payload.readUInt8(18)],
+      ['flags', payload.readUInt8(19)],
+      ['supply_mv', payload.readUInt16LE(20)],
+      ['current_ma', payload.readInt16LE(22)],
+      ['power_mw', payload.readUInt16LE(24)],
+      ['sense_mv', payload.readUInt16LE(26)],
+      ['uptime_s', payload.readUInt32LE(28)],
+      ['reset_reason', payload.readUInt8(32)],
+      ['status_version', payload.readUInt8(33)],
+    ];
+    return fields.map(([component, value]) => ({ entity, component, value, timestamp }));
+  }
+
   // ── Generic sensor type decoder ──────────────────────────────────────────
   // New packet ID scheme: low byte = (board_number - 1) * 0x20 + channel (raw)
   //                                   (board_number - 1) * 0x20 + 0x10 + channel (calibrated)

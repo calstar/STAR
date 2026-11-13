@@ -833,4 +833,121 @@ bool parse_log_packet(const uint8_t *buffer, size_t buffer_size,
   return true;
 }
 
+
+//==============================================================================
+// Bluetooth switch relay
+//==============================================================================
+
+namespace {
+void put_header(uint8_t *buf, PacketType type, uint32_t timestamp_ms) {
+  PacketHeader header;
+  header.packet_type = type;
+  header.version = DIABLO_COMMS_VERSION;
+  header.timestamp = timestamp_ms;
+  memcpy(buf, &header, sizeof(PacketHeader));
+}
+
+bool get_header(const uint8_t *buf, size_t size, PacketType type, PacketHeader &out) {
+  if (!buf || size < sizeof(PacketHeader)) return false;
+  memcpy(&out, buf, sizeof(PacketHeader));
+  return out.packet_type == type;
+}
+} // namespace
+
+uint32_t switch_config_hash(const SwitchConfig &config) {
+  uint32_t h = 2166136261u;
+  auto mix = [&h](uint8_t b) {
+    h ^= b;
+    h *= 16777619u;
+  };
+  mix(config.count);
+  for (uint8_t i = 0; i < config.count && i < MAX_SWITCHES; ++i) {
+    mix(config.entries[i].role);
+    for (uint8_t b : config.entries[i].mac) mix(b);
+  }
+  return h;
+}
+
+size_t create_switch_config_packet(const SwitchConfig &config, uint32_t timestamp_ms,
+                                   uint8_t *buffer, size_t buffer_size) {
+  if (config.count > MAX_SWITCHES) return 0;
+  const size_t total = sizeof(PacketHeader) + 4 + 1 + config.count * sizeof(SwitchConfigEntry);
+  if (!buffer || buffer_size < total) return 0;
+  put_header(buffer, PacketType::SWITCH_CONFIG, timestamp_ms);
+  uint8_t *p = buffer + sizeof(PacketHeader);
+  const uint32_t hash = switch_config_hash(config);
+  memcpy(p, &hash, 4);
+  p += 4;
+  *p++ = config.count;
+  memcpy(p, config.entries, config.count * sizeof(SwitchConfigEntry));
+  return total;
+}
+
+bool parse_switch_config_packet(const uint8_t *buffer, size_t buffer_size,
+                                PacketHeader &header_out, SwitchConfig &config_out,
+                                uint32_t &hash_out) {
+  PacketHeader hdr;
+  if (!get_header(buffer, buffer_size, PacketType::SWITCH_CONFIG, hdr)) return false;
+  const size_t fixed = sizeof(PacketHeader) + 4 + 1;
+  if (buffer_size < fixed) return false;
+  const uint8_t *p = buffer + sizeof(PacketHeader);
+  uint32_t hash;
+  memcpy(&hash, p, 4);
+  const uint8_t count = p[4];
+  if (count > MAX_SWITCHES) return false;
+  if (buffer_size < fixed + count * sizeof(SwitchConfigEntry)) return false;
+  SwitchConfig cfg;
+  cfg.count = count;
+  memcpy(cfg.entries, p + 5, count * sizeof(SwitchConfigEntry));
+  for (uint8_t i = 0; i < count; ++i)
+    if (cfg.entries[i].role >= MAX_SWITCHES) return false;
+  if (switch_config_hash(cfg) != hash) return false;
+  header_out = hdr;
+  config_out = cfg;
+  hash_out = hash;
+  return true;
+}
+
+size_t create_switch_status_packet(const SwitchStatusReport &r, uint32_t timestamp_ms,
+                                   uint8_t *buffer, size_t buffer_size) {
+  if (r.status_len > MAX_SWITCH_STATUS_BYTES) return 0;
+  const size_t total = sizeof(PacketHeader) + 10 + r.status_len;
+  if (!buffer || buffer_size < total) return 0;
+  put_header(buffer, PacketType::SWITCH_STATUS, timestamp_ms);
+  uint8_t *p = buffer + sizeof(PacketHeader);
+  *p++ = r.role;
+  *p++ = static_cast<uint8_t>(r.link);
+  *p++ = static_cast<uint8_t>(r.rssi);
+  memcpy(p, &r.age_ms, 2);
+  p += 2;
+  memcpy(p, &r.config_hash, 4);
+  p += 4;
+  *p++ = r.status_len;
+  memcpy(p, r.status, r.status_len);
+  return total;
+}
+
+bool parse_switch_status_packet(const uint8_t *buffer, size_t buffer_size,
+                                PacketHeader &header_out, SwitchStatusReport &out) {
+  PacketHeader hdr;
+  if (!get_header(buffer, buffer_size, PacketType::SWITCH_STATUS, hdr)) return false;
+  const size_t fixed = sizeof(PacketHeader) + 10;
+  if (buffer_size < fixed) return false;
+  const uint8_t *p = buffer + sizeof(PacketHeader);
+  SwitchStatusReport r;
+  r.role = p[0];
+  if (p[1] > static_cast<uint8_t>(SwitchLink::UP)) return false;
+  r.link = static_cast<SwitchLink>(p[1]);
+  r.rssi = static_cast<int8_t>(p[2]);
+  memcpy(&r.age_ms, p + 3, 2);
+  memcpy(&r.config_hash, p + 5, 4);
+  r.status_len = p[9];
+  if (r.role >= MAX_SWITCHES || r.status_len > MAX_SWITCH_STATUS_BYTES) return false;
+  if (buffer_size < fixed + r.status_len) return false;
+  memcpy(r.status, p + 10, r.status_len);
+  header_out = hdr;
+  out = r;
+  return true;
+}
+
 } // namespace daq

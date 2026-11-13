@@ -1,0 +1,21 @@
+[Unit]
+Description=Sensor System Switch Service (Bluetooth switch list to the environmental board)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sensor_system
+Environment=DAQ_CONFIG=config/config.toml
+EnvironmentFile=-%h/.config/daq/pipeline.env
+# Sends [switch_roles.*] to the environmental board as SWITCH_CONFIG every interval_ms. It never
+# commands a switch on its own.
+ExecStart=/bin/bash -c 'if [ -x ./build/bin/switch_service ]; then exec ./build/bin/switch_service --config ${DAQ_CONFIG}; else echo "switch_service not found — run scripts/build.sh"; exit 1; fi'
+# on-failure: with [switch_service] disabled it exits 0 and stays down. Exit 2 is a config error
+# (listed in the journal) that retrying will not fix.
+Restart=on-failure
+RestartPreventExitStatus=2
+RestartSec=5
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=default.target

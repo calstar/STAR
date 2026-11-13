@@ -329,4 +329,41 @@ bool parse_log_packet(const uint8_t *buffer, size_t buffer_size,
                       const uint8_t *&text_out,
                       uint16_t &text_len_out);
 
+
+//==============================================================================
+// Bluetooth switch relay
+//==============================================================================
+
+/**
+ * @brief Hash of a switch list (FNV-1a over count and entries, in order).
+ * The env board applies a SWITCH_CONFIG only when its hash differs from the one
+ * it holds, so the server can resend it every second for free.
+ */
+uint32_t switch_config_hash(const SwitchConfig &config);
+
+/**
+ * @brief SWITCH_CONFIG (16): PacketHeader + hash (u32) + count (u8) + count x
+ * SwitchConfigEntry. The hash is computed here.
+ * @return bytes written, or 0 on error (count > MAX_SWITCHES, buffer too small).
+ */
+size_t create_switch_config_packet(const SwitchConfig &config, uint32_t timestamp_ms,
+                                   uint8_t *buffer, size_t buffer_size);
+
+/** @return false on a wrong type, a short buffer, count > MAX_SWITCHES, a role
+ *  out of range, or a hash that doesn't match the entries. */
+bool parse_switch_config_packet(const uint8_t *buffer, size_t buffer_size,
+                                PacketHeader &header_out, SwitchConfig &config_out,
+                                uint32_t &hash_out);
+
+/**
+ * @brief SWITCH_STATUS (19): PacketHeader + role (u8) + link (u8) + rssi (i8) +
+ * age_ms (u16) + config_hash (u32) + status_len (u8) + status bytes.
+ * @return bytes written, or 0 on error.
+ */
+size_t create_switch_status_packet(const SwitchStatusReport &report, uint32_t timestamp_ms,
+                                   uint8_t *buffer, size_t buffer_size);
+
+bool parse_switch_status_packet(const uint8_t *buffer, size_t buffer_size,
+                                PacketHeader &header_out, SwitchStatusReport &report_out);
+
 } // namespace daq

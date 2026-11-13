@@ -9,6 +9,7 @@
 //
 // NOTE: distinct from the unrelated legacy global `class Config` in lib/include/Config.h.
 
+#include "config/SwitchRelayConfig.hpp"
 #include <cstdint>
 #include <map>
 #include <string>
@@ -276,6 +277,8 @@ struct Config {
     std::vector<T7Board> t7_boards;
     std::vector<std::string> t7_errors;
     std::map<std::string, ActuatorRole> actuator_roles;
+    // [switch_service] + [switch_roles.*]: Bluetooth switches the env board relays.
+    SwitchRelayConfig switch_relay;
     FireConfig fire;
     FlowConfig flow;
     ControllerServiceConfig controller_service;

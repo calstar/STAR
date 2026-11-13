@@ -36,11 +36,10 @@ const bad = new Uint8Array(bytes); bad[0] = 2;
 assert.throws(() => P.decodeStatus(new DataView(bad.buffer)), /version 2/);
 assert.throws(() => P.decodeStatus(new DataView(new ArrayBuffer(16))), /16 bytes/);
 
-// UUIDs must match the firmware's.
-const src = readFileSync(join(fw, "src", "ble_link.cpp"), "utf8");
-for (const u of [P.SERVICE_UUID, P.OUTPUT_UUID, P.STATUS_UUID, P.FIRMWARE_UUID]) assert.ok(src.includes(`"${u}"`), u);
+// UUIDs must match the firmware's (one definition, shared with the env board).
 const lib = join(fw, "..", "..", "lib", "daq-protocol");
 const status = readFileSync(join(lib, "src", "SwitchStatus.h"), "utf8");
+for (const u of [P.SERVICE_UUID, P.OUTPUT_UUID, P.STATUS_UUID, P.FIRMWARE_UUID]) assert.ok(status.includes(`"${u}"`), u);
 assert.match(status, new RegExp(`STATUS_VERSION = ${P.STATUS_VERSION};`));
 
 // The shared verdict cases: the DAQ's Switches page runs the same file, so the

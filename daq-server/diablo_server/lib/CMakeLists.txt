@@ -10,6 +10,7 @@ set(FSW_SOURCES
     src/config/LoadActiveBoards.cpp
     src/config/Config.cpp
     src/config/T7Config.cpp
+    src/config/SwitchRelayConfig.cpp
     src/t7/T7Stream.cpp
     src/t7/T7Convert.cpp
     src/t7/T7Calibration.cpp
@@ -73,6 +74,14 @@ target_link_libraries(fsw_daq_lib
 add_executable(test_environmental_config test/test_environmental_config.cpp)
 target_link_libraries(test_environmental_config fsw_daq_lib)
 add_test(NAME environmental_config COMMAND test_environmental_config)
+
+add_executable(test_switch_relay_config test/test_switch_relay_config.cpp)
+target_link_libraries(test_switch_relay_config fsw_daq_lib)
+add_test(NAME switch_relay_config COMMAND test_switch_relay_config)
+
+add_executable(test_switch_status_message test/test_switch_status_message.cpp)
+target_link_libraries(test_switch_status_message fsw_daq_lib)
+add_test(NAME switch_status_message COMMAND test_switch_status_message)
 
 add_executable(test_ball_valve_config test/test_ball_valve_config.cpp)
 target_link_libraries(test_ball_valve_config fsw_daq_lib)

@@ -23,6 +23,21 @@ target_port = 5005
 elodin_host = "127.0.0.1"
 elodin_port = 2240
 
+[switch_service]
+# Bluetooth altimeter switches, relayed by the environmental board (firmware/Environmental
+# Tracker). switch_service sends the list below to env_board every interval_ms; the board
+# connects to those MACs only. Off until the switches' MACs are filled in.
+enabled = false
+interval_ms = 1000
+env_board = "environmental_board"
+
+# One table per switch: role 0-4 is what goes on the wire, the name stays here. The MAC is the
+# switch's Bluetooth MAC (its console prints it; its name ends in the last two bytes).
+# [switch_roles.main_altimeter]
+# role = 0
+# name = "Main altimeter"
+# mac = "58:cf:79:00:00:00"
+
 [config_broadcast_service]
 enabled = true
 backend_url = "http://127.0.0.1:8082"

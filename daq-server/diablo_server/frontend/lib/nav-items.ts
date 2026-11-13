@@ -73,6 +73,8 @@ export const NAV_ITEMS: NavItem[] = [
     description: 'Encoder board angles and connection status' },
   { id: 'environmental', name: 'Environmental', path: '/environmental', accent: '#38BDF8',
     description: 'Temperature, relative humidity, and absolute pressure' },
+  { id: 'switches', name: 'Switches', path: '/switches', accent: '#EF4444',
+    description: 'Bluetooth altimeter switches, relayed by the environmental board' },
   { id: 'self-tests', name: 'Board Self Tests', path: '/self-tests', accent: '#A855F7',
     description: 'Detailed pass/fail diagnostics per hotfire frame' },
   { id: 'boards-flash', name: 'Ethernet OTA Flash', path: '/flash', accent: '#06B6D4',

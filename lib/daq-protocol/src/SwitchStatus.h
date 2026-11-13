@@ -30,6 +30,13 @@ enum StatusFlags : uint8_t {
     FLAG_NO_BATTERY = 1 << 3,     // J1-3 below the switch's battery-present threshold
 };
 
+// GATT layout (base UUID 5354_4152-xxxx, "STAR"). The switch serves these; the
+// environmental board and the web page (web/protocol.js) look them up.
+constexpr const char *SERVICE_UUID = "53544152-0001-4b8a-9d3e-7a1c2f6b0e10";
+constexpr const char *OUTPUT_UUID = "53544152-0002-4b8a-9d3e-7a1c2f6b0e10";    // read, write, notify: 0x01 arm, 0x00 disarm
+constexpr const char *STATUS_UUID = "53544152-0003-4b8a-9d3e-7a1c2f6b0e10";    // read, notify: StatusPacket
+constexpr const char *FIRMWARE_UUID = "53544152-0004-4b8a-9d3e-7a1c2f6b0e10";  // read: 32-byte image SHA-256
+
 constexpr uint8_t STATUS_VERSION = 1;
 
 // Little-endian, 17 bytes (fits the default 20-byte ATT payload).

@@ -540,6 +540,134 @@ void setUp() {
 void tearDown() {
 }
 
+
+// ---------------------------------------------------------------------------
+// Bluetooth switch relay: SWITCH_CONFIG / SWITCH_STATUS
+// ---------------------------------------------------------------------------
+
+static daq::SwitchConfig two_switches() {
+    daq::SwitchConfig c;
+    c.count = 2;
+    c.entries[0] = {0, {0x58, 0xCF, 0x79, 0x01, 0x3F, 0x2A}};
+    c.entries[1] = {3, {0x58, 0xCF, 0x79, 0x01, 0x11, 0x22}};
+    return c;
+}
+
+void test_switch_config_roundtrip() {
+    daq::SwitchConfig in = two_switches();
+    uint8_t buf[128];
+    size_t n = daq::create_switch_config_packet(in, 7, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 5 + 2 * 7, n);
+
+    daq::PacketHeader hdr;
+    daq::SwitchConfig out;
+    uint32_t hash = 0;
+    TEST_ASSERT_TRUE(daq::parse_switch_config_packet(buf, n, hdr, out, hash));
+    TEST_ASSERT_EQUAL(daq::PacketType::SWITCH_CONFIG, hdr.packet_type);
+    TEST_ASSERT_EQUAL(2, out.count);
+    TEST_ASSERT_EQUAL(3, out.entries[1].role);
+    TEST_ASSERT_EQUAL_MEMORY(in.entries[1].mac, out.entries[1].mac, 6);
+    TEST_ASSERT_EQUAL_UINT32(daq::switch_config_hash(in), hash);
+}
+
+void test_switch_config_hash_follows_the_list() {
+    daq::SwitchConfig a = two_switches();
+    daq::SwitchConfig b = two_switches();
+    TEST_ASSERT_EQUAL_UINT32(daq::switch_config_hash(a), daq::switch_config_hash(b));
+    b.entries[1].mac[5] ^= 1;
+    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a), daq::switch_config_hash(b));
+    b = two_switches();
+    b.entries[1].role = 4;
+    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a), daq::switch_config_hash(b));
+    b = two_switches();
+    b.count = 1;
+    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a), daq::switch_config_hash(b));
+}
+
+void test_switch_config_empty_list() {
+    daq::SwitchConfig in;
+    uint8_t buf[32];
+    size_t n = daq::create_switch_config_packet(in, 0, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 5, n);
+    daq::PacketHeader hdr;
+    daq::SwitchConfig out = two_switches();
+    uint32_t hash;
+    TEST_ASSERT_TRUE(daq::parse_switch_config_packet(buf, n, hdr, out, hash));
+    TEST_ASSERT_EQUAL(0, out.count);
+}
+
+void test_switch_config_rejects_bad_packets() {
+    daq::SwitchConfig in = two_switches();
+    uint8_t buf[128];
+    size_t n = daq::create_switch_config_packet(in, 0, buf, sizeof(buf));
+    daq::PacketHeader hdr;
+    daq::SwitchConfig out;
+    uint32_t hash;
+    TEST_ASSERT_FALSE(daq::parse_switch_config_packet(buf, n - 1, hdr, out, hash));  // short
+    uint8_t bad[128];
+    memcpy(bad, buf, n);
+    bad[n - 1] ^= 0xFF;  // a MAC byte changed in flight: hash no longer matches
+    TEST_ASSERT_FALSE(daq::parse_switch_config_packet(bad, n, hdr, out, hash));
+    memcpy(bad, buf, n);
+    bad[0] = static_cast<uint8_t>(daq::PacketType::SWITCH_STATUS);
+    TEST_ASSERT_FALSE(daq::parse_switch_config_packet(bad, n, hdr, out, hash));
+
+    in.count = daq::MAX_SWITCHES + 1;
+    TEST_ASSERT_EQUAL(0, daq::create_switch_config_packet(in, 0, buf, sizeof(buf)));
+    in = two_switches();
+    in.entries[0].role = daq::MAX_SWITCHES;  // role out of range
+    n = daq::create_switch_config_packet(in, 0, buf, sizeof(buf));
+    TEST_ASSERT_FALSE(daq::parse_switch_config_packet(buf, n, hdr, out, hash));
+    TEST_ASSERT_EQUAL(0, daq::create_switch_config_packet(two_switches(), 0, buf, 10));
+}
+
+void test_switch_status_roundtrip() {
+    daq::SwitchStatusReport in;
+    in.role = 4;
+    in.link = daq::SwitchLink::UP;
+    in.rssi = -71;
+    in.age_ms = 1234;
+    in.config_hash = 0xDEADBEEF;
+    in.status_len = 17;
+    for (uint8_t i = 0; i < 17; ++i) in.status[i] = static_cast<uint8_t>(i * 13 + 1);
+
+    uint8_t buf[128];
+    size_t n = daq::create_switch_status_packet(in, 55, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 10 + 17, n);
+
+    daq::PacketHeader hdr;
+    daq::SwitchStatusReport out;
+    TEST_ASSERT_TRUE(daq::parse_switch_status_packet(buf, n, hdr, out));
+    TEST_ASSERT_EQUAL(55, hdr.timestamp);
+    TEST_ASSERT_EQUAL(4, out.role);
+    TEST_ASSERT_EQUAL((int)daq::SwitchLink::UP, (int)out.link);
+    TEST_ASSERT_EQUAL(-71, out.rssi);
+    TEST_ASSERT_EQUAL(1234, out.age_ms);
+    TEST_ASSERT_EQUAL_UINT32(0xDEADBEEF, out.config_hash);
+    TEST_ASSERT_EQUAL(17, out.status_len);
+    TEST_ASSERT_EQUAL_MEMORY(in.status, out.status, 17);
+}
+
+void test_switch_status_rejects_bad_packets() {
+    daq::SwitchStatusReport in;
+    in.status_len = 17;
+    uint8_t buf[128];
+    size_t n = daq::create_switch_status_packet(in, 0, buf, sizeof(buf));
+    daq::PacketHeader hdr;
+    daq::SwitchStatusReport out;
+    TEST_ASSERT_TRUE(daq::parse_switch_status_packet(buf, n, hdr, out));
+    TEST_ASSERT_FALSE(daq::parse_switch_status_packet(buf, n - 1, hdr, out));  // status cut short
+    uint8_t bad[128];
+    memcpy(bad, buf, n);
+    bad[sizeof(daq::PacketHeader) + 1] = 7;  // unknown link state
+    TEST_ASSERT_FALSE(daq::parse_switch_status_packet(bad, n, hdr, out));
+    memcpy(bad, buf, n);
+    bad[sizeof(daq::PacketHeader)] = daq::MAX_SWITCHES;  // role out of range
+    TEST_ASSERT_FALSE(daq::parse_switch_status_packet(bad, n, hdr, out));
+    in.status_len = daq::MAX_SWITCH_STATUS_BYTES + 1;
+    TEST_ASSERT_EQUAL(0, daq::create_switch_status_packet(in, 0, buf, sizeof(buf)));
+}
+
 int main(int argc, char** argv) {
     UNITY_BEGIN();
 
@@ -586,6 +714,12 @@ int main(int argc, char** argv) {
     RUN_TEST(test_log_packet_parse_wrong_type);
 
     // Null buffer
+    RUN_TEST(test_switch_config_roundtrip);
+    RUN_TEST(test_switch_config_hash_follows_the_list);
+    RUN_TEST(test_switch_config_empty_list);
+    RUN_TEST(test_switch_config_rejects_bad_packets);
+    RUN_TEST(test_switch_status_roundtrip);
+    RUN_TEST(test_switch_status_rejects_bad_packets);
     RUN_TEST(test_parse_null_buffer);
 
     return UNITY_END();

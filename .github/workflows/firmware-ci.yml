@@ -234,6 +234,10 @@ jobs:
         run: pio test -e native
         working-directory: firmware/Hotfire_Code/Hotfire_Tests
 
+      - name: Environmental board switch relay tests
+        run: pio test -e native
+        working-directory: firmware/Environmental Tracker
+
   flight-computer-tests:
     name: Flight_Computer Tests
     runs-on: ubuntu-latest

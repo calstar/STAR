@@ -86,6 +86,10 @@ public:
     static bool register_environmental_tables(ElodinClient& client,
                                               const std::vector<BoardChannels>& boards);
 
+    /** [0x27, role] / entity SW<role>, one per configured Bluetooth switch role
+     *  (layout: streams/SwitchStatusMessage.hpp). */
+    static bool register_switch_tables(ElodinClient& client, const std::vector<uint8_t>& roles);
+
     /**
      * @brief Register RAW sensor / actuator VTables.
      *

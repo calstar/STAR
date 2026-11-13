@@ -323,4 +323,48 @@ struct __attribute__((packed)) StacklightCommandPacket {
   uint8_t buzzer;
 };
 
+
+//==============================================================================
+// Bluetooth switch relay (environmental board)
+//==============================================================================
+
+// At most this many switches per environmental board.
+constexpr uint8_t MAX_SWITCHES = 5;
+// Room for the switch's raw status (17 bytes at STATUS_VERSION 1) to grow.
+constexpr uint8_t MAX_SWITCH_STATUS_BYTES = 32;
+
+/** One configured switch. `role` is the server's index (0..MAX_SWITCHES-1);
+ *  names stay on the server. `mac` is the switch's BT MAC, most significant
+ *  byte first, as it is printed. */
+struct __attribute__((packed)) SwitchConfigEntry {
+  uint8_t role;
+  uint8_t mac[6];
+};
+
+/** The whole switch list (not the wire layout: on the wire it is
+ *  hash (u32) + count (u8) + count x SwitchConfigEntry). */
+struct SwitchConfig {
+  uint8_t count = 0;
+  SwitchConfigEntry entries[MAX_SWITCHES] = {};
+};
+
+enum class SwitchLink : uint8_t {
+  DOWN = 0, // not connected (searching, or never seen)
+  UP = 1,   // connected
+};
+
+/** One role's link and its switch's last status, as the env board holds them.
+ *  `status` is the switch's StatusPacket bytes untouched (SwitchStatus.h);
+ *  `status_len` is 0 until the first one arrives. While the link is down the
+ *  last status is still sent, and `age_ms` says how old it is. */
+struct SwitchStatusReport {
+  uint8_t role = 0;
+  SwitchLink link = SwitchLink::DOWN;
+  int8_t rssi = 0;                  // dBm, 0 when unknown
+  uint16_t age_ms = 0xFFFF;         // since the last status notification, saturating
+  uint32_t config_hash = 0;         // of the switch list the env board holds
+  uint8_t status_len = 0;
+  uint8_t status[MAX_SWITCH_STATUS_BYTES] = {};
+};
+
 } // namespace daq

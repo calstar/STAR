@@ -23,6 +23,7 @@
 #include "comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "comms/messages/sensor/EnvironmentalMessage.hpp"
+#include "streams/SwitchStatusMessage.hpp"
 #include "comms/messages/sensor/SensorMessages.hpp"
 #include "daq-protocol.h"
 #include "fsw/BoardTypeWire.hpp"
@@ -571,6 +572,18 @@ int main(int argc, char* argv[]) {
             config_board_ids.push_back(static_cast<uint8_t>(cfg.board_id));
     }
 
+    // Bluetooth switches relayed by the environmental board ([switch_roles.*]): one Elodin
+    // table per configured role. Status from anywhere but the relaying board is dropped.
+    const fsw::config::Config full_cfg = fsw::config::load(config_path);
+    std::vector<uint8_t> switch_roles;
+    std::string switch_board_ip;
+    if (full_cfg.switch_relay.enabled && full_cfg.switch_relay.errors.empty()) {
+        for (const auto& r : full_cfg.switch_relay.roles)
+            switch_roles.push_back(r.role);
+        if (const auto* b = fsw::config::switch_relay_board(full_cfg))
+            switch_board_ip = b->ip;
+    }
+
     if (elodin_client.connect(db_host, db_port)) {
         elodin_connected = true;
         std::cout << "✅ Connected to Elodin database" << std::endl;
@@ -589,6 +602,7 @@ int main(int argc, char* argv[]) {
         // Register BOARD_HEARTBEAT and SELF_TEST VTables only for boards in config
         fsw::elodin::DatabaseConfig::register_heartbeat_tables(elodin_client, config_board_ids);
         fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client, env_boards);
+        fsw::elodin::DatabaseConfig::register_switch_tables(elodin_client, switch_roles);
         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client, config_board_ids);
         // Drain any response from DB after registration; otherwise recv buffer fills and TABLE
         // writes stall after ~3s
@@ -664,6 +678,25 @@ int main(int argc, char* argv[]) {
                         env->sample_timestamp_ms);
                     if (elodin_connected && elodin_client.is_connected() &&
                         elodin_client.publish({0x25, static_cast<uint8_t>(cfg->board_id)}, msg))
+                        ++elodin_publish_count;
+                    else
+                        ++elodin_drop_count;
+                }
+            }
+            if (auto sw = pipeline.get_last_switch_status()) {
+                const bool listed = std::find(switch_roles.begin(), switch_roles.end(),
+                                              sw->report.role) != switch_roles.end();
+                if (listed && sw->source_ip == switch_board_ip) {
+                    ++packet_count;
+                    ++packets_per_board[sw->source_ip];
+                    const uint64_t timestamp_ns =
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+                    const auto msg = fsw::streams::make_switch_status_message(sw->report,
+                                                                              timestamp_ns);
+                    if (elodin_connected && elodin_client.is_connected() &&
+                        elodin_client.publish({0x27, sw->report.role}, msg))
                         ++elodin_publish_count;
                     else
                         ++elodin_drop_count;
@@ -769,6 +802,8 @@ int main(int argc, char* argv[]) {
                                                                                config_board_ids);
                         fsw::elodin::DatabaseConfig::register_environmental_tables(elodin_client,
                                                                                    env_boards);
+                        fsw::elodin::DatabaseConfig::register_switch_tables(elodin_client,
+                                                                            switch_roles);
                         fsw::elodin::DatabaseConfig::register_self_test_tables(elodin_client,
                                                                                config_board_ids);
                     }

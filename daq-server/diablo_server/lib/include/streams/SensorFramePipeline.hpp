@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "DiabloPackets.h"
 #include "protocol/EncryptedFrame.hpp"
 #include "transport/NetworkSocket.hpp"
 
@@ -58,6 +59,14 @@ public:
     };
     std::optional<EnvironmentalSample> get_last_environmental();
 
+    // SWITCH_STATUS (type 19) from the environmental board's Bluetooth switch relay.
+    struct SwitchStatusSample {
+        daq::SwitchStatusReport report;
+        uint32_t board_timestamp_ms;
+        std::string source_ip;
+    };
+    std::optional<SwitchStatusSample> get_last_switch_status();
+
 private:
     std::unique_ptr<daq_comms::transport::UDPSocket> socket_;
     std::vector<uint8_t> receive_buffer_;
@@ -70,6 +79,7 @@ private:
     std::vector<uint8_t> last_log_buffer_;
     std::string last_log_source_ip_;
     std::optional<EnvironmentalSample> last_environmental_;
+    std::optional<SwitchStatusSample> last_switch_status_;
 
     static constexpr size_t RECEIVE_BUFFER_SIZE = 8192;
 };
