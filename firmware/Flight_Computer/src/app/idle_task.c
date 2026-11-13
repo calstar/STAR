@@ -1,9 +1,11 @@
 #include "idle_task.h"
 
+#include "board.h"
 #include "board_bringup.h"
 #include "board_sleep.h"
 #include "bringup_task.h"
 #include "cmsis_os2.h"
+#include "health_task.h"
 #include "main.h"
 #include "mode.h"
 #include "radio_task.h"
@@ -102,7 +104,22 @@ static void idle_task(void* argument) {
             }
             uint32_t ms =
                 r.event == IDLE_EVENT_SLEEP ? r.sleep_s * 1000U : 1000U;
-            if (board_sleep(ms, work_waiting) == 0U && !work_waiting()) {
+            if (ms > HEALTH_MAX_SLEEP_MS) {
+                ms = HEALTH_MAX_SLEEP_MS; /* the watchdog's lease limit */
+            }
+            /* Stop freezes every task: lease the sleep to the health task
+             * so the frozen workers are not counted as stalled. IWDG1 keeps
+             * counting in Stop and outlasts 10 s (board_watchdog.c). */
+            const board_sleep_info_t* si = board_sleep_info();
+            uint32_t hal_before = board_now_ms();
+            bool leased =
+                si->ready && si->stop_allowed && health_task_prepare_sleep(ms);
+            uint32_t slept = board_sleep(ms, work_waiting);
+            if (leased) {
+                /* HAL time awake + the Stop time the HAL tick missed. */
+                (void)health_task_resume(board_now_ms() - hal_before + slept);
+            }
+            if (slept == 0U && !work_waiting()) {
                 /* Stop refused (option byte, LSI): wait awake instead. */
                 (void)osThreadFlagsWait(EV_CMD | EV_MODE, osFlagsWaitAny, ms);
             }

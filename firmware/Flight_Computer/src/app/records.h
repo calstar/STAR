@@ -14,14 +14,17 @@
 
 #ifdef __cplusplus
 extern "C" {
+#define REC_STATIC_ASSERT static_assert /* C++ tests include this too */
+#else
+#define REC_STATIC_ASSERT _Static_assert
 #endif
 
 enum {
-    REC_IMU = 0x10,   /* rec_imu_t */
-    REC_HIGHG = 0x11, /* rec_highg_t */
-    REC_BARO = 0x12,  /* rec_baro_t */
-    REC_GNSS = 0x13,  /* rec_gnss_t (gnss_core) */
-    REC_HEALTH = 0x14,
+    REC_IMU = 0x10,    /* rec_imu_t */
+    REC_HIGHG = 0x11,  /* rec_highg_t */
+    REC_BARO = 0x12,   /* rec_baro_t */
+    REC_GNSS = 0x13,   /* rec_gnss_t (gnss_core) */
+    REC_HEALTH = 0x14, /* rec_health_t (health_core) */
     REC_EVENT = 0x15,
 };
 
@@ -62,10 +65,26 @@ typedef struct __attribute__((packed)) {
     uint8_t fix_type, num_sv, flags;
 } rec_gnss_t;
 
-_Static_assert(sizeof(rec_imu_t) == 18, "rec_imu_t layout");
-_Static_assert(sizeof(rec_gnss_t) == 49, "rec_gnss_t layout");
-_Static_assert(sizeof(rec_highg_t) == 7, "rec_highg_t layout");
-_Static_assert(sizeof(rec_baro_t) == 12, "rec_baro_t layout");
+/* The analog inputs, raw, in board_adc_input_t order: VBAT (PA0), EXT_SENSE_1
+ * (PA1), PYRO_1_CONT (PA2), PYRO_2_CONT (PA3), EXT_SENSE_2 (PA4), ALT_CURR
+ * (PC0), CURR (PC1). Continuity is read only: nothing here drives a pyro. */
+#define REC_HEALTH_INPUTS 7U
+
+typedef struct __attribute__((packed)) {
+    uint32_t t_us;
+    uint16_t battery_mv; /* PA0 through battery.c (USB's supply on USB) */
+    uint16_t current_ma; /* PC1, 1 V/A */
+    uint16_t counts[REC_HEALTH_INPUTS];
+    uint8_t valid;       /* bit per input: the conversion returned */
+    uint8_t battery;     /* battery_state_t */
+    uint8_t task_faults; /* health_t faults: bit per stalled worker */
+} rec_health_t;
+
+REC_STATIC_ASSERT(sizeof(rec_imu_t) == 18, "rec_imu_t layout");
+REC_STATIC_ASSERT(sizeof(rec_gnss_t) == 49, "rec_gnss_t layout");
+REC_STATIC_ASSERT(sizeof(rec_highg_t) == 7, "rec_highg_t layout");
+REC_STATIC_ASSERT(sizeof(rec_baro_t) == 12, "rec_baro_t layout");
+REC_STATIC_ASSERT(sizeof(rec_health_t) == 25, "rec_health_t layout");
 
 #ifdef __cplusplus
 }

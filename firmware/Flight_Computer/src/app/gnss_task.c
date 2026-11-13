@@ -4,6 +4,7 @@
 #include "board_uart9.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
+#include "health_task.h"
 #include "main.h"
 
 #define EV_RX (1U << 0)
@@ -52,10 +53,12 @@ static void gnss_task(void* argument) {
                 gps_power(false); /* Idle: the module loses its RAM config */
                 active = false;
             }
+            health_task_set_active(HEALTH_GNSS, false);
             (void)osThreadFlagsWait(EV_MODE, osFlagsWaitAny, osWaitForever);
             continue;
         }
         if (!active) {
+            health_task_set_active(HEALTH_GNSS, true);
             gps_power(true);
             gnss_core_init(&core, board_time_us()); /* re-detect, reconfig */
             if (!uart_started) {
@@ -83,6 +86,7 @@ static void gnss_task(void* argument) {
             gnss_core_request_status(&core)) {
             last_status_us = now;
         }
+        health_task_beat(HEALTH_GNSS);
     }
 }
 

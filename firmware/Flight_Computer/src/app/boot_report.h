@@ -31,11 +31,23 @@ typedef enum { BOOT_READY = 0, BOOT_WARN, BOOT_FAIL } boot_verdict_t;
 
 #define BOOT_REPORT_TEXT_MAX 768U
 
+/* Why the chip last reset: RCC_RSR bits, RM0468 Rev 3 (board_watchdog.c
+ * checks them against the CMSIS names). An internal reset also pulls NRST,
+ * so PIN is set alongside the real cause. */
+#define BOOT_RESET_BROWN_OUT (1UL << 21)
+#define BOOT_RESET_PIN (1UL << 22)
+#define BOOT_RESET_POWER_ON (1UL << 23)
+#define BOOT_RESET_SOFTWARE (1UL << 24)
+#define BOOT_RESET_IWDG (1UL << 26)
+#define BOOT_RESET_WWDG (1UL << 28)
+#define BOOT_RESET_LOW_POWER (1UL << 30)
+
 typedef struct {
     boot_verdict_t verdict;
     uint16_t result_bits;
     uint8_t required_failed, optional_failed;
     battery_t battery;
+    uint32_t reset_flags; /* boot_report_add_reset */
     char text[BOOT_REPORT_TEXT_MAX];
 } boot_report_t;
 
@@ -44,6 +56,14 @@ void boot_report_build(boot_report_t* report, const self_test_status_t* status,
                        battery_t battery, uint32_t now_ms);
 
 const char* boot_verdict_name(boot_verdict_t verdict);
+
+/* The reset cause, most specific first: IWDG, WWDG, low-power, software,
+ * power-on, brown-out, pin. "unknown" with no flag set. */
+const char* boot_reset_name(uint32_t flags);
+
+/* After boot_report_build: keep flags and add a "reset" line to text. Does
+ * not change the verdict; a watchdog reset is for a person to see. */
+void boot_report_add_reset(boot_report_t* report, uint32_t flags);
 
 #ifdef __cplusplus
 }

@@ -1,5 +1,6 @@
 #include "board_adc.h"
 
+#include "cmsis_os2.h"
 #include "main.h"
 
 extern ADC_HandleTypeDef hadc1;
@@ -15,8 +16,14 @@ static const uint32_t channels[BOARD_ADC_COUNT] = {
 };
 
 static bool calibrated;
+/* ADC1 is shared by the Idle loop's battery reads and the health task. */
+static osMutexId_t lock;
 
 bool board_adc_init(void) {
+    if (!lock) {
+        static const osMutexAttr_t attr = {"adc", osMutexPrioInherit, NULL, 0};
+        lock = osMutexNew(&attr);
+    }
     if (!calibrated) {
         calibrated =
             HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET_LINEARITY,
@@ -30,6 +37,9 @@ bool board_adc_read(board_adc_input_t input, uint16_t* counts,
     if ((unsigned)input >= BOARD_ADC_COUNT || !counts) {
         return false;
     }
+    if (lock && osMutexAcquire(lock, timeout_ms) != osOK) {
+        return false;
+    }
     /* Same as MX_ADC1_Init's channel setup, only the channel differs. */
     ADC_ChannelConfTypeDef config = {0};
     config.Channel = channels[input];
@@ -39,15 +49,18 @@ bool board_adc_read(board_adc_input_t input, uint16_t* counts,
     config.OffsetNumber = ADC_OFFSET_NONE;
     config.Offset = 0;
     config.OffsetSignedSaturation = DISABLE;
-    if (HAL_ADC_ConfigChannel(&hadc1, &config) != HAL_OK ||
-        HAL_ADC_Start(&hadc1) != HAL_OK) {
-        return false;
-    }
-    bool ok = HAL_ADC_PollForConversion(&hadc1, timeout_ms) == HAL_OK;
+    bool ok = HAL_ADC_ConfigChannel(&hadc1, &config) == HAL_OK &&
+              HAL_ADC_Start(&hadc1) == HAL_OK;
     if (ok) {
-        *counts = (uint16_t)HAL_ADC_GetValue(&hadc1);
+        ok = HAL_ADC_PollForConversion(&hadc1, timeout_ms) == HAL_OK;
+        if (ok) {
+            *counts = (uint16_t)HAL_ADC_GetValue(&hadc1);
+        }
+        HAL_ADC_Stop(&hadc1);
     }
-    HAL_ADC_Stop(&hadc1);
+    if (lock) {
+        (void)osMutexRelease(lock);
+    }
     return ok;
 }
 
