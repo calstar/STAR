@@ -566,15 +566,6 @@ jobs:
         fi
       continue-on-error: true
 
-    - name: Run integration tests
-      run: |
-        if [ -f "test/test_system.sh" ]; then
-          chmod +x test/test_system.sh
-          # Only run quick smoke tests in CI
-          echo "Running smoke tests..."
-        fi
-      continue-on-error: true
-
   # ASan + UBSan over the full stack.
   #
   # Sanitizers only report on code that actually executes, which is why this job runs

@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 
+#include "config/NetworkDefaults.hpp"
 #include "control/StateMachine.hpp"
 #include "elodin/ElodinClient.hpp"
 
@@ -214,7 +215,7 @@ private:
 
     std::string bind_addr_{"0.0.0.0"};
     bool bind_addr_explicit_{false};
-    uint16_t actuator_port_{5005};
+    uint16_t actuator_port_{fsw::config::defaults::kBoardPort};
     bool loaded_{false};
     fsw::elodin::ElodinClient* elodin_{nullptr};
 

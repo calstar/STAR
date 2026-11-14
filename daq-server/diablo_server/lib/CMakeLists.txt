@@ -26,7 +26,6 @@ set(FSW_SOURCES
     src/elodin/ElodinClient.cpp
     src/streams/SensorFramePipeline.cpp
     src/fsw/FSWConfigManager.cpp
-    src/control/PressureStateMachine.cpp
     src/calibration/PTCalibration.cpp
     src/calibration/CubicCalibrationStore.cpp
     src/calibration/LcTareStore.cpp
@@ -268,10 +267,8 @@ target_include_directories(test_sequencer_elodin PRIVATE
 )
 target_link_libraries(test_sequencer_elodin
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
-# Deliberately NO add_test(). This is an integration test, not a unit test: it needs the repo root
-# as its working directory (for config/ and external/) and a live Elodin DB on 2240, so under ctest
-# it fails on the environment rather than on the code. Run it by hand from the repo root, or via
-# test/test_integration.sh which provides both.
+# Registered with CTest further down (search "NAME sequencer_elodin"), where its working-directory
+# requirement is explained.
 
 add_executable(test_hold_rules
     test/test_hold_rules.cpp
