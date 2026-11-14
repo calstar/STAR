@@ -180,10 +180,11 @@ export interface GroundView {
   show: boolean;
   rocket: [string, Tone] | null;
   heard: string;
+  heard_stale: boolean;
   signal: string;
   battery: string;
   adc: { name: string; counts: number; pin_v: string; value: string }[];
-  chips: { name: string; result: [string, Tone]; value: string; expected: string; when: string }[];
+  chips: { name: string; result: [string, Tone]; value: string; expected: string; words: string; when: string }[];
   telemetry: string;
   log: { t: string; kind: string; seq: number; rssi: string; summary: string }[];
   command: string;

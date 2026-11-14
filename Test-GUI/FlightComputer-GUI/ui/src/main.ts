@@ -326,14 +326,14 @@ function configTab(c: ConfigView) {
 // ---------------------------------------------------------------- ground
 
 function groundTab(g: GroundView) {
-  const c = (x: [string, Tone] | null) => (x ? chip(x[0], x[1]) : html`<span class="muted">—</span>`);
+  const state = g.rocket ? html`<div class="rocket-state tone-${g.rocket[1]}">${g.rocket[0]}</div>` : html`<div class="rocket-state tone-neutral">No rocket yet</div>`;
   return html`<div class="ground" data-testid="ground">
     <div class="col">
       ${card(
         "Rocket",
-        html`<dl class="rows">
-            <dt>Rocket state</dt><dd>${c(g.rocket)}</dd>
-            <dt>Last heard</dt><dd>${g.heard}</dd>
+        html`${state}
+          <dl class="rows rocket-facts">
+            <dt>Last heard</dt><dd class=${g.heard_stale ? "stale" : ""}>${g.heard}</dd>
             <dt>Signal</dt><dd>${g.signal}</dd>
             <dt>Battery</dt><dd>${g.battery}</dd>
             ${g.telemetry ? html`<dt>Telemetry</dt><dd>${g.telemetry}</dd>` : nothing}
@@ -344,23 +344,29 @@ function groundTab(g: GroundView) {
                     Confirm: arm the rocket
                   </button>
                   <button class="ghost" @click=${() => set({ armConfirm: false })}>Cancel</button>`
-              : html`<button ?disabled=${g.busy} @click=${() => set({ armConfirm: true })}>Arm</button>`}
+              : html`<button class="arm" ?disabled=${g.busy} @click=${() => set({ armConfirm: true })}>Arm</button>`}
             <button ?disabled=${g.busy} @click=${() => send({ cmd: "ground_unarm" })}>Un-arm</button>
           </div>
-          ${g.command ? html`<p class="muted" data-testid="ground-command">${g.command}</p>` : nothing}`,
+          ${g.command
+            ? html`<p class=${g.busy ? "arm-progress" : "arm-outcome"} data-testid="ground-command">${g.command}</p>`
+            : nothing}`,
       )}
       ${card(
         "Status report",
         g.chips.length
           ? html`<table class="ground-table">
-                <thead><tr><th>Chip</th><th>Result</th><th>Read</th><th>Expected</th><th></th></tr></thead>
+                <thead><tr><th>Chip</th><th>Result</th><th>What was read</th><th>When</th></tr></thead>
                 <tbody>${g.chips.map(
-                  (r) => html`<tr><td>${r.name}</td><td>${chip(r.result[0], r.result[1])}</td><td>${r.value}</td><td>${r.expected}</td><td class="muted">${r.when}</td></tr>`,
+                  (r) => html`<tr><td>${r.name}</td><td>${chip(r.result[0], r.result[1])}</td><td>${r.words}</td><td>${r.when === "boot" ? "boot only" : "live"}</td></tr>`,
                 )}</tbody>
               </table>
               <table class="ground-table">
-                <thead><tr><th>ADC</th><th>Counts</th><th>At the pin</th><th></th></tr></thead>
-                <tbody>${g.adc.map((r) => html`<tr><td>${r.name}</td><td>${r.counts}</td><td>${r.pin_v}</td><td>${r.value}</td></tr>`)}</tbody>
+                <thead><tr><th>Input</th><th>Reading</th><th>Counts</th></tr></thead>
+                <tbody>${g.adc.map((r) => {
+                  const reading = r.value || r.pin_v;
+                  const pin = r.value ? html`<span class="muted"> ${r.pin_v} at the pin</span>` : nothing;
+                  return html`<tr><td>${r.name}</td><td>${reading}${pin}</td><td class="muted">${r.counts}</td></tr>`;
+                })}</tbody>
               </table>`
           : html`<p class="muted">Waiting for the rocket's first Status report (after each heartbeat, ~10 s in Idle).</p>`,
       )}

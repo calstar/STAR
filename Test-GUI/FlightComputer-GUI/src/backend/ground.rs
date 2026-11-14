@@ -18,6 +18,9 @@ use crate::radio::{self, frame_type as ft, Heartbeat, RadioRx, Status, Telemetry
 use crate::records::{REC_BARO, REC_HIGHG, REC_IMU};
 
 const LOG_ROWS: usize = 300;
+/// "Last heard" turns red after this. A pad operator should not trust a
+/// rocket that has been quiet that long.
+const STALE: Duration = Duration::from_secs(15);
 /// After a command is sent, how long the rocket has to show the new state.
 const CONFIRM: Duration = Duration::from_secs(3);
 pub const MAX_TRIES: u32 = 6;
@@ -59,6 +62,8 @@ pub struct ChipRow {
     pub result: (String, Tone),
     pub value: String,
     pub expected: String,
+    /// "read 0x6B, expected 0x6B", or the reading alone when there is no expected byte.
+    pub words: String,
     /// "live" (checked for this report) or "boot" (its self-test result).
     pub when: String,
 }
@@ -69,6 +74,8 @@ pub struct GroundView {
     pub show: bool,
     pub rocket: Option<(String, Tone)>,
     pub heard: String,
+    /// True once the last frame is 15 s old. "nothing yet" is not stale.
+    pub heard_stale: bool,
     pub signal: String,
     pub battery: String,
     pub adc: Vec<AdcRow>,
@@ -232,6 +239,7 @@ impl GroundState {
             (n.replace('_', " "), tone)
         });
         v.heard = self.heard_at.map_or_else(|| "nothing yet".into(), |t| format!("{:.0} s ago", t.elapsed().as_secs_f64()));
+        v.heard_stale = self.heard_at.is_some_and(|t| t.elapsed() >= STALE);
         v.signal = self.signal.map_or_else(|| "—".into(), |(r, s)| format!("RSSI {r:.0} dBm, SNR {s:.1} dB"));
         v.battery = self.battery_mv.map_or_else(|| "—".into(), |mv| format!("{:.2} V", mv as f64 / 1000.0));
         if let Some(s) = &self.status {
@@ -250,12 +258,7 @@ impl GroundState {
         v.log = self.log.iter().cloned().collect();
         v.busy = self.command.is_some();
         v.command = match &self.command {
-            Some(c) => format!(
-                "{} — try {} of {MAX_TRIES}{}",
-                if c.want == Want::Armed { "Arming" } else { "Un-arming" },
-                c.tries,
-                if c.sent_at.is_some() { ", waiting for the rocket to show it" } else { ", sending (~3 s)" }
-            ),
+            Some(c) => format!("try {} of {MAX_TRIES}, waiting for the rocket", c.tries),
             None => self.outcome.clone(),
         };
         v
@@ -297,6 +300,11 @@ fn chip_rows(s: &Status) -> Vec<ChipRow> {
                 result: (label.clone(), label_tone(&label)),
                 value: if what.is_empty() { "—".into() } else { format!("0x{value:02X} ({what})") },
                 expected: expected.map_or_else(String::new, |e| format!("0x{e:02X}")),
+                words: match expected {
+                    Some(e) => format!("read 0x{value:02X}, expected 0x{e:02X}"),
+                    None if what.is_empty() => format!("read 0x{value:02X}"),
+                    None => format!("read 0x{value:02X} ({what})"),
+                },
                 when: if s.live_mask >> i & 1 != 0 { "live".into() } else { "boot".into() },
             }
         })
