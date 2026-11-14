@@ -62,7 +62,18 @@ image: auto-update's git sync is the deploy, so a page change on `main` is live
 within one timer tick (5 min). The tick that first brings in the mount also runs
 `docker compose up -d`, which recreates Caddy with it. One-time setup:
 
-1. Tunnel → **Add published application**: `switch.starberkeley.org` → `http://caddy:80`.
+1. Add the page to the box's sparse checkout. Without it the folder never exists,
+   Docker mounts an empty root-owned directory in its place, and every request
+   gets an empty `404`:
+
+   ```bash
+   cd ~/STAR
+   sudo chown -R ec2-user:ec2-user firmware   # only if Docker already created it as root
+   git sparse-checkout add firmware/Bluetooth_Switch/web
+   ```
+
+   The running Caddy sees the files at once; no restart.
+2. Tunnel → **Add published application**: `switch.starberkeley.org` → `http://caddy:80`.
 
 **Verify:** `curl -sI https://switch.starberkeley.org/` returns `200` (no redirect
 to auth), and `/test/protocol.test.mjs` returns `404`.
