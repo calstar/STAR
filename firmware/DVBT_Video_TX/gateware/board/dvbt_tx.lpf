@@ -1,0 +1,55 @@
+# LFE5U-25F-7TG144C pin assignment -- PROVISIONAL until the board is laid out.
+# Chosen from Project Trellis' TQFP144 pin data: clock on the right PLL's
+# input, the DAC bus on the same bank (3), ESP32 SPI on bank 2 with SCK on a
+# clock-capable pin; bank 8 is left to the
+# configuration flash. All 3.3 V LVCMOS: the AD9116 runs its digital I/O
+# from DVDDIO = 3.3 V (VIH 2.1 V, datasheet Rev. F Table 2); its DVDD pin is
+# the output of its own 1.8 V LDO and takes only a bypass capacitor.
+
+FREQUENCY PORT "clk_in" 27.428571 MHZ;
+FREQUENCY PORT "spi_sck" 20 MHZ;
+
+LOCATE COMP "clk_in"   SITE "69";   # LRC_GPLL0T_IN, from Si5351A CLK0
+
+LOCATE COMP "dac_d[0]"  SITE "67";
+LOCATE COMP "dac_d[1]"  SITE "71";
+LOCATE COMP "dac_d[2]"  SITE "72";
+LOCATE COMP "dac_d[3]"  SITE "73";
+LOCATE COMP "dac_d[4]"  SITE "74";
+LOCATE COMP "dac_d[5]"  SITE "76";
+LOCATE COMP "dac_d[6]"  SITE "77";
+LOCATE COMP "dac_d[7]"  SITE "78";
+LOCATE COMP "dac_d[8]"  SITE "79";
+LOCATE COMP "dac_d[9]"  SITE "80";
+LOCATE COMP "dac_d[10]" SITE "81";
+LOCATE COMP "dac_d[11]" SITE "82";
+LOCATE COMP "dac_dclk"  SITE "84";
+
+LOCATE COMP "spi_sck"  SITE "90";   # PCLKT2_0
+LOCATE COMP "spi_cs_n" SITE "91";
+LOCATE COMP "spi_mosi" SITE "92";
+LOCATE COMP "spi_miso" SITE "93";
+LOCATE COMP "dreq"     SITE "94";
+
+LOCATE COMP "led_tx"   SITE "115";
+
+IOBUF PORT "clk_in"   IO_TYPE=LVCMOS33;
+IOBUF PORT "spi_sck"  IO_TYPE=LVCMOS33;
+IOBUF PORT "spi_cs_n" IO_TYPE=LVCMOS33 PULLMODE=UP;
+IOBUF PORT "spi_mosi" IO_TYPE=LVCMOS33;
+IOBUF PORT "spi_miso" IO_TYPE=LVCMOS33;
+IOBUF PORT "dreq"     IO_TYPE=LVCMOS33;
+IOBUF PORT "dac_d[0]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[1]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[2]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[3]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[4]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[5]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[6]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[7]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[8]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[9]"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[10]" IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_d[11]" IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "dac_dclk"  IO_TYPE=LVCMOS33 SLEWRATE=FAST DRIVE=8;
+IOBUF PORT "led_tx"   IO_TYPE=LVCMOS33;
