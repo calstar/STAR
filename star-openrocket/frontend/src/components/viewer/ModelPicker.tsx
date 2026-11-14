@@ -23,11 +23,14 @@
  *
  * Building is the slow part, so it runs as a polled job rather than a blocking
  * request.
+ *
+ * An OpenRocket .ork is the third way in: imported, it becomes a model like any
+ * build (backend/ork/), and costs no Onshape quota at all.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { buildStatus, listAssemblies, searchDocuments, startBuild } from '../../api/client'
+import { buildStatus, importOrk, listAssemblies, searchDocuments, startBuild } from '../../api/client'
 import type { BuildJob, ModelSummary, OnshapeAssembly, OnshapeDocument } from '../../types'
 
 interface Props {
@@ -198,6 +201,30 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
     [loadAssemblies],
   )
 
+  const orkInput = useRef<HTMLInputElement>(null)
+  const [importing, setImporting] = useState(false)
+  const [importNotes, setImportNotes] = useState<string[]>([])
+
+  const importFile = useCallback(
+    async (file: File) => {
+      setBuildError(null)
+      setImportNotes([])
+      setImporting(true)
+      try {
+        const result = await importOrk(file)
+        setImportNotes(result.warnings)
+        onBuilt(result.modelId)
+        if (result.warnings.length === 0) setOpen(false)
+      } catch (exc: unknown) {
+        setBuildError(exc instanceof Error ? exc.message : String(exc))
+      } finally {
+        setImporting(false)
+        if (orkInput.current) orkInput.current.value = ''
+      }
+    },
+    [onBuilt],
+  )
+
   const launch = useCallback(
     async (request: Parameters<typeof startBuild>[0]) => {
       setBuildError(null)
@@ -328,6 +355,39 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
             </div>
           ) : (
             <div className="mt-3">
+              <div className="mb-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={importing || disabled}
+                  onClick={() => orkInput.current?.click()}
+                  title="Import an OpenRocket design as a model (no Onshape calls)"
+                  className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)] disabled:opacity-50"
+                >
+                  {importing ? 'importing…' : 'Import OpenRocket .ork'}
+                </button>
+                <input
+                  ref={orkInput}
+                  type="file"
+                  accept=".ork"
+                  // Importing moves the design onto the new model: gated like a build.
+                  disabled={importing || disabled}
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    if (file) void importFile(file)
+                  }}
+                />
+              </div>
+              {importNotes.length > 0 && (
+                <div className="mb-3 rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-300">
+                  <p className="mb-1">Imported, with these simplifications:</p>
+                  <ul className="list-disc pl-4">
+                    {importNotes.map((note) => (
+                      <li key={note}>{note}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {models.length > 0 && (
                 <>
                   <p className="mb-1 text-2xs uppercase tracking-wide text-[var(--color-text-muted)]">
@@ -348,6 +408,11 @@ export function ModelPicker({ models, modelId, onSelectModel, onBuilt, disabled 
                           }`}
                         >
                           {model.documentName ?? model.id}
+                          {model.kind === 'ork' && (
+                            <span className="ml-2 rounded bg-[var(--color-bg-secondary)] px-1 text-2xs text-[var(--color-text-muted)]">
+                              OpenRocket
+                            </span>
+                          )}
                           <span className="ml-2 text-xs text-[var(--color-text-muted)]">{model.assemblyName}</span>
                         </button>
                       </li>

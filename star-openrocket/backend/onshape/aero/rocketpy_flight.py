@@ -1,19 +1,24 @@
-"""6-DOF ascent flight via RocketPy, driven by the CAD-derived rocket.
+"""6-DOF ascent flight via RocketPy, flying the same airframe the stability panel analyses.
 
-RocketPy owns the trajectory integration (validated against real flights); we feed
-it the geometry, mass and motor the CAD/Barrowman pipeline already produces. Scope
-here is **ascent only** -- ``terminate_on_apogee=True`` -- descent/recovery is the
-recovery-calculator's job (merging in soon).
+RocketPy owns the trajectory integration; everything it integrates comes from the
+app's own pipeline, so the 6-DOF and the static margin describe one rocket:
 
-Aero uses RocketPy's **native** nose + fins (not our injected CP): the trajectory is
-identical either way (drag-dominated -- verified), and native surfaces keep RocketPy's
-own stability-margin readout meaningful. The ours-vs-RocketPy CP comparison is then a
-**margin overlay** -- RocketPy's ``stability_margin(t)`` against our ``cp_axial_at_mach``
-over the same Mach(t) -- computed on one physically-correct flight.
+* **Aerodynamics** are the app's Barrowman components (``stability.aero_components``):
+  the body split at its radius changes (nose, boattail, any shoulder) and the fin
+  set, each a RocketPy surface at its own CP with its own CNa (the fins' with Mach).
+  RocketPy computes each surface's lift from the airflow *at that surface* --
+  including the rocket's rotation -- so pitch damping falls out of the same
+  components that set the static margin, boattail included. RocketPy's own
+  ``stability_margin`` therefore equals the panel's at the panel's Mach.
+* **Mass** is the panel's: the parts, the viewer's overrides, the motor placement,
+  and the airframe's rigid-body inertia from the parts' tensors
+  (``stability.rigid_body_inertia``), not a uniform-rod estimate -- the rod put
+  LE4 SD at 160 kg m^2 against a real 74.
+* **Jet damping** uses the real nozzle: the motor is placed by its aft end.
 
-Approximations (see FUTURE_IMPROVEMENTS.md): inertia is a rod/cylinder estimate (CAD
-has no inertia tensor yet); drag is a stub Cd(Mach) curve. Neither affects the
-stability outputs; they gate the apogee/max-Q performance numbers, which the UI flags.
+Scope is **ascent only** (``terminate_on_apogee=True``); descent is the recovery
+calculator's. Drag is still a stub Cd(Mach) curve (FUTURE_IMPROVEMENTS.md #2): it
+moves apogee and max-q, not the stability outputs.
 """
 
 from __future__ import annotations
@@ -30,10 +35,12 @@ from ..geometry_store import GeometryStore
 from .axis import Axis
 from .stability import (
     MotorPlacement,
+    aero_components,
     aero_core,
     compute_cg,
     cp_axial_at_mach,
     place_motor,
+    rigid_body_inertia,
 )
 
 # Friends of Amateur Rocketry (FAR), Mojave -- the fixed launch site. Now shared
@@ -60,16 +67,19 @@ _STUB_DRAG = [[0.0, 0.45], [0.6, 0.48], [0.9, 0.55], [1.0, 0.62], [1.2, 0.58], [
 
 @dataclass
 class RocketGeom:
-    """Resolved rocket geometry for RocketPy, in a nose(0)->tail frame (metres, kg)."""
+    """The rocket RocketPy flies, in a nose(0)->tail frame (metres, kg)."""
 
-    radius: float
-    nose_length: float
-    nose_kind: str
+    radius: float  # reference radius (r_max)
     body_length: float
     mass_without_motor: float
     cg_from_nose: float
-    #: Fins, or None. (n, root_chord, tip_chord, span, sweep_length, position_from_nose)
-    fins: tuple[int, float, float, float, float, float] | None
+    #: Lifting components: (name, CNa(Mach) on pi r^2, CP from the nose).
+    surfaces: list[tuple[str, Callable[[float], float], float]]
+    #: Dry (I_transverse, I_transverse, I_axial) about ``cg_from_nose``, kg m^2. None
+    #: falls back to the uniform-rod estimate, and the result says so.
+    inertia: tuple[float, float, float] | None = None
+    #: How ``inertia`` was obtained, for the approximations line.
+    inertia_source: str = "parts"
 
 
 @dataclass
@@ -109,7 +119,8 @@ class FlightDynamicsResult:
     min_stability_margin: float
     min_stability_margin_time: float
     min_stability_margin_ours: float | None
-    max_angle_of_attack: float      # deg, over the meaningful (fast) window
+    max_angle_of_attack: float      # deg, after rail exit while airspeed >= 25 % of max
+    out_of_rail_angle_of_attack: float | None  # deg, the moment the rocket leaves the rail
     max_bending_moment: float
     drift_distance: float           # m, pad to apogee ground point
     drift_bearing: float            # deg, compass bearing pad->apogee point
@@ -121,10 +132,20 @@ class FlightDynamicsResult:
     burnout_drag: float | None      # N, whole-vehicle aerodynamic drag
     launch_stable: bool
     approximations: list[str] = field(default_factory=list)
+    #: Dry pitch inertia the flight used (kg m^2) and where it came from.
+    inertia_transverse: float | None = None
+    inertia_source: str | None = None
 
 
 def _generic_motor(motor: Motor):
-    """A RocketPy GenericMotor from our thrust-curve Motor (thrust + mass, no grain model)."""
+    """A RocketPy GenericMotor from our thrust-curve Motor (thrust + mass, no grain model).
+
+    Its origin is the **nozzle exit** (the motor's aft end), so the rocket adds it by its
+    aft position and RocketPy's jet damping -- mass flow times the nozzle-to-CG distance
+    squared -- has the real arm. (It used to sit at the motor's CG, which on LE4 SD put
+    the nozzle 0.6 m too far forward and halved the jet damping.) Propellant sits at the
+    chamber centre; the casing's CG is the datafile's burnout CG.
+    """
     from rocketpy import GenericMotor
 
     thrust = list(zip(motor.time, motor.thrust))
@@ -140,18 +161,63 @@ def _generic_motor(motor: Motor):
         burn_time=motor.burn_time,
         chamber_radius=radius,
         chamber_height=length,
-        chamber_position=0.0,
+        chamber_position=length / 2.0,
         propellant_initial_mass=prop,
         nozzle_radius=0.8 * radius,
+        nozzle_position=0.0,
         dry_mass=dry,
-        center_of_dry_mass_position=0.0,
+        # cg_x is from the fore end; this frame measures from the nozzle, forward.
+        center_of_dry_mass_position=length - motor.burnout_cgx,
         dry_inertia=(dry_i_long, dry_i_long, dry_i_roll),
         coordinate_system_orientation="nozzle_to_combustion_chamber",
     )
 
 
+def _barrowman_surface(name: str, cna: Callable[[float], float], radius: float):
+    """One app Barrowman component as a RocketPy aerodynamic surface.
+
+    A subclass of RocketPy's ``AeroSurface``, so ``Flight`` treats it like its own
+    nose or fins: lift ``CNa(M) * alpha`` from the local airflow at the surface, which
+    includes the rocket's rotation (that is the pitch damping), and it counts in
+    ``Rocket.cp_position`` / ``static_margin``. The CP is the surface's position;
+    locally it sits at its own origin.
+    """
+    from rocketpy.mathutils import Function
+    from rocketpy.rocket.aero_surface.aero_surface import AeroSurface
+
+    class BarrowmanSurface(AeroSurface):
+        def __init__(self) -> None:
+            super().__init__(name, math.pi * radius**2, 2 * radius)
+            # Referenced to the rocket's own area, so RocketPy's ref_factor is 1.
+            self.rocket_radius = radius
+            self.evaluate_geometrical_parameters()
+            self.evaluate_lift_coefficient()
+            self.evaluate_center_of_pressure()
+
+        def evaluate_geometrical_parameters(self) -> None:
+            return None
+
+        def evaluate_lift_coefficient(self) -> None:
+            self.clalpha = Function(lambda mach: cna(mach), "Mach", f"Lift coefficient derivative for {name}")
+            self.cl = Function(lambda alpha, mach: cna(mach) * alpha, ["Alpha (rad)", "Mach"], "Cl")
+
+        def evaluate_center_of_pressure(self) -> None:
+            self.cpx = self.cpy = self.cpz = 0.0
+            self.cp = (0.0, 0.0, 0.0)
+
+        def info(self) -> None:
+            return None
+
+        def all_info(self) -> None:
+            return None
+
+    return BarrowmanSurface()
+
+
 def _approx_inertia(mass: float, length: float, radius: float) -> tuple[float, float, float]:
-    """Rod (transverse) + thin cylinder (roll) inertia estimate. See FUTURE_IMPROVEMENTS.md #1."""
+    """Rod (transverse) + thin cylinder (roll) estimate: the fallback for a model whose
+    parts carry no inertia tensor (builds that predate it). A uniform rod spreads the
+    mass evenly, so it overstates a ballasted rocket's pitch inertia -- 2x on LE4 SD."""
     i_long = (1 / 12) * mass * length**2
     i_roll = 0.5 * mass * radius**2
     return i_long, i_long, i_roll
@@ -165,7 +231,7 @@ def run_flight(
     geom: RocketGeom,
     motor: Motor,
     *,
-    motor_position_from_nose: float,
+    nozzle_position_from_nose: float,
     rail_length: float = 1.0,
     inclination: float = 85.0,
     heading: float = 0.0,
@@ -216,22 +282,23 @@ def run_flight(
     env.set_atmospheric_model(**atmos_model)
 
     drag = drag_curve if drag_curve is not None else _STUB_DRAG
+    inertia = geom.inertia or _approx_inertia(geom.mass_without_motor, geom.body_length, geom.radius)
     rocket = Rocket(
         radius=geom.radius,
         mass=geom.mass_without_motor,
-        inertia=_approx_inertia(geom.mass_without_motor, geom.body_length, geom.radius),
+        inertia=inertia,
         power_off_drag=drag,
         power_on_drag=drag,
         center_of_mass_without_motor=geom.cg_from_nose,
         coordinate_system_orientation="nose_to_tail",
     )
-    rocket.add_nose(length=geom.nose_length, kind=geom.nose_kind, position=0.0)
-    if geom.fins is not None:
-        n, root, tip, span, sweep, pos = geom.fins
-        rocket.add_trapezoidal_fins(
-            n=n, root_chord=root, tip_chord=tip, span=span, position=pos, sweep_length=sweep
-        )
-    rocket.add_motor(_generic_motor(motor), position=motor_position_from_nose)
+    if not geom.surfaces:
+        raise ValueError("the rocket has no lifting surfaces to fly")
+    rocket.add_surfaces(
+        [_barrowman_surface(name, cna, geom.radius) for name, cna, _ in geom.surfaces],
+        [cp for _, _, cp in geom.surfaces],
+    )
+    rocket.add_motor(_generic_motor(motor), position=nozzle_position_from_nose)
 
     launch_stable = True
     try:
@@ -263,7 +330,7 @@ def run_flight(
     )
 
     return _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
-                   float(motor.burn_time))
+                   float(motor.burn_time), inertia)
 
 
 def _safe(fn, t: float, default: float | None = 0.0) -> float | None:
@@ -274,7 +341,7 @@ def _safe(fn, t: float, default: float | None = 0.0) -> float | None:
 
 
 def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
-            burnout_time) -> FlightDynamicsResult:
+            burnout_time, inertia) -> FlightDynamicsResult:
     t_end = float(flight.apogee_time)
     # A flight that hit `max_time` without an apogee reports one at (or very
     # near) zero. Sampling that gives `linspace(0, 0, N)` -- a full result
@@ -336,8 +403,18 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
     except Exception:
         pass
 
-    # Max AoA over the physical (non-null) window.
-    max_aoa = max((a for a in aoa if a is not None), default=0.0)
+    # Max AoA in flight: after the rail lets go, and while the rocket is fast enough
+    # for the angle to mean anything. On the rail it is held; near apogee (and on any
+    # flight's slow end) the airspeed collapses and the angle balloons with it --
+    # LE4 SD read 36 deg there in a 15 ft/s wind, against 7 deg at rail exit.
+    t_rail = _safe(lambda _t: flight.out_of_rail_time, 0.0)
+    v_floor = max(_AOA_MIN_AIRSPEED, 0.25 * float(flight.max_speed))
+    in_flight = [
+        a for t, a, v in zip(ts, aoa, speed)
+        if a is not None and t >= t_rail and v is not None and v >= v_floor
+    ]
+    max_aoa = max(in_flight, default=0.0)
+    rail_aoa = _safe(flight.angle_of_attack, t_rail, None)
 
     ours_defined = [m for m in marg_ours if m is not None]
     min_ours = min(ours_defined) if ours_defined else None
@@ -387,6 +464,7 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
         min_stability_margin_time=float(flight.min_stability_margin_time),
         min_stability_margin_ours=min_ours,
         max_angle_of_attack=max_aoa,
+        out_of_rail_angle_of_attack=None if rail_aoa is None else abs(rail_aoa),
         max_bending_moment=max((abs(b) for b in bend), default=0.0),
         drift_distance=dist,
         drift_bearing=bearing,
@@ -396,20 +474,15 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
         burnout_drag=_safe(flight.aerodynamic_drag, burnout_time, None),
         launch_stable=launch_stable,
         approximations=[
-            "inertia: rod/cylinder estimate (no CAD inertia tensor)",
+            *(["inertia: uniform-rod estimate (the parts carry no inertia tensors)"]
+              if geom.inertia is None else
+              [f"inertia: {geom.inertia_source}"] if geom.inertia_source != "parts" else []),
             "airframe drag: stub Cd(Mach) curve",
-            "nose: approximated as an ogive from the CAD profile",
+            "fin CP held at its Mach 0.3 position (CNa follows Mach)",
         ],
+        inertia_transverse=float(inertia[0]),
+        inertia_source="uniform rod" if geom.inertia is None else geom.inertia_source,
     )
-
-
-def _nose_from_profile(profile) -> tuple[float, str]:
-    """Nose length (tip to full radius) and kind from the CAD radius profile."""
-    r = np.asarray(profile.r_grid)
-    s = np.asarray(profile.s_grid)
-    full = np.where(r >= 0.99 * profile.r_max)[0]
-    nose_len = float(s[full[0]] - profile.x_fore) if len(full) else float(profile.x_aft - profile.x_fore)
-    return max(nose_len, 1e-3), "ogive"
 
 
 def simulate_flight_dynamics(
@@ -447,27 +520,23 @@ def simulate_flight_dynamics(
         else x_fore
     )
 
-    nose_len, nose_kind = _nose_from_profile(profile)
-    fins = None
-    if core.fin_pf is not None:
-        pf = core.fin_pf
-        fins = (
-            pf.n_fins,
-            float(pf.root_chord),
-            float(pf.tip_chord),
-            float(pf.span),
-            float(pf.sweep),
-            float(pf.chord_lead[0] - x_fore),
-        )
+    components = aero_components(core)
+    body = rigid_body_inertia(manifest_parts, core.axis, overrides)
+    inertia, source = None, "parts"
+    if body is not None and body.tensor_fraction > 0:
+        inertia = (body.i_transverse, body.i_transverse, body.i_axial)
+        if body.tensor_fraction < 0.99:
+            source = (f"parts ({body.tensor_fraction:.0%} of the mass with its own tensor; "
+                      "the rest as point masses)")
 
     geom = RocketGeom(
         radius=profile.r_max,
-        nose_length=nose_len,
-        nose_kind=nose_kind,
         body_length=profile.x_aft - x_fore,
         mass_without_motor=mass_cad,
         cg_from_nose=cg_cad_axial - x_fore,
-        fins=fins,
+        surfaces=[(c.name, c.cna_at, c.cp_axial - x_fore) for c in components],
+        inertia=inertia,
+        inertia_source=source,
     )
 
     burn = motor.burn_time
@@ -485,7 +554,7 @@ def simulate_flight_dynamics(
     return run_flight(
         geom,
         motor,
-        motor_position_from_nose=placed.cg_axial - x_fore,
+        nozzle_position_from_nose=placed.aft_axial - x_fore,
         rail_length=rail_length,
         inclination=inclination,
         heading=heading,

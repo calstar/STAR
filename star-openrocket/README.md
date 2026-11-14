@@ -154,6 +154,39 @@ Credentials come from `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY` in the
 environment with no defaults — a build with neither set fails immediately
 rather than silently producing nothing. They never reach the browser.
 
+## Importing an OpenRocket .ork
+
+**Import OpenRocket .ork** in the model picker turns an .ork into a model like any
+Onshape build -- the same `model.glb`, geometry sidecar and `manifest.json` in
+`cache/ork_<hash of the file>/` -- so every tab (stability, flight dynamics, full
+flight, .ork export) runs on it unchanged. It costs no Onshape quota.
+
+- **Placement and mass follow OpenRocket** (`backend/ork/document.py`): the
+  airframe stacks nose to tail; everything else is placed by its axial method
+  (top / middle / bottom / after / absolute); bare `auto` radii are resolved the
+  way OpenRocket does. Mass overrides, subtree overrides and CG overrides apply as
+  in OpenRocket's mass calculator; anything not overridden is weighed from its
+  geometry and material. Nose and transition shapes are OpenRocket's formulas
+  (`backend/ork/shapes.py`).
+- **The motor comes with it.** Each motor configuration is matched to the
+  catalogue by the thrust-data digest the .ork stores (by maker and designation
+  when the data file is not cached), and the rocket opens with its default motor
+  placed where the .ork puts it.
+- **Only the airframe and fins are aerodynamic**, as in OpenRocket: internal
+  parts are drawn and weighed but never offered as the outer surface.
+- **What is not modelled is said, not dropped**: pods and boosters, fin cant,
+  motor clusters and the like come back as warnings in the manifest and in the
+  picker.
+
+**Compare…** (stability panel) puts the open model beside another -- a CAD build
+beside the .ork it should match -- and flags every row that differs: length,
+diameters, nose profile, boattail, fins, mass, CG, CP and margins, all measured by
+the same code on both sides (`backend/ork/compare.py`, `POST /api/compare`).
+
+`tests/test_ork_openrocket.py::test_imported_ork_matches_openrocket` holds an
+imported rocket's mass, CG and CP to OpenRocket's own, in CI's `openrocket-check`
+job.
+
 ## Designs, sharing and checkouts
 
 A **design** is the whole unified config -- the CAD/stability/ascent slice and

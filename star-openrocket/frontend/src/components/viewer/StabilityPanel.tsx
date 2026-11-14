@@ -78,6 +78,8 @@ export interface StabilityPanelProps {
   busy: boolean
   error: string | null
   onCompute: () => void
+  /** Open the side-by-side comparison with another model (e.g. an imported .ork). */
+  onCompare?: () => void
   /** Face editing: pick/correct which faces are the airframe / the fins. */
   faceEditMode: boolean
   editTarget: 'body' | 'fin' | 'motor'
@@ -132,6 +134,7 @@ export function StabilityPanel({
   busy,
   error,
   onCompute,
+  onCompare,
   faceEditMode,
   onToggleEditMode,
   onAutoDetect,
@@ -181,6 +184,16 @@ export function StabilityPanel({
         >
           {busy ? 'Computing…' : result ? 'Recompute' : 'Compute'}
         </button>
+        {onCompare && (
+          <button
+            type="button"
+            onClick={onCompare}
+            title="Compare this model with another, e.g. the OpenRocket .ork it should match"
+            className="rounded border border-[var(--color-border)] px-2 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]"
+          >
+            Compare…
+          </button>
+        )}
       </div>
 
       {/* Surface controls: auto-detect seeds both sets; the edit buttons let the

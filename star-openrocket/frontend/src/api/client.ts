@@ -3,6 +3,8 @@
 import type {
   Browsed,
   BuildJob,
+  CompareResult,
+  CompareSide,
   Manifest,
   ModelSummary,
   OnshapeAssembly,
@@ -14,6 +16,7 @@ import type {
   MotorDetail,
   MotorSearchResult,
   OrkExportRequest,
+  OrkImportResult,
   OuterSurfaceGuess,
   StabilityRequest,
   StabilityResult,
@@ -132,6 +135,29 @@ export function searchMotors(
 }
 
 /** CG, CP and static margin from the approved (or auto-detected) surface. */
+/** Import an OpenRocket .ork as a model (sent as the raw body). */
+export async function importOrk(file: File): Promise<OrkImportResult> {
+  const url = `/api/import/ork?filename=${encodeURIComponent(file.name)}`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file,
+  })
+  if (!response.ok) await fail('/api/import/ork', response)
+  return response.json() as Promise<OrkImportResult>
+}
+
+/** Two models side by side (typically a CAD build against an imported .ork). */
+export async function compareModels(a: CompareSide, b: CompareSide): Promise<CompareResult> {
+  const response = await fetch('/api/compare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ a, b }),
+  })
+  if (!response.ok) await fail('/api/compare', response)
+  return response.json() as Promise<CompareResult>
+}
+
 export async function computeStability(
   modelId: string,
   request: StabilityRequest,

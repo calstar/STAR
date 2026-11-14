@@ -178,3 +178,30 @@ def test_openrocket_loads_written_motor_files_to_the_same_digest(orkcheck, tmp_p
     path.write_text(text)
     (got,) = orkcheck(path)
     assert got["digest"] == motor.digest
+
+
+def test_imported_ork_matches_openrocket(orkcheck, tmp_path):
+    """The import direction: OpenRocket opens the sample .ork, the importer turns the
+    same file into a model, and the app's own pipeline must give OpenRocket's mass,
+    CG and CP back. The sample carries every placement rule and mass rule the
+    importer implements (tests/ork_samples.py), with masses mostly *computed* from
+    materials, so this holds the importer's mass model to OpenRocket's own."""
+    from backend.onshape.geometry_store import GeometryStore
+    from backend.ork.importer import import_ork
+    from ork_samples import sample_ork_xml
+
+    data = sample_ork_xml(with_motor=False).encode()
+    path = tmp_path / "sample.ork"
+    path.write_bytes(data)
+    got = orkcheck(path)[0]
+    assert got["loadWarnings"] == 0
+
+    manifest = import_ork(data, "sample.ork", tmp_path / "cache")
+    store = GeometryStore.load(tmp_path / "cache" / manifest["source"]["modelId"])
+    app = compute_stability(store, manifest["parts"], detect_outer_surface(store).faces)
+
+    assert app.mass == pytest.approx(got["massStructure"], rel=2e-3)
+    assert abs(app.cg_from_nose - got["cgStructure"]) < 2e-3
+    assert app.ref_diameter == pytest.approx(got["refLength"], rel=1e-6)
+    assert abs(app.cp_from_nose - got["cp"]) < 5e-3
+    assert app.cna == pytest.approx(got["cna"], rel=0.03)

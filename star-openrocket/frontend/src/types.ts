@@ -1,6 +1,7 @@
 /** Shape of manifest.json, emitted by backend/onshape/build.py. */
 
 import type { Device } from './recovery/types/schema'
+import type { Kind } from './lib/units/quantities'
 
 export interface Material {
   name: string
@@ -60,17 +61,82 @@ export interface Manifest {
     resolvedFrom: string
     assemblyName: string
     builtAt: string
-    apiVersion: string
+    apiVersion?: string
+    /** "ork" for an imported OpenRocket file; absent (Onshape) for a CAD build. */
+    kind?: 'onshape' | 'ork'
+    fileName?: string
   }
   upAxisHandling: string
   totals: Totals
   parts: Part[]
   build: Record<string, number>
   warnings: string[]
+  /** Present on an imported .ork: what only the .ork knows. */
+  ork?: OrkInfo
 }
+
+/** One motor configuration of an imported .ork, matched to the motor catalogue. */
+export interface OrkMotorInfo {
+  configId: string
+  default: boolean
+  manufacturer: string
+  designation: string
+  digest: string | null
+  diameter: number
+  length: number
+  mount: string
+  aftFromNose: number
+  /** The MotorSelection aftOffset that reproduces the .ork's placement. */
+  aftOffset: number
+  motorId: string | null
+  simfileId: string | null
+  /** "digest" (the .ork's exact thrust data) or "designation" (name only). */
+  matchedBy: 'digest' | 'designation' | null
+}
+
+export interface OrkInfo {
+  rocketName: string
+  length: number
+  referenceDiameter: number
+  mass: number
+  cgFromNose: number
+  motors: OrkMotorInfo[]
+  /** OpenRocket's own stored results, as the file carries them. */
+  simulations: { name: string; configId: string | null; summary: Record<string, number> }[]
+}
+
+export interface OrkImportResult {
+  modelId: string
+  rocketName: string
+  warnings: string[]
+  motors: OrkMotorInfo[]
+}
+
+/** One line of a model-vs-model comparison. Values are SI; `kind` is the unit kind
+ * to show them in ("count" and "margin" -- calibres -- convert to nothing). */
+export interface CompareRow {
+  key: string
+  label: string
+  kind: Kind | 'count' | 'margin'
+  a: number | null
+  b: number | null
+  delta: number | null
+  relative: number | null
+  /** Beyond the backend's tolerance for this unit. */
+  differs: boolean
+}
+
+export interface CompareResult {
+  rows: CompareRow[]
+}
+
+/** One side of a comparison: a model and (optionally) its stability selection.
+ * Anything left out is auto-detected, as the backend's StabilityRequest defaults. */
+export type CompareSide = Partial<StabilityRequest> & { modelId: string }
 
 export interface ModelSummary {
   id: string
+  kind?: 'onshape' | 'ork'
   documentName: string | null
   assemblyName: string | null
   builtAt: string | null
@@ -356,7 +422,13 @@ export interface FlightDynamicsResult {
   minStabilityMargin: number
   minStabilityMarginTime: number
   minStabilityMarginOurs: number | null
+  /** deg, after rail exit while airspeed is at least 25 % of the maximum. */
   maxAngleOfAttack: number
+  /** deg, the moment the rocket leaves the rail. */
+  outOfRailAngleOfAttack: number | null
+  /** Dry pitch inertia the flight used, kg m², and where it came from. */
+  inertiaTransverse: number | null
+  inertiaSource: string | null
   maxBendingMoment: number
   driftDistance: number
   driftBearing: number

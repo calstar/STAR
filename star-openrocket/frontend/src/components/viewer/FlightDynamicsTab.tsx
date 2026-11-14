@@ -2,10 +2,11 @@
  * Flight Dynamics tab: a 6-DOF ascent (RocketPy) driven by the CAD rocket.
  *
  * Ascent only (rail -> apogee); descent/recovery is the recovery calculator's job.
- * Aero uses RocketPy's native surfaces; the stability panel overlays our CP(M) margin
- * against RocketPy's for comparison (the "CP model" selector picks which curve(s) show).
- * Drag and inertia are approximations (see FUTURE_IMPROVEMENTS.md) -- stability panels are
- * exact, performance tiles (apogee, max-Q) are flagged approximate.
+ * The 6-DOF flies the stability panel's own airframe -- its Barrowman components, its
+ * parts' masses and rigid-body inertia, its motor placement (backend/onshape/aero/
+ * rocketpy_flight.py) -- so RocketPy's margin and ours are the same curve, and the
+ * dynamics (angle of attack, pitch rate, damping) come from that airframe. Drag is still
+ * a stub (see FUTURE_IMPROVEMENTS.md): apogee and max-Q are flagged approximate.
  */
 
 import { btn, useDisabled } from '@stardesign-ui'
@@ -337,7 +338,11 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
             <Tile label="Max accel" value={`${(result.maxAcceleration / G).toFixed(1)} g`} />
             <Tile label="Off-rail" value={q(result.outOfRailVelocity, 'speed')} sub={`${result.outOfRailStabilityMargin.toFixed(2)} cal`} warn={result.outOfRailStabilityMargin < 1} />
             <Tile label="Min margin" value={`${result.minStabilityMargin.toFixed(2)} cal`} sub={result.minStabilityMarginOurs != null ? `ours ${result.minStabilityMarginOurs.toFixed(2)}` : undefined} warn={result.minStabilityMargin < 1} />
-            <Tile label="Max AoA" value={`${result.maxAngleOfAttack.toFixed(1)}°`} />
+            <Tile
+              label="AoA off rail"
+              value={result.outOfRailAngleOfAttack != null ? `${result.outOfRailAngleOfAttack.toFixed(1)}°` : '—'}
+              sub={`max in flight ${result.maxAngleOfAttack.toFixed(1)}°`}
+            />
             <Tile label="Drift @ apogee" value={q(result.driftDistance, 'distance')} sub={`bearing ${result.driftBearing.toFixed(0)}°`} />
           </div>
 
@@ -430,8 +435,14 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
           </div>
 
           <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 px-3 py-2 text-2xs text-[var(--color-text-muted)]">
-            Approximations in this run: {result.approximations.join(' · ')}. Stability outputs are exact;
-            apogee / max-Q depend on the drag model. See FUTURE_IMPROVEMENTS.md.
+            {result.inertiaTransverse != null && (
+              <>
+                Pitch inertia (dry): {result.inertiaTransverse.toFixed(2)} kg·m² from {result.inertiaSource}.{' '}
+              </>
+            )}
+            Approximations in this run: {result.approximations.join(' · ')}. Stability and pitch
+            dynamics come from the same airframe as the stability panel; apogee / max-Q depend on
+            the drag model. See FUTURE_IMPROVEMENTS.md.
           </div>
         </>
       )}

@@ -16,6 +16,8 @@ along the detected nose->tail axis, so CG (a 3-D point) is projected onto that a
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
@@ -462,3 +464,149 @@ def compute_stability(
         axis_direction=axis.direction.tolist(),
         fin_symmetric=fins_symmetric(fin_pf.azimuths) if fin_pf is not None else True,
     )
+
+
+# -- The same aero and mass, as the 6-DOF needs them -----------------------------------
+#
+# The static margin above treats the body as one Barrowman component. A flight
+# simulation also needs *where* along the body the lift acts -- pitch damping goes
+# as each component's CNa times its arm squared -- so the body is split at its
+# radius changes. The Barrowman body integral telescopes,
+#
+#     CNa * cp = (2 / A_ref) (x_aft A_aft - x_fore A_fore - V),
+#
+# so any split into contiguous intervals sums back to exactly the static CNa and
+# CP: the 6-DOF and the stability panel fly one airframe.
+
+
+@dataclass
+class AeroComponent:
+    """One lifting component: CNa (on A_ref = pi r_max^2) as a function of Mach,
+    acting at a fixed axial CP."""
+
+    name: str
+    cna_at: Callable[[float], float]
+    cp_axial: float
+
+    @property
+    def cna(self) -> float:
+        return self.cna_at(0.3)
+
+
+#: Body intervals whose |CNa| is below this carry no lift worth a surface.
+_MIN_COMPONENT_CNA = 1e-4
+#: At most this many body components: each is evaluated every integration step.
+_MAX_BODY_COMPONENTS = 6
+
+
+def _body_intervals(s: np.ndarray, r: np.ndarray) -> list[tuple[int, int]]:
+    """Index ranges [i0, i1] covering the profile, one around each run of stations
+    where the radius changes (nose, boattail, any shoulder), split in the flat tube
+    between runs."""
+    changing = np.abs(np.diff(r)) > 1e-7 * max(float(r.max()), 1e-9)
+    runs: list[list[int]] = []
+    for k, active in enumerate(changing):
+        if active:
+            if runs and runs[-1][1] == k:
+                runs[-1][1] = k + 1
+            else:
+                runs.append([k, k + 1])
+    if not runs:
+        return [(0, len(s) - 1)]
+    # Merge the closest neighbours until few enough remain.
+    while len(runs) > _MAX_BODY_COMPONENTS:
+        gaps = [s[runs[i + 1][0]] - s[runs[i][1]] for i in range(len(runs) - 1)]
+        i = int(np.argmin(gaps))
+        runs[i] = [runs[i][0], runs[i + 1][1]]
+        del runs[i + 1]
+    bounds = [0]
+    for a, b in zip(runs[:-1], runs[1:]):
+        # Split the flat stretch between two runs at its middle station.
+        bounds.append((a[1] + b[0]) // 2)
+    bounds.append(len(s) - 1)
+    return list(zip(bounds[:-1], bounds[1:]))
+
+
+def aero_components(core: AeroCore) -> list[AeroComponent]:
+    """The airframe's Barrowman aero as separate components (body intervals + fins).
+
+    Their CNa-weighted CP is ``core.cp_axial`` and their CNa sum ``core.cna_total``,
+    exactly (see the note above); the fins keep their Mach dependence.
+    """
+    prof = core.profile
+    s, r = np.asarray(prof.s_grid, dtype=np.float64), np.asarray(prof.r_grid, dtype=np.float64)
+    a_ref = math.pi * prof.r_max**2
+    out: list[AeroComponent] = []
+    for i0, i1 in _body_intervals(s, r):
+        seg_s, seg_r = s[i0 : i1 + 1], r[i0 : i1 + 1]
+        vol = float((math.pi / 3.0) * np.sum(np.diff(seg_s) * (seg_r[:-1] ** 2 + seg_r[:-1] * seg_r[1:] + seg_r[1:] ** 2)))
+        a_fore, a_aft = math.pi * seg_r[0] ** 2, math.pi * seg_r[-1] ** 2
+        cna = 2.0 * (a_aft - a_fore) / a_ref
+        if abs(cna) < _MIN_COMPONENT_CNA:
+            continue
+        cp = (seg_s[-1] * a_aft - seg_s[0] * a_fore - vol) / (a_aft - a_fore)
+        kind = "nose" if i0 == 0 else ("boattail" if i1 == len(s) - 1 and cna < 0 else "body")
+        cna, cp = float(cna), float(cp)
+        out.append(AeroComponent(f"{kind} (cp {cp - prof.x_fore:.3f} m)", (lambda _m, c=cna: c), cp))
+    pf = core.fin_pf
+    if pf is not None:
+        def fin_cna(mach: float, pf=pf) -> float:
+            return fin_set_aero(pf.chord_lead, pf.chord_trail, pf.span, pf.body_radius,
+                                pf.n_fins, prof.r_max, max(float(mach), 0.0)).cna
+        fin_cp = fin_set_aero(pf.chord_lead, pf.chord_trail, pf.span, pf.body_radius,
+                              pf.n_fins, prof.r_max, 0.3).cp
+        out.append(AeroComponent(f"fins ({pf.n_fins})", fin_cna, float(fin_cp)))
+    return out
+
+
+@dataclass
+class RigidBody:
+    """Mass properties about the body's own CG, on the rocket axis."""
+
+    mass: float
+    cg_axial: float
+    i_transverse: float  # kg m^2, pitch/yaw, about the CG
+    i_axial: float  # kg m^2, roll
+    #: Fraction of the mass whose parts carried their own inertia tensor; the rest
+    #: count as point masses at their centroids.
+    tensor_fraction: float
+
+
+def rigid_body_inertia(
+    parts: list[dict], axis: Axis, overrides: dict[str, float] | None = None
+) -> RigidBody | None:
+    """The airframe's inertia from its parts: each part's own tensor (per kg, times
+    its mass -- the viewer's override if there is one) plus the parallel-axis term.
+    On LE4 SD this reproduces Onshape's assembly inertia to the 4th digit.
+
+    None when no part has mass.
+    """
+    overrides = overrides or {}
+    ms, cs, tens = [], [], []
+    for p in parts:
+        m = overrides.get(p["key"], p["mass"])
+        if not (m > 0):
+            continue
+        ms.append(float(m))
+        cs.append(np.asarray(p["centroidWorld"], dtype=np.float64))
+        per_kg = p.get("inertiaPerKgWorld")
+        tens.append(None if per_kg is None else np.asarray(per_kg, dtype=np.float64).reshape(3, 3))
+    if not ms:
+        return None
+    m = np.asarray(ms)
+    c = np.asarray(cs)
+    total = float(m.sum())
+    cg = (m[:, None] * c).sum(axis=0) / total
+    tensor = np.zeros((3, 3))
+    covered = 0.0
+    for mi, ci, ti in zip(m, c, tens):
+        if ti is not None:
+            tensor += mi * ti
+            covered += mi
+        d = ci - cg
+        tensor += mi * (float(d @ d) * np.eye(3) - np.outer(d, d))
+    u = np.asarray(axis.direction, dtype=np.float64)
+    u = u / np.linalg.norm(u)
+    i_axial = float(u @ tensor @ u)
+    i_transverse = float((np.trace(tensor) - i_axial) / 2.0)
+    return RigidBody(total, float((cg - axis.origin) @ u), i_transverse, i_axial, covered / total)

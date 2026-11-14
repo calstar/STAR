@@ -35,7 +35,8 @@ _APP_ROOT = str(Path(__file__).resolve().parent.parent)
 if _APP_ROOT not in _sys.path:
     _sys.path.insert(0, _APP_ROOT)
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from .deadline import ComputeBudgetMiddleware
@@ -66,6 +67,9 @@ from .onshape.browse import BrowseCache
 from .onshape.build import build as run_build
 from .onshape.client import MissingCredentials, OnshapeClient, OnshapeError
 from .onshape.geometry_store import GeometryStore
+from .ork import compare as ork_compare
+from .ork.document import MAX_FILE_BYTES as ORK_MAX_BYTES, OrkError
+from .ork.importer import import_ork
 from .motors.db import MotorDB
 
 CACHE_ROOT = Path(__file__).resolve().parent.parent / "cache"
@@ -184,6 +188,7 @@ async def list_models():
                 "documentName": source.get("documentName"),
                 "assemblyName": source.get("assemblyName"),
                 "builtAt": source.get("builtAt"),
+                "kind": source.get("kind", "onshape"),
                 "partCount": manifest.get("totals", {}).get("partCount"),
                 "partsWithoutMaterial": manifest.get("totals", {}).get(
                     "partsWithoutMaterial"
@@ -784,6 +789,9 @@ def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
         "minStabilityMarginTime": result.min_stability_margin_time,
         "minStabilityMarginOurs": result.min_stability_margin_ours,
         "maxAngleOfAttack": result.max_angle_of_attack,
+        "outOfRailAngleOfAttack": result.out_of_rail_angle_of_attack,
+        "inertiaTransverse": result.inertia_transverse,
+        "inertiaSource": result.inertia_source,
         "maxBendingMoment": result.max_bending_moment,
         "driftDistance": result.drift_distance,
         "driftBearing": result.drift_bearing,
@@ -1117,6 +1125,70 @@ async def start_build(request: BuildRequest):
 
     threading.Thread(target=_run_job, args=(job_id, url), daemon=True).start()
     return {"jobId": job_id, "status": "queued"}
+
+
+# -- OpenRocket .ork import -----------------------------------------------------
+#
+# An .ork becomes a model like any build: same three artifacts in cache/, so the
+# viewer and every analysis endpoint run on it unchanged (backend/ork/).
+
+
+@app.post("/api/import/ork")
+async def import_ork_file(request: Request, filename: str = Query("rocket.ork", max_length=200)):
+    """Import an OpenRocket .ork sent as the raw request body. Returns the new model."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > ORK_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"an .ork is at most {ORK_MAX_BYTES // 2**20} MB")
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="send the .ork file as the request body")
+    name = Path(filename).name or "rocket.ork"
+    try:
+        # CPU-bound (meshing, GLB); off the event loop, like the sync routes.
+        manifest = await run_in_threadpool(import_ork, data, name, CACHE_ROOT, _motor_db)
+    except OrkError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "modelId": manifest["source"]["modelId"],
+        "rocketName": manifest["source"]["documentName"],
+        "warnings": manifest.get("warnings", []),
+        "motors": manifest["ork"]["motors"],
+    }
+
+
+class CompareSide(StabilityRequest):
+    modelId: str
+
+
+class CompareRequest(BaseModel):
+    a: CompareSide
+    b: CompareSide
+
+
+def _compare_side(side: CompareSide) -> ork_compare.Side:
+    model_dir = _model_dir(side.modelId)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+    faces = [(f.key, f.faceId) for f in side.outerFaces] or detect_outer_surface(store).faces
+    fin_faces = [(f.key, f.faceId) for f in side.finFaces] if side.finFaces is not None else None
+    launch = burnout = None
+    if side.motor is not None:
+        launch, _ = _resolve_motor(side.motor.model_copy(update={"state": "launch"}))
+        burnout, _ = _resolve_motor(side.motor.model_copy(update={"state": "burnout"}))
+    return ork_compare.Side(
+        store=store, parts=manifest.get("parts", []), outer_faces=faces, fin_faces=fin_faces,
+        n_fins=side.nFins, overrides=side.overrides, launch=launch, burnout=burnout,
+    )
+
+
+@app.post("/api/compare")
+# Sync: CPU-bound, see the note on /stability.
+def compare_models(request: CompareRequest):
+    """Two models side by side -- typically a CAD build against an imported .ork."""
+    try:
+        return ork_compare.compare(_compare_side(request.a), _compare_side(request.b))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/build/{job_id}")
