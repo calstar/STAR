@@ -68,6 +68,7 @@ import numpy as np
 from physics.atmosphere import Atmosphere
 from physics.site import FAR_ELEV_M, FAR_LAT, FAR_LON
 
+from ..geometry_store import face_extents
 from .barrowman_fins import DIVISIONS, fin_set_aero
 from .fins import FinSection
 from .stability import AeroCore, CPContribution, MotorAxial, merge_cp
@@ -191,10 +192,10 @@ def part_masses(store, axis, x_nose: float, manifest_parts: list[dict],
     """
     overrides = overrides or {}
     extent: dict[str, tuple[float, float, float]] = {}
-    for fg in store.iter_faces():
-        s, rho = axis.axial_radial(fg.triangles.reshape(-1, 3))
+    faces = [fg for fg in store.iter_faces() if len(fg.triangles)]
+    for fg, s_lo, s_hi, r_hi in zip(faces, *face_extents(faces, axis)):
         lo, hi, r = extent.get(fg.occurrence_key, (np.inf, -np.inf, 0.0))
-        extent[fg.occurrence_key] = (min(lo, float(s.min())), max(hi, float(s.max())), max(r, float(rho.max())))
+        extent[fg.occurrence_key] = (min(lo, float(s_lo)), max(hi, float(s_hi)), max(r, float(r_hi)))
 
     d = axis.direction
     u = np.cross(d, [1.0, 0.0, 0.0] if abs(d[0]) < 0.9 else [0.0, 1.0, 0.0])

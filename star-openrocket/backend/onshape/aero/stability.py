@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..geometry_store import GeometryStore
+from ..geometry_store import GeometryStore, face_extents
 from .axis import Axis
 from .barrowman_body import body_aero
 from .barrowman_fins import fin_set_aero
@@ -96,15 +96,19 @@ def _aftmost_axial(store: GeometryStore, axis: Axis) -> float | None:
     protrudes past the airframe skin (a nozzle, retainer, boat tail, motor mount). Returns
     ``None`` when the model has no geometry.
     """
-    aftmost: float | None = None
-    for fg in store.iter_faces():
-        verts = fg.triangles.reshape(-1, 3)
-        if verts.size == 0:
-            continue
-        m = float(((verts - axis.origin) @ axis.direction).max())
-        if aftmost is None or m > aftmost:
-            aftmost = m
-    return aftmost
+    faces = [fg for fg in store.iter_faces() if len(fg.triangles)]
+    if not faces:
+        return None
+    # Every vertex of a face lies within its bounding sphere, so its furthest one is
+    # between centre - radius and centre + radius along the axis. Only faces whose
+    # upper bound clears the best lower bound can hold the answer; the rest are never read.
+    if all(fg.bound_center is not None for fg in faces):
+        mid = (np.array([fg.bound_center for fg in faces]) - axis.origin) @ axis.direction
+        rad = np.array([fg.bound_radius for fg in faces])
+        floor = (mid - rad).max()
+        faces = [fg for fg, t in zip(faces, mid + rad) if t >= floor]
+    _, s_hi, _ = face_extents(faces, axis)
+    return float(np.nanmax(s_hi))
 
 
 def compute_cg(

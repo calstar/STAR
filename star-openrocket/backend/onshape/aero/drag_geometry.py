@@ -21,6 +21,8 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
+from ..geometry_store import face_chunks, reach_bound
+
 #: OpenRocket's ``ExternalComponent.Finish`` table (24.12): equivalent sand-grain
 #: roughness, metres. ``smooth`` ("Smooth paint") is OpenRocket's default for a new
 #: component's finish and ours for a CAD model, which records none.
@@ -329,8 +331,7 @@ def _tube_radius(s: np.ndarray, r: np.ndarray) -> float:
 def detect_protuberances(store, outer_faces, core, tube_r: float, fin_keys: set, roughness: float) -> list[Protuberance]:
     """Parts standing proud of the tube, other than the fins: lugs, buttons, shrouds.
 
-    One pass over every face in the model (``GeometryStore.faces_for`` walks them all
-    per call, so a call per face cost 24x on LE4 SD), grouped by part occurrence:
+    One batched pass over every face in the model, grouped by part occurrence:
     whatever a part has outside ``tube_r`` + 0.5 mm along the tube is one feature.
     The outer-surface selection is not enough -- on LE4 SD neither the camera shrouds
     nor the rail lugs are in it. The fins' own parts are skipped (their edges and roots
@@ -345,24 +346,25 @@ def detect_protuberances(store, outer_faces, core, tube_r: float, fin_keys: set,
     fin_occ = {k for k, _ in fin_keys}
     e1 = _perp(d)
     e2 = np.cross(d, e1)
+    faces = [fg for fg in store.iter_faces() if fg.occurrence_key not in fin_occ and len(fg.triangles)]
+    # Skip, unread, every face whose bounding sphere stays inside the tube.
+    faces = [fg for fg, b in zip(faces, reach_bound(faces, core.axis)) if b >= tube_r + 1e-3]
     proud: dict[str, list[np.ndarray]] = {}
-    for fg in store.iter_faces():
-        if fg.occurrence_key in fin_occ:
-            continue
-        t = fg.triangles
-        if len(t) == 0:
-            continue
-        rel = t.reshape(-1, 3) - o
+    for lo_f, _, tris, starts in face_chunks(faces):
+        rel = tris.reshape(-1, 3) - o
         sax = rel @ d
-        rad = np.linalg.norm(rel - np.outer(sax, d), axis=1)
-        if rad.max() < tube_r + 1e-3:
-            continue
-        tri_out = (rad.reshape(-1, 3) > tube_r + 5e-4).any(axis=1)
+        rad = np.linalg.norm(rel - np.outer(sax, d), axis=1).reshape(-1, 3)
         tri_s = sax.reshape(-1, 3)
+        face_reach = np.maximum.reduceat(rad.max(axis=1), starts)
+        tri_out = (rad > tube_r + 5e-4).any(axis=1)
         # Along the tube only: the nose and the tail's own ends are not protuberances.
         tri_out &= (tri_s.min(axis=1) > x0 + 1e-3) & (tri_s.max(axis=1) < x1 - 1e-3)
-        if tri_out.any():
-            proud.setdefault(fg.occurrence_key, []).append(t[tri_out])
+        bounds = np.append(starts, len(tris))
+        for i in np.flatnonzero(face_reach >= tube_r + 1e-3):
+            lo, hi = bounds[i], bounds[i + 1]
+            sel = tri_out[lo:hi]
+            if sel.any():
+                proud.setdefault(faces[lo_f + i].occurrence_key, []).append(tris[lo:hi][sel])
 
     feats: list[tuple[float, float, float, float, float]] = []  # x, length, height, width, frontal
     for tris in proud.values():

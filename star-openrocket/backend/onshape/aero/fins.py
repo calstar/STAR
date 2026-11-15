@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..geometry_store import FaceGeometry
+from ..geometry_store import FaceGeometry, face_areas, face_extents, reach_bound
 from .axis import Axis
 from .barrowman_fins import DIVISIONS, FinSetAero, fin_set_aero
 
@@ -95,16 +95,17 @@ def detect_fin_faces(
     to the biggest protruding face. Fin count is left to the azimuthal clustering
     in ``count_fins`` -- this just gathers the candidate faces.
     """
-    cands: list[FaceGeometry] = []
-    for fg in faces:
-        _, rho = axis.axial_radial(fg.triangles.reshape(-1, 3))
-        # Protrudes past the airframe *and* is a fin surface (not a protruding edge,
-        # whose plane does not pass through the axis).
-        if float(rho.max()) > body_r_max * protrusion and is_fin_face(fg, axis):
-            cands.append(fg)
+    # Only faces whose bounding sphere reaches past the threshold can; the rest of the
+    # model (most of LE4 SD's 15 M triangles) is never read.
+    limit = body_r_max * protrusion
+    reach = [fg for fg, b in zip(faces, reach_bound(faces, axis)) if b > limit]
+    _, _, rho_max = face_extents(reach, axis)
+    # Protrudes past the airframe *and* is a fin surface (not a protruding edge,
+    # whose plane does not pass through the axis).
+    cands = [fg for fg, r in zip(reach, rho_max) if r > limit and is_fin_face(fg, axis)]
     if not cands:
         return []
-    areas = [_face_area(fg) for fg in cands]
+    areas = face_areas(cands)
     a_max = max(areas)
     return [
         (fg.occurrence_key, fg.face_id)
