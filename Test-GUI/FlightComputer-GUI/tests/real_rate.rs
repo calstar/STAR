@@ -11,7 +11,11 @@ struct S(Mutex<Vec<(Instant, [usize; 5])>>, Mutex<String>);
 impl Sink for S {
     fn emit(&self, event: &str, p: serde_json::Value) {
         if event == "view" {
-            *self.1.lock().unwrap() = format!("{} | state {:?} | live {:?} | role {:?}", p["link"]["text"], p["state"], p["live"]["error"], { let t = p.to_string(); t.find("RECEIVER").map(|_| "RECEIVER").or(t.find("TRANSMITTER").map(|_| "TRANSMITTER")) });
+            *self.1.lock().unwrap() =
+                format!("{} | state {:?} | live {:?} | role {:?}", p["link"]["text"], p["state"], p["live"]["error"], {
+                    let t = p.to_string();
+                    t.find("RECEIVER").map(|_| "RECEIVER").or(t.find("TRANSMITTER").map(|_| "TRANSMITTER"))
+                });
             return;
         }
         let mut n = [0; 5];
@@ -45,7 +49,15 @@ fn real_board_rate() {
         let got: Vec<_> = all.iter().filter(|x| x.0 >= t0).collect();
         let per = |i: usize| got.iter().map(|x| x.1[i]).sum::<usize>() as f64 / 3.0;
         let gap = got.windows(2).map(|w| w[1].0.duration_since(w[0].0).as_millis()).max().unwrap_or(0);
-        println!("{rate} Hz: batches/s {:.1}, worst gap {gap} ms, accel {:.0} gyro {:.0} highg {:.0} baro {:.0} gnss {:.0}", got.len() as f64 / 3.0, per(0), per(1), per(2), per(3), per(4));
+        println!(
+            "{rate} Hz: batches/s {:.1}, worst gap {gap} ms, accel {:.0} gyro {:.0} highg {:.0} baro {:.0} gnss {:.0}",
+            got.len() as f64 / 3.0,
+            per(0),
+            per(1),
+            per(2),
+            per(3),
+            per(4)
+        );
     }
     println!("{}", s.1.lock().unwrap());
 }

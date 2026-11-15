@@ -595,7 +595,11 @@ impl LogTest {
                 self.bad_blocks, self.blocks, self.lba, self.first_bad
             );
         }
-        let rate = if self.elapsed_ms > 0 { format!(", {:.0} kB/s write+read", 2.0 * bytes as f64 / self.elapsed_ms as f64) } else { String::new() };
+        let rate = if self.elapsed_ms > 0 {
+            format!(", {:.0} kB/s write+read", 2.0 * bytes as f64 / self.elapsed_ms as f64)
+        } else {
+            String::new()
+        };
         format!(
             "eMMC check passed: {} blocks ({} KB) written at LBA {} and read back intact in {} ms{rate}.",
             self.blocks,

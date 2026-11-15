@@ -485,7 +485,9 @@ impl Controller {
             | ConfigSave { .. }
             | ConfigSavedReadback { .. }
             | ConfigRevert => self.config.on_reply(&mut self.sh, purpose, res),
-            LogInfo { .. } | LogSessions { .. } | LogRead { .. } | LogAbort | LogWipe | LogTest | LogSelect => self.flights.on_reply(&mut self.sh, purpose, res),
+            LogInfo { .. } | LogSessions { .. } | LogRead { .. } | LogAbort | LogWipe | LogTest | LogSelect => {
+                self.flights.on_reply(&mut self.sh, purpose, res)
+            }
             Ground => self.ground.on_reply(&mut self.sh, res),
             SelfTest => self.on_self_test(res),
         }

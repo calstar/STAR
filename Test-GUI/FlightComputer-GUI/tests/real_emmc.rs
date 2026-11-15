@@ -34,7 +34,14 @@ fn real_board_emmc() {
     let port = std::env::var("FC_PORT").expect("FC_PORT");
     let dir = tempfile::tempdir().unwrap();
     let s = Arc::new(S::default());
-    let b = Backend::start(Options { sim_flash: dir.path().join("f"), flights_root: std::env::var("FC_OUT").map(Into::into).unwrap_or(dir.path().join("fl")), connect_sim: false }, s.clone());
+    let b = Backend::start(
+        Options {
+            sim_flash: dir.path().join("f"),
+            flights_root: std::env::var("FC_OUT").map(Into::into).unwrap_or(dir.path().join("fl")),
+            connect_sim: false,
+        },
+        s.clone(),
+    );
     std::thread::sleep(Duration::from_millis(1500));
     b.send(Command::SelectPort { port });
     b.send(Command::Connect);
@@ -50,11 +57,19 @@ fn real_board_emmc() {
     });
     println!("link: {}", v["link"]["text"]);
     println!("summary: {}", v["flights"]["summary"]);
-    for r in v["status"].to_string().split("},{") { if r.to_lowercase().contains("emmc") || r.contains("state") { println!("  {}", r.chars().take(200).collect::<String>()); } }
+    for r in v["status"].to_string().split("},{") {
+        if r.to_lowercase().contains("emmc") || r.contains("state") {
+            println!("  {}", r.chars().take(200).collect::<String>());
+        }
+    }
     b.send(Command::FlightCheckCard);
     let v = wait(&s, 30, |v| v["flights"]["card_check"].as_str().is_some_and(|t| !t.is_empty() && !t.contains("running")));
     println!("card check: {}", v["flights"]["card_check"]);
-    let v = wait(&s, 10, |v| v["flights"]["summary"].as_str().is_some_and(|t| t.starts_with(if std::env::var("FC_CARD").is_ok_and(|c| c == "1") { "SD NAND" } else { "eMMC" }) || t.starts_with("Could not")));
+    let v = wait(&s, 10, |v| {
+        v["flights"]["summary"].as_str().is_some_and(|t| {
+            t.starts_with(if std::env::var("FC_CARD").is_ok_and(|c| c == "1") { "SD NAND" } else { "eMMC" }) || t.starts_with("Could not")
+        })
+    });
     println!("list: {}", v["flights"]["summary"]);
     let entries = v["flights"]["entries"].as_array().cloned().unwrap_or_default();
     for e in &entries {
@@ -85,7 +100,11 @@ fn walk(d: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut out = vec![];
     for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
         let p = e.path();
-        if p.is_dir() { out.extend(walk(&p)) } else { out.push(p) }
+        if p.is_dir() {
+            out.extend(walk(&p))
+        } else {
+            out.push(p)
+        }
     }
     out
 }

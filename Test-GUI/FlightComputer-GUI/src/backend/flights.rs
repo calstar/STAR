@@ -409,26 +409,30 @@ impl FlightsState {
                     self.finish(sh, r);
                 }
             }
-            Purpose::LogTest => match res.and_then(|fr| {
-                if fr.ty == msg::LOG_TEST_REPLY {
-                    p::LogTest::unpack(&fr.payload)
-                } else {
-                    Err(describe_refusal(&fr))
-                }
-            }) {
-                Ok(t) => {
-                    let name = CARDS[self.card as usize];
-                    self.card_check = t.describe().replacen("eMMC", name, 1);
-                    if !t.passed() {
+            Purpose::LogTest => {
+                match res.and_then(
+                    |fr| {
+                        if fr.ty == msg::LOG_TEST_REPLY {
+                            p::LogTest::unpack(&fr.payload)
+                        } else {
+                            Err(describe_refusal(&fr))
+                        }
+                    },
+                ) {
+                    Ok(t) => {
+                        let name = CARDS[self.card as usize];
+                        self.card_check = t.describe().replacen("eMMC", name, 1);
+                        if !t.passed() {
+                            sh.warn(&format!("{name} check"), self.card_check.clone());
+                        }
+                    }
+                    Err(e) => {
+                        let name = CARDS[self.card as usize];
+                        self.card_check = format!("{name} check not run: {e}");
                         sh.warn(&format!("{name} check"), self.card_check.clone());
                     }
                 }
-                Err(e) => {
-                    let name = CARDS[self.card as usize];
-                    self.card_check = format!("{name} check not run: {e}");
-                    sh.warn(&format!("{name} check"), self.card_check.clone());
-                }
-            },
+            }
             Purpose::LogSelect => {
                 let r = res.and_then(|fr| p::Ack::unpack(&fr.payload));
                 if self.card != 0 && !r.as_ref().is_ok_and(|a| a.ok()) {
