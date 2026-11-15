@@ -101,8 +101,9 @@ export interface OrkInfo {
   mass: number
   cgFromNose: number
   motors: OrkMotorInfo[]
-  /** OpenRocket's own stored results, as the file carries them. */
-  simulations: { name: string; configId: string | null; summary: Record<string, number> }[]
+  /** OpenRocket's stored results. `status` is "uptodate" only when they belong to the
+   *  design in the file (anything else: some earlier version of it). */
+  simulations: { name: string; status: string | null; configId: string | null; summary: Record<string, number> }[]
 }
 
 export interface OrkImportResult {
@@ -441,12 +442,21 @@ export interface FlightDynamicsResult {
   burnoutDrag: number | null
   launchStable: boolean
   approximations: string[]
+  /** The drag model flown, its Cd(Mach) at the pad's air, and its terms at max speed
+   *  and at Mach 0.3 on the pad (null for the stub). */
+  dragModel: string
+  cdCurve: { mach: number[]; powerOff: number[]; powerOn: number[] } | null
+  cdBreakdown: Record<string, { mach: number; altitude: number; cd: number; terms: Record<string, number> }> | null
 }
 
 /** Launch conditions for the 6-DOF flight, on top of the geometry/motor request. */
 export interface FlightDynamicsRequest extends StabilityRequest {
   inclination?: number
   heading?: number
+  /** backend/onshape/aero/drag.py DRAG_MODELS; the backend defaults to 'buildup'. */
+  dragModel?: 'buildup' | 'openrocket-24.12' | 'stub'
+  /** The CAD's surface finish (OpenRocket finish name); an .ork brings its own. */
+  finish?: string
   /** The shared environment (set on the Environment tab): the site atmosphere the
    *  ascent flies in and the wind it climbs through — the same objects the recovery
    *  descent integrates, so both halves of the flight agree. Mirrors the recovery

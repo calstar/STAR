@@ -187,6 +187,61 @@ the same code on both sides (`backend/ork/compare.py`, `POST /api/compare`).
 imported rocket's mass, CG and CP to OpenRocket's own, in CI's `openrocket-check`
 job.
 
+**A stored OpenRocket result may not be this design's.** The importer keeps each
+simulation's `status`; OpenRocket writes `uptodate` only when the stored numbers
+belong to the design in the file. LE4 SD's said `notsimulated`, and its stored
+apogee time (15.7 s) is one no drag level can give that rocket -- re-run it in
+OpenRocket before using it as a reference.
+
+**An .ork's custom "damping ratio" expression reads high.** A common one is
+`Cdm/(2*sqrt(Il*Ccm))`, with `Cdm` from OpenRocket's *example* `DampingMoment`
+extension. That extension measures each component's arm from the nose tip
+(`(axialOffset - |CP|)^2`) instead of from the CG, and takes jet damping with the
+motor's mass *decrease* (negative) at the motor's CG rather than its nozzle. On
+LE4 SD that reads 0.31-0.33 coasting where the pitch-damping ratio is ~0.08. The
+formula itself is right; use the Flight Dynamics tab's damping, or C2 with the
+arms from the CG.
+
+## Drag
+
+The 6-DOF flies a named drag model (`backend/onshape/aero/drag.py`), chosen per
+design on the Flight Dynamics tab and recorded in the result:
+
+| model | what it is |
+|---|---|
+| `buildup` (default) | OpenRocket's component buildup with its long-rocket shortcuts replaced by handbook correlations (`drag_buildup.py`) |
+| `openrocket-24.12` | OpenRocket's own drag, formula for formula (`drag_openrocket.py`), to compare with what OpenRocket shows |
+| `stub` | the fixed Cd(Mach) curve the 6-DOF flew before, to reproduce an old result exactly |
+
+Both real models read the airframe the stability panel uses
+(`drag_geometry.from_core`): the body split into nose / tube / boattail with wetted
+areas off the profile, the fins' planform and section off the mesh, and anything
+standing proud of the tube (lugs, buttons, shrouds) off the CAD skin. A CAD model
+records no surface finish, so the design names one (OpenRocket's finish table,
+default smooth paint); an imported .ork uses its own per piece, its nose shape, fin
+sections and extra fin sets (`manifest["ork"]["drag"]`).
+
+What the buildup changes against OpenRocket, each a cited correlation (see the
+module docstring):
+
+- skin friction at each part's own Reynolds number (fins at their mean chord, not
+  the rocket's length);
+- roughness by Nikuradse's sand-grain regime (smooth below k+ = 5, fully rough above
+  70), not "fully rough whenever it is larger";
+- Hoerner's body and fin form factors;
+- Hoerner's subsonic base drag, which falls with the forebody's boundary layer --
+  on a long rocket about a quarter of OpenRocket's;
+- base drag only on the annulus outside the nozzle while the motor burns.
+
+On LE4 SD at max speed (Mach 0.47) the buildup gives Cd ~0.33, OpenRocket's model
+~0.40, the old stub 0.47. RocketPy evaluates drag as a function of Mach *and*
+Reynolds number, so each model is tabulated over both. `POST
+/api/models/{id}/drag` returns every model's Cd(Mach) and term breakdown side by
+side. Drag moves apogee and max-q; the stability outputs do not depend on it.
+`tests/test_drag.py` holds each term to hand calculation, and CI's
+`openrocket-check` job holds `openrocket-24.12` to OpenRocket's own
+`BarrowmanCalculator`, term by term.
+
 ## Designs, sharing and checkouts
 
 A **design** is the whole unified config -- the CAD/stability/ascent slice and

@@ -25,10 +25,37 @@ arm. See the module docstring.
 
 ---
 
-## 2. Airframe drag is a stub Cd(Mach) curve
+## 2. ~~Airframe drag is a stub Cd(Mach) curve~~ (subsonic buildup done)
 
-**Today.** RocketPy is a trajectory solver, not a drag predictor — it requires a
-supplied `power_off_drag` / `power_on_drag` as Cd(Mach). We currently feed a **stub
+**Was.** A fixed curve (Cd 0.45 subsonic, a transonic bump) for every rocket.
+
+**Now.** Named drag models built from the CAD airframe (README "Drag"): a component
+buildup by default -- OpenRocket's with its long-rocket shortcuts replaced by
+Hoerner / Schlichting correlations -- and OpenRocket 24.12's own model beside it,
+tabulated over Mach and Reynolds number, with a power-on curve. The stub stays
+selectable.
+
+**Left.**
+- **Calibration against flight.** Fit Cd from the coast-phase deceleration on an
+  altimeter trace (the recovery calculator's flight data, atmosphere and wind are
+  in). No flight data yet; this is what would make either model accurate rather
+  than plausible -- buildups disagree with real rockets by 10-20 %, from what none
+  of them model (surface defects, joints, fin misalignment, flying off the wind).
+- **Transonic and supersonic** terms are OpenRocket's (nose and fin wave drag,
+  base above Mach 1); fine for LE4 SD (Mach 0.47), approximate for a fast rocket.
+- **Angle-of-attack drag** is not modelled: zero-AoA Cd throughout.
+- **Nozzle exit** for the power-on base is taken as the motor case diameter; the
+  motor files carry no exit size.
+- **Handbook page numbers.** The correlations cite Hoerner's and Schlichting's
+  chapters; the exact pages have not been checked against the books.
+- **CAD protuberances** are read off the outer surface by a geometric rule
+  (`drag_geometry.detect_protuberances`); a design with many small features may
+  need a per-feature review in the UI.
+
+### Original notes
+
+**Today (was).** RocketPy is a trajectory solver, not a drag predictor — it requires a
+supplied `power_off_drag` / `power_on_drag` as Cd(Mach). We fed a **stub
 curve** (subsonic Cd0 ≈ 0.45 with a transonic bump), not a CAD-derived value.
 
 **Why it's a simplification.** Drag dominates apogee and max-Q, so those performance

@@ -132,6 +132,7 @@ def _ork_block(doc: OrkDocument, motor_db: MotorDB | None) -> dict:
         "cgFromNose": doc.cg,
         "motors": [_motor_block(m, doc.length, motor_db) for m in doc.motors],
         "simulations": doc.simulations,
+        "drag": doc.drag,
         "components": [
             {"id": c.id, "name": c.name, "type": c.tag, "x": c.x, "length": c.length,
              "mass": c.mass, "cg": c.cg, "massOverridden": c.mass_overridden, "depth": c.depth}

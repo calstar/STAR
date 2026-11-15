@@ -26,7 +26,7 @@ import sys as _sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 # physics/ (the recovery calculator's pure library) sits at the app root next to
 # backend/. Put the app root on sys.path so `import physics` resolves regardless
@@ -51,6 +51,9 @@ from physics.schema import Device, Site, WindInput  # noqa: E402
 from physics.site import FAR_ELEV_M  # noqa: E402
 
 from .onshape.aero.axis import Axis
+from .onshape.aero import drag as drag_models
+from .onshape.aero.drag import DEFAULT_MODEL as DEFAULT_DRAG_MODEL
+from .onshape.aero.drag_geometry import DEFAULT_FINISH, FINISHES, apply_ork_hints, from_core
 from .onshape.aero.fins import (
     count_fins,
     detect_fin_faces,
@@ -265,6 +268,10 @@ class MotorSelection(BaseModel):
     state: str = "launch"
 
 
+DragModelName = Literal[drag_models.DRAG_MODELS]  # type: ignore[valid-type]
+FinishName = Literal[tuple(FINISHES)]  # type: ignore[valid-type]
+
+
 class StabilityRequest(BaseModel):
     #: Approved outer airframe faces. Empty means "auto-detect them for me".
     outerFaces: list[FaceRef] = []
@@ -295,6 +302,16 @@ class FlightDynamicsRequest(StabilityRequest):
     #: Both optional -- absent wind is calm; absent site is the standard column at FAR.
     wind: WindInput | None = Field(default=None, discriminator="kind")
     site: Site | None = None
+    #: The drag model flown (``drag.DRAG_MODELS``) and, for a CAD model, its surface
+    #: finish (an OpenRocket finish name; an imported .ork brings its own).
+    dragModel: DragModelName = DEFAULT_DRAG_MODEL
+    finish: FinishName = DEFAULT_FINISH
+
+
+class DragRequest(StabilityRequest):
+    """The airframe selection plus the CAD's surface finish, for ``/drag``."""
+
+    finish: FinishName = DEFAULT_FINISH
 
 
 class OrkExportRequest(FlightDynamicsRequest):
@@ -759,6 +776,9 @@ def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
             heading=request.heading,
             wind_profile=wind_profile,
             atmosphere=atmosphere,
+            drag_model=request.dragModel,
+            finish=request.finish,
+            ork_drag=(manifest.get("ork") or {}).get("drag"),
         )
     except ModuleNotFoundError as exc:
         raise HTTPException(
@@ -818,6 +838,59 @@ def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
         "burnoutDrag": result.burnout_drag,
         "launchStable": result.launch_stable,
         "approximations": result.approximations,
+        "dragModel": result.drag_model,
+        "cdCurve": result.cd_curve,
+        "cdBreakdown": result.cd_breakdown,
+    }
+
+
+@app.post("/api/models/{model_id}/drag")
+def drag(model_id: str, request: DragRequest):
+    """Every drag model's Cd(Mach) and term breakdown for the airframe, side by side.
+
+    Evaluated in the standard atmosphere at the FAR pad -- no flight is run, so this is
+    the drag as a function of Mach at the pad's air, for comparing the models.
+    """
+    import math
+
+    from .onshape.aero.stability import aero_core
+
+    model_dir = _model_dir(model_id)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+    faces = [(f.key, f.faceId) for f in request.outerFaces] or detect_outer_surface(store).faces
+    fin_faces = [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
+    try:
+        core = aero_core(store, faces, None, fin_faces, request.nFins)
+        geom = apply_ork_hints(from_core(store, faces, core, finish=request.finish, fin_faces=fin_faces),
+                               (manifest.get("ork") or {}).get("drag"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    atm = Atmosphere(FAR_ELEV_M)
+    T, rho = float(atm.T(0.0)), float(atm.rho(0.0))
+    a = math.sqrt(1.4 * 287.05287 * T)
+    nu = 1.458e-6 * T**1.5 / (T + 110.4) / rho  # Sutherland
+    machs = [round(0.05 * i, 2) for i in range(0, 41)]
+    models = {}
+    for name in drag_models.DRAG_MODELS:
+        rows = [drag_models.breakdown(geom, name, m, max(m, 1e-3) * a / nu) for m in machs]
+        models[name] = {
+            "mach": machs,
+            "cd": [r.cd for r in rows],
+            "terms": {k: [r.terms.get(k, 0.0) for r in rows] for k in dict.fromkeys(t for r in rows for t in r.terms)},
+        }
+    return {
+        "default": drag_models.DEFAULT_MODEL,
+        "refArea": geom.ref_area,
+        "length": geom.length,
+        "notes": list(geom.notes),
+        "segments": [{"kind": sg.kind, "xFore": sg.x_fore, "xAft": sg.x_aft, "rFore": sg.r_fore,
+                      "rAft": sg.r_aft, "wetArea": sg.wet_area, "roughness": sg.roughness} for sg in geom.segments],
+        "fins": [{"name": f.name, "count": f.count, "area": f.area, "span": f.span, "mac": f.mac,
+                  "thickness": f.thickness, "section": f.section} for f in geom.fins],
+        "protuberances": [{"name": p.name, "kind": p.kind, "count": p.count, "height": p.height,
+                           "width": p.width, "length": p.length, "x": p.x} for p in geom.protuberances],
+        "models": models,
     }
 
 

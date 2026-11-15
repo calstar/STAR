@@ -205,3 +205,36 @@ def test_imported_ork_matches_openrocket(orkcheck, tmp_path):
     assert app.ref_diameter == pytest.approx(got["refLength"], rel=1e-6)
     assert abs(app.cp_from_nose - got["cp"]) < 5e-3
     assert app.cna == pytest.approx(got["cna"], rel=0.03)
+
+
+@pytest.mark.parametrize("mach", [0.1, 0.3, 0.6, 0.9, 1.2, 2.0])
+def test_openrocket_drag_port_matches_openrocket(orkcheck, tmp_path, mach):
+    """``drag_openrocket`` against BarrowmanCalculator itself, term by term, on the
+    sample .ork imported through the app (its mesh profile plus the file's own finish,
+    shape and fin section). The 2 % allows the meshed wetted area (64 facets round)
+    against OpenRocket's exact one; a transcription fault moves a term by more."""
+    from backend.onshape.aero import drag_openrocket
+    from backend.onshape.aero.drag_geometry import apply_ork_hints, from_core
+    from backend.onshape.aero.stability import aero_core
+    from backend.onshape.geometry_store import GeometryStore
+    from backend.ork.importer import import_ork
+    from ork_samples import sample_ork_xml
+
+    data = sample_ork_xml(with_motor=False).encode()
+    path = tmp_path / "sample.ork"
+    path.write_bytes(data)
+    (want,) = orkcheck(path, "--drag", str(mach))
+
+    manifest = import_ork(data, "sample.ork", tmp_path / "cache")
+    store = GeometryStore.load(tmp_path / "cache" / manifest["source"]["modelId"])
+    faces = detect_outer_surface(store).faces
+    core = aero_core(store, faces)
+    geom = apply_ork_hints(from_core(store, faces, core), manifest["ork"]["drag"])
+    assert geom.ref_area == pytest.approx(want["refArea"], rel=1e-6)
+    got = drag_openrocket.drag(geom, mach, want["velocity"] / want["nu"]).terms
+    friction = got["friction: body"] + got["friction: fins"]
+    base = got["base"]
+    pressure = sum(v for k, v in got.items() if not k.startswith("friction") and k != "base")
+    assert friction == pytest.approx(want["friction"], rel=0.02)
+    assert pressure == pytest.approx(want["pressure"], rel=0.02, abs=2e-4)
+    assert base == pytest.approx(want["base"], rel=0.02)

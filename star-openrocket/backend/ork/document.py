@@ -123,6 +123,10 @@ class OrkDocument:
     #: OpenRocket's own stored simulation summaries, as written in the file.
     simulations: list[dict]
     warnings: list[str]
+    #: What OpenRocket's drag model reads and a mesh cannot carry: per airframe piece
+    #: its finish and shape, per fin set its outline, section and finish, and the rail
+    #: buttons and launch lugs (``drag_geometry.apply_ork_hints``).
+    drag: dict = field(default_factory=dict)
 
     @property
     def mass(self) -> float:
@@ -278,6 +282,7 @@ class _Walker:
         #: (x0, x1, inner radius function) of each placed airframe piece, for "auto"
         #: radii on whatever sits inside it.
         self._airframe: list[tuple[float, float, callable]] = []
+        self.drag: dict = {"pieces": [], "fins": [], "buttons": []}
 
     def warn(self, message: str) -> None:
         if message not in self.warnings:
@@ -409,6 +414,10 @@ class _Walker:
                     revs.append(_tube(cap_at, s_thk, s_rad - s_thk, 0.0))
 
         mass, cg = self.weigh_revolutions(name, revs, material)
+        piece = {"name": name, "type": e.tag, "x": x0, "length": length, "finish": _finish(e)}
+        if e.tag != "bodytube":
+            piece["shape"], piece["param"] = shape, param
+        self.drag["pieces"].append(piece)
         self._airframe.append((x0, x0 + length, inner))
         comp = self.add(e, x0, length, mass, cg, material, revs, depth=0, parent=None)
         # A body tube can be the motor mount itself (LE4 SD's T5 is).
@@ -471,6 +480,10 @@ class _Walker:
                 r_in = r_out - (_num(e, "thickness", 0.0) or 0.0)
             if tag == "launchlug":
                 self.warn(f"{name}: launch lug drawn on the axis (its mass is what counts).")
+                self.drag["buttons"].append({
+                    "name": name, "kind": "lug", "count": count, "x": x, "height": 2 * r_out,
+                    "width": 2 * r_out, "frontalArea": math.pi * (r_out**2 - r_in**2),
+                })
             revs = [_tube(x + k * (length + separation), length, r_out, r_in) for k in range(count)]
             if count > 1:
                 self.warn(f"{name}: {count} instances, each weighed and drawn {separation * 1000:.1f} mm apart.")
@@ -507,6 +520,14 @@ class _Walker:
             if e.findtext("overridemass") is None:
                 self.warn(f"{name}: rail button weighed as a solid cylinder.")
             self.add(e, x, 0.0, mass, x, material, [], parent.depth + 1, parent.id)
+            # RailButtonCalc's reference area: outer silhouette less the notch.
+            d_out = 2 * r
+            d_in = _num(e, "innerdiameter", d_out) or d_out
+            notch = (d_out - d_in) * (_num(e, "innerheight", 0.0) or 0.0)
+            self.drag["buttons"].append({
+                "name": name, "kind": "button", "count": count, "x": x, "height": height,
+                "width": d_out, "frontalArea": height * d_out - notch,
+            })
             return None
 
         self.warn(f"{name}: <{tag}> is not supported; skipped.")
@@ -598,6 +619,12 @@ class _Walker:
             moment += fillet * (x + root_len / 2)
         cg = moment / mass if mass > 0 else x + cx
         plates = FinPlates(points, thickness, count, root_r, x, angle)
+        root = points[points[:, 1] <= 1e-9, 0]
+        self.drag["fins"].append({
+            "name": name, "count": count, "x": x, "points": points.tolist(), "thickness": thickness,
+            "section": (e.findtext("crosssection") or "square").strip().lower(), "finish": _finish(e),
+            "rootChord": float(root.max() - root.min()) if len(root) > 1 else length,
+        })
         self.add(e, x, length, mass, cg, material, [plates], parent.depth + 1, parent.id)
         return None
 
@@ -709,11 +736,19 @@ def _simulations(root: ET.Element) -> list[dict]:
         out.append(
             {
                 "name": (sim.findtext("name") or "").strip(),
+                # OpenRocket writes "uptodate" only when the stored results match the
+                # design in the file; anything else is a result of some other design.
+                "status": sim.get("status"),
                 "configId": (conditions.findtext("configid") if conditions is not None else None),
                 "summary": {k: float(v) for k, v in (data.attrib.items() if data is not None else []) if _is_float(v)},
             }
         )
     return out
+
+
+def _finish(e: ET.Element) -> str | None:
+    f = e.findtext("finish")
+    return f.strip().lower() if f else None
 
 
 def _is_float(text: str) -> bool:
@@ -742,4 +777,5 @@ def parse_ork(data: bytes) -> OrkDocument:
         motors=walker.motors,
         simulations=_simulations(root),
         warnings=walker.warnings,
+        drag=walker.drag,
     )

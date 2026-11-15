@@ -345,3 +345,54 @@ def test_compare_flags_a_real_difference(api, tmp_path):
     assert rows["fins.rootChord"]["differs"]
     assert rows["fins.rootChord"]["delta"] == pytest.approx(0.05, abs=2e-3)
     assert not rows["airframe.length"]["differs"]
+
+
+# -- what the drag models read from the file ----------------------------------------
+
+
+def test_drag_inputs_are_read_from_the_file():
+    """Finish, shape and fin section: the inputs OpenRocket's drag needs and a mesh
+    cannot carry, kept in manifest["ork"]["drag"] for ``drag_geometry.apply_ork_hints``."""
+    doc = parse_ork(DATA)
+    pieces = {p["name"]: p for p in doc.drag["pieces"]}
+    assert pieces["Nose"]["finish"] == "smooth"
+    assert (pieces["Nose"]["shape"], pieces["Nose"]["param"]) == ("ogive", 1.0)
+    assert pieces["Tail"]["shape"] == "conical"
+    assert pieces["Tail"]["finish"] is None  # the file names none: OpenRocket's default applies
+    (fins,) = doc.drag["fins"]
+    assert (fins["count"], fins["section"], fins["thickness"]) == (3, "square", 0.004)
+    assert fins["rootChord"] == pytest.approx(0.2)
+    assert doc.drag["buttons"] == []
+
+
+def test_a_stored_simulation_says_whether_it_is_this_designs():
+    """OpenRocket marks a stored result "uptodate" only when it belongs to the design
+    in the file; LE4 SD's said "notsimulated" with a time to apogee no drag can give."""
+    xml = sample_ork_xml().replace(
+        "</rocket>",
+        """</rocket>
+  <simulations>
+    <simulation status="outdated"><name>Old</name><conditions><configid>cfg-1</configid></conditions>
+      <flightdata maxaltitude="1456.8" timetoapogee="15.7"/></simulation>
+  </simulations>""",
+    )
+    (sim,) = parse_ork(xml.encode()).simulations
+    assert sim["status"] == "outdated" and sim["summary"]["maxaltitude"] == pytest.approx(1456.8)
+
+
+def test_drag_endpoint_compares_the_models_on_an_import(api):
+    model_id = api.post("/api/import/ork", content=DATA).json()["modelId"]
+    r = api.post(f"/api/models/{model_id}/drag", json={})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["default"] == "buildup"
+    assert [s["kind"] for s in body["segments"]] == ["nose", "tube", "boattail"]
+    (fins,) = body["fins"]
+    assert (fins["count"], fins["section"]) == (3, "square")  # the file's section, not a guess
+    at = body["models"]["openrocket-24.12"]["mach"].index(0.3)
+    cd = {k: m["cd"][at] for k, m in body["models"].items()}
+    assert cd["stub"] == pytest.approx(0.465)
+    assert 0.2 < cd["buildup"] < cd["openrocket-24.12"] < 0.8
+    terms = body["models"]["openrocket-24.12"]["terms"]
+    assert sum(v[at] for v in terms.values()) == pytest.approx(cd["openrocket-24.12"])
+    assert api.post(f"/api/models/{model_id}/drag", json={"finish": "sandpaper"}).status_code == 422

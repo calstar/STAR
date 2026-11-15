@@ -16,9 +16,14 @@ app's own pipeline, so the 6-DOF and the static margin describe one rocket:
   LE4 SD at 160 kg m^2 against a real 74.
 * **Jet damping** uses the real nozzle: the motor is placed by its aft end.
 
+* **Drag** is a named model (``drag.DRAG_MODELS``) built from the same airframe
+  (``drag_geometry.from_core``): by default the component buildup, tabulated over
+  Mach x Reynolds, with its power-on curve while the motor burns. ``stub`` flies the
+  fixed curve this module used before. Drag moves apogee and max-q, not the
+  stability outputs.
+
 Scope is **ascent only** (``terminate_on_apogee=True``); descent is the recovery
-calculator's. Drag is still a stub Cd(Mach) curve (FUTURE_IMPROVEMENTS.md #2): it
-moves apogee and max-q, not the stability outputs.
+calculator's.
 """
 
 from __future__ import annotations
@@ -32,7 +37,9 @@ import numpy as np
 
 from ...motors.motor import Motor
 from ..geometry_store import GeometryStore
+from . import drag as drag_models
 from .axis import Axis
+from .drag_geometry import DEFAULT_FINISH, apply_ork_hints, from_core
 from .stability import (
     MotorPlacement,
     aero_components,
@@ -61,8 +68,6 @@ _MAX_FLIGHT_STEP = 0.5     # s; keeps the adaptive solver from grinding
 _MIN_APOGEE_TIME = 0.1     # s; below this, no apogee was found at all
 
 _N_SAMPLES = 300
-#: Stub drag Cd(Mach): subsonic ~0.45 with a transonic bump. See FUTURE_IMPROVEMENTS.md.
-_STUB_DRAG = [[0.0, 0.45], [0.6, 0.48], [0.9, 0.55], [1.0, 0.62], [1.2, 0.58], [2.0, 0.48], [5.0, 0.40]]
 
 
 @dataclass
@@ -135,6 +140,11 @@ class FlightDynamicsResult:
     #: Dry pitch inertia the flight used (kg m^2) and where it came from.
     inertia_transverse: float | None = None
     inertia_source: str | None = None
+    #: The drag model flown, its Cd(Mach) at the launch site's air (power off / on),
+    #: and its term-by-term breakdown at max speed and at Mach 0.3 on the pad.
+    drag_model: str = "stub"
+    cd_curve: dict | None = None
+    cd_breakdown: dict | None = None
 
 
 def _generic_motor(motor: Motor):
@@ -240,7 +250,9 @@ def run_flight(
     elevation: float = FAR_ELEV_M,
     latitude: float = FAR_LAT,
     longitude: float = FAR_LON,
-    drag_curve: list | None = None,
+    drag_tables: "drag_models.DragTables | None" = None,
+    drag_notes: tuple[str, ...] = (),
+    drag_breakdown_fn: Callable[[float, float], dict] | None = None,
     our_margin_fn: Callable[[float, float], float | None] | None = None,
 ) -> FlightDynamicsResult:
     """Assemble RocketPy Environment + Rocket + Motor from ``geom`` and run to apogee.
@@ -252,6 +264,9 @@ def run_flight(
 
     ``our_margin_fn(t, mach)`` supplies our-CP static margin per sample for the overlay;
     when None the ``stability_margin_ours`` series is all None.
+
+    ``drag_tables`` (``drag.drag_tables``) is the drag flown; None is the ``stub``
+    curve. ``drag_breakdown_fn(mach, v_over_nu)`` reports the model's terms.
     """
     from rocketpy import Environment, Flight, Rocket
 
@@ -281,14 +296,14 @@ def run_flight(
         ]
     env.set_atmospheric_model(**atmos_model)
 
-    drag = drag_curve if drag_curve is not None else _STUB_DRAG
+    power_off_drag, power_on_drag = drag_models.rocketpy_drag(drag_tables)
     inertia = geom.inertia or _approx_inertia(geom.mass_without_motor, geom.body_length, geom.radius)
     rocket = Rocket(
         radius=geom.radius,
         mass=geom.mass_without_motor,
         inertia=inertia,
-        power_off_drag=drag,
-        power_on_drag=drag,
+        power_off_drag=power_off_drag,
+        power_on_drag=power_on_drag,
         center_of_mass_without_motor=geom.cg_from_nose,
         coordinate_system_orientation="nose_to_tail",
     )
@@ -330,7 +345,7 @@ def run_flight(
     )
 
     return _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
-                   float(motor.burn_time), inertia)
+                   float(motor.burn_time), inertia, drag_tables, drag_notes, drag_breakdown_fn)
 
 
 def _safe(fn, t: float, default: float | None = 0.0) -> float | None:
@@ -341,7 +356,7 @@ def _safe(fn, t: float, default: float | None = 0.0) -> float | None:
 
 
 def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
-            burnout_time, inertia) -> FlightDynamicsResult:
+            burnout_time, inertia, drag_tables=None, drag_notes=(), drag_breakdown_fn=None) -> FlightDynamicsResult:
     t_end = float(flight.apogee_time)
     # A flight that hit `max_time` without an apogee reports one at (or very
     # near) zero. Sampling that gives `linspace(0, 0, N)` -- a full result
@@ -477,12 +492,42 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
             *(["inertia: uniform-rod estimate (the parts carry no inertia tensors)"]
               if geom.inertia is None else
               [f"inertia: {geom.inertia_source}"] if geom.inertia_source != "parts" else []),
-            "airframe drag: stub Cd(Mach) curve",
+            *(["airframe drag: stub Cd(Mach) curve"] if drag_tables is None else
+              [f"airframe drag: {drag_tables.model} model, zero angle of attack", *drag_notes]),
             "fin CP held at its Mach 0.3 position (CNa follows Mach)",
         ],
         inertia_transverse=float(inertia[0]),
         inertia_source="uniform rod" if geom.inertia is None else geom.inertia_source,
+        drag_model="stub" if drag_tables is None else drag_tables.model,
+        cd_curve=drag_models.curve_at(drag_tables, _v_nu(env, elevation, 1.0) * _sound(env, elevation) * 2 * geom.radius),
+        cd_breakdown=_breakdowns(drag_breakdown_fn, env, flight, elevation),
     )
+
+
+def _sound(env, h: float) -> float:
+    return float(env.speed_of_sound(h))
+
+
+def _v_nu(env, h: float, speed: float) -> float:
+    """V / nu (1/m) at altitude ``h`` (m MSL)."""
+    return speed * float(env.density(h)) / float(env.dynamic_viscosity(h))
+
+
+def _breakdowns(fn, env, flight, elevation: float) -> dict | None:
+    """The drag model's terms at max speed and at Mach 0.3 on the pad."""
+    if fn is None:
+        return None
+    out = {}
+    try:
+        t = float(flight.max_speed_time)
+        h = float(flight.z(t))
+        v = float(flight.max_speed)
+        out["maxSpeed"] = {"mach": v / _sound(env, h), "altitude": h - elevation, **fn(v / _sound(env, h), _v_nu(env, h, v))}
+    except Exception:
+        pass
+    v03 = 0.3 * _sound(env, elevation)
+    out["mach03"] = {"mach": 0.3, "altitude": 0.0, **fn(0.3, _v_nu(env, elevation, v03))}
+    return out
 
 
 def simulate_flight_dynamics(
@@ -504,8 +549,18 @@ def simulate_flight_dynamics(
     elevation: float = FAR_ELEV_M,
     latitude: float = FAR_LAT,
     longitude: float = FAR_LON,
+    drag_model: str = drag_models.DEFAULT_MODEL,
+    finish: str = DEFAULT_FINISH,
+    ork_drag: dict | None = None,
 ) -> FlightDynamicsResult:
-    """Extract the rocket from CAD + Barrowman, then run the RocketPy ascent."""
+    """Extract the rocket from CAD + Barrowman, then run the RocketPy ascent.
+
+    ``drag_model`` picks the drag (``drag.DRAG_MODELS``); ``finish`` is the CAD's surface
+    finish (an OpenRocket finish name) and ``ork_drag`` an imported .ork's own drag
+    inputs (``manifest["ork"]["drag"]``), which replace what the mesh cannot say.
+    """
+    if drag_model not in drag_models.DRAG_MODELS:
+        raise ValueError(f"unknown drag model {drag_model!r}; one of {', '.join(drag_models.DRAG_MODELS)}")
     core = aero_core(store, outer_faces, axis, fin_faces, n_fins, include_fins=True)
     profile = core.profile
     x_fore = profile.x_fore
@@ -539,6 +594,20 @@ def simulate_flight_dynamics(
         inertia_source=source,
     )
 
+    tables, notes, breakdown_fn = None, (), None
+    if drag_model != "stub":
+        dgeom = apply_ork_hints(from_core(store, outer_faces, core, finish=finish, fin_faces=fin_faces), ork_drag)
+        dgeom = dgeom.with_nozzle(motor.diameter / 2)
+        tables = drag_models.drag_tables(dgeom, drag_model)
+        notes = dgeom.notes
+        if drag_model == "buildup":
+            notes = (*notes, "power-on base drag on the annulus outside the motor case "
+                     "(nozzle exit taken as the case diameter)")
+
+        def breakdown_fn(mach: float, v_nu: float, g=dgeom) -> dict:
+            off = drag_models.breakdown(g, drag_model, mach, v_nu)
+            return {"cd": off.cd, "terms": off.terms}
+
     burn = motor.burn_time
 
     def our_margin(t: float, mach: float) -> float | None:
@@ -563,5 +632,8 @@ def simulate_flight_dynamics(
         elevation=elevation,
         latitude=latitude,
         longitude=longitude,
+        drag_tables=tables,
+        drag_notes=tuple(notes),
+        drag_breakdown_fn=breakdown_fn,
         our_margin_fn=our_margin,
     )

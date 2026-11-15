@@ -239,6 +239,9 @@ class AeroCore:
     #: at any Mach and re-merged without re-tessellating -- see ``cp_axial_at_mach``.
     body_cna: float = 0.0
     body_cp_axial: float = 0.0
+    #: The fin faces the fin set was read from (given or detected), so a later pass
+    #: over the same fins -- the drag geometry's section -- need not detect them again.
+    fin_faces: list | None = None
 
 
 def aero_core(
@@ -302,7 +305,7 @@ def aero_core(
     cp_axial, cna_total = merge_cp(contributions)
     return AeroCore(
         profile, axis, cp_axial, cna_total, fin_count, fin_cna, fin_pf,
-        body_cna=aero.cna, body_cp_axial=aero.cp,
+        body_cna=aero.cna, body_cp_axial=aero.cp, fin_faces=fin_faces if include_fins else None,
     )
 
 

@@ -51,7 +51,7 @@ def test_each_case(case):
     _close(got["flightDynamics"], exp["flightDynamics"])
     _close(got["ork"], {**exp["flightDynamics"], "devices": exp["ork_devices"]})
     _close(got["recovery"], exp["recovery"])
-    stability = {k: v for k, v in exp["flightDynamics"].items() if k not in ("inclination", "heading", "site", "wind", "railLength")}
+    stability = {k: v for k, v in exp["flightDynamics"].items() if k not in ("inclination", "heading", "dragModel", "finish", "site", "wind", "railLength")}
     _close(got["stability"], stability)
 
 

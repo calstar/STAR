@@ -90,7 +90,7 @@ def test_burnout_mass_and_drag():
     the motor's 0.2 kg spent casing. Drag: q * Cd(M) * pi r^2 by hand, reading
     q and Mach off the result's own series at burnout and Cd off the stub
     curve the flight was run with."""
-    from backend.onshape.aero.rocketpy_flight import _STUB_DRAG
+    from backend.onshape.aero.drag import STUB_CURVE as _STUB_DRAG
 
     res = _run()
     assert res.burnout_mass == pytest.approx(4.2, abs=0.01)
@@ -250,3 +250,43 @@ def test_injected_surfaces_fly_exactly_like_rocketpys_own():
     assert np.allclose([b.w2(t) for t in ts], [a.w2(t) for t in ts], atol=0.02)
     assert np.allclose([b.angle_of_attack(t) for t in ts], [a.angle_of_attack(t) for t in ts], atol=0.3)
     del nose, fins
+
+
+def test_flight_flies_the_named_drag_model(tmp_path):
+    """The 6-DOF flies the drag model it names: ``stub`` is the old curve exactly, the
+    default buildup is the airframe's own (lower here, so the rocket goes higher), and
+    an unknown name is refused rather than flown as something else."""
+    from backend.onshape.aero import drag as drag_models
+    from backend.onshape.aero.outer_surface import detect_outer_surface
+    from backend.onshape.aero.rocketpy_flight import simulate_flight_dynamics
+    from backend.onshape.aero.stability import MotorPlacement
+    from backend.onshape.geometry_store import GeometryStore
+    from backend.ork.importer import import_ork
+    from ork_samples import sample_ork_xml
+
+    manifest = import_ork(sample_ork_xml().encode(), "sample.ork", tmp_path)
+    store = GeometryStore.load(tmp_path / manifest["source"]["modelId"])
+    motor = _motor()
+    placement = MotorPlacement(mass=motor.launch_mass, length=motor.length, cmx=motor.launch_cgx,
+                               diameter=motor.diameter, aft_offset=-0.06)
+    faces = detect_outer_surface(store).faces
+
+    def fly(model):
+        return simulate_flight_dynamics(
+            store, manifest["parts"], faces, motor, placement, rail_length=3.0, inclination=88.0,
+            elevation=_ELEV, drag_model=model, ork_drag=manifest["ork"]["drag"],
+        )
+
+    stub, built = fly("stub"), fly("buildup")
+    assert stub.drag_model == "stub" and "airframe drag: stub Cd(Mach) curve" in stub.approximations
+    assert stub.cd_breakdown is None
+    assert built.drag_model == "buildup"
+    assert any(a.startswith("airframe drag: buildup") for a in built.approximations)
+    cd03 = built.cd_breakdown["mach03"]["cd"]
+    assert 0.2 < cd03 < 0.465  # below the stub's 0.465 at Mach 0.3
+    assert built.apogee > stub.apogee
+    curve = built.cd_curve
+    assert curve["powerOn"][6] < curve["powerOff"][6]  # the plume fills the base
+    assert drag_models.DEFAULT_MODEL == "buildup"
+    with pytest.raises(ValueError):
+        fly("rasaero")

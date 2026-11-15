@@ -5,8 +5,10 @@
  * The 6-DOF flies the stability panel's own airframe -- its Barrowman components, its
  * parts' masses and rigid-body inertia, its motor placement (backend/onshape/aero/
  * rocketpy_flight.py) -- so RocketPy's margin and ours are the same curve, and the
- * dynamics (angle of attack, pitch rate, damping) come from that airframe. Drag is still
- * a stub (see FUTURE_IMPROVEMENTS.md): apogee and max-Q are flagged approximate.
+ * dynamics (angle of attack, pitch rate, damping) come from that airframe. Drag is a
+ * named model built from that airframe too (backend/onshape/aero/drag.py): the
+ * component buildup by default, OpenRocket's own model to compare, or the old stub.
+ * The backend computes every Cd shown here; this tab only renders it.
  */
 
 import { btn, useDisabled } from '@stardesign-ui'
@@ -29,7 +31,7 @@ import {
 } from 'recharts'
 
 import { computeFlightDynamics } from '../../api/client'
-import type { FlightParams } from '../../types/config'
+import { FINISHES, type FlightParams } from '../../types/config'
 import type { FaceRef, FlightDynamicsResult, FlightDynamicsSample, MotorSelection } from '../../types'
 import { flightDynamicsRequest } from '../../lib/designRequests'
 import { useUnits } from '../../lib/units/unitsContext'
@@ -213,7 +215,7 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
   // Rail angle, heading and the CP model are design fields. Running the sim and
   // the compare-series toggles only change what you are looking at.
   const readOnly = useDisabled()
-  const { inclination, heading, cpModel } = flight
+  const { inclination, heading, cpModel, dragModel, finish } = flight
   const { val, lab, dec, q } = useUnits()
 
   // Display helpers: convert SI → the chosen unit for the convertible series,
@@ -244,7 +246,7 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
       const res = await computeFlightDynamics(
         modelId,
         flightDynamicsRequest(
-          { outerFaces, finFaces, finCount: nFins, motor: motorSel, railLength, flight: { inclination, heading } },
+          { outerFaces, finFaces, finCount: nFins, motor: motorSel, railLength, flight: { inclination, heading, dragModel, finish } },
           recovery,
           overrides,
         ),
@@ -305,6 +307,22 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
             <option value="rocketpy">RocketPy native</option>
           </select>
         </label>
+        <label className="flex flex-col text-xs text-[var(--color-text-secondary)]">
+          Drag model
+          <select value={dragModel} disabled={readOnly} onChange={(e) => onFlightChange({ dragModel: e.target.value as FlightParams['dragModel'] })} className={SELECT}>
+            <option value="buildup">Component buildup</option>
+            <option value="openrocket-24.12">OpenRocket 24.12</option>
+            <option value="stub">Stub curve (old)</option>
+          </select>
+        </label>
+        <label className="flex flex-col text-xs text-[var(--color-text-secondary)]" title="The CAD records no surface finish; an imported .ork uses its own per piece.">
+          Surface finish
+          <select value={finish} disabled={readOnly || dragModel === 'stub'} onChange={(e) => onFlightChange({ finish: e.target.value as FlightParams['finish'] })} className={SELECT}>
+            {FINISHES.map(([k, label]) => (
+              <option key={k} value={k}>{label}</option>
+            ))}
+          </select>
+        </label>
         <button
           onClick={run}
           disabled={busy || !modelId || !motorSel}
@@ -332,7 +350,7 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
 
           {/* Summary tiles */}
           <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
-            <Tile label="Apogee" value={q(result.apogee, 'altitude')} sub={`at ${result.apogeeTime.toFixed(1)} s · approx drag`} />
+            <Tile label="Apogee" value={q(result.apogee, 'altitude')} sub={`at ${result.apogeeTime.toFixed(1)} s · ${result.dragModel === 'stub' ? 'stub drag' : `${result.dragModel} drag`}`} />
             <Tile label="Max velocity" value={q(result.maxSpeed, 'speed')} sub={`Mach ${result.maxMach.toFixed(2)}`} />
             <Tile label="Max-Q" value={q(result.maxDynamicPressure, 'pressure')} sub={`at ${result.maxDynamicPressureTime.toFixed(1)} s`} />
             <Tile label="Max accel" value={`${(result.maxAcceleration / G).toFixed(1)} g`} />
@@ -434,6 +452,8 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
             </div>
           </div>
 
+          {result.cdCurve && <DragPanel result={result} />}
+
           <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 px-3 py-2 text-2xs text-[var(--color-text-muted)]">
             {result.inertiaTransverse != null && (
               <>
@@ -447,6 +467,68 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
         </>
       )}
       </div>
+    </div>
+  )
+}
+
+const SELECT = 'mt-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-tertiary)] px-2 py-1 text-sm text-[var(--color-text-primary)] disabled:cursor-not-allowed disabled:border-[var(--color-border)] disabled:text-[var(--color-text-muted)]'
+
+/** The flown drag model: Cd(Mach) at the pad's air, motor off and burning, and its
+ *  term-by-term breakdown at max speed and at Mach 0.3. All numbers are the backend's. */
+function DragPanel({ result }: { result: FlightDynamicsResult }) {
+  const curve = result.cdCurve!
+  const data = curve.mach.map((m, i) => ({ m, off: curve.powerOff[i], on: curve.powerOn[i] }))
+  const cols = Object.entries(result.cdBreakdown ?? {})
+  const terms = [...new Set(cols.flatMap(([, b]) => Object.keys(b.terms)))]
+  const label: Record<string, string> = { maxSpeed: 'At max speed', mach03: 'Mach 0.3, pad' }
+  return (
+    <div className="mt-3 grid items-start gap-3 lg:grid-cols-2">
+      <Panel heightClass="h-[340px]" title={`Drag coefficient — ${result.dragModel}`} hint="Zero-AoA Cd on the reference area, at the pad's air. Power on: the motor's exhaust fills the base it sits in.">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 24, right: 16, bottom: 24, left: 16 }}>
+            <CartesianGrid stroke={GRID.stroke} strokeDasharray={GRID.strokeDasharray} />
+            <XAxis dataKey="m" type="number" domain={[0, 'dataMax']} stroke={AXIS.stroke} tick={{ fontSize: TICK_FONT, fill: AXIS.stroke }} tickLine={false} tickFormatter={(v: number) => v.toFixed(1)} label={axisLabelX('Mach')} />
+            <YAxis stroke={FD.mach} tick={{ fontSize: TICK_FONT, fill: FD.mach }} tickLine={false} width={56} domain={[0, 'auto']} tickFormatter={(v: number) => v.toFixed(2)} label={axisLabelY('Cd')} />
+            <Tooltip {...tip} formatter={(v: number, n: string) => [v.toFixed(3), n]} labelFormatter={(m: number) => `Mach ${m.toFixed(2)}`} />
+            <Legend verticalAlign="bottom" wrapperStyle={{ fontSize: TICK_FONT, paddingTop: 8 }} />
+            {result.maxMach > 0 && <ReferenceLine x={result.maxMach} stroke={REFERENCE} strokeDasharray="4 3" label={{ value: 'max Mach', fill: REFERENCE, fontSize: TICK_FONT, position: 'top' }} />}
+            <Line type="monotone" dataKey="off" name="motor off" stroke={FD.mach} dot={false} strokeWidth={1.75} isAnimationActive={false} />
+            <Line type="monotone" dataKey="on" name="motor burning" stroke={FD.aoa} dot={false} strokeWidth={1.5} strokeDasharray="5 3" isAnimationActive={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </Panel>
+      {cols.length > 0 && (
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 p-3">
+          <div className="mb-1 text-xs font-medium text-[var(--color-text-primary)]">Where the drag comes from</div>
+          <div className="mb-2 text-2xs text-[var(--color-text-muted)]">Each term's share of Cd, motor off.</div>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[var(--color-text-secondary)]">
+                <th className="py-1 text-left font-normal">Term</th>
+                {cols.map(([k, b]) => (
+                  <th key={k} className="py-1 text-right font-normal">{label[k] ?? k}<div className="text-2xs text-[var(--color-text-muted)]">Mach {b.mach.toFixed(2)}</div></th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="text-[var(--color-text-primary)]">
+              {terms.map((t) => (
+                <tr key={t} className="border-t border-[var(--color-border)]/50">
+                  <td className="py-1">{t}</td>
+                  {cols.map(([k, b]) => (
+                    <td key={k} className="py-1 text-right tabular-nums">{(b.terms[t] ?? 0).toFixed(3)}</td>
+                  ))}
+                </tr>
+              ))}
+              <tr className="border-t border-[var(--color-border)] font-semibold">
+                <td className="py-1">Total Cd</td>
+                {cols.map(([k, b]) => (
+                  <td key={k} className="py-1 text-right tabular-nums">{b.cd.toFixed(3)}</td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   )
 }
