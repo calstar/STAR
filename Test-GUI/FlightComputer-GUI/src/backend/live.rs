@@ -16,8 +16,11 @@ use super::{Purpose, Shared};
 use crate::protocol::{self as p, msg, Frame};
 use crate::records::{self as rec, Decoded, P0_PA};
 
-pub const RATES: [u16; 8] = [0, 1, 2, 5, 10, 25, 50, 100];
-pub const DEFAULT_RATE: u16 = 10;
+/// Up to the board's MAX_RATE_HZ (200, usb_link.c). A pass is at most ~120
+/// bytes (four SAMPLE frames), so 200 Hz is ~24 kB/s: nothing for USB.
+pub const RATES: [u16; 9] = [0, 1, 2, 5, 10, 25, 50, 100, 200];
+/// 50 Hz: smooth charts; the baro (OSR 4096) and GNSS (10 Hz) are slower anyway.
+pub const DEFAULT_RATE: u16 = 50;
 /// Seconds of history the window keeps on screen.
 pub const WINDOW_S: f64 = 30.0;
 
@@ -131,6 +134,8 @@ pub struct LiveState {
     readings_dirty: bool,
     session: u32,
     last_sample: Option<Instant>,
+    /// From arm to STOP, for the CSV export.
+    pub recorder: super::recording::Recorder,
 }
 
 impl LiveState {
@@ -147,6 +152,7 @@ impl LiveState {
             readings_dirty: true,
             session: 0,
             last_sample: None,
+            recorder: Default::default(),
         }
     }
 
@@ -210,6 +216,7 @@ impl LiveState {
         let conf = sh.active_config.unwrap_or_else(crate::config::defaults);
         let Some(d) = rec::decode(t, data, &conf, P0_PA) else { return };
         self.latest.insert(t, d);
+        self.recorder.on_sample(d);
         self.last_sample = Some(Instant::now());
         let now = self.t0.elapsed().as_secs_f64();
         let (batch, last_t, broken) = (&mut self.batch, &mut self.last_t, &mut self.broken);

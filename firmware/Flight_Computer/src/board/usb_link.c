@@ -4,13 +4,16 @@
 #include <string.h>
 
 #include "FreeRTOS.h"
+#include "board_chips.h"
 #include "board_config.h"
+#include "board_dfu.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
 #include "gnss_task.h"
 #include "gui_map.h"
 #include "main.h"
 #include "mode.h"
+#include "nand_stm32.h"
 #include "radio_task.h"
 #include "records.h"
 #include "sensors_task.h"
@@ -18,15 +21,21 @@
 #include "usb_frame.h"
 #include "usbd_cdc_if.h"
 
-enum { HELLO = 0x01, GET_STATUS = 0x02, SET_STREAM = 0x03 };
+enum { HELLO = 0x01, GET_STATUS = 0x02, SET_STREAM = 0x03, SELF_TEST = 0x04 };
 enum { CONFIG_GET = 0x10, CONFIG_SET, CONFIG_SAVE, CONFIG_REVERT };
 enum { RADIO_ARM = 0x40, RADIO_UNARM = 0x41, RADIO_RX = 0xB2 };
-enum { LOG_INFO = 0x20, LOG_SESSIONS, LOG_READ, LOG_ABORT };
+enum { LOG_INFO = 0x20, LOG_SESSIONS, LOG_READ, LOG_ABORT, LOG_WIPE, LOG_TEST };
+enum { LOG_SELECT = 0x26 }; /* u8 card: 0 eMMC, 1 SD NAND */
 enum { LOG_INFO_REPLY = 0xA0, SESSIONS = 0xA1, LOG_BLOCK = 0xA2 };
+enum { LOG_TEST_REPLY = 0xA3 };
+#define WIPE_MAGIC 0x45504957UL /* "WIPE" */
+enum { ENTER_DFU = 0x31 }; /* u32 DFU_MAGIC -> ACK, then the ROM bootloader */
+#define DFU_MAGIC 0x21554644UL /* "DFU!" */
 #define SESSIONS_PER_FRAME 24U
 enum { ACK = 0x7F, INFO = 0x81, VALUE = 0x83, CONFIG = 0x90, SAMPLE = 0xB0 };
 enum { OK = 0, BAD_FRAME = 1, BAD_VALUE = 3, WRONG_STATE = 4 };
 enum { BUSY = 5, FLASH_ERROR = 6, STORAGE_ERROR = 7, NOT_IMPLEMENTED = 8 };
+enum { BAD_MAGIC = 9 };
 enum { RADIO_ERROR = 10 };
 #define MAX_RATE_HZ 200U
 
@@ -169,6 +178,27 @@ static uint32_t get_u32(const uint8_t* p) {
 
 /* The flight log, read back (PROTOCOL.md section 6). Not while recording:
  * the reads run in the writer task, between its chunk writes. */
+/* The two flight logs, same API: LOG_SELECT picks the one the other LOG_*
+ * commands use (eMMC until told otherwise). */
+typedef struct {
+    emmc_log_t* (*log)(void);
+    emmc_status_t (*open)(void);
+    emmc_status_t (*sessions)(uint32_t start, emmc_log_session_t* out,
+                              uint32_t max, uint32_t* n, uint32_t* total);
+    emmc_status_t (*read)(uint32_t k, uint8_t out[EMMC_BLOCK_SIZE]);
+    emmc_status_t (*wipe)(void);
+    emmc_status_t (*check)(uint32_t seed, emmc_log_check_t* out,
+                           uint32_t* elapsed_ms);
+} store_t;
+
+static const store_t stores[2] = {
+    {emmc_stm32_log, emmc_stm32_open, emmc_stm32_sessions, emmc_stm32_read,
+     emmc_stm32_wipe, emmc_stm32_check},
+    {nand_stm32_log, nand_stm32_open, nand_stm32_sessions, nand_stm32_read,
+     nand_stm32_wipe, nand_stm32_check},
+};
+static const store_t* store = &stores[0];
+
 static void handle_log(uint8_t type, uint8_t seq, const uint8_t* p,
                        size_t len) {
     if (type == LOG_ABORT) {
@@ -187,17 +217,62 @@ static void handle_log(uint8_t type, uint8_t seq, const uint8_t* p,
         ack(type, seq, BUSY, 0);
         return;
     }
-    if (emmc_stm32_open() != EMMC_OK) {
+    if (type == LOG_SELECT) {
+        if (len != 1) {
+            ack(type, seq, BAD_FRAME, 0);
+        } else if (p[0] > 1U) {
+            ack(type, seq, BAD_VALUE, p[0]);
+        } else {
+            store = &stores[p[0]];
+            ack(type, seq, OK, 0);
+        }
+        return;
+    }
+    if (type == LOG_WIPE) {
+        emmc_status_t st;
+        if (len != 4 || get_u32(p) != WIPE_MAGIC) {
+            ack(type, seq, len != 4 ? BAD_FRAME : BAD_MAGIC, 0);
+        } else if ((st = store->wipe()) != EMMC_OK) {
+            ack(type, seq, STORAGE_ERROR, st);
+        } else {
+            ack(type, seq, OK, 0);
+        }
+        return;
+    }
+    if (type == LOG_TEST) {
+        /* u8 status (emmc_status_t), u32 lba, u16 blocks, u16 bad_blocks,
+         * u16 first_bad (0xFFFF: none), u32 elapsed_ms */
+        emmc_log_check_t c;
+        uint32_t ms = 0;
+        if (len != 4) {
+            ack(type, seq, BAD_FRAME, 0);
+            return;
+        }
+        emmc_status_t st = store->check(get_u32(p), &c, &ms);
+        uint8_t r[15] = {(uint8_t)st};
+        put_u32(r + 1, c.lba);
+        r[5] = (uint8_t)c.blocks;
+        r[6] = (uint8_t)(c.blocks >> 8);
+        r[7] = (uint8_t)c.bad_blocks;
+        r[8] = (uint8_t)(c.bad_blocks >> 8);
+        uint16_t fb = c.first_bad > 0xFFFFU ? 0xFFFFU : (uint16_t)c.first_bad;
+        r[9] = (uint8_t)fb;
+        r[10] = (uint8_t)(fb >> 8);
+        put_u32(r + 11, ms);
+        (void)send(LOG_TEST_REPLY, seq, r, sizeof r, false);
+        return;
+    }
+    if (store->open() != EMMC_OK) {
         ack(type, seq, STORAGE_ERROR, 0);
         return;
     }
-    const emmc_log_t* log = emmc_stm32_log();
+    const emmc_log_t* log = store->log();
     static emmc_log_session_t list[SESSIONS_PER_FRAME];
     uint32_t n = 0, total = 0;
     if (type == LOG_INFO) {
         /* disk u8, epoch, data start, capacity, blocks used, sessions u32 */
         uint8_t r[21] = {(uint8_t)log->disk};
-        if (emmc_stm32_sessions(0, list, 0, &n, &total) != EMMC_OK) {
+        if (store->sessions(0, list, 0, &n, &total) != EMMC_OK) {
             ack(type, seq, STORAGE_ERROR, 0);
             return;
         }
@@ -213,7 +288,7 @@ static void handle_log(uint8_t type, uint8_t seq, const uint8_t* p,
             return;
         }
         uint16_t start = (uint16_t)(p[0] | p[1] << 8);
-        if (emmc_stm32_sessions(start, list, SESSIONS_PER_FRAME, &n, &total) !=
+        if (store->sessions(start, list, SESSIONS_PER_FRAME, &n, &total) !=
             EMMC_OK) {
             ack(type, seq, STORAGE_ERROR, 0);
             return;
@@ -259,7 +334,7 @@ static void read_step(void) {
         return;
     }
     put_u32(p, reading.next);
-    if (emmc_stm32_read(reading.next, p + 4) != EMMC_OK) {
+    if (store->read(reading.next, p + 4) != EMMC_OK) {
         reading.active = false;
         ack(LOG_READ, reading.seq, STORAGE_ERROR, 0);
         return;
@@ -281,6 +356,31 @@ static void handle(const uint8_t* f, size_t len) {
             send_values();
             ack(type, seq, OK, 0);
             break;
+        case ENTER_DFU:
+            /* Firmware update over USB (board_dfu.h). Never in flight: the
+             * board stops everything, sensors and logs included. */
+            if (len != 4) {
+                ack(type, seq, BAD_FRAME, 0);
+            } else if (get_u32(p) != DFU_MAGIC) {
+                ack(type, seq, BAD_MAGIC, 0);
+            } else if (!configurable()) {
+                ack(type, seq, WRONG_STATE, app_state());
+            } else {
+                ack(type, seq, OK, 0);
+                osDelay(50U); /* let the ACK leave */
+                board_dfu_enter();
+            }
+            break;
+        case SELF_TEST:
+            /* IDLE only: in SELF_TEST the boot check owns the chips, and
+             * from ARMED on the sensor tasks do. */
+            if (app_state() != FLIGHT_IDLE || !board_chips_recheck()) {
+                ack(type, seq, WRONG_STATE, app_state());
+            } else {
+                send_values();
+                ack(type, seq, OK, 0);
+            }
+            break;
         case SET_STREAM: {
             uint16_t rate = len == 3 ? (uint16_t)(p[0] | p[1] << 8) : 0;
             if (len != 3) {
@@ -290,6 +390,7 @@ static void handle(const uint8_t* f, size_t len) {
             } else {
                 mask = p[2];
                 rate_hz = rate;
+                app_set_usb_live(rate > 0);
                 ack(type, seq, OK, 0);
             }
             break;
@@ -304,6 +405,9 @@ static void handle(const uint8_t* f, size_t len) {
         case LOG_SESSIONS:
         case LOG_READ:
         case LOG_ABORT:
+        case LOG_WIPE:
+        case LOG_TEST:
+        case LOG_SELECT:
             handle_log(type, seq, p, len);
             break;
         case RADIO_ARM:
@@ -339,29 +443,58 @@ static void feed(uint8_t c) {
     in_overflow = false;
 }
 
-/* Sent only when the sensor has produced a new one since the last. */
+/* SAMPLE frames for one pass, sent in a single CDC transfer. Frames are
+ * 0x00-delimited, so the host reads them out of one transfer as it would out
+ * of several. One frame per transfer lost all but the first: the next one
+ * found the endpoint still busy and was dropped (may_drop). */
+static uint8_t samples_tx[4U * USB_FRAME_WIRE_MAX];
+static uint16_t samples_len;
+static uint32_t samples_seen[4], samples_pending[4];
+static uint8_t samples_bits;
+
+/* Queued only when the sensor has produced a new one since the last sent. */
 static void sample(uint8_t bit, uint8_t type, uint32_t count, const void* rec,
                    size_t size) {
-    static uint32_t seen[4];
     uint8_t p[1 + sizeof(rec_gnss_t)];
-    if (!(mask & (1U << bit)) || count == seen[bit] || size >= sizeof p) {
+    if (!(mask & (1U << bit)) || count == samples_seen[bit] ||
+        size >= sizeof p) {
         return;
     }
-    seen[bit] = count;
     p[0] = type;
     memcpy(p + 1, rec, size);
-    (void)send(SAMPLE, 0, p, (uint16_t)(size + 1U), true);
+    size_t n = usb_frame_encode(SAMPLE, 0, p, (uint16_t)(size + 1U),
+                                samples_tx + samples_len);
+    if (n > 0) {
+        samples_len = (uint16_t)(samples_len + n);
+        samples_pending[bit] = count;
+        samples_bits |= (uint8_t)(1U << bit);
+    }
 }
 
 static void send_samples(void) {
     static sensors_core_t s;
+    if (!usb_tx_ready()) {
+        return; /* busy (a LOG_BLOCK, a reply): the next pass sends the latest
+                 */
+    }
     sensors_task_snapshot(&s);
     const gnss_core_t* g = gnss_task_core();
+    samples_len = 0;
+    samples_bits = 0;
     sample(0, REC_IMU, s.imu.samples, &s.imu_latest, sizeof s.imu_latest);
     sample(1, REC_HIGHG, s.highg.samples, &s.highg_latest,
            sizeof s.highg_latest);
     sample(2, REC_BARO, s.baro.samples, &s.baro_latest, sizeof s.baro_latest);
     sample(3, REC_GNSS, g->fixes, &g->latest, sizeof g->latest);
+    if (samples_len == 0 ||
+        CDC_Transmit_HS(samples_tx, samples_len) != USBD_OK) {
+        return;
+    }
+    for (int i = 0; i < 4; ++i) {
+        if (samples_bits & (1U << i)) {
+            samples_seen[i] = samples_pending[i];
+        }
+    }
 }
 
 void usb_link_rx(const uint8_t* bytes, uint32_t len) {
@@ -417,6 +550,9 @@ void usb_link_run(void) {
             feed(b[i]);
         }
         if (!usb_terminal_open()) {
+            if (rate_hz) {
+                app_set_usb_live(false);
+            }
             rate_hz = 0; /* the next program to open the port asks again */
             reading.active = false;
             continue;

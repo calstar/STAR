@@ -26,6 +26,12 @@ void sensors_task_set_active(bool on);
 /* Snapshot of the latest samples and per-sensor counters (any task). */
 void sensors_task_snapshot(sensors_core_t* out);
 
+/* Hold the sensor buses for a chip check (board_chips_check). On resume a
+ * running sensors task starts its chips over: the check may have left them
+ * in any mode. No-ops before the task starts. */
+void sensors_task_pause(void);
+void sensors_task_resume(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -302,6 +302,8 @@ static struct {
     uint32_t *n, *total;
     emmc_log_session_t* out;
     uint8_t* block;
+    uint32_t seed, elapsed_ms;
+    emmc_log_check_t check;
 } req;
 
 static void do_open(void* ctx) {
@@ -321,6 +323,18 @@ static void do_read(void* ctx) {
     if (req.st == EMMC_OK) {
         memcpy(req.block, read_buf, EMMC_BLOCK_SIZE);
     }
+}
+
+static void do_wipe(void* ctx) {
+    (void)ctx;
+    req.st = emmc_log_wipe(&flight_log);
+}
+
+static void do_check(void* ctx) {
+    (void)ctx;
+    uint32_t t0 = osKernelGetTickCount();
+    req.st = emmc_log_check(&flight_log, req.seed, &req.check);
+    req.elapsed_ms = osKernelGetTickCount() - t0;
 }
 
 static emmc_status_t run(void (*fn)(void* ctx)) {
@@ -346,6 +360,20 @@ emmc_status_t emmc_stm32_read(uint32_t k, uint8_t out[EMMC_BLOCK_SIZE]) {
     req.k = k;
     req.block = out;
     return run(do_read);
+}
+
+emmc_status_t emmc_stm32_wipe(void) {
+    return run(do_wipe);
+}
+
+emmc_status_t emmc_stm32_check(uint32_t seed, emmc_log_check_t* out,
+                               uint32_t* elapsed_ms) {
+    req.seed = seed;
+    req.elapsed_ms = 0;
+    emmc_status_t st = run(do_check);
+    *out = req.check;
+    *elapsed_ms = req.elapsed_ms;
+    return st;
 }
 
 void emmc_stm32_writer_task(void* argument) {

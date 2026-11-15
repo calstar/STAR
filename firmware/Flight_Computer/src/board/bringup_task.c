@@ -5,10 +5,13 @@
 #include "app.h"
 #include "board.h"
 #include "board_bringup.h"
+#include "board_chips.h"
 #include "boot_report.h"
 #include "cmsis_os2.h"
+#include "led_show.h"
 #include "main.h"
 #include "mode.h"
+#include "radio_task.h"
 #include "self_test.h"
 #include "self_test_devices.h"
 
@@ -52,6 +55,23 @@ static const self_test_config_t config = {
 static void led(GPIO_TypeDef* port, uint16_t pin, bool on) {
     /* LEDs are active low: 3V3 -> resistor -> LED -> pin. */
     HAL_GPIO_WritePin(port, pin, on ? GPIO_PIN_RESET : GPIO_PIN_SET);
+}
+
+static volatile bool idle_awake;
+
+void bringup_leds_note_awake(bool on) {
+    idle_awake = on;
+}
+
+void bringup_leds_refresh(void) {
+    if (!g_bringup_report.finished) {
+        return;
+    }
+    led_lamps_t lamps =
+        led_show(app_state(), g_bringup_report.report.verdict,
+                 radio_task_arm_pending(), board_now_ms(), idle_awake);
+    led(LED1_GPIO_Port, LED1_Pin, lamps.yellow);
+    led(LED2_GPIO_Port, LED2_Pin, lamps.green);
 }
 
 static void bringup_task(void* argument) {
@@ -99,22 +119,14 @@ static void bringup_task(void* argument) {
     g_bringup_report.finished = true;
 
     /* Chips are out of reset and checked: start the application tasks. */
+    board_chips_init();
     g_bringup_report.app_started = app_start();
 
-    /* LED1: 1 Hz alive. LED2: off READY, blinking WARN, solid FAIL. In
-     * Idle the board sleeps: LED1 is the Idle loop's (one flash per
-     * heartbeat) and LED2 only shows FAIL, so no LED burns through Stop. */
-    boot_verdict_t verdict = g_bringup_report.report.verdict;
-    for (bool on = true;; on = !on) {
-        if (app_state() == FLIGHT_IDLE) {
-            led(LED2_GPIO_Port, LED2_Pin, verdict == BOOT_FAIL);
-            osDelay(1000);
-            continue;
-        }
-        led(LED1_GPIO_Port, LED1_Pin, on);
-        led(LED2_GPIO_Port, LED2_Pin,
-            verdict == BOOT_FAIL || (verdict == BOOT_WARN && on));
-        osDelay(on ? 100 : 900);
+    /* 50 ms tracks the 80 ms armed blink. In Idle Stop this task freezes;
+     * the Idle task refreshes once on the way into sleep. */
+    for (;;) {
+        bringup_leds_refresh();
+        osDelay(50);
     }
 }
 

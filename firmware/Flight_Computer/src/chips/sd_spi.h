@@ -15,6 +15,14 @@ extern "C" {
 #endif
 
 #define SD_CMD0_GO_IDLE 0U
+#define SD_CMD9_SEND_CSD 9U
+#define SD_CMD12_STOP_TRANSMISSION 12U
+#define SD_CMD13_SEND_STATUS 13U
+#define SD_CMD16_SET_BLOCKLEN 16U
+#define SD_CMD17_READ_SINGLE_BLOCK 17U
+#define SD_CMD18_READ_MULTIPLE_BLOCK 18U
+#define SD_CMD24_WRITE_BLOCK 24U
+#define SD_CMD25_WRITE_MULTIPLE_BLOCK 25U
 #define SD_CMD8_SEND_IF_COND 8U
 #define SD_CMD10_SEND_CID 10U
 #define SD_CMD55_APP_CMD 55U
@@ -26,8 +34,10 @@ extern "C" {
 
 #define SD_R1_IDLE 0x01U
 #define SD_R1_ILLEGAL_COMMAND 0x04U
-#define SD_DATA_TOKEN 0xFEU
-#define SD_OCR_CCS 0x40000000U /* card capacity status: SDHC/SDXC */
+#define SD_DATA_TOKEN 0xFEU        /* single-block write, every read block */
+#define SD_MULTI_WRITE_TOKEN 0xFCU /* each block of CMD25 */
+#define SD_STOP_TRAN_TOKEN 0xFDU   /* ends CMD25 */
+#define SD_OCR_CCS 0x40000000U     /* card capacity status: SDHC/SDXC */
 
 /* CRC7 (x^7 + x^3 + 1) over len bytes, as used by commands and the CID. */
 uint8_t sd_crc7(const uint8_t* data, uint8_t len);
@@ -46,6 +56,20 @@ bool sd_r7_ok(const uint8_t r7[4]);
 /* CID register (16 bytes): byte 15 must be CRC7(bytes 0..14) << 1 | 1, and
  * the contents must not be uniform 0xFF/0x00 (a dead bus). */
 bool sd_cid_ok(const uint8_t cid[16]);
+
+/* CRC16-CCITT (x^16 + x^12 + x^5 + 1, init 0), as on SD data blocks. */
+uint16_t sd_crc16(const uint8_t* data, uint32_t len);
+
+/* Data response token after each written block: xxx0 sss1, sss = 010
+ * accepted, 101 CRC error, 110 write error. */
+static inline bool sd_data_accepted(uint8_t token) {
+    return (token & 0x1FU) == 0x05U;
+}
+
+/* CSD (16 bytes) to 512-byte blocks: version 2.0 (SDHC: (C_SIZE + 1) x
+ * 1024) or 1.0 (C_SIZE, C_SIZE_MULT, READ_BL_LEN). 0 for an unknown
+ * structure. */
+uint32_t sd_csd_blocks(const uint8_t csd[16]);
 
 #ifdef __cplusplus
 }

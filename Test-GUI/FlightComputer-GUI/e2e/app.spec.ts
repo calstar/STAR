@@ -21,7 +21,7 @@ const tab = (page: Page, name: string) => page.getByRole("tab", { name }).click(
 test("status and live", async ({ page }) => {
   await connect(page);
   await expect(page.locator(".rows dt", { hasText: /^State$/ }).locator("+ dd")).toHaveText("IDLE");
-  await expect(page.locator(".selftest li", { hasText: /^Imu/ })).toContainText("PASS");
+  await expect(page.locator(".selftest li", { hasText: /^IMU/ })).toContainText("PASS");
 
   await tab(page, "Live");
   const accel = page.getByTestId("readings").locator(".reading", { hasText: "Accel (IMU)" });

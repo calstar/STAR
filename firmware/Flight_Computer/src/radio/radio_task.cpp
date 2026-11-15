@@ -14,6 +14,8 @@
 #include "sx1262.h"
 #include "sx1262_setup.h"
 
+static volatile bool arm_pending_flag;
+
 namespace {
 
 using namespace radio_link;
@@ -248,6 +250,7 @@ void radio_task(void*) {
         status.frames_dropped = link.frames_dropped();
         status.radio_errors = link.radio_errors();
         status.crc_errors = receiver.crc_errors();
+        arm_pending_flag = link.arm_pending();
         give();
         if (action == ArmAction::Arm) {
             status.arms++;
@@ -399,6 +402,10 @@ void radio_task_start_continuous_rx(void) {
     if (configured)
         setup.start_rx_continuous();
     give();
+}
+
+bool radio_task_arm_pending(void) {
+    return arm_pending_flag;
 }
 
 void radio_task_last_rx(radio_rx_t* out) {

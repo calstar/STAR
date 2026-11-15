@@ -85,6 +85,7 @@ pub mod msg {
     pub const HELLO: u8 = 0x01; // -> INFO
     pub const GET_STATUS: u8 = 0x02; // -> every VALUE row, then ACK
     pub const SET_STREAM: u8 = 0x03; // u16 rate_hz, u8 mask -> ACK
+    pub const SELF_TEST: u8 = 0x04; // IDLE: re-check the chips -> every VALUE row, then ACK
     pub const CONFIG_GET: u8 = 0x10; // u8 slot -> CONFIG
     pub const CONFIG_SET: u8 = 0x11; // blob -> ACK (RAM, not saved)
     pub const CONFIG_SAVE: u8 = 0x12; // -> ACK (RAM config to internal flash)
@@ -94,6 +95,8 @@ pub mod msg {
     pub const LOG_READ: u8 = 0x22; // u32 first, u32 count -> LOG_BLOCK x count, then ACK
     pub const LOG_ABORT: u8 = 0x23; // -> ACK (ends a LOG_READ early)
     pub const LOG_WIPE: u8 = 0x24; // u32 WIPE_MAGIC -> ACK
+    pub const LOG_TEST: u8 = 0x25; // u32 seed -> LOG_TEST_REPLY (card write/read-back check)
+    pub const LOG_SELECT: u8 = 0x26; // u8 card (0 eMMC, 1 SD NAND) -> ACK; the LOG_* commands after it use that card
     pub const REBOOT: u8 = 0x30; // u32 REBOOT_MAGIC -> ACK, then the board resets
 
     // board -> host
@@ -104,6 +107,7 @@ pub mod msg {
     pub const LOG_INFO_REPLY: u8 = 0xA0;
     pub const SESSIONS: u8 = 0xA1;
     pub const LOG_BLOCK: u8 = 0xA2; // u32 index, 512 raw bytes
+    pub const LOG_TEST_REPLY: u8 = 0xA3; // LogTest
     pub const SAMPLE: u8 = 0xB0; // u8 record type, record bytes (records.h)
     pub const TEXT: u8 = 0xB1; // UTF-8 debug line
     pub const RADIO_RX: u8 = 0xB2; // receiver: one radio frame heard (radio.rs)
@@ -540,6 +544,68 @@ impl LogInfo {
     }
 }
 
+/// LOG_TEST_REPLY: the board wrote one 16 KB chunk of a seeded pattern to the
+/// unused gap just below the log (never a flight or the superblock), read it
+/// back and compared (`emmc_log_check` in emmc_log.c).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LogTest {
+    /// emmc_status_t: 0 OK, 1 I/O error, 2 timeout, 3 not ready (recording,
+    /// card fault, chunks queued), 4 bad parameter.
+    pub status: u8,
+    pub lba: u32,
+    pub blocks: u16,
+    pub bad_blocks: u16,
+    /// Index of the first bad block, 0xFFFF if none.
+    pub first_bad: u16,
+    pub elapsed_ms: u32,
+}
+
+impl LogTest {
+    pub const SIZE: usize = 15;
+    pub fn pack(&self) -> Vec<u8> {
+        let mut v = vec![self.status];
+        v.extend_from_slice(&self.lba.to_le_bytes());
+        for x in [self.blocks, self.bad_blocks, self.first_bad] {
+            v.extend_from_slice(&x.to_le_bytes());
+        }
+        v.extend_from_slice(&self.elapsed_ms.to_le_bytes());
+        v
+    }
+    pub fn unpack(b: &[u8]) -> Result<Self, String> {
+        if b.len() != Self::SIZE {
+            return Err(format!("LOG_TEST_REPLY: {} bytes, expected {}", b.len(), Self::SIZE));
+        }
+        let mut r = Rd::new(b);
+        Ok(Self { status: r.u8()?, lba: r.u32()?, blocks: r.u16()?, bad_blocks: r.u16()?, first_bad: r.u16()?, elapsed_ms: r.u32()? })
+    }
+    pub fn passed(&self) -> bool {
+        self.status == 0 && self.bad_blocks == 0 && self.blocks > 0
+    }
+    /// One line for the user.
+    pub fn describe(&self) -> String {
+        const WHY: [&str; 5] = ["OK", "I/O error", "timeout", "not ready", "bad parameter"];
+        let bytes = self.blocks as u32 * 512;
+        if self.status != 0 {
+            let why = WHY.get(self.status as usize).copied().unwrap_or("unknown error");
+            return format!("eMMC check FAILED: the card reported {why} (status {}) writing/reading LBA {}.", self.status, self.lba);
+        }
+        if self.bad_blocks != 0 {
+            return format!(
+                "eMMC check FAILED: {} of {} blocks at LBA {} read back different from what was written (first: block {}).",
+                self.bad_blocks, self.blocks, self.lba, self.first_bad
+            );
+        }
+        let rate = if self.elapsed_ms > 0 { format!(", {:.0} kB/s write+read", 2.0 * bytes as f64 / self.elapsed_ms as f64) } else { String::new() };
+        format!(
+            "eMMC check passed: {} blocks ({} KB) written at LBA {} and read back intact in {} ms{rate}.",
+            self.blocks,
+            bytes / 1024,
+            self.lba,
+            self.elapsed_ms
+        )
+    }
+}
+
 /// One recorded flight (Arm to Un-arm or power-off): one row of the file list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionEntry {
@@ -584,6 +650,22 @@ pub fn unpack_sessions(b: &[u8]) -> Result<(u16, Vec<SessionEntry>), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn log_test_reply_layout() {
+        // Byte layout as usb_link.c builds it: u8 status, u32 lba, u16 blocks,
+        // u16 bad, u16 first_bad, u32 elapsed_ms.
+        let raw = [0u8, 0xE0, 0x1F, 0, 0, 32, 0, 0, 0, 0xFF, 0xFF, 7, 0, 0, 0];
+        let t = LogTest::unpack(&raw).unwrap();
+        assert_eq!(t, LogTest { status: 0, lba: 8160, blocks: 32, bad_blocks: 0, first_bad: 0xFFFF, elapsed_ms: 7 });
+        assert!(t.passed() && t.describe().contains("passed"));
+        assert_eq!(t.pack(), raw);
+        let bad = LogTest { bad_blocks: 1, first_bad: 5, ..t };
+        assert!(!bad.passed() && bad.describe().contains("first: block 5"));
+        let io = LogTest { status: 1, ..t };
+        assert!(!io.passed() && io.describe().contains("I/O error"));
+        assert!(LogTest::unpack(&raw[..14]).is_err());
+    }
 
     #[test]
     fn crc16_check_value() {

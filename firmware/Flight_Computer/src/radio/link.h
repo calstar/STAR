@@ -27,6 +27,11 @@ public:
      */
     ArmAction poll(uint32_t now_ms);
 
+    /** True after a valid first ARM, until the confirm frame or the window. */
+    bool arm_pending() const {
+        return gate_.pending();
+    }
+
     uint32_t frames_ok() const {
         return frames_ok_;
     }  // valid frames

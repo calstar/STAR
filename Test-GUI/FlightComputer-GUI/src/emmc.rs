@@ -188,8 +188,10 @@ pub fn decode_blocks<'a>(
     out
 }
 
-/// One CSV per sensor plus events.csv and session.txt. Returns the files written.
-pub fn export_csv(s: &Session, dir: &Path, p0_pa: f64) -> io::Result<Vec<PathBuf>> {
+/// One CSV per sensor plus events.csv and session.txt. Every row ends with a
+/// `source` column naming the card it was read from (`emmc` or `sdnand`).
+/// Returns the files written.
+pub fn export_csv(s: &Session, dir: &Path, p0_pa: f64, source: &str) -> io::Result<Vec<PathBuf>> {
     fs::create_dir_all(dir)?;
     let conf = s.config.unwrap_or_else(cfg::defaults);
     let mut written = Vec::new();
@@ -197,19 +199,19 @@ pub fn export_csv(s: &Session, dir: &Path, p0_pa: f64) -> io::Result<Vec<PathBuf
         let Some(rows) = s.records.get(&t).filter(|r| !r.is_empty()) else { continue };
         let path = dir.join(format!("{}.csv", rec::name(t)));
         let mut w = io::BufWriter::new(fs::File::create(&path)?);
-        writeln!(w, "t_ms,{}", rec::columns(t).join(","))?;
+        writeln!(w, "t_ms,{},source", rec::columns(t).join(","))?;
         for (t_ms, d) in rows {
             if let Some(dec) = rec::decode(t, d, &conf, p0_pa) {
-                writeln!(w, "{t_ms},{}", dec.csv().join(","))?;
+                writeln!(w, "{t_ms},{},{source}", dec.csv().join(","))?;
             }
         }
         w.flush()?;
         written.push(path);
     }
     let path = dir.join("events.csv");
-    let mut text = String::from("t_ms,event\n");
+    let mut text = String::from("t_ms,event,source\n");
     for (t, e) in &s.events {
-        let _ = writeln!(text, "{t},{}", csv_quote(e));
+        let _ = writeln!(text, "{t},{},{source}", csv_quote(e));
     }
     fs::write(&path, text)?;
     written.push(path);

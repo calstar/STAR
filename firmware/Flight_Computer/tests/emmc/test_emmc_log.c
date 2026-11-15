@@ -36,6 +36,8 @@ typedef struct {
     bool powered_off;   /* after a torn write, everything fails */
     int lock_depth;
     unsigned locks;
+    uint32_t
+        flip_lba; /* nonzero: reads of this LBA come back with a bit flipped */
 } disk_t;
 
 static void disk_new(disk_t* d, uint32_t capacity) {
@@ -77,6 +79,9 @@ static emmc_status_t f_read(void* ctx, uint32_t lba, void* buf, uint32_t count,
         return EMMC_ERR_IO;
     }
     memcpy(buf, d->blocks + (size_t)lba * BS, (size_t)count * BS);
+    if (d->flip_lba >= lba && d->flip_lba - lba < count && d->flip_lba) {
+        ((uint8_t*)buf)[(size_t)(d->flip_lba - lba) * BS + 100] ^= 0x10;
+    }
     return EMMC_OK;
 }
 
@@ -626,12 +631,161 @@ static void test_read_back(void) {
     free(d.blocks);
 }
 
+/* A torn write's hole inside the log: the session list must still start
+ * each session at its own first block. Session 2's chunk tears (blocks
+ * 0-2 and 9-12 land), the next power-up writes session 3 after it. A
+ * binary search that read the hole as "session 0" put blocks 32-40 in
+ * session 1, so a download of session 2 lost its first blocks. */
+static void test_sessions_across_hole(void) {
+    disk_t d;
+    emmc_log_t log;
+    disk_new(&d, DATA_START + 32 * 16);
+    log_new(&log, &d);
+    uint8_t x = 1;
+    CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 10));
+    emmc_log_flush(&log);
+    drain(&log, 0);
+    CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 20));
+    drain(&log, 0); /* session 1: blocks 0-31, 32-63 (SESSION_END) */
+    CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 100));
+    CHECK(emmc_log_append(&log, 0x11, 150, &x, 1));
+    emmc_log_flush(&log);
+    d.torn_armed = true;
+    d.torn_mask = 0x7u | (0xFu << 9);
+    CHECK(emmc_log_service(&log, 0) == EMMC_ERR_IO);
+
+    disk_power_cycle(&d);
+    log_new(&log, &d);
+    CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 0));
+    CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 50));
+    drain(&log, 0);
+    CHECK(log.head == DATA_START + 64 + 13 + 32);
+
+    disk_power_cycle(&d);
+    log_new(&log, &d);
+    CHECK(emmc_log_open(&log) == EMMC_OK);
+    emmc_log_session_t s[4];
+    uint32_t n = 0, total = 0;
+    CHECK(emmc_log_sessions(&log, 0, s, 4, &n, &total) == EMMC_OK);
+    CHECK(n == 3 && total == 3);
+    CHECK(s[0].session == 1 && s[0].first_block == 0 && s[0].blocks == 64);
+    CHECK(s[1].session == 2 && s[1].first_block == 64 && s[1].blocks == 13);
+    CHECK(s[1].duration_ms == 50); /* 100 .. 150; the hole is skipped */
+    CHECK(s[2].session == 3 && s[2].first_block == 77 && s[2].blocks == 32);
+    CHECK(s[2].duration_ms == 50);
+    free(d.blocks);
+}
+
+/* Un-arm seals the last chunk, but the writer may not have written it yet
+ * when the GUI asks. open() writes the backlog first, so the session list
+ * and the block count include the end of the flight. */
+static void test_open_writes_backlog(void) {
+    disk_t d;
+    emmc_log_t log;
+    disk_new(&d, DATA_START + 32 * 16);
+    log_new(&log, &d);
+    uint8_t x = 3;
+    CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 100));
+    CHECK(emmc_log_append(&log, 0x11, 150, &x, 1));
+    CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 900));
+    CHECK(emmc_log_backlog(&log) == 1); /* nothing on the card yet */
+    CHECK(emmc_log_open(&log) == EMMC_OK);
+    CHECK(emmc_log_backlog(&log) == 0);
+    CHECK(emmc_log_used(&log) == 32);
+    emmc_log_session_t s[1];
+    uint32_t n = 0, total = 0;
+    CHECK(emmc_log_sessions(&log, 0, s, 1, &n, &total) == EMMC_OK);
+    CHECK(n == 1 && s[0].blocks == 32 && s[0].duration_ms == 800);
+    free(d.blocks);
+}
+
+/* LOG_WIPE: old flights read as invalid, numbering restarts at 1, and the
+ * next flight is written at the start of the log. */
+static void test_wipe(void) {
+    disk_t d;
+    emmc_log_t log;
+    disk_new(&d, DATA_START + 32 * 16);
+    log_new(&log, &d);
+    for (int s = 0; s < 2; ++s) {
+        CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 0));
+        CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 10));
+        drain(&log, 0);
+    }
+    uint32_t old_epoch = log.epoch;
+    CHECK(emmc_log_used(&log) == 64);
+    CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 0));
+    CHECK(emmc_log_wipe(&log) == EMMC_ERR_NOT_READY); /* recording */
+    CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 10));
+    CHECK(emmc_log_wipe(&log) == EMMC_OK); /* writes the backlog first */
+    CHECK(log.epoch > old_epoch && emmc_log_used(&log) == 0);
+    uint32_t n = 0, total = 0;
+    emmc_log_session_t s[2];
+    CHECK(emmc_log_sessions(&log, 0, s, 2, &n, &total) == EMMC_OK &&
+          total == 0);
+    CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 0));
+    CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 10));
+    drain(&log, 0);
+    CHECK(emmc_log_sessions(&log, 0, s, 2, &n, &total) == EMMC_OK);
+    CHECK(total == 1 && s[0].session == 1 && s[0].first_block == 0);
+
+    disk_power_cycle(&d); /* the wipe holds across a power cycle */
+    log_new(&log, &d);
+    CHECK(emmc_log_open(&log) == EMMC_OK && emmc_log_used(&log) == 32);
+    free(d.blocks);
+}
+
+/* LOG_TEST: one chunk written to the gap below the log and read back; a
+ * bad block is found; the log and superblock are untouched. */
+static void test_card_check(void) {
+    disk_t d;
+    emmc_log_t log;
+    disk_new(&d, DATA_START + 32 * 16);
+    log_new(&log, &d);
+    CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 0));
+    CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 10));
+    drain(&log, 0);
+    static uint8_t before[DATA_START * BS];
+    memcpy(before, d.blocks, sizeof before);
+    uint8_t* log_copy = malloc(32 * BS);
+    CHECK(log_copy != NULL);
+    memcpy(log_copy, d.blocks + (size_t)DATA_START * BS, 32 * BS);
+
+    emmc_log_check_t r;
+    CHECK(emmc_log_check(&log, 0x1234, &r) == EMMC_OK);
+    CHECK(r.lba == DATA_START - 32 && r.blocks == 32 && r.bad_blocks == 0);
+    CHECK(r.first_bad == UINT32_MAX);
+    CHECK(memcmp(d.blocks, before, BS) == 0); /* superblock */
+    CHECK(memcmp(d.blocks + (size_t)DATA_START * BS, log_copy, 32 * BS) == 0);
+    CHECK(memcmp(d.blocks + (size_t)r.lba * BS, before + (size_t)r.lba * BS,
+                 BS) != 0); /* it did write */
+
+    d.flip_lba = DATA_START - 32 + 5;
+    CHECK(emmc_log_check(&log, 99, &r) == EMMC_OK);
+    CHECK(r.bad_blocks == 1 && r.first_bad == 5);
+    d.flip_lba = 0;
+
+    d.write_failures = 1;
+    CHECK(emmc_log_check(&log, 7, &r) == EMMC_ERR_IO);
+    CHECK(emmc_log_on_state(&log, FLIGHT_IDLE, FLIGHT_ARMED, 0));
+    CHECK(emmc_log_check(&log, 7, &r) == EMMC_ERR_NOT_READY); /* recording */
+    /* the borrowed chunk was given back: recording still works */
+    CHECK(emmc_log_on_state(&log, FLIGHT_ARMED, FLIGHT_IDLE, 10));
+    drain(&log, 0);
+    CHECK(emmc_log_used(&log) == 64);
+    free(log_copy);
+    free(d.blocks);
+}
+
 int main(void) {
     test_crc();
     test_no_io_before_arm();
     test_session_roundtrip();
     test_sessions_and_remount();
     test_read_back();
+    test_sessions_across_hole();
+    test_open_writes_backlog();
+    test_wipe();
+    test_card_check();
     test_flight_keeps_recording();
     test_flush_interval();
     test_backpressure();
@@ -642,6 +796,6 @@ int main(void) {
     test_write_retry();
     test_full();
     test_invalid_init();
-    puts("14 emmc log test groups passed");
+    puts("18 emmc log test groups passed");
     return 0;
 }

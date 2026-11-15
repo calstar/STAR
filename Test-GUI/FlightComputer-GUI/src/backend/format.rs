@@ -3,9 +3,10 @@
 use serde::Serialize;
 
 /// How a value should look. The frontend maps each to a colour; nothing else.
-#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Serialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Tone {
+    #[default]
     Neutral,
     Good,
     Warn,

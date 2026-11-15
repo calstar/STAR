@@ -22,6 +22,10 @@ flight_state_t app_state(void);
  * the Idle loop; elsewhere it moves the state table directly. */
 void app_command(mode_command_t command);
 
+/* A laptop is streaming live samples over USB: in Idle the sensors and GPS
+ * run too (the board is awake on USB anyway). Nothing is recorded. */
+void app_set_usb_live(bool on);
+
 #ifdef __cplusplus
 }
 #endif

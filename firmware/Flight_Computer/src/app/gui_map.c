@@ -11,6 +11,7 @@
 #include "gui_map.h"
 
 #include "board_bringup.h"
+#include "board_chips.h"
 #include "board_config.h"
 #include "bringup_task.h"
 #include "cmsis_os2.h"
@@ -18,6 +19,7 @@
 #include "gnss_task.h"
 #include "idle_task.h"
 #include "mode.h"
+#include "nand_stm32.h"
 #include "radio_task.h"
 #include "sensors_task.h"
 #include "usb_frame.h"
@@ -65,9 +67,13 @@
     X(U8,  gnss->latest.fix_type,                 "gnss_fix",            "",       FIX)     \
     X(U8,  gnss->latest.num_sv,                   "gnss_satellites",     "",       "")      \
     X(U8,  emmc->disk,                            "emmc",                "",       DISK)    \
-    X(U32, log_used(),                            "emmc_blocks_used",    "",       "")      \
+    X(U32, log_used(emmc),                        "emmc_blocks_used",    "",       "")      \
     X(U32, emmc->capacity,                        "emmc_blocks_total",   "",       "")      \
     X(U32, emmc->stats.dropped,                   "emmc_dropped",        "",       "")      \
+    X(U8,  nand->disk,                            "nand",                "",       DISK)    \
+    X(U32, log_used(nand),                        "nand_blocks_used",    "",       "")      \
+    X(U32, nand->capacity,                        "nand_blocks_total",   "",       "")      \
+    X(U32, nand->stats.dropped,                   "nand_dropped",        "",       "")      \
     X(U32, sensor_errors(),                       "sensor_errors",       "",       "")      \
     X(U16, usb_link_rate_hz(),                    "stream_rate_hz",      "Hz",     "")
 /* clang-format on */
@@ -106,6 +112,7 @@ static const gnss_core_t* gnss;
 static radio_status_t radio;
 static status_report_t report; /* the last Idle report (idle_task.c) */
 static const emmc_log_t* emmc;
+static const emmc_log_t* nand;
 
 static uint8_t flags(void) {
     /* bit 0 on USB power, 1 settings not saved, 2 streaming, 3 flash held
@@ -116,20 +123,15 @@ static uint8_t flags(void) {
                      (board_config_from_defaults() ? 8U : 0U));
 }
 
+/* The last live check (Idle report or USB SELF_TEST), else the boot result. */
 static uint8_t self_test(uint16_t id) {
-    const self_test_status_t* st = &g_bringup_report.self_test;
-    for (uint8_t i = 0; i < st->device_count; ++i) {
-        if (st->devices[i].device_id == id) {
-            return (uint8_t)st->devices[i].reply.result;
-        }
-    }
-    return SELF_TEST_PENDING;
+    return board_chips_result(id);
 }
 
-static uint32_t log_used(void) {
-    return emmc->disk == EMMC_DISK_UNMOUNTED
+static uint32_t log_used(const emmc_log_t* log) {
+    return log->disk == EMMC_DISK_UNMOUNTED
                ? 0U
-               : emmc->head - emmc->config.data_start_lba;
+               : log->head - log->config.data_start_lba;
 }
 
 static uint32_t sensor_errors(void) {
@@ -147,6 +149,7 @@ void gui_map_read(void) {
     radio_task_status(&radio);
     idle_task_last_status(&report);
     emmc = emmc_stm32_log();
+    nand = nand_stm32_log();
     size_t i = 0;
 #define X(type, expr, name, unit, labels) values[i++] = RAW_##type(expr);
     GUI_MAP(X)

@@ -41,3 +41,41 @@ bool sd_cid_ok(const uint8_t cid[16]) {
     }
     return cid[15] == (uint8_t)((sd_crc7(cid, 15) << 1) | 1U);
 }
+
+uint16_t sd_crc16(const uint8_t* data, uint32_t len) {
+    uint16_t crc = 0;
+    for (uint32_t i = 0; i < len; ++i) {
+        crc = (uint16_t)(crc ^ ((uint16_t)data[i] << 8));
+        for (int bit = 0; bit < 8; ++bit) {
+            crc = (crc & 0x8000U) ? (uint16_t)((crc << 1) ^ 0x1021U)
+                                  : (uint16_t)(crc << 1);
+        }
+    }
+    return crc;
+}
+
+/* Bits [hi:lo] of the 128-bit register, bit 127 the MSB of byte 0. */
+static uint32_t csd_bits(const uint8_t csd[16], unsigned hi, unsigned lo) {
+    uint32_t v = 0;
+    for (unsigned b = hi + 1U; b-- > lo;) {
+        unsigned byte = 15U - b / 8U;
+        v = (v << 1) | ((csd[byte] >> (b % 8U)) & 1U);
+    }
+    return v;
+}
+
+uint32_t sd_csd_blocks(const uint8_t csd[16]) {
+    switch (csd_bits(csd, 127, 126)) {
+        case 1: /* CSD 2.0 */
+            return (csd_bits(csd, 69, 48) + 1U) * 1024U;
+        case 0: { /* CSD 1.0 */
+            uint32_t c_size = csd_bits(csd, 73, 62);
+            uint32_t mult = csd_bits(csd, 49, 47);
+            uint32_t bl_len = csd_bits(csd, 83, 80);
+            uint64_t bytes = (uint64_t)(c_size + 1U) << (mult + 2U + bl_len);
+            return (uint32_t)(bytes / 512U);
+        }
+        default:
+            return 0;
+    }
+}

@@ -7,6 +7,7 @@
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
 #include "main.h"
+#include "nand_stm32.h"
 
 #define EV_MODE (1U << 4) /* sensors_task_set_active() */
 
@@ -14,13 +15,15 @@ static sensors_core_t core;
 static osMutexId_t snapshot_lock;
 static osThreadId_t thread;
 static volatile bool want_active; /* written by the mode, read here */
+static volatile bool restart;     /* a chip check ran: init the chips again */
 
 static void to_emmc(void* ctx, uint8_t type, const void* data, uint8_t len) {
     (void)ctx;
     /* Non-blocking; false outside ARMED/LAUNCHED/RECOVERY or when every
      * chunk is full (the log counts and reports drops itself). */
-    (void)emmc_log_append(emmc_stm32_log(), type, osKernelGetTickCount(), data,
-                          len);
+    uint32_t t = osKernelGetTickCount();
+    (void)emmc_log_append(emmc_stm32_log(), type, t, data, len);
+    (void)emmc_log_append(nand_stm32_log(), type, t, data, len); /* backup */
 }
 
 static void sensors_task(void* argument) {
@@ -48,6 +51,7 @@ static void sensors_task(void* argument) {
         }
         if (!active) {
             osMutexAcquire(snapshot_lock, osWaitForever);
+            restart = false;
             fc_config_t cfg = board_config_get(); /* this arming's settings */
             core.settings = sensors_settings(&cfg);
             sensors_core_init(&core, board_time_us());
@@ -63,6 +67,11 @@ static void sensors_task(void* argument) {
         }
         flags &= ~EV_MODE; /* re-checked at the top of the loop */
         osMutexAcquire(snapshot_lock, osWaitForever);
+        if (restart) {
+            osMutexRelease(snapshot_lock);
+            active = false; /* re-init at the top, with the chips as left */
+            continue;
+        }
         sensors_core_step(&core, flags, board_exti_last_us(IMU_INT1_Pin),
                           board_exti_last_us(ACCEL_INT_1_Pin), board_time_us());
         osMutexRelease(snapshot_lock);
@@ -86,6 +95,19 @@ bool sensors_task_start(void) {
     snapshot_lock = osMutexNew(&lock_attr);
     thread = snapshot_lock ? osThreadNew(sensors_task, NULL, &attr) : NULL;
     return thread != NULL;
+}
+
+void sensors_task_pause(void) {
+    if (snapshot_lock) {
+        (void)osMutexAcquire(snapshot_lock, osWaitForever);
+    }
+}
+
+void sensors_task_resume(void) {
+    if (snapshot_lock) {
+        restart = true;
+        (void)osMutexRelease(snapshot_lock);
+    }
 }
 
 void sensors_task_set_active(bool on) {

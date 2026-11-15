@@ -51,7 +51,7 @@ fn flight_plot(app: tauri::State<App>) -> Option<FlightPlot> {
 }
 
 /// Open a native file dialog, then send the backend the command for the path
-/// chosen. `what` is config_import, config_export or flight_folder.
+/// chosen. `what` is config_import, config_export, flight_csv or flight_folder.
 #[tauri::command]
 async fn pick(handle: AppHandle, what: String) -> Result<(), String> {
     let state = handle.state::<App>();
@@ -60,6 +60,7 @@ async fn pick(handle: AppHandle, what: String) -> Result<(), String> {
     let path = match what.as_str() {
         "config_import" => dialog.add_filter("JSON", &["json"]).blocking_pick_file(),
         "config_export" => dialog.add_filter("JSON", &["json"]).set_file_name("flight-computer-config.json").blocking_save_file(),
+        "flight_csv" => dialog.add_filter("CSV", &["csv"]).set_file_name("flight-data.csv").blocking_save_file(),
         "flight_folder" => {
             let d = match root.filter(|r| r.is_dir()) {
                 Some(r) => dialog.set_directory(r),
@@ -74,6 +75,7 @@ async fn pick(handle: AppHandle, what: String) -> Result<(), String> {
     let command = match what.as_str() {
         "config_import" => Command::ConfigImport { path },
         "config_export" => Command::ConfigExport { path },
+        "flight_csv" => Command::RecordingSave { path },
         _ => Command::FlightOpenFolder { path },
     };
     state.with(|b| b.send(command));

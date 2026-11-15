@@ -20,6 +20,12 @@ What exists now: `src/radio/radio.h`, a pretend radio, and 14 tests for it.
 CI runs the tests on every PR that touches `firmware/` (`.github/workflows/firmware-ci.yml`).
 The real radio driver and the message format come in later PRs.
 
+## LEDs
+
+LED1 (PB9) is yellow. LED2 (PE0) is green. There is no third lamp.
+
+Agreed with Inez on 2026-11-13: armed is a fast green blink with yellow off, not solid green. Solid green already means a self-test FAIL, and it stays solid after arming so a failed chip is still obvious. A warning blinks green with the yellow heartbeat. The first Arm frame is a yellow double-blink until the second frame. Idle is one yellow flash about every 10 seconds. Un-arm returns to that Idle flash.
+
 ## Architecture
 
 ```text

@@ -3,9 +3,9 @@
 What the STM32 firmware must implement for the bench GUI. The reference
 implementation is `src/protocol.rs`; `src/fake_board.rs` is a working
 board-side example, and their unit tests pin both. **On the board so far**
-(`src/board/usb_link.c`): HELLO, GET_STATUS, SET_STREAM, VALUE, SAMPLE,
-CONFIG_GET/SET/SAVE/REVERT, LOG_INFO/SESSIONS/READ/ABORT, and on a receiver
-RADIO_ARM/UNARM/RX (§8); LOG_WIPE and REBOOT answer NOT_IMPLEMENTED. Proposed 2026-11-06; change it here and in
+(`src/board/usb_link.c`): HELLO, GET_STATUS, SET_STREAM, SELF_TEST, VALUE, SAMPLE,
+CONFIG_GET/SET/SAVE/REVERT, LOG_INFO/SESSIONS/READ/ABORT/WIPE/TEST, and on a receiver
+RADIO_ARM/UNARM/RX (§8); REBOOT answers NOT_IMPLEMENTED. Proposed 2026-11-06; change it here and in
 `protocol.rs` together.
 
 ## 1. Transport
@@ -41,6 +41,7 @@ The board sends its own messages (`VALUE` rows, `SAMPLE`, `TEXT`) with
 | 0x01 | HELLO | — | INFO |
 | 0x02 | GET_STATUS | — | every VALUE row (seq 0), then ACK |
 | 0x03 | SET_STREAM | `u16 rate_hz, u8 mask` (bit 0 IMU, 1 high-g, 2 baro, 3 GNSS) | ACK |
+| 0x04 | SELF_TEST | — | IDLE only: checks the chips again now (`board_chips.h`), then every VALUE row (seq 0), then ACK. WRONG_STATE (detail = state) otherwise |
 | 0x10 | CONFIG_GET | `u8 slot` (0 active/RAM, 1 saved/flash, 2 firmware defaults) | CONFIG, or ACK FLASH_ERROR if slot 1 is empty |
 | 0x11 | CONFIG_SET | config blob (§5) | ACK. Validated and applied to RAM, **not** saved |
 | 0x12 | CONFIG_SAVE | — | ACK. Writes the RAM config to flash |
@@ -50,7 +51,10 @@ The board sends its own messages (`VALUE` rows, `SAMPLE`, `TEXT`) with
 | 0x22 | LOG_READ | `u32 first_block, u32 count` | `count` × LOG_BLOCK, then ACK |
 | 0x23 | LOG_ABORT | — | ACK (and the running LOG_READ ends with ACK OK, detail 1) |
 | 0x24 | LOG_WIPE | `u32 0x45504957` ("WIPE") | ACK |
+| 0x25 | LOG_TEST | `u32 seed` | LOG_TEST_REPLY. SELF_TEST/IDLE only (else WRONG_STATE) |
+| 0x26 | LOG_SELECT | `u8 card` (0 eMMC, 1 SD NAND) | ACK. The LOG_* commands after it use that card; the board starts on the eMMC. BAD_VALUE for another number. SELF_TEST/IDLE only |
 | 0x30 | REBOOT | `u32 0x544F4F42` ("BOOT") | ACK, then reset |
+| 0x31 | ENTER_DFU | `u32 0x21554644` ("DFU!") | ACK, then the board drops off USB and its ROM bootloader enumerates as USB DFU (0483:df11) for a firmware update (`pio run -e usb -t upload`). SELF_TEST/IDLE only (else WRONG_STATE) |
 | 0x40 | RADIO_ARM | — | receiver only: sends the Arm pair (§8); ACK OK or RADIO_ERROR |
 | 0x41 | RADIO_UNARM | — | receiver only: sends Un-arm twice (§8); ACK OK or RADIO_ERROR |
 
@@ -63,6 +67,7 @@ The board sends its own messages (`VALUE` rows, `SAMPLE`, `TEXT`) with
 | 0xA0 | LOG_INFO_REPLY | `u8 disk_state, u32 epoch, u32 data_start_lba, u32 capacity_blocks, u32 blocks_used, u32 sessions` |
 | 0xA1 | SESSIONS | `u16 total, u8 n, n × {u32 session, u32 first_block, u32 blocks, u32 duration_ms, u32 utc_start}`, n ≤ 24 |
 | 0xA2 | LOG_BLOCK | `u32 block_index, u8 raw[512]` |
+| 0xA3 | LOG_TEST_REPLY | `u8 status (emmc_status_t), u32 lba, u16 blocks, u16 bad_blocks, u16 first_bad (0xFFFF none), u32 elapsed_ms` |
 | 0xB0 | SAMPLE | `u8 record_type, record bytes` (`src/app/records.h` structs as-is) |
 | 0xB1 | TEXT | UTF-8 debug line |
 | 0xB2 | RADIO_RX | receiver only: `u8 type, u16 seq, i16 rssi_x2, i16 snr_x4, u8 len, payload`, every radio frame heard (§8) |
@@ -79,7 +84,9 @@ name. The GUI shows the rows it is sent, in order, so a row added, renamed or
 removed there needs no GUI change. Types: 0 u8, 1 u16, 2 u32, 3 i8, 4 i16,
 5 i32 (`value` holds it sign-extended). `labels` is a comma list naming an
 enum's values from 0 (`"UNKNOWN,OK,WARN"`), empty for a plain number. Rows
-named `self_test_*` go in the self-test list. The GUI reads three names itself:
+named `self_test_*` go in the self-test list; each holds the chip's last live
+check (Idle report or SELF_TEST), or its boot result if it was never checked
+live. The GUI reads three names itself:
 `state` (flight_state_t), `flags` and `stream_rate_hz`. Flags: bit 0 on USB
 power (TPS2121 `SW_ST`), bit 1 RAM config differs from flash, bit 2 streaming,
 bit 3 flash held no valid config (running defaults).
@@ -227,6 +234,22 @@ CRC-32), so a board-side bug cannot vouch for its own data.
   the log writer's task, between chunk writes, never while recording.
 - **LOG_WIPE** writes a new superblock with a higher epoch (`format()` in
   `emmc_log.c`). Old blocks become invalid; nothing is erased. IDLE only.
+  The next flight is session 1. Chunks still queued from the last Un-arm are
+  written first (as for every read: `emmc_log_open`).
+- **LOG_TEST** (`emmc_log_check`) is the hardware check of the storage path:
+  one 32-block multi-block write of a seeded pattern to LBAs
+  `data_start - 32 .. data_start - 1` (the unused gap between the superblock and
+  the log), one multi-block read back, compare. It uses the same DMA chunk
+  buffer and transfer size as the log, never touches a flight, and is refused
+  while recording or with chunks queued (status 3). The GUI's **Test card**
+  button runs it and prints the result under the flight list.
+- **Hardware procedure** (Flights tab, board in IDLE): 1) Test card: expect
+  "passed, 32 blocks". 2) Arm, wait ~30 s, Un-arm. 3) Refresh: a new flight with
+  a plausible length. 4) Download: no "blocks failed their check" warning, and
+  imu/baro CSVs with steady t_us. 5) Power-cycle, Refresh: the same flight list
+  (the log survived). 6) Optional: Arm, cut power while armed, power up, Refresh:
+  that flight is listed up to ~1 s before the cut; a later Arm makes the next
+  number and old flights still download clean.
 
 At USB full speed (12 Mbit/s, ~0.8–1 MB/s of payload in practice), a 10-minute
 flight at ~50 kB/s (~30 MB) downloads in about 30–40 s.

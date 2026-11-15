@@ -88,6 +88,12 @@ fn status_and_live() {
     let st = r.b.view().status;
     assert_eq!(st.self_test.len(), 8);
     assert!(st.self_test.iter().all(|row| row.value != "—"));
+    assert!(st.self_test_summary.ok, "{:?}", st.self_test_summary);
+    // The button has the board check its chips again (SELF_TEST), no notice.
+    r.send(Command::SelfTest);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(r.b.view().notices.is_empty(), "{:?}", r.b.view().notices);
+    assert!(r.b.view().status.self_test_summary.ok);
     let rows: Vec<_> = st.sections.iter().flat_map(|s| s.rows.iter()).collect();
     let find = |name: &str| rows.iter().find(|r| r.name == name).unwrap_or_else(|| panic!("{name}"));
     assert_eq!((find("State").value.as_str(), find("State").chip), ("IDLE", Some(Tone::Good)));
@@ -126,7 +132,7 @@ fn idle_shows_its_heartbeats_newest_first() {
     assert!(r.wait(15.0, |v| v.live.heartbeats.as_ref().is_some_and(|h| h.len() >= 2)), "{:?}", r.b.view().live.heartbeats);
     let rows = r.b.view().live.heartbeats.unwrap();
     assert!(rows[0].n > rows[1].n, "newest first");
-    assert_eq!(rows[0].chips, "6 of 8 pass"); // Ethernet not configured, NAND not implemented
+    assert_eq!(rows[0].chips, "8 of 8 pass");
     assert!(r.b.view().live.show_graphs, "the simulated board streams in IDLE, so its graphs stay");
 }
 
@@ -169,6 +175,16 @@ fn download_a_flight() {
         assert!(folder.join(name).metadata().map(|m| m.len() > 0).unwrap_or(false), "{name}");
     }
     assert!(shown.warnings.is_empty(), "flight 2 is scaled with its own config record: {:?}", shown.warnings);
+    // Every CSV row says which card it came from.
+    let only_source = |folder: &Path, want: &str| {
+        for name in ["imu.csv", "baro.csv", "events.csv"] {
+            let text = std::fs::read_to_string(folder.join(name)).unwrap();
+            let mut lines = text.lines();
+            assert!(lines.next().unwrap().ends_with(",source"), "{name} header");
+            assert!(lines.all(|l| l.ends_with(&format!(",{want}"))), "{name}: a row not from {want}");
+        }
+    };
+    only_source(folder, "emmc");
     let plot = r.b.flight_plot().expect("plot data");
     assert_eq!(plot.id, shown.plot_id);
     assert!(plot.charts.iter().all(|c| c.lines.iter().all(|l| !l.x.is_empty() && l.x.len() == l.y.len())));
@@ -178,6 +194,14 @@ fn download_a_flight() {
     r.send(Command::FlightDownload { session: 1 });
     assert!(r.wait(30.0, |v| v.flights.shown.as_ref().is_some_and(|s| s.plot_id != shown.plot_id)));
     assert!(r.b.view().flights.shown.unwrap().warnings[0].0.contains("assumed"));
+
+    // The same flight from the SD NAND (the simulated board has one card) is
+    // saved in its own folder, its rows marked sdnand.
+    r.send(Command::FlightCard { card: 1 });
+    assert!(r.wait(10.0, |v| v.flights.summary.starts_with("SD NAND") && v.flights.entries.len() == 2));
+    r.send(Command::FlightDownload { session: 2 });
+    assert!(r.wait(30.0, |v| v.flights.shown.as_ref().is_some_and(|s| s.folder.contains("SD NAND"))));
+    only_source(Path::new(&r.b.view().flights.shown.unwrap().folder), "sdnand");
 }
 
 #[test]

@@ -20,6 +20,7 @@ pub mod format;
 pub mod ground;
 pub mod heartbeats;
 pub mod live;
+pub mod recording;
 pub mod stages;
 pub mod status;
 
@@ -71,8 +72,13 @@ pub enum Purpose {
     },
     LogAbort,
     LogWipe,
+    /// LOG_TEST: the eMMC write/read-back check.
+    LogTest,
+    LogSelect,
     /// RADIO_ARM / RADIO_UNARM to a receiver board.
     Ground,
+    /// SELF_TEST: the board checks its chips again.
+    SelfTest,
 }
 
 /// Everything the window can ask for. Each is checked here before anything is
@@ -111,6 +117,12 @@ pub enum Command {
     ConfigExport {
         path: PathBuf,
     },
+    /// Stop recording flight data (it starts on arm).
+    RecordingStop,
+    /// Save the recorded flight data as one CSV file.
+    RecordingSave {
+        path: PathBuf,
+    },
     FlightsRefresh,
     FlightDownload {
         session: u32,
@@ -133,10 +145,24 @@ pub enum Command {
     FlightWipe {
         confirm: String,
     },
+    /// Write a test chunk to the card's spare area and read it back (LOG_TEST).
+    FlightCheckCard,
+    /// Which card the Flights tab reads: 0 eMMC, 1 SD NAND (the backup).
+    FlightCard {
+        card: u8,
+    },
     DismissNotice,
     /// Receiver board: Arm / Un-arm the rocket, retried until it shows it.
     GroundArm,
     GroundUnarm,
+    /// Ground station position: from the rocket's latest fix, typed, or none.
+    GroundStationFromFix,
+    GroundStationSet {
+        text: String,
+    },
+    GroundStationClear,
+    /// Have the board check its chips again (SELF_TEST), then show the results.
+    SelfTest,
 }
 
 /// Where the controller sends what the window should know. The Tauri app emits
@@ -184,6 +210,7 @@ pub struct View {
     pub config: config::ConfigView,
     pub flights: flights::FlightsView,
     pub ground: ground::GroundView,
+    pub recording: recording::RecordingView,
 }
 
 /// What every part may touch: the link, the notice queue, what the board said.
@@ -238,9 +265,11 @@ impl Default for Options {
 
 const HEARTBEAT_LIMIT: Duration = Duration::from_secs(4);
 const PORT_SCAN: Duration = Duration::from_secs(2);
-/// The view is rebuilt at least this often (the watchdog needs it), and the
-/// live batch is flushed this often.
+/// The view is rebuilt at least this often (the watchdog needs it).
 const TICK: Duration = Duration::from_millis(50);
+/// The live batch is flushed this often (~30 Hz): the window draws on its
+/// next animation frame, so this, not TICK, is how fresh the charts are.
+const LIVE_FLUSH: Duration = Duration::from_millis(33);
 
 /// The controller's state. Lives on its own thread; `Backend` is the handle.
 pub struct Controller {
@@ -347,6 +376,12 @@ impl Controller {
             ConfigDefaults => self.config.set_editor(crate::config::defaults()),
             ConfigImport { path } => self.config.import(&mut self.sh, &path),
             ConfigExport { path } => self.config.export(&mut self.sh, &path),
+            RecordingStop => self.live.recorder.stop(),
+            RecordingSave { path } => {
+                if let Err(e) = self.live.recorder.save(&path) {
+                    self.sh.warn("Flight data not saved", e);
+                }
+            }
             FlightsRefresh => {
                 if ready && !self.flights.busy() {
                     self.flights.refresh(&mut self.sh)
@@ -358,9 +393,19 @@ impl Controller {
             FlightOpenFolder { path } => self.flights.open_folder(&mut self.sh, &path),
             FlightReveal { session } => self.flights.reveal(session),
             FlightWipe { confirm } => self.flights.wipe(&mut self.sh, &confirm),
+            FlightCheckCard => self.flights.check_card(&mut self.sh),
+            FlightCard { card } => self.flights.select_card(&mut self.sh, card),
             GroundArm | GroundUnarm => {
                 if ready && self.receiver() {
                     self.ground.command(&mut self.sh, c == GroundArm)
+                }
+            }
+            GroundStationFromFix => self.ground.station_from_fix(),
+            GroundStationSet { text } => self.ground.station_set(&text),
+            GroundStationClear => self.ground.station_clear(),
+            SelfTest => {
+                if ready {
+                    self.sh.client.request(msg::SELF_TEST, &[], Purpose::SelfTest);
                 }
             }
             DismissNotice => {
@@ -418,8 +463,15 @@ impl Controller {
                 Event::Block(Purpose::LogRead { id }, fr) => self.flights.on_block(id, &fr),
                 Event::Block(..) => {}
             }
+            self.note_armed();
         }
         self.ground.tick(&mut self.sh); // Arm/Un-arm: confirmed yet, or send again
+    }
+
+    /// Arming (this board, or the rocket heard by a receiver) starts a recording.
+    fn note_armed(&mut self) {
+        let st = if self.receiver() { self.ground.rocket_state() } else { self.sh.state() };
+        self.live.recorder.on_armed(st.is_some_and(|s| s >= p::state::ARMED));
     }
 
     fn route(&mut self, purpose: Purpose, res: Result<Frame, String>) {
@@ -433,9 +485,29 @@ impl Controller {
             | ConfigSave { .. }
             | ConfigSavedReadback { .. }
             | ConfigRevert => self.config.on_reply(&mut self.sh, purpose, res),
-            LogInfo { .. } | LogSessions { .. } | LogRead { .. } | LogAbort | LogWipe => self.flights.on_reply(&mut self.sh, purpose, res),
+            LogInfo { .. } | LogSessions { .. } | LogRead { .. } | LogAbort | LogWipe | LogTest | LogSelect => self.flights.on_reply(&mut self.sh, purpose, res),
             Ground => self.ground.on_reply(&mut self.sh, res),
+            SelfTest => self.on_self_test(res),
         }
+    }
+
+    /// The board sent its VALUE rows before this ACK; anything else gets a
+    /// notice, and the last results are read again so the list is current.
+    fn on_self_test(&mut self, res: Result<Frame, String>) {
+        let ack = res.and_then(|fr| p::Ack::unpack(&fr.payload));
+        let why = match &ack {
+            Ok(a) if a.ok() => return,
+            Ok(a) if a.result == p::result::NOT_IMPLEMENTED || a.result == p::result::UNKNOWN_TYPE => {
+                "This firmware cannot re-run the chip checks (no SELF_TEST command). Showing its boot results; flash newer firmware to re-check.".to_string()
+            }
+            Ok(a) if a.result == p::result::WRONG_STATE => {
+                format!("The board checks its chips again only in IDLE: {}. Showing its last results.", a.describe())
+            }
+            Ok(a) => format!("The board refused: {}.", a.describe()),
+            Err(e) => format!("No answer from the board: {e}."),
+        };
+        self.sh.warn("Self-test not run", why);
+        self.sh.client.request(msg::GET_STATUS, &[], Purpose::Status);
     }
 
     pub fn heartbeat_lost(&self) -> bool {
@@ -461,6 +533,7 @@ impl Controller {
             config: self.config.view(&self.sh),
             flights: self.flights.view(&self.sh),
             ground: self.ground.view(self.receiver()),
+            recording: self.live.recorder.view(),
         }
     }
 
@@ -524,7 +597,8 @@ impl Backend {
                     // A command's effect shows at once; otherwise the view is
                     // rebuilt at most every TICK (frames can arrive at hundreds a second).
                     let mut urgent = false;
-                    match rx.recv_timeout(TICK) {
+                    let wait = LIVE_FLUSH.saturating_sub(last_flush.elapsed()).max(Duration::from_millis(1));
+                    match rx.recv_timeout(wait) {
                         Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => break,
                         Ok(Msg::Cmd(cmd)) => {
                             c.command(cmd);
@@ -547,7 +621,7 @@ impl Backend {
                             last = v;
                         }
                     }
-                    if last_flush.elapsed() >= TICK {
+                    if last_flush.elapsed() >= LIVE_FLUSH {
                         last_flush = Instant::now();
                         if let Some(b) = c.live.take_batch() {
                             sink.emit("live", serde_json::to_value(&b).expect("batch serialises"));

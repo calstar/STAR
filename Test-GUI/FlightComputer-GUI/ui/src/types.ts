@@ -16,9 +16,20 @@ export interface Row {
   hint: string | null;
 }
 
+export interface SelfTestSummary {
+  /** Every chip passed: the only time the button is green. */
+  ok: boolean;
+  label: string;
+  /** One line per chip that did not pass. */
+  detail: string;
+  /** Names (as in self_test) of the chips that did not pass. */
+  failed: string[];
+}
+
 export interface StatusView {
   sections: { title: string; rows: Row[] }[];
   self_test: Row[];
+  self_test_summary: SelfTestSummary;
   messages: string[];
 }
 
@@ -93,6 +104,10 @@ export interface FlightsView {
   wipe_word: string;
   shown: { plot_id: number; detail: string; warnings: [string, Tone][]; folder: string } | null;
   root: string;
+  can_check: boolean;
+  card: number;
+  cards: string[];
+  card_check: string;
 }
 
 export interface View {
@@ -107,6 +122,14 @@ export interface View {
   config: ConfigView;
   flights: FlightsView;
   ground: GroundView;
+  recording: RecordingView;
+}
+
+export interface RecordingView {
+  phase: "waiting" | "recording" | "stopped";
+  text: string;
+  can_stop: boolean;
+  can_save: boolean;
 }
 
 /** The `live` event: samples since the last one. `y` has a value per line of chart `plot`. */
@@ -139,15 +162,22 @@ export type Command =
   | { cmd: "flights_refresh" }
   | { cmd: "flight_download"; session: number }
   | { cmd: "flight_cancel" }
+  | { cmd: "recording_stop" }
   | { cmd: "flight_open"; session: number }
   | { cmd: "flight_reveal"; session: number | null }
   | { cmd: "flight_wipe"; confirm: string }
+  | { cmd: "flight_check_card" }
+  | { cmd: "flight_card"; card: number }
   | { cmd: "dismiss_notice" }
   | { cmd: "ground_arm" }
-  | { cmd: "ground_unarm" };
+  | { cmd: "ground_unarm" }
+  | { cmd: "ground_station_from_fix" }
+  | { cmd: "ground_station_set"; text: string }
+  | { cmd: "ground_station_clear" }
+  | { cmd: "self_test" };
 
 /** Native file dialogs (Rust side); the chosen path goes straight to the backend. */
-export type Pick = "config_import" | "config_export" | "flight_folder";
+export type Pick = "config_import" | "config_export" | "flight_folder" | "flight_csv";
 
 /** A box of current values on the Live tab (see live.rs `Reading`). */
 export interface Reading {
@@ -186,7 +216,38 @@ export interface GroundView {
   adc: { name: string; counts: number; pin_v: string; value: string }[];
   chips: { name: string; result: [string, Tone]; value: string; expected: string; words: string; when: string }[];
   telemetry: string;
+  place: string;
+  where_note: string;
+  track: [number, number][];
+  gps: GpsView;
   log: { t: string; kind: string; seq: number; rssi: string; summary: string }[];
   command: string;
   busy: boolean;
+}
+
+/** The GPS card (ground.rs GpsView). Course is direction of travel from
+ * successive fixes; tilt is from the accelerometer; there is no compass heading. */
+export interface GpsView {
+  has_fix: boolean;
+  fix: [string, Tone];
+  sats: string;
+  lat: string;
+  lon: string;
+  alt: string;
+  age: string;
+  age_stale: boolean;
+  course_deg: number | null;
+  course: string;
+  speed: string;
+  vspeed: string;
+  tilt_deg: number | null;
+  tilt: string;
+  tilt_note: string;
+  station_set: boolean;
+  station: string;
+  station_error: string;
+  bearing_deg: number | null;
+  range: string;
+  elevation: string;
+  station_en: [number, number] | null;
 }

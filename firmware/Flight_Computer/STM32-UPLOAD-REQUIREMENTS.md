@@ -163,6 +163,27 @@ It builds the firmware, then flashes it over the ST-Link with OpenOCD. Drop
 `~/.platformio` (no password needed). The image is
 `firmware/Flight_Computer/.pio/build/flight/firmware.elf` (and `.bin`).
 
+**Over USB-C, no ST-Link** (once the board runs firmware from 2026-11-14 or
+later; the first time, flash with the ST-Link as above):
+
+```bash
+pio run -d firmware/Flight_Computer -e usb -t upload
+pio run -d firmware/Flight_Computer -e usb -t upload --upload-port /dev/cu.usbmodem...
+```
+
+It builds, sends the board ENTER_DFU over its serial port, waits for the
+STM32's ROM bootloader to appear as a USB DFU device ("DFU in FS Mode",
+0483:df11, ~1 s), writes the image with `dfu-util` (PlatformIO's
+`tool-dfuutil`) and starts it; the serial port is back ~2 s later. Close the
+GUI first: it holds the port. The board refuses while armed (WRONG_STATE).
+How it works and what it had to fix on the rev 1 board:
+`src/board/board_dfu.c`; the laptop side: `scripts/usb_upload.py` (also runs
+alone: `python3 scripts/usb_upload.py .pio/build/flight/firmware.bin [port]`).
+
+The bootloader is in ROM, so a bad image cannot remove it. If an image crashes
+before it can answer ENTER_DFU, use the ST-Link, or hold BOOT0 high at power-up
+(the ROM bootloader starts directly) and run the same command.
+
 **From VS Code** (PlatformIO IDE extension):
 
 1. **File → Open Folder… → `firmware/Flight_Computer`.** Open this folder

@@ -49,6 +49,11 @@ emmc_status_t emmc_stm32_open(void);
 emmc_status_t emmc_stm32_sessions(uint32_t start, emmc_log_session_t* out,
                                   uint32_t max, uint32_t* n, uint32_t* total);
 emmc_status_t emmc_stm32_read(uint32_t k, uint8_t out[EMMC_BLOCK_SIZE]);
+/* LOG_WIPE and LOG_TEST (emmc_log_wipe / emmc_log_check), in the writer
+ * task. *elapsed_ms: how long the check's write + read-back took. */
+emmc_status_t emmc_stm32_wipe(void);
+emmc_status_t emmc_stm32_check(uint32_t seed, emmc_log_check_t* out,
+                               uint32_t* elapsed_ms);
 
 /* The writer: loops emmc_log_service(). Run at low priority. */
 void emmc_stm32_writer_task(void* argument);

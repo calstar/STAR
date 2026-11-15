@@ -217,6 +217,33 @@ emmc_status_t emmc_log_sessions(emmc_log_t* log, uint32_t start,
  * on the board). */
 emmc_status_t emmc_log_read(emmc_log_t* log, uint32_t k, uint8_t* buf);
 
+/*
+ * Wipe the log (USB LOG_WIPE): a new superblock with a higher epoch, so
+ * every old block reads as invalid; nothing is erased. The next session is
+ * numbered 1. Card I/O, not while recording (EMMC_ERR_NOT_READY).
+ */
+emmc_status_t emmc_log_wipe(emmc_log_t* log);
+
+/*
+ * Card write/read-back check (USB LOG_TEST), for bring-up on real hardware.
+ * Writes one chunk (EMMC_LOG_CHUNK_BLOCKS blocks, one multi-block write, as
+ * the log does) of a pattern made from `seed` and each block's LBA to the
+ * unused gap just below data_start, reads it back with one multi-block read
+ * and compares. Never touches the superblock or a log block. Uses a log
+ * chunk buffer, so only when nothing is queued and not recording
+ * (EMMC_ERR_NOT_READY). EMMC_OK means the transfers worked; *out says
+ * whether the data came back intact (bad_blocks == 0).
+ */
+typedef struct {
+    uint32_t lba;        /* first LBA written */
+    uint32_t blocks;     /* EMMC_LOG_CHUNK_BLOCKS */
+    uint32_t bad_blocks; /* blocks that did not read back as written */
+    uint32_t first_bad;  /* index of the first, or UINT32_MAX */
+} emmc_log_check_t;
+
+emmc_status_t emmc_log_check(emmc_log_t* log, uint32_t seed,
+                             emmc_log_check_t* out);
+
 #ifdef __cplusplus
 }
 #endif

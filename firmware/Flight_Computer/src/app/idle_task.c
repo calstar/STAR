@@ -117,11 +117,6 @@ static bool work_waiting(void) {
     return osMessageQueueGetCount(commands) > 0U || !want_active;
 }
 
-static void led1(bool on) { /* active low */
-    HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin,
-                      on ? GPIO_PIN_RESET : GPIO_PIN_SET);
-}
-
 static void idle_task(void* argument) {
     (void)argument;
     static const idle_port_t port = {read_battery, on_usb, send_heartbeat,
@@ -136,13 +131,22 @@ static void idle_task(void* argument) {
         }
         (void)idle_enter(&idle, osKernelGetTickCount());
         while (want_active) {
-            led1(true);
+            bool pending = radio_task_arm_pending();
+            bringup_leds_note_awake(!pending);
+            bringup_leds_refresh();
             idle_result_t r = idle_on_wake(&idle, osKernelGetTickCount());
-            led1(false);
             if (r.event == IDLE_EVENT_ARM_REQUESTED) {
                 app_set_state(flight_state_next(FLIGHT_IDLE, FLIGHT_EV_ARM));
                 break;
             }
+            if (radio_task_arm_pending()) {
+                /* Stay awake so the yellow double-blink is not frozen in Stop.
+                 * The confirm window is 2 s (arm_gate.h). */
+                (void)osDelay(50);
+                continue;
+            }
+            bringup_leds_note_awake(false);
+            bringup_leds_refresh();
             uint32_t ms =
                 r.event == IDLE_EVENT_SLEEP ? r.sleep_s * 1000U : 1000U;
             if (board_sleep(ms, work_waiting) == 0U && !work_waiting()) {

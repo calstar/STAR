@@ -17,6 +17,7 @@ add_library(star_app STATIC
     ${ROOT}/src/app/sleep_math.c
     ${ROOT}/src/app/mode_core.c
     ${ROOT}/src/app/flight_state.c
+    ${ROOT}/src/app/led_show.c
     ${ROOT}/src/app/fc_config.c
     ${ROOT}/src/app/status_report.c
     ${ROOT}/src/app/emmc_log.c
@@ -30,7 +31,7 @@ add_library(star_app STATIC
     ${FAKES}/fake_baro.c)
 target_include_directories(star_app PUBLIC ${ROOT}/src/app ${ROOT}/src/chips ${ROOT}/src/radio ${FAKES})
 
-set(TESTS test_sensors_core test_gnss_core test_boot_report test_sleep_math test_mode_core test_fc_config test_status_report)
+set(TESTS test_sensors_core test_gnss_core test_boot_report test_sleep_math test_mode_core test_fc_config test_status_report test_led_show)
 foreach(t ${TESTS})
     add_executable(${t} ${t}.c)
     target_link_libraries(${t} PRIVATE star_app)

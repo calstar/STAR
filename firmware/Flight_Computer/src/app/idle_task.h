@@ -16,7 +16,8 @@
  *   poll_command    commands the radio task's ARM gate confirmed
  * An Arm -> ARM_REQUESTED -> app_set_state(ARMED): sensors, GPS and the
  * eMMC log start. ARMED is "record", never pyro.
- * LED1 is on while the board is awake in Idle: one short flash every 10 s.
+ * The yellow lamp is on while this task is awake: one short flash every
+ * 10 s. The bring-up task owns the pattern after that (led_show.h).
  */
 
 #include <stdbool.h>

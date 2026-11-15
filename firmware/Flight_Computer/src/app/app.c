@@ -7,6 +7,7 @@
 #include "ground_task.h"
 #include "idle_task.h"
 #include "mode.h"
+#include "nand_stm32.h"
 #include "radio_task.h"
 #include "sensors_task.h"
 #include "telemetry_task.h"
@@ -26,6 +27,20 @@ static bool start_emmc(void) {
     return osThreadNew(emmc_stm32_writer_task, NULL, &attr) != NULL;
 }
 
+/* The SD NAND backup log: its own writer, so neither card waits on the other.
+ */
+static bool start_nand(void) {
+    static const osThreadAttr_t attr = {
+        .name = "nand",
+        .stack_size = 1024,
+        .priority = osPriorityLow,
+    };
+    if (nand_stm32_init() != EMMC_OK) {
+        return false;
+    }
+    return osThreadNew(nand_stm32_writer_task, NULL, &attr) != NULL;
+}
+
 static void on_radio_command(radio_command_t command) {
     app_command(command == RADIO_CMD_ARM ? MODE_CMD_ARM : MODE_CMD_DISARM);
 }
@@ -35,6 +50,7 @@ bool app_start(void) {
         return ground_start(); /* the ground station: the radio only */
     }
     bool ok = start_emmc();
+    ok = start_nand() && ok;
     ok = sensors_task_start() && ok;
     ok = gnss_task_start() && ok;
     ok = radio_task_start() && ok;

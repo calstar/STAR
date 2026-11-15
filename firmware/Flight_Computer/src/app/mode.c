@@ -5,11 +5,13 @@
 #include "gnss_task.h"
 #include "idle_task.h"
 #include "main.h"
+#include "nand_stm32.h"
 #include "radio_task.h"
 #include "sensors_task.h"
 
 static osMutexId_t lock;
 static volatile flight_state_t state = FLIGHT_SELF_TEST;
+static bool usb_live;
 
 static void take(void) {
     if (!lock) {
@@ -31,16 +33,30 @@ void app_set_state(flight_state_t to) {
         /* The W5500 leaves reset before anything could use it. */
         HAL_GPIO_WritePin(ETH_RST_GPIO_Port, ETH_RST_Pin,
                           o.ethernet ? GPIO_PIN_SET : GPIO_PIN_RESET);
-        sensors_task_set_active(o.sensors);
-        gnss_task_set_active(o.gps);
+        bool live = to == FLIGHT_IDLE && usb_live;
+        sensors_task_set_active(o.sensors || live);
+        gnss_task_set_active(o.gps || live);
         idle_task_set_active(o.idle_loop);
         if (o.radio_sniff) {
             radio_task_start_sniff(MODE_SNIFF_RX_MS, MODE_SNIFF_SLEEP_MS);
         } else {
             radio_task_start_continuous_rx();
         }
-        (void)emmc_log_on_state(emmc_stm32_log(), from, to,
-                                osKernelGetTickCount());
+        uint32_t now = osKernelGetTickCount();
+        (void)emmc_log_on_state(emmc_stm32_log(), from, to, now);
+        (void)emmc_log_on_state(nand_stm32_log(), from, to, now);
+    }
+    (void)osMutexRelease(lock);
+}
+
+void app_set_usb_live(bool on) {
+    take();
+    if (on != usb_live) {
+        usb_live = on;
+        if (state == FLIGHT_IDLE) {
+            sensors_task_set_active(on);
+            gnss_task_set_active(on);
+        }
     }
     (void)osMutexRelease(lock);
 }

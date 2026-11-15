@@ -27,6 +27,8 @@ pub const DATA_START: u32 = 8192;
 pub const CAPACITY: u32 = 0x76_0000; // blocks, THGBMTG5D1LBAIL user area (EMMC-ARCHITECTURE.md §1)
 pub const BLOCKS_PER_TICK: u32 = 64; // LOG_READ pacing: 64 blocks per 10 ms tick = 3.2 MB/s
 const MAX_STREAM_HZ: u16 = 200;
+const BARO_PERIOD_S: f64 = 0.02;
+const GNSS_PERIOD_S: f64 = 0.1;
 
 /// SplitMix64 with Box-Muller: deterministic noise, no dependency.
 pub struct Rng(u64);
@@ -193,12 +195,18 @@ pub struct FakeBoard {
     pub stream_rate: u16,
     pub stream_mask: u8,
     next_sample: f64,
+    next_baro: f64,
+    next_gnss: f64,
     next_status: f64,
     read_job: Option<ReadJob>,
     /// The card mounts on Arm or on the first log request.
     pub mounted: bool,
     /// Role = receiver: the rocket it hears (state, next frames, Arm tries).
     rocket: SimRocket,
+    /// Tests: chips that do not answer (bit = self_test::DEVICES index).
+    pub missing: u8,
+    /// Each chip's last self-test result: the boot check, then SELF_TEST's.
+    chips: [u8; 8],
 }
 
 #[derive(Default)]
@@ -232,10 +240,14 @@ impl FakeBoard {
             stream_rate: 0,
             stream_mask: p::STREAM_ALL,
             next_sample: 0.0,
+            next_baro: 0.0,
+            next_gnss: 0.0,
             next_status: 0.0,
             read_job: None,
             mounted: false,
             rocket: SimRocket::default(),
+            missing: 0,
+            chips: [st::PENDING; 8],
         };
         b.boot();
         b
@@ -252,6 +264,12 @@ impl FakeBoard {
         self.next_status = 0.0;
         self.read_job = None;
         self.mounted = false;
+        self.check_chips();
+    }
+
+    /// Probe every chip, as the firmware's board_chips_check does.
+    fn check_chips(&mut self) {
+        self.chips = core::array::from_fn(|i| if self.missing & (1 << i) != 0 { st::TIMEOUT } else { st::PASS });
     }
 
     fn read_flash(&self) -> Option<Vec<u8>> {
@@ -319,6 +337,16 @@ impl FakeBoard {
                 self.send(msg::INFO, fr.seq, &info.pack());
             }
             msg::GET_STATUS => {
+                self.send_values();
+                self.ack(&fr, result::OK, 0);
+            }
+            msg::SELF_TEST => {
+                // Idle only: in SELF_TEST the boot check is still running, and
+                // from ARMED on the sensor tasks own the chips.
+                if self.state() != state::IDLE {
+                    return self.ack(&fr, result::WRONG_STATE, self.state() as u16);
+                }
+                self.check_chips();
                 self.send_values();
                 self.ack(&fr, result::OK, 0);
             }
@@ -457,6 +485,24 @@ impl FakeBoard {
                 self.log = BlockWriter::new(self.log.epoch + 1);
                 self.ack(&fr, result::OK, 0);
             }
+            // One simulated card: both selections read it.
+            msg::LOG_SELECT => match pl {
+                [0 | 1] => self.ack(&fr, result::OK, 0),
+                [c] => self.ack(&fr, result::BAD_VALUE, *c as u16),
+                _ => self.ack(&fr, result::BAD_FRAME, 0),
+            },
+            msg::LOG_TEST => {
+                if !self.configurable() {
+                    return self.ack(&fr, result::WRONG_STATE, self.state() as u16);
+                }
+                if pl.len() != 4 {
+                    return self.ack(&fr, result::BAD_FRAME, 0);
+                }
+                self.mounted = true;
+                // The simulated card always reads back what was written.
+                let t = p::LogTest { status: 0, lba: DATA_START - 32, blocks: 32, bad_blocks: 0, first_bad: 0xFFFF, elapsed_ms: 4 };
+                self.send(msg::LOG_TEST_REPLY, fr.seq, &t.pack());
+            }
             msg::REBOOT => {
                 if pl != p::REBOOT_MAGIC.to_le_bytes() {
                     return self.ack(&fr, result::BAD_MAGIC, 0);
@@ -508,6 +554,8 @@ impl FakeBoard {
         }
         let done = self.state() != state::SELF_TEST;
         let pass = if done { st::PASS } else { st::PENDING };
+        let chips = self.chips;
+        let chip = |i: usize| (if done { chips[i] } else { st::PENDING }) as u32;
         // A 2S LiPo near full, judged OK; the real board converts and judges.
         let battery_mv = (7_900 + (self.rng.uniform() * 20.0) as i32 - 10) as u32;
         let rows: Vec<(&str, u8, u32, &str, &str)> = vec![
@@ -520,14 +568,14 @@ impl FakeBoard {
             ("battery_state", U8, 1, "", "UNKNOWN,OK,WARN,FAIL,USB,INVALID"),
             ("idle_heartbeats", U32, if done { 1 + (self.uptime() / 10.0) as u32 } else { 0 }, "", ""),
             ("idle_last_send", U8, pass as u32, "", RESULT),
-            ("self_test_imu", U8, pass as u32, "", RESULT),
-            ("self_test_high_g", U8, pass as u32, "", RESULT),
-            ("self_test_barometer", U8, pass as u32, "", RESULT),
-            ("self_test_ethernet", U8, st::NOT_CONFIGURED as u32, "", RESULT),
-            ("self_test_radio", U8, pass as u32, "", RESULT),
-            ("self_test_gnss", U8, pass as u32, "", RESULT),
-            ("self_test_nand", U8, st::NOT_IMPLEMENTED as u32, "", RESULT),
-            ("self_test_emmc", U8, pass as u32, "", RESULT),
+            ("self_test_imu", U8, chip(0), "", RESULT),
+            ("self_test_high_g", U8, chip(1), "", RESULT),
+            ("self_test_barometer", U8, chip(2), "", RESULT),
+            ("self_test_ethernet", U8, chip(3), "", RESULT),
+            ("self_test_radio", U8, chip(4), "", RESULT),
+            ("self_test_gnss", U8, chip(5), "", RESULT),
+            ("self_test_nand", U8, chip(6), "", RESULT),
+            ("self_test_emmc", U8, chip(7), "", RESULT),
             ("gnss_fix", U8, if done { 3 } else { 0 }, "", "NO_FIX,DEAD_RECKONING,2D,3D,GNSS_DR,TIME_ONLY"),
             ("gnss_satellites", U8, if done { 11 } else { 0 }, "", ""),
             ("emmc", U8, self.mounted as u32, "", "UNMOUNTED,MOUNTED,FULL,FAULT"),
@@ -586,7 +634,9 @@ impl FakeBoard {
             self.hear_rocket(now);
         }
         if self.stream_rate > 0 && now >= self.next_sample {
-            self.next_sample = now + 1.0 / self.stream_rate as f64;
+            // From the due time, not from now: a 10 ms tick that lands late
+            // must not stretch the period (that halved 100 Hz).
+            self.next_sample = (self.next_sample + 1.0 / self.stream_rate as f64).max(now - 0.01);
             self.stream_samples(now);
         }
     }
@@ -674,11 +724,15 @@ impl FakeBoard {
         if m & p::STREAM_HIGHG != 0 {
             frames.push((rec::REC_HIGHG, rec::pack_highg(t_us, [0, 0, 1])));
         }
-        if m & p::STREAM_BARO != 0 {
+        // Like the board, a sensor is sent only when it has a new sample: the
+        // baro at ~50 Hz (OSR 4096, two 10 ms conversions), GNSS at 10 Hz.
+        if m & p::STREAM_BARO != 0 && now >= self.next_baro {
+            self.next_baro = (self.next_baro + BARO_PERIOD_S).max(now - BARO_PERIOD_S);
             let pr = pressure(0.0) - 8000.0 + r.gauss(0.0, 2.0);
             frames.push((rec::REC_BARO, rec::pack_baro(t_us, 2412 + r.gauss(0.0, 3.0) as i32, pr as i32)));
         }
-        if m & p::STREAM_GNSS != 0 {
+        if m & p::STREAM_GNSS != 0 && now >= self.next_gnss {
+            self.next_gnss = (self.next_gnss + GNSS_PERIOD_S).max(now - GNSS_PERIOD_S);
             frames.push((rec::REC_GNSS, gnss(t_us, 700.0 + r.gauss(0.0, 1.5), 0.0, 11)));
         }
         for (t, d) in frames {
@@ -759,6 +813,38 @@ mod tests {
         assert_eq!((a.result, a.detail), (result::WRONG_STATE, state::ARMED as u16));
         assert_eq!(h.ack(msg::CONFIG_SAVE, &[]).result, result::WRONG_STATE);
         assert_eq!(h.ack(msg::LOG_WIPE, &p::WIPE_MAGIC.to_le_bytes()).result, result::WRONG_STATE);
+        assert_eq!(h.ack(msg::LOG_TEST, &1u32.to_le_bytes()).result, result::WRONG_STATE);
+    }
+
+    #[test]
+    fn card_check_replies_in_idle() {
+        let mut h = Host::new(FakeBoard::new(None, monotonic()));
+        let fr = h.ask(msg::LOG_TEST, &7u32.to_le_bytes(), 1);
+        assert_eq!(fr[0].ty, msg::LOG_TEST_REPLY);
+        let t = p::LogTest::unpack(&fr[0].payload).unwrap();
+        assert!(t.passed());
+        assert_eq!(t.lba + t.blocks as u32, DATA_START, "the gap just below the log");
+    }
+
+    #[test]
+    fn self_test_checks_the_chips_again() {
+        let (t, clock) = manual_clock();
+        let mut h = Host::new(FakeBoard::new(None, clock));
+        let chips = |b: &mut FakeBoard| -> Vec<u32> {
+            b.values().into_iter().filter(|v| v.name.starts_with("self_test_")).map(|v| v.raw).collect()
+        };
+        // Still in SELF_TEST: the boot check owns the chips.
+        assert_eq!(h.ack(msg::SELF_TEST, &[]).result, result::WRONG_STATE);
+        *t.lock().unwrap() += SELF_TEST_S;
+        assert_eq!(chips(&mut h.board), vec![st::PASS as u32; 8]);
+        // A chip stops answering: unseen until it is checked again.
+        h.board.missing = 1 << 2;
+        assert_eq!(chips(&mut h.board)[2], st::PASS as u32);
+        let fr = h.ask(msg::SELF_TEST, &[], 1);
+        assert!(Ack::unpack(&fr.last().unwrap().payload).unwrap().ok());
+        assert_eq!(chips(&mut h.board)[2], st::TIMEOUT as u32);
+        h.board.state_override = Some(state::ARMED);
+        assert_eq!(h.ack(msg::SELF_TEST, &[]).result, result::WRONG_STATE);
     }
 
     #[test]

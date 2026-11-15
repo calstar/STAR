@@ -6,6 +6,7 @@
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
 #include "main.h"
+#include "nand_stm32.h"
 
 #define EV_RX (1U << 0)
 #define EV_MODE (1U << 1) /* gnss_task_set_active() */
@@ -37,8 +38,9 @@ static void set_baud(void* ctx, uint32_t baud) {
 
 static void to_emmc(void* ctx, uint8_t type, const void* data, uint8_t len) {
     (void)ctx;
-    (void)emmc_log_append(emmc_stm32_log(), type, osKernelGetTickCount(), data,
-                          len);
+    uint32_t t = osKernelGetTickCount();
+    (void)emmc_log_append(emmc_stm32_log(), type, t, data, len);
+    (void)emmc_log_append(nand_stm32_log(), type, t, data, len); /* backup */
 }
 
 static void gnss_task(void* argument) {

@@ -44,6 +44,9 @@ pub struct Meta {
     pub utc_start: u32,
     pub downloaded_utc: String,
     pub format: String,
+    /// 0 eMMC, 1 SD NAND. Absent in folders saved before the NAND log.
+    #[serde(default)]
+    pub card: u8,
 }
 
 pub fn flight_title(e: &SessionEntry) -> String {
@@ -57,13 +60,18 @@ pub fn flight_title(e: &SessionEntry) -> String {
 }
 
 /// session -> folder, for flights already downloaded from this board and card epoch.
-pub fn find_downloaded(root: &Path, uid: &str, epoch: u32) -> HashMap<u32, PathBuf> {
+/// The cards a board logs to, by LOG_SELECT number.
+pub const CARDS: [&str; 2] = ["eMMC", "SD NAND"];
+/// The same cards as the CSV `source` column names them.
+pub const CARD_SOURCES: [&str; 2] = ["emmc", "sdnand"];
+
+pub fn find_downloaded(root: &Path, uid: &str, card: u8, epoch: u32) -> HashMap<u32, PathBuf> {
     let mut out = HashMap::new();
     let Ok(dir) = std::fs::read_dir(root) else { return out };
     for ent in dir.flatten() {
         let Ok(text) = std::fs::read_to_string(ent.path().join("meta.json")) else { continue };
         let Ok(m) = serde_json::from_str::<Meta>(&text) else { continue };
-        if m.board_uid == uid && m.epoch == epoch {
+        if m.board_uid == uid && m.card == card && m.epoch == epoch {
             out.insert(m.session, ent.path());
         }
     }
@@ -187,6 +195,35 @@ struct Download {
     t0: Instant,
 }
 
+impl Download {
+    /// Every block of the session has arrived.
+    fn complete(&self) -> bool {
+        let e = &self.entry;
+        (e.first_block..e.first_block + e.blocks).all(|i| self.blocks.contains_key(&i))
+    }
+}
+
+/// How a LOG_READ ended. The board sends its closing ACK with a bounded wait
+/// for the USB endpoint (usb_link.c `send`: 50 ms), so on a busy host the ACK
+/// can be lost after the last block went out. A read with every block in hand
+/// is complete whatever happened to the ACK; the GUI checks each block itself.
+fn read_outcome(res: Result<Frame, String>, complete: bool) -> Result<(), String> {
+    match res {
+        Ok(fr) => {
+            let a = p::Ack::unpack(&fr.payload)?;
+            if !a.ok() {
+                Err(a.describe())
+            } else if a.detail != 0 {
+                Err("cancelled".into())
+            } else {
+                Ok(())
+            }
+        }
+        Err(_) if complete => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// A downloaded flight on screen.
 pub struct Shown {
     pub session: Session,
@@ -250,6 +287,12 @@ pub struct FlightsView {
     pub wipe_word: String,
     pub shown: Option<ShownView>,
     pub root: String,
+    pub can_check: bool,
+    /// The card shown (index into `cards`).
+    pub card: u8,
+    pub cards: Vec<String>,
+    /// The last eMMC write/read-back check (LOG_TEST), or "".
+    pub card_check: String,
 }
 
 #[derive(Default)]
@@ -264,6 +307,10 @@ pub struct FlightsState {
     download: Option<Download>,
     next_id: u32,
     plot_id: u32,
+    /// The last LOG_TEST result, as shown under the flight list.
+    pub card_check: String,
+    /// The card the list and downloads come from (CARDS index).
+    pub card: u8,
 }
 
 impl FlightsState {
@@ -296,6 +343,8 @@ impl FlightsState {
         // A newer refresh supersedes an older one still paging: replies to the
         // old one are ignored, or both would append and every flight would show twice.
         self.gen += 1;
+        // Every refresh names its card first: a reconnected board starts on the eMMC.
+        sh.client.request_with_timeout(msg::LOG_SELECT, &[self.card], Purpose::LogSelect, LOG_TIMEOUT);
         sh.client.request_with_timeout(msg::LOG_INFO, &[], Purpose::LogInfo { gen: self.gen }, LOG_TIMEOUT);
     }
 
@@ -310,11 +359,12 @@ impl FlightsState {
 
     fn fill(&mut self, sh: &Shared) {
         let Some(li) = self.log_info else { return };
-        self.downloaded = find_downloaded(&sh.flights_root, &Self::uid(sh), li.epoch);
+        self.downloaded = find_downloaded(&sh.flights_root, &Self::uid(sh), self.card, li.epoch);
         let used = li.head as u64 * emmc::BLOCK as u64;
         let cap = (li.capacity.saturating_sub(li.data_start)) as u64 * emmc::BLOCK as u64;
         self.summary = format!(
-            "{} flights on the card; {} of {} used. Saved to {}",
+            "{}: {} flights; {} of {} used. Saved to {}",
+            CARDS[self.card as usize],
             self.entries.len(),
             fmt_bytes(used),
             fmt_bytes(cap),
@@ -354,18 +404,40 @@ impl FlightsState {
             }
             Purpose::LogInfo { .. } | Purpose::LogSessions { .. } => {} // superseded
             Purpose::LogRead { id } => {
-                if self.download.as_ref().is_some_and(|d| d.id == id) {
-                    let r = res.and_then(|fr| {
-                        let a = p::Ack::unpack(&fr.payload)?;
-                        if !a.ok() {
-                            Err(a.describe())
-                        } else if a.detail != 0 {
-                            Err("cancelled".into())
-                        } else {
-                            Ok(())
-                        }
-                    });
+                if let Some(d) = self.download.as_ref().filter(|d| d.id == id) {
+                    let r = read_outcome(res, d.complete());
                     self.finish(sh, r);
+                }
+            }
+            Purpose::LogTest => match res.and_then(|fr| {
+                if fr.ty == msg::LOG_TEST_REPLY {
+                    p::LogTest::unpack(&fr.payload)
+                } else {
+                    Err(describe_refusal(&fr))
+                }
+            }) {
+                Ok(t) => {
+                    let name = CARDS[self.card as usize];
+                    self.card_check = t.describe().replacen("eMMC", name, 1);
+                    if !t.passed() {
+                        sh.warn(&format!("{name} check"), self.card_check.clone());
+                    }
+                }
+                Err(e) => {
+                    let name = CARDS[self.card as usize];
+                    self.card_check = format!("{name} check not run: {e}");
+                    sh.warn(&format!("{name} check"), self.card_check.clone());
+                }
+            },
+            Purpose::LogSelect => {
+                let r = res.and_then(|fr| p::Ack::unpack(&fr.payload));
+                if self.card != 0 && !r.as_ref().is_ok_and(|a| a.ok()) {
+                    let why = r.map_or_else(|e| e, |a| a.describe());
+                    // The LOG_INFO already sent would list the eMMC under the NAND's name.
+                    self.gen += 1;
+                    self.entries.clear();
+                    self.log_info = None;
+                    self.summary = format!("The board did not switch to the SD NAND ({why}). Flash newer firmware.");
                 }
             }
             Purpose::LogAbort => {}
@@ -421,8 +493,10 @@ impl FlightsState {
             );
         }
         let uid = Self::uid(sh);
-        let folder = sh.flights_root.join(format!("{} ({})", flight_title(&e), &uid[..uid.len().min(8)]));
+        let card = if self.card == 0 { String::new() } else { format!(" {}", CARDS[self.card as usize]) };
+        let folder = sh.flights_root.join(format!("{}{card} ({})", flight_title(&e), &uid[..uid.len().min(8)]));
         let meta = Meta {
+            card: self.card,
             board_uid: uid,
             firmware: sh.client.info.as_ref().map(|i| i.fw_git.clone()).unwrap_or_default(),
             epoch: d.epoch,
@@ -440,7 +514,7 @@ impl FlightsState {
             std::fs::write(folder.join("flight.slg"), raw).map_err(|e| e.to_string())?;
             std::fs::write(folder.join("meta.json"), serde_json::to_string_pretty(&meta).unwrap()).map_err(|e| e.to_string())?;
             let (session, _) = load_folder(&folder)?;
-            emmc::export_csv(&session, &folder, P0_PA).map_err(|e| e.to_string())?;
+            emmc::export_csv(&session, &folder, P0_PA, CARD_SOURCES[self.card as usize]).map_err(|e| e.to_string())?;
             Ok(session)
         };
         match save() {
@@ -492,6 +566,29 @@ impl FlightsState {
             return sh.warn("Wipe card", "Not wiped: the board is not connected, or a download is running.");
         }
         sh.client.request_with_timeout(msg::LOG_WIPE, &p::WIPE_MAGIC.to_le_bytes(), Purpose::LogWipe, LOG_TIMEOUT);
+    }
+
+    /// LOG_TEST: write one chunk to the gap below the log and read it back.
+    pub fn select_card(&mut self, sh: &mut Shared, card: u8) {
+        if (card as usize) >= CARDS.len() || card == self.card || self.busy() {
+            return;
+        }
+        self.card = card;
+        self.card_check.clear();
+        self.entries.clear();
+        self.log_info = None;
+        if sh.client.is_ready() {
+            self.refresh(sh);
+        }
+    }
+
+    pub fn check_card(&mut self, sh: &mut Shared) {
+        if !sh.client.is_ready() || self.busy() {
+            return sh.warn("eMMC check", "Not run: the board is not connected, or a download is running.");
+        }
+        let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_secs() as u32);
+        self.card_check = format!("{} check running...", CARDS[self.card as usize]);
+        sh.client.request_with_timeout(msg::LOG_TEST, &seed.to_le_bytes(), Purpose::LogTest, LOG_TIMEOUT);
     }
 
     pub fn view(&self, sh: &Shared) -> FlightsView {
@@ -547,6 +644,10 @@ impl FlightsState {
                 ShownView { plot_id: s.plot.id, detail: s.detail(), warnings, folder: s.folder.display().to_string() }
             }),
             root: sh.flights_root.display().to_string(),
+            can_check: ready && !busy,
+            card: self.card,
+            cards: CARDS.iter().map(|c| c.to_string()).collect(),
+            card_check: self.card_check.clone(),
         }
     }
 }
@@ -574,6 +675,31 @@ fn reveal(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ack_frame(result: u8, detail: u16) -> Result<Frame, String> {
+        let a = p::Ack { for_type: msg::LOG_READ, result, detail };
+        Ok(Frame { ty: msg::ACK, seq: 1, payload: a.pack() })
+    }
+
+    #[test]
+    fn read_outcome_survives_a_lost_final_ack() {
+        assert_eq!(read_outcome(ack_frame(p::result::OK, 0), true), Ok(()));
+        assert_eq!(read_outcome(Err("timeout".into()), true), Ok(()), "all blocks in: the lost ACK does not matter");
+        assert!(read_outcome(Err("timeout".into()), false).is_err(), "blocks missing: still a failure");
+        assert!(read_outcome(ack_frame(p::result::OK, 1), true).is_err(), "cancelled");
+        assert!(read_outcome(ack_frame(p::result::STORAGE_ERROR, 0), true).is_err());
+    }
+
+    #[test]
+    fn download_complete_needs_every_block() {
+        let entry = SessionEntry { session: 2, first_block: 10, blocks: 3, duration_ms: 0, utc_start: 0 };
+        let mut d = Download { id: 1, entry, epoch: 1, blocks: BTreeMap::new(), t0: Instant::now() };
+        d.blocks.insert(10, vec![]);
+        d.blocks.insert(12, vec![]);
+        assert!(!d.complete());
+        d.blocks.insert(11, vec![]);
+        assert!(d.complete());
+    }
 
     #[test]
     fn decimation_keeps_spikes_and_order() {

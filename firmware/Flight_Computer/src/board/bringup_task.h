@@ -5,12 +5,9 @@
  * Boot-time bring-up: power/reset sequencing, then Pranay's self-test
  * coordinator over every chip, then an analog snapshot.
  *
- * Results, with no console yet:
- *   LED1 (PB9)  fast blink while checks run, then 1 Hz forever (alive)
- *   LED2 (PE0)  after the checks: off = READY, blinking with LED1 = WARN
- *               (optional chip failed or battery low), solid = FAIL
- *               (required chip failed, battery FAIL or unreadable)
- *               (LED2 on + LED1 stopped = Error_Handler halted the chip)
+ * Results, with no console yet. After the checks, src/app/led_show.h
+ * decides the lamps. Solid green is self-test FAIL and stays solid when
+ * the rocket arms. LED2 on and LED1 stopped means Error_Handler halted.
  *   g_bringup_report  watch it in the debugger (PlatformIO Debug, ST-Link)
  *
  * Nothing here enables a pyro output or transmits on the radio.
@@ -49,6 +46,10 @@ board_bringup_t* bringup_task_board(void);
 
 /* Create the bring-up task. Call between osKernelInitialize/osKernelStart. */
 void bringup_task_start(void);
+
+/* Idle calls these around its wake. awake is the 10 s yellow flash. */
+void bringup_leds_note_awake(bool on);
+void bringup_leds_refresh(void);
 
 #ifdef __cplusplus
 }

@@ -7,7 +7,7 @@
 import { html, nothing, render, type TemplateResult } from "lit-html";
 import { connect, type Api } from "./api";
 import { FlightPlots, LivePlots } from "./plots";
-import type { Command, Reading, ConfigView, FieldView, FlightsView, GroundView, HeartbeatRow, Pick, Row, StatusView, Tone, View } from "./types";
+import type { Command, Reading, ConfigView, FieldView, FlightsView, GroundView, GpsView, HeartbeatRow, Pick, Row, StatusView, Tone, View } from "./types";
 import "./style.css";
 import logoBlue from "./assets/star-logo-blue.png";
 import logoWhite from "./assets/star-logo-white.png";
@@ -28,6 +28,9 @@ const ui = {
   wipeText: "",
   readings: [] as Reading[],
   armConfirm: false, // the Ground tab's Arm waits for a second click
+  stationText: "", // the Ground tab's typed ground-station position
+  copied: "", // which coordinate was just copied
+  selfTestBusy: false,
 };
 
 let api: Api;
@@ -68,6 +71,33 @@ function card(title: string, body: unknown, cls = "") {
 
 // ---------------------------------------------------------------- top bar
 
+function selfTestButton(v: View) {
+  const s = v.status.self_test_summary;
+  const label = ui.selfTestBusy ? "Checking…" : s.label;
+  return html`<button
+    class="selftest ${s.ok ? "tone-good" : "tone-warn"}"
+    aria-label="Run self-test. ${s.label}"
+    title=${s.detail}
+    ?disabled=${!v.link.open || ui.selfTestBusy}
+    @click=${() => {
+      set({ selfTestBusy: true });
+      send({ cmd: "self_test" });
+      window.setTimeout(() => set({ selfTestBusy: false }), 700);
+    }}
+  >${label}</button>`;
+}
+
+// Starts on arm; STOP ends it, then the data can be saved as one CSV file.
+function recordingBar(v: View) {
+  const r = v.recording;
+  return html`<div class="recording rec-${r.phase}" data-testid="recording">
+    ${r.phase === "recording" ? html`<span class="rec-dot" aria-hidden="true"></span>` : nothing}
+    <span>${r.text}</span>
+    ${r.can_stop ? html`<button class="danger" @click=${() => send({ cmd: "recording_stop" })}>STOP</button>` : nothing}
+    ${r.can_save ? html`<button class="primary" @click=${() => pick("flight_csv")}>Save flight data as CSV</button>` : nothing}
+  </div>`;
+}
+
 function topbar(v: View) {
   const open = v.link.open;
   return html`<header class="topbar">
@@ -86,7 +116,7 @@ function topbar(v: View) {
     <button class=${open ? "" : "primary"} @click=${() => send({ cmd: open ? "disconnect" : "connect" })}>
       ${open ? "Disconnect" : "Connect"}
     </button>
-    ${v.state ? chip(v.state[0], v.state[1]) : nothing}
+    ${selfTestButton(v)}
     <span class="link-text ${v.link.heartbeat_lost ? "tone-text-bad" : ""}" role="status">${v.link.text}</span>
   </header>`;
 }
@@ -109,7 +139,7 @@ function statusTab(s: StatusView) {
       ${card(
         "Self-test",
         html`<ul class="selftest">
-          ${s.self_test.map((r) => html`<li><span>${r.name}</span>${r.chip ? chip(r.value, r.chip) : html`<span class="muted">${r.value}</span>`}</li>`)}
+          ${s.self_test.map((r) => html`<li class=${s.self_test_summary.failed.includes(r.name) ? "failed" : ""}><span>${r.name}</span>${r.chip ? chip(r.value, r.chip) : html`<span class="muted">${r.value}</span>`}</li>`)}
         </ul>`,
       )}
       ${s.messages.length ? card("Board messages", html`<pre class="log">${s.messages.join("\n")}</pre>`) : nothing}
@@ -156,6 +186,7 @@ function liveTab(v: View) {
       )}
     </aside>
     <div class="live-main">
+    ${recordingBar(v)}
     <div class="toolbar">
       <label class="field-inline">
         <span>Stream rate</span>
@@ -325,7 +356,159 @@ function configTab(c: ConfigView) {
 
 // ---------------------------------------------------------------- ground
 
-function groundTab(g: GroundView) {
+/** Compass rose: course over ground (solid arrow) and the bearing from the ground station to the rocket (dashed). */
+function compass(g: GpsView) {
+  const c = 70;
+  const at = (deg: number, r: number) => [c + r * Math.sin((deg * Math.PI) / 180), c - r * Math.cos((deg * Math.PI) / 180)];
+  const ticks = Array.from({ length: 36 }, (_, i) => {
+    const deg = i * 10;
+    const [x1, y1] = at(deg, i % 9 === 0 ? 50 : 55);
+    const [x2, y2] = at(deg, 60);
+    return html`<line class=${i % 9 === 0 ? "major" : ""} x1=${x1} y1=${y1} x2=${x2} y2=${y2}></line>`;
+  });
+  const labels = (["N", "E", "S", "W"] as const).map((n, i) => {
+    const [x, y] = at(i * 90, 41);
+    return html`<text x=${x} y=${y} class=${n === "N" ? "north" : ""}>${n}</text>`;
+  });
+  const arrow = (deg: number, cls: string) => {
+    const [x, y] = at(deg, 52);
+    const [lx, ly] = at(deg - 160, 10);
+    const [rx, ry] = at(deg + 160, 10);
+    const [hx, hy] = [x, y];
+    return html`<g class=${cls}>
+      <line x1=${c} y1=${c} x2=${hx} y2=${hy}></line>
+      <polygon points="${hx},${hy} ${hx + lx - c},${hy + ly - c} ${hx + rx - c},${hy + ry - c}"></polygon>
+    </g>`;
+  };
+  return html`<svg class="gps-compass" viewBox="0 0 140 140" role="img" aria-label="Course over ground ${g.course}">
+    <circle cx=${c} cy=${c} r="60"></circle>
+    ${ticks}${labels}
+    ${g.bearing_deg !== null ? arrow(g.bearing_deg, "bearing") : nothing}
+    ${g.course_deg !== null ? arrow(g.course_deg, "course") : nothing}
+    <circle class="hub" cx=${c} cy=${c} r="3"></circle>
+  </svg>`;
+}
+
+/** Tilt off vertical. The lean is drawn to the right: which compass way it leans is unknown (no magnetometer). */
+function tiltGauge(g: GpsView) {
+  const deg = g.tilt_deg ?? 0;
+  return html`<svg class="gps-tilt" viewBox="0 0 140 140" role="img" aria-label="Tilt ${g.tilt}">
+    <path class="arc" d="M 70 20 A 50 50 0 0 1 120 70"></path>
+    ${[15, 30, 45, 60, 75].map((a) => {
+      const r = (a * Math.PI) / 180;
+      return html`<line class="tick" x1=${70 + 46 * Math.sin(r)} y1=${70 - 46 * Math.cos(r)} x2=${70 + 52 * Math.sin(r)} y2=${70 - 52 * Math.cos(r)}></line>`;
+    })}
+    <line class="vertical" x1="70" y1="12" x2="70" y2="128"></line>
+    <line class="ground-line" x1="20" y1="128" x2="120" y2="128"></line>
+    ${g.tilt_deg !== null
+      ? html`<g class="rocket-body" transform="rotate(${deg.toFixed(1)} 70 110)">
+          <path d="M70 34 L77 50 L77 104 L83 114 L57 114 L63 104 L63 50 Z"></path>
+        </g>`
+      : nothing}
+  </svg>`;
+}
+
+/** Recent path, east/north metres from the first fix after arming, with range rings and the ground station. */
+function trackPlot(track: [number, number][], g: GpsView) {
+  if (track.length === 0) return html`<div class="gps-track empty muted">Track shows after the first fix once armed</div>`;
+  const pts = [...track, ...(g.station_en ? [g.station_en] : [])];
+  const raw = Math.max(20, ...pts.flat().map((v) => Math.abs(v))) * 1.15;
+  const steps = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000];
+  const span = steps.find((s) => s >= raw) ?? raw;
+  const c = 110;
+  const k = 95 / span;
+  const x = (e: number) => c + e * k;
+  const y = (n: number) => c - n * k;
+  const d = track.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)} ${y(p[1]).toFixed(1)}`).join(" ");
+  const last = track[track.length - 1];
+  const unit = (m: number) => (m >= 1000 ? `${m / 1000} km` : `${m} m`);
+  const heading =
+    g.course_deg !== null
+      ? html`<line class="heading" x1=${x(last[0])} y1=${y(last[1])}
+          x2=${x(last[0]) + 16 * Math.sin((g.course_deg * Math.PI) / 180)} y2=${y(last[1]) - 16 * Math.cos((g.course_deg * Math.PI) / 180)}></line>`
+      : nothing;
+  return html`<svg class="gps-track" viewBox="0 0 220 220" role="img" aria-label="Path since arming">
+    <circle class="ring" cx=${c} cy=${c} r="95"></circle>
+    <circle class="ring" cx=${c} cy=${c} r="47.5"></circle>
+    <line class="axis" x1=${c} y1="10" x2=${c} y2="210"></line>
+    <line class="axis" x1="10" y1=${c} x2="210" y2=${c}></line>
+    <text class="north" x=${c} y="9">N</text>
+    <text class="scale" x="214" y="214">${unit(span)} ring</text>
+    <path d=${d}></path>
+    <circle class="pad" cx=${c} cy=${c} r="3"></circle>
+    ${g.station_en ? html`<rect class="station" x=${x(g.station_en[0]) - 4} y=${y(g.station_en[1]) - 4} width="8" height="8"><title>Ground station</title></rect>` : nothing}
+    ${heading}
+    <circle class="rocket" cx=${x(last[0]).toFixed(1)} cy=${y(last[1]).toFixed(1)} r="4.5"></circle>
+  </svg>`;
+}
+
+function copyText(label: string, text: string) {
+  void navigator.clipboard?.writeText(text).then(() => {
+    set({ copied: label });
+    setTimeout(() => ui.copied === label && set({ copied: "" }), 1200);
+  });
+}
+
+function gpsCard(g: GroundView) {
+  const s = g.gps;
+  const coord = (label: string, v: string) =>
+    html`<button class="coord" title="Copy" ?disabled=${!v} @click=${() => copyText(label, v)}>
+      <span class="muted">${label}</span> ${v || "—"} <span class="copy">${ui.copied === label ? "copied" : "copy"}</span>
+    </button>`;
+  return card(
+    "GPS & direction",
+    html`<div class="gps-head">
+        ${chip(s.fix[0], s.fix[1])}
+        <span>${s.sats} sats</span>
+        <span class=${s.age_stale ? "stale" : "muted"}>${s.age}</span>
+      </div>
+      <div class="gps-coords">
+        ${coord("lat", s.lat)} ${coord("lon", s.lon)}
+        ${s.lat ? html`<button class="coord" @click=${() => copyText("both", `${s.lat}, ${s.lon}`)}>${ui.copied === "both" ? "copied" : "copy both"}</button>` : nothing}
+      </div>
+      <div class="gps-dials">
+        <figure>
+          ${compass(s)}
+          <figcaption>
+            <b>${s.course}</b> course over ground
+            <span class="muted">direction of travel from GPS, not where the nose points</span>
+          </figcaption>
+        </figure>
+        <figure>
+          ${tiltGauge(s)}
+          <figcaption>
+            <b>${s.tilt}</b>
+            <span class="muted">${s.tilt_note}. Lean direction unknown (no magnetometer).</span>
+          </figcaption>
+        </figure>
+      </div>
+      <dl class="rows rocket-facts">
+        <dt>Altitude</dt><dd>${s.alt || "—"}</dd>
+        <dt>Ground speed</dt><dd>${s.speed}</dd>
+        <dt>Vertical speed</dt><dd>${s.vspeed}</dd>
+        ${s.station_set
+          ? html`<dt>From station</dt>
+              <dd>${s.bearing_deg !== null ? `${s.bearing_deg.toFixed(0).padStart(3, "0")}°, ` : ""}${s.range || "—"}</dd>
+              <dt>Elevation</dt><dd>${s.elevation || "—"}</dd>`
+          : nothing}
+      </dl>
+      ${trackPlot(g.track, s)}
+      <div class="gps-station">
+        <div class="muted">Ground station ${s.station_set ? html`<span class="place">${s.station}</span>` : "not set"}</div>
+        <div class="gps-station-row">
+          <button ?disabled=${!s.has_fix} @click=${() => send({ cmd: "ground_station_from_fix" })}>Use rocket's fix</button>
+          <input placeholder="lat, lon[, alt m]" .value=${ui.stationText}
+            @input=${(e: Event) => (ui.stationText = (e.target as HTMLInputElement).value)}
+            @keydown=${(e: KeyboardEvent) => e.key === "Enter" && send({ cmd: "ground_station_set", text: ui.stationText })} />
+          <button @click=${() => send({ cmd: "ground_station_set", text: ui.stationText })}>Set</button>
+          ${s.station_set ? html`<button class="ghost" @click=${() => send({ cmd: "ground_station_clear" })}>Clear</button>` : nothing}
+        </div>
+        ${s.station_error ? html`<p class="stale">${s.station_error}</p>` : nothing}
+      </div>`,
+  );
+}
+
+function groundTab(g: GroundView, v: View) {
   const state = g.rocket ? html`<div class="rocket-state tone-${g.rocket[1]}">${g.rocket[0]}</div>` : html`<div class="rocket-state tone-neutral">No rocket yet</div>`;
   return html`<div class="ground" data-testid="ground">
     <div class="col">
@@ -336,6 +519,8 @@ function groundTab(g: GroundView) {
             <dt>Last heard</dt><dd class=${g.heard_stale ? "stale" : ""}>${g.heard}</dd>
             <dt>Signal</dt><dd>${g.signal}</dd>
             <dt>Battery</dt><dd>${g.battery}</dd>
+            <dt>GPS</dt><dd class="place">${g.place}</dd>
+            ${g.where_note ? html`<dt></dt><dd>${g.where_note}</dd>` : nothing}
             ${g.telemetry ? html`<dt>Telemetry</dt><dd>${g.telemetry}</dd>` : nothing}
           </dl>
           <div class="ground-actions">
@@ -347,10 +532,12 @@ function groundTab(g: GroundView) {
               : html`<button class="arm" ?disabled=${g.busy} @click=${() => set({ armConfirm: true })}>Arm</button>`}
             <button ?disabled=${g.busy} @click=${() => send({ cmd: "ground_unarm" })}>Un-arm</button>
           </div>
+          ${recordingBar(v)}
           ${g.command
             ? html`<p class=${g.busy ? "arm-progress" : "arm-outcome"} data-testid="ground-command">${g.command}</p>`
             : nothing}`,
       )}
+      ${gpsCard(g)}
       ${card(
         "Status report",
         g.chips.length
@@ -388,6 +575,16 @@ function flightsTab(f: FlightsView) {
   const openRow = (s: number, downloaded: boolean) =>
     send(downloaded ? { cmd: "flight_open", session: s } : { cmd: "flight_download", session: s });
   return html`<div class="toolbar">
+      <label class="field-inline">
+        <span>Card</span>
+        <select
+          aria-label="Card"
+          ?disabled=${f.busy}
+          @change=${(e: Event) => send({ cmd: "flight_card", card: Number((e.target as HTMLSelectElement).value) })}
+        >
+          ${f.cards.map((c, i) => html`<option value=${i} ?selected=${i === f.card}>${c}</option>`)}
+        </select>
+      </label>
       <button ?disabled=${!f.can_refresh} @click=${() => send({ cmd: "flights_refresh" })}>Refresh</button>
       <button
         class="primary"
@@ -401,9 +598,15 @@ function flightsTab(f: FlightsView) {
       <button ?disabled=${!sel?.downloaded} @click=${() => sel && send({ cmd: "flight_reveal", session: sel.session })}>Show in folder</button>
       <span class="spacer"></span>
       <button class="ghost" @click=${() => pick("flight_folder")}>Open a downloaded flight…</button>
+      <button
+        title="Writes 16 KB to the card's spare area below the log, reads it back and compares. Flights are not touched."
+        ?disabled=${!f.can_check}
+        @click=${() => send({ cmd: "flight_check_card" })}
+      >Test card</button>
       <button class="danger" ?disabled=${!f.can_wipe} @click=${() => set({ wipeOpen: true, wipeText: "" })}>Wipe card…</button>
     </div>
     <p class="muted" data-testid="flights-summary">${f.summary}</p>
+    ${f.card_check ? html`<p class="muted" data-testid="card-check">${f.card_check}</p>` : nothing}
     ${f.progress
       ? html`<div class="progress" role="progressbar" aria-valuenow=${Math.round(f.progress.fraction * 100)} aria-valuemin="0" aria-valuemax="100">
           <div style="width:${(f.progress.fraction * 100).toFixed(1)}%"></div>
@@ -527,7 +730,7 @@ function page(v: View): TemplateResult {
       <div class="panel live" ?hidden=${ui.tab !== "live"}>${liveTab(v)}</div>
       <div class="panel" ?hidden=${ui.tab !== "config"}>${configTab(v.config)}</div>
       <div class="panel" ?hidden=${ui.tab !== "flights"}>${flightsTab(v.flights)}</div>
-      <div class="panel" ?hidden=${ui.tab !== "ground" || !v.ground.show}>${groundTab(v.ground)}</div>
+      <div class="panel" ?hidden=${ui.tab !== "ground" || !v.ground.show}>${groundTab(v.ground, v)}</div>
     </main>
     ${noticeDialog(v)}`;
 }
@@ -550,6 +753,16 @@ async function showFlight(id: number) {
       c.lines.length > 1 ? c.lines.map((l, j) => `<span><i style="background:var(--s${j})"></i>${l.name}</span>`).join("") : "";
   });
   flight.render(plot, [...root.querySelectorAll<HTMLElement>("[data-flight]")]);
+}
+
+let drawQueued = false;
+function drawSoon() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => {
+    drawQueued = false;
+    draw();
+  });
 }
 
 function draw() {
@@ -606,7 +819,10 @@ async function main() {
     },
     live: (b) => {
       live.push(b);
-      set({ readings: b.readings });
+      // Batches come ~30 a second; redraw the readings once per frame at
+      // most, and only while the Live tab is showing.
+      ui.readings = b.readings;
+      if (ui.tab === "live") drawSoon();
     },
   });
   const v = await api.view();

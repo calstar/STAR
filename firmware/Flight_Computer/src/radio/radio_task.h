@@ -59,6 +59,10 @@ typedef struct {
 
 void radio_task_last_rx(radio_rx_t* out);
 
+/* First ARM frame accepted, waiting for the second. The bring-up task reads
+ * this for the yellow double-blink. False before the radio task exists. */
+bool radio_task_arm_pending(void);
+
 /* Called from the radio task when the ARM gate confirms a command. */
 void radio_task_on_command(void (*callback)(radio_command_t command));
 

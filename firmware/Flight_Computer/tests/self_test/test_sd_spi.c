@@ -74,11 +74,44 @@ static void test_cid(void) {
     CHECK(!sd_cid_ok(zero));
 }
 
+/* 0x7FA1 for a block of 0xFF is the SD spec's worked example; "123456789"
+ * gives 0x31C3 (CRC-16/XMODEM check value). */
+static void test_crc16(void) {
+    uint8_t ff[512];
+    memset(ff, 0xFF, sizeof ff);
+    CHECK(sd_crc16(ff, sizeof ff) == 0x7FA1U);
+    CHECK(sd_crc16((const uint8_t*)"123456789", 9) == 0x31C3U);
+}
+
+/* CSD 2.0 from a real 8 GB SDHC card (C_SIZE 0x3B37); the CSD 1.0 bytes were
+ * built field by field in Python (C_SIZE 0xF0F, C_SIZE_MULT 5,
+ * READ_BL_LEN 9). */
+static void test_csd(void) {
+    const uint8_t v2[16] = {0x40, 0x0E, 0x00, 0x32, 0x5B, 0x59, 0x00, 0x00,
+                            0x3B, 0x37, 0x7F, 0x80, 0x0A, 0x40, 0x40, 0x00};
+    const uint8_t v1[16] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x03, 0xC3,
+                            0xC0, 0x02, 0x80, 0x00, 0x00, 0x00, 0x00, 0x7F};
+    uint8_t bad[16] = {0xC0};
+    CHECK(sd_csd_blocks(v2) == (0x3B37U + 1U) * 1024U);
+    CHECK(sd_csd_blocks(v1) == 493568U);
+    CHECK(sd_csd_blocks(bad) == 0U);
+}
+
+static void test_data_response(void) {
+    CHECK(sd_data_accepted(0xE5));  /* accepted, upper bits undefined */
+    CHECK(!sd_data_accepted(0xEB)); /* CRC error */
+    CHECK(!sd_data_accepted(0xED)); /* write error */
+    CHECK(!sd_data_accepted(0xFF)); /* no response */
+}
+
 int main(void) {
     test_command_frames();
     test_r1();
     test_r7();
     test_cid();
+    test_crc16();
+    test_csd();
+    test_data_response();
     puts("sd_spi: all tests passed");
     return 0;
 }

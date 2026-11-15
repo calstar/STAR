@@ -501,6 +501,19 @@ emmc_status_t emmc_log_open(emmc_log_t* log) {
     if (recording) {
         return EMMC_ERR_NOT_READY;
     }
+    /* Chunks sealed at Un-arm may still be waiting for the card. Write them
+     * first, or a download right after Un-arm misses the end of the flight
+     * (the session list and LOG_INFO would stop at the last chunk written).
+     * Bounded: nothing new is queued while not recording. */
+    for (uint32_t i = 0;
+         emmc_log_backlog(log) > 0U &&
+         i < (uint32_t)log->chunk_count * log->config.write_attempts;
+         ++i) {
+        (void)emmc_log_service(log, 0U);
+    }
+    lock(log);
+    disk = log->disk;
+    unlock(log);
     if (disk == EMMC_DISK_MOUNTED || disk == EMMC_DISK_FULL) {
         return EMMC_OK;
     }
@@ -527,20 +540,33 @@ static emmc_status_t session_of(emmc_log_t* log, uint32_t k, uint32_t* s) {
     return st;
 }
 
-/* First block in [0, n) of session s or later (sessions never decrease). */
+/* First valid block in [0, n) of session s or later (sessions never
+ * decrease along the log). Blocks that are not valid (a torn write's hole,
+ * which mount steps over) belong to no session: they count as before s. A
+ * plain binary search that read a hole block as "session 0 < s" could jump
+ * past the real start of s and hand its first blocks to the session before. */
 static emmc_status_t first_of(emmc_log_t* log, uint32_t n, uint32_t s,
                               uint32_t* k) {
     uint32_t lo = 0, hi = n;
     while (lo < hi) {
-        uint32_t mid = lo + (hi - lo) / 2U, at = 0;
-        emmc_status_t st = session_of(log, mid, &at);
-        if (st != EMMC_OK) {
-            return st;
+        uint32_t mid = lo + (hi - lo) / 2U, at = 0, j = mid;
+        emmc_status_t st;
+        /* Nearest valid block at or left of mid, within [lo, mid]. */
+        for (;;) {
+            if ((st = session_of(log, j, &at)) != EMMC_OK) {
+                return st;
+            }
+            if (at != 0U || j == lo) {
+                break;
+            }
+            --j;
         }
-        if (at < s) {
+        if (at == 0U) {
+            lo = mid + 1U; /* [lo, mid] holds no valid block */
+        } else if (at < s) {
             lo = mid + 1U;
         } else {
-            hi = mid;
+            hi = j;
         }
     }
     *k = lo;
@@ -551,14 +577,13 @@ static emmc_status_t first_of(emmc_log_t* log, uint32_t n, uint32_t s,
 static emmc_status_t record_time(emmc_log_t* log, uint32_t k, bool last,
                                  uint32_t* t, bool* any) {
     const uint8_t* b = log->scratch;
-    emmc_status_t st =
-        log->port.read(log->context, log->config.data_start_lba + k,
-                       log->scratch, 1U, log->config.read_budget_ms);
-    if (st != EMMC_OK) {
-        return st;
+    bool valid = false;
+    emmc_status_t st = probe(log, k, &valid, NULL); /* reads into scratch */
+    *any = false;
+    if (st != EMMC_OK || !valid || b[16] != EMMC_LOG_KIND_DATA) {
+        return st; /* a hole or a pad block has no records */
     }
     uint16_t used = get16(b + 18);
-    *any = false;
     for (uint32_t i = 0; used <= EMMC_LOG_PAYLOAD_BYTES &&
                          i + EMMC_LOG_RECORD_HEADER_BYTES <= used;) {
         const uint8_t* r = b + EMMC_LOG_HEADER_BYTES + i;
@@ -582,11 +607,15 @@ emmc_status_t emmc_log_sessions(emmc_log_t* log, uint32_t start,
     if (used == 0U) {
         return EMMC_OK;
     }
-    if ((st = session_of(log, 0, &s0)) != EMMC_OK ||
+    /* The oldest session is that of the first valid block (block 0 itself
+     * may be in a torn hole; such leading blocks are listed under none).
+     * The newest is the last block's: mount ends the log on a valid one. */
+    uint32_t first = 0;
+    if ((st = first_of(log, used, 1U, &first)) != EMMC_OK ||
+        (first < used && (st = session_of(log, first, &s0)) != EMMC_OK) ||
         (st = session_of(log, used - 1U, &s1)) != EMMC_OK) {
         return st;
     }
-    uint32_t first = 0;
     for (uint32_t s = s0; s != 0U && s <= s1; ++s) {
         uint32_t next = 0, at = 0;
         if ((st = first_of(log, used, s + 1U, &next)) != EMMC_OK ||
@@ -627,4 +656,93 @@ emmc_status_t emmc_log_read(emmc_log_t* log, uint32_t k, uint8_t* buf) {
     }
     return log->port.read(log->context, log->config.data_start_lba + k, buf, 1U,
                           log->config.read_budget_ms);
+}
+
+emmc_status_t emmc_log_wipe(emmc_log_t* log) {
+    emmc_status_t st = emmc_log_open(log);
+    if (st != EMMC_OK) {
+        return st;
+    }
+    /* format() takes the old epoch from the superblock in scratch. */
+    if ((st = log->port.read(log->context, 0U, log->scratch, 1U,
+                             log->config.read_budget_ms)) != EMMC_OK ||
+        (st = format(log)) != EMMC_OK) {
+        return st;
+    }
+    lock(log);
+    log->head = log->config.data_start_lba;
+    /* session = base_session + arm_index: the next Arm makes session 1. */
+    log->base_session = 0U - log->arm_index;
+    log->disk = EMMC_DISK_MOUNTED;
+    unlock(log);
+    return EMMC_OK;
+}
+
+static uint32_t check_word(uint32_t seed, uint32_t lba, uint32_t i) {
+    uint32_t x = seed ^ (lba * 0x9E3779B1UL) ^ (i * 0x85EBCA6BUL);
+    x ^= x >> 16;
+    x *= 0x7FEB352DUL;
+    x ^= x >> 15;
+    x *= 0x846CA68BUL;
+    x ^= x >> 16;
+    return x;
+}
+
+emmc_status_t emmc_log_check(emmc_log_t* log, uint32_t seed,
+                             emmc_log_check_t* out) {
+    out->lba = log->config.data_start_lba - EMMC_LOG_CHUNK_BLOCKS;
+    out->blocks = EMMC_LOG_CHUNK_BLOCKS;
+    out->bad_blocks = 0;
+    out->first_bad = UINT32_MAX;
+    if (log->config.data_start_lba < 1U + EMMC_LOG_CHUNK_BLOCKS) {
+        return EMMC_ERR_PARAM; /* no gap between superblock and log */
+    }
+    emmc_status_t st = emmc_log_open(log); /* starts the card once */
+    if (st != EMMC_OK) {
+        return st;
+    }
+    /* Borrow a chunk buffer (DMA-reachable on the board). */
+    lock(log);
+    uint8_t c = log->write_chunk;
+    bool idle = !log->recording && !log->has_fill &&
+                emmc_log_backlog(log) == 0U &&
+                log->chunk_state[c] == EMMC_CHUNK_FREE;
+    if (idle) {
+        log->chunk_state[c] = EMMC_CHUNK_FILLING; /* not FREE: Arm skips it */
+    }
+    unlock(log);
+    if (!idle) {
+        return EMMC_ERR_NOT_READY;
+    }
+    uint8_t* buf = log->chunks[c].bytes;
+    for (uint32_t b = 0; b < EMMC_LOG_CHUNK_BLOCKS; ++b) {
+        for (uint32_t i = 0; i < EMMC_BLOCK_SIZE / 4U; ++i) {
+            put32(buf + b * EMMC_BLOCK_SIZE + 4U * i,
+                  check_word(seed, out->lba + b, i));
+        }
+    }
+    st = log->port.write(log->context, out->lba, buf, EMMC_LOG_CHUNK_BLOCKS,
+                         log->config.write_budget_ms);
+    if (st == EMMC_OK) {
+        memset(buf, 0, EMMC_LOG_CHUNK_BYTES);
+        st = log->port.read(log->context, out->lba, buf, EMMC_LOG_CHUNK_BLOCKS,
+                            log->config.write_budget_ms);
+    }
+    if (st == EMMC_OK) {
+        for (uint32_t b = 0; b < EMMC_LOG_CHUNK_BLOCKS; ++b) {
+            for (uint32_t i = 0; i < EMMC_BLOCK_SIZE / 4U; ++i) {
+                if (get32(buf + b * EMMC_BLOCK_SIZE + 4U * i) !=
+                    check_word(seed, out->lba + b, i)) {
+                    if (out->bad_blocks++ == 0U) {
+                        out->first_bad = b;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    lock(log);
+    log->chunk_state[c] = EMMC_CHUNK_FREE;
+    unlock(log);
+    return st;
 }
