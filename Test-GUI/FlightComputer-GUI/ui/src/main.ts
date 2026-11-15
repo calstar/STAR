@@ -116,6 +116,7 @@ function topbar(v: View) {
     <button class=${open ? "" : "primary"} @click=${() => send({ cmd: open ? "disconnect" : "connect" })}>
       ${open ? "Disconnect" : "Connect"}
     </button>
+    ${v.state ? chip(v.state[0], v.state[1]) : nothing}
     ${selfTestButton(v)}
     <span class="link-text ${v.link.heartbeat_lost ? "tone-text-bad" : ""}" role="status">${v.link.text}</span>
   </header>`;
