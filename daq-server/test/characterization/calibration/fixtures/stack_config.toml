@@ -1,0 +1,213 @@
+# Characterization fixture for calibration_service (test/characterization/calibration).
+# Hermetic: every board IP is 127.0.0.x, and the service is pointed at a stand-in Elodin by
+# --elodin-port; the [database] port below is never dialled. Not derived from the stand's config.
+
+[database]
+host = "127.0.0.1"
+port = 2240
+
+[boards.pt_board]
+type = "PT"
+pt_type = "0-5V ratiometric"
+ip = "127.0.0.21"
+send_port = 5005
+board_id = 21
+enabled = true
+voltage_reference = 1
+active_connectors = [ 1, 2, 3, 4, 5 ]
+
+[boards.pt_board_2]
+type = "PT"
+pt_type = "4-20 mA absolute"
+ip = "127.0.0.22"
+send_port = 5005
+board_id = 22
+enabled = true
+voltage_reference = 0
+adc_ref_voltage = 2.5
+active_connectors = [ 1, 2, 3, 4 ]
+hp_pt_full_scale_psi = 5000
+hp_pt_sense_resistor_ohms = 120
+
+[boards.lc_board_2]
+type = "LC"
+ip = "127.0.0.42"
+send_port = 5005
+board_id = 42
+enabled = true
+voltage_reference = 0
+active_connectors = [ 1, 2, 6 ]
+
+[boards.tc_board]
+type = "TC"
+ip = "127.0.0.51"
+send_port = 5005
+board_id = 51
+enabled = true
+voltage_reference = 0
+active_connectors = [ 1, 2, 3 ]
+
+[boards.rtd_board]
+type = "RTD"
+ip = "127.0.0.31"
+send_port = 5005
+board_id = 31
+enabled = true
+voltage_reference = 0
+active_connectors = [ 1, 2 ]
+
+[boards.actuator_board_2]
+type = "ACTUATOR"
+ip = "127.0.0.12"
+send_port = 5005
+listen_port = 5005
+num_actuators = 10
+board_id = 12
+enabled = true
+voltage_reference = 0
+active_connectors = [ 1, 2, 3 ]
+
+[boards.ball_valve_board]
+type = "BALL_VALVE"
+ip = "127.0.0.71"
+send_port = 5005
+listen_port = 5005
+board_id = 71
+enabled = true
+voltage_reference = 0
+active_connectors = [ 1, 2 ]
+
+[boards.labjack_1]
+type = "T7"
+ip = "127.0.0.81"
+board_id = 81
+enabled = true
+scan_rate_hz = 100.0
+
+[[boards.labjack_1.channels]]
+ain = 1
+kind = "PT"
+role = "T7 PT"
+signal = "4-20mA"
+shunt_ohms = 250.0
+full_scale = 1000.0
+
+[[boards.labjack_1.channels]]
+ain = 2
+kind = "TC"
+tc_type = "K"
+role = "T7 TC"
+range = 0.1
+
+[[boards.labjack_1.channels]]
+ain = 3
+kind = "RTD"
+role = "T7 RTD"
+r0_ohms = 1000.0
+ljtr_ohms = 1000.0
+
+[[boards.labjack_1.channels]]
+ain = 4
+kind = "LC"
+role = "T7 LC"
+differential = true
+range = 0.1
+full_scale = 500.0
+sensitivity_mv_per_v = 2.0
+excitation_v = 10.0
+
+[[boards.labjack_1.channels]]
+ain = 6
+kind = "PT"
+role = "T7 PT Cubic"
+signal = "0.5-4.5V"
+full_scale = 2000.0
+
+[sensor_roles_pt_board]
+"Fuel Upstream" = 1
+"GSE Low" = 2
+"Fuel Downstream" = 3
+"Moved Role" = 4
+"Chamber Mid PT 1" = 5
+
+[calibration_model_pt_board]
+"Fuel Upstream" = "cubic"
+"GSE Low" = "physics"
+"Fuel Downstream" = "cubic"
+"Moved Role" = "cubic"
+"Chamber Mid PT 1" = "physics"
+
+[calibration_full_scale_pt_board]
+"Chamber Mid PT 1" = 1500
+
+[sensor_roles_pt_board_2]
+"GSE High" = 1
+"GN2 High" = 2
+"GSE Mid" = 3
+"Excitation V" = 4
+
+[calibration_model_pt_board_2]
+"GSE Mid" = "cubic"
+
+[calibration_sense_resistor_pt_board_2]
+"GN2 High" = 100
+
+[calibration_full_scale_pt_board_2]
+"GN2 High" = 3000
+
+[sensor_roles_lc_board_2]
+"LC Ox" = 1
+"LC Fuel" = 2
+"LC Thrust" = 6
+
+[calibration_model_lc_board_2]
+"LC Fuel" = "cubic"
+"LC Thrust" = "physics"
+
+[calibration_sensitivity_lc_board_2]
+"LC Thrust" = 3
+
+[calibration_pga_lc_board_2]
+"LC Thrust" = 64
+
+[calibration_full_scale_lc_board_2]
+"LC Thrust" = 500
+
+[calibration_model_labjack_1]
+"T7 PT Cubic" = "cubic"
+"T7 LC" = "linear"
+
+[sensor_roles_tc_board]
+"TC One" = 1
+"TC Two" = 2
+
+[sensor_roles_rtd_board]
+"RTD One" = 1
+"RTD Two" = 2
+
+[abort_pts]
+"Fuel Upstream" = 400
+"GSE Low" = 300
+"GSE High" = 2000
+"Fuel Downstream" = 250
+"T7 PT" = 100
+"No Such Role" = 50
+
+[calibration.tc]
+json_dir = "scripts/calibration/calibrations/tc"
+csv_paths = [ ]
+adc_ref_voltage = 2.5
+
+[calibration.rtd]
+json_dir = "scripts/calibration/calibrations/rtd"
+csv_paths = [ ]
+r0_ohm = 1000
+adc_ref_voltage = 2.5
+excitation_ua = 1000
+
+[calibration.lc]
+json_dir = "scripts/calibration/calibrations/lc"
+csv_paths = [ ]
+sensitivity_mv_per_v = 2
+pga_gain = 32
+full_scale_value = 300

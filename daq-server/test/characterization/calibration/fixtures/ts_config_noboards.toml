@@ -1,0 +1,12 @@
+# A config with no PT / LC board: calibration-handler's getActiveChannels falls back to the host's
+# channel maps. Hermetic fixture, never dialled.
+[database]
+host = "127.0.0.1"
+port = 2240
+
+[boards.tc_board]
+type = "TC"
+ip = "127.0.0.51"
+board_id = 51
+enabled = true
+active_connectors = [ 1 ]
