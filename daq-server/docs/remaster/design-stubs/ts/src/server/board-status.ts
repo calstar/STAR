@@ -22,7 +22,7 @@
  * separate 1 s timers, never merged (WP6 [A5]).
  */
 
-import type { BoardStatus, NotificationPayload, ParsedSensorData, SensorUpdate, WebSocket } from '../product-types.js';
+import type { BoardStatus, ParsedSensorData, SensorUpdate, WebSocket } from '../product-types.js';
 
 /** 1: board status broadcasts per second. */
 export declare const BOARD_STATUS_HZ: number;
@@ -94,42 +94,5 @@ export function sendBoardStatus(ws: WebSocket): number {
 
 /** [step 2.8, A4] Connect burst: replay each self-test SENSOR_UPDATE; returns how many. */
 export function sendSelfTestReplay(ws: WebSocket): number {
-  throw new Error('stub');
-}
-
-/**
- * [step 2.10, debate verdict] One board's health notifications for this sweep (server.ts:671-717),
- * in today's order: `board_lost_` raise/clear, the one-shot `"… connected"`, `setup_stuck_`
- * raise/clear (raise stamped `firstSeenSetup`), `unrecognized_` raise/clear. Today's literals and
- * key order (G9). Pure: `markStaleBoards` keeps its loop, its `const now` (:662) and every write
- * (`status.connected` :667, `boardFirstSeenSetupMs` :693/:700 — set before this call, which gets
- * the resulting `first` — the key set, `prevConnectedState` :719) and `broadcastBoardStatus()`
- * (:721), and sends each returned payload (verdict F5: the sweep is not a pure reducer).
- */
-export function boardHealthEvents(
-  status: Readonly<BoardStatus>,
-  prev: boolean | undefined,
-  firstSeenSetup: number | undefined,
-  activeKeys: ReadonlySet<string>,
-  now: number,
-): NotificationPayload[] {
-  throw new Error('stub');
-}
-
-/**
- * [step 2.10, debate verdict] The `self_test_fail_<boardId>` payload (`ongoing:true`, `<label>
- * failed self-test`, stamped `now`) for the first failing row of a board not in `notified`, else
- * `null` (server.ts:1679-1689). Pure: `noteSelfTestResults` keeps the `selfTestLatest` snapshot
- * writes (up to the failing row; the `break` stays), `selfTestNotifiedBoards.add`, the send and the
- * key; `now` is the caller's `epochNow` (:1670); `label` is computed by the caller first (a listed
- * non-verbatim edit). Return type inferred by DESIGN-WP6 (the verdict gave the parameters).
- */
-export function selfTestFailure(
-  boardId: number,
-  rows: ReadonlyArray<ParsedSensorData>,
-  notified: ReadonlySet<number>,
-  label: string,
-  now: number,
-): NotificationPayload | null {
   throw new Error('stub');
 }
