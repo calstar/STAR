@@ -121,7 +121,6 @@ def main():
     # it in char/backend). An absolute path is NOT equivalent: the backend's legacy loaders join
     # the configured path onto other directories, so an absolute one is never found.
     os.makedirs(os.path.join(root, "char", "backend"), exist_ok=True)
-<<<<<<< HEAD
     if mode == "boards":
         # The SETUP -> SELF_TEST startup board, exactly as test_integration.sh declares it;
         # board_startup_sim.py plays it (session.ts), board_simulator.py skips it by name.
@@ -140,7 +139,6 @@ necessary_for_abort = false
 enable_serial_printing = 0
 designated_survivor = false
 """
-=======
     # The OTA project list (ota-build.ts discoverProjects) walks up from the backend's cwd to the
     # first firmware/Hotfire_Code. Without one here it found the repo's, which the Linux gate's
     # `git archive` export does not contain (and which changes with every firmware project). A
@@ -151,7 +149,6 @@ designated_survivor = false
         os.makedirs(os.path.join(hc, d), exist_ok=True)
     for d in ("PT_Hotfire", "Group/LC_Hotfire", "Hotfire_Tests", "PT_Hotfire/.pio/x"):
         open(os.path.join(hc, d, "platformio.ini"), "w").write("[env]\n")
->>>>>>> char/pipeline-linux
     assert "192.168.2." not in text
 
     for name in os.listdir(os.path.join(daq_root, "config", "profiles", "default")):
