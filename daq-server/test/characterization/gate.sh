@@ -25,6 +25,7 @@ fi
 
 LOG="$ROOT/.tmp/gate"
 mkdir -p "$LOG"
+STARTED="$(date '+%Y-%m-%d %H:%M:%S')"
 fails=()
 step() {
   local name="$1"; shift
@@ -145,6 +146,12 @@ step shared-types shared_types
 [ "$FAST" = 1 ] || step integration integration
 step format format_check
 step tree-unchanged tree_unchanged
+
+# A run the machine slept through is void: every timeout and timing golden saw a wall-clock jump
+# (2026-11-16: a lid close mid-ctest timed out a packets test whose golden had matched).
+slept="$([ "$(uname)" = Darwin ] && pmset -g log 2>/dev/null |
+  awk -v s="$STARTED" 'substr($0,1,19) >= s && $4 == "Sleep" {print substr($0,1,19)}' | head -3)"
+[ -z "$slept" ] || { echo; echo "GATE: VOID — the machine slept during the run (${slept//$'\n'/, }); rerun"; exit 2; }
 
 echo
 if [ ${#fails[@]} -eq 0 ]; then echo "GATE: PASS"; else echo "GATE: FAIL — ${fails[*]}"; exit 1; fi
