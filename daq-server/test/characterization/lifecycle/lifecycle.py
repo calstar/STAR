@@ -1092,19 +1092,36 @@ def dup_subscription(r: Run):
     )
     rc, _ = pr.wait(60)
     r.emit(g, f"  exit {rc}")
-    # Kept: the per-phase verdicts with the delivery ratio rounded to a whole multiple (the
-    # script's own 20 % tolerance is far finer than run-to-run rate noise needs), and the tally.
-    # Dropped: packet counts and rates (wall-clock), and the "max burst" lines, a timing
-    # heuristic that flips with scheduling.
+    # Every line the script prints about its measurements is kept; only values are masked.
+    #   verdicts: the delivery ratio is rounded to a whole multiple (the script's own 20 %
+    #     tolerance is far finer than run-to-run rate noise needs);
+    #   packet counts and rates: wall-clock, masked to <count>/<rate>;
+    #   "max burst" lines: the count, the per-ms average and the script's own burst verdict
+    #     (icon + wording) are a scheduling heuristic that flips run to run, so all three are
+    #     masked and only the line's shape and its phase label stay.
     for ln in pr.output().splitlines():
         s = ln.strip()
         m = re.match(r"^(✅|❌|⚠️)\s+(\d+) subscriptions: (.*?)\(ratio=([\d.]+)x", s)
+        b = re.match(r"^(?:✅|❌|⚠️)\s+(after-\d+x): max burst", s)
         if m:
             r.emit(
                 g,
                 f"  {m.group(1)} {m.group(2)} subscriptions: {m.group(3).strip()} (ratio ~{round(float(m.group(4)))}x)",
             )
-        elif s.startswith("✅ Baseline") or s.startswith("❌ No packets"):
+        elif b:
+            r.emit(
+                g,
+                f"  <burst-verdict> {b.group(1)}: max burst <count> packets/ms"
+                " (avg <rate>/ms) — <burst-verdict>",
+            )
+        elif s.startswith("Received "):
+            s = re.sub(r"^Received \d+ packets", "Received <count> packets", s)
+            r.emit(g, "  " + re.sub(r"\([\d.]+ pkt/s\)", "(<rate> pkt/s)", s))
+        elif s.startswith("Rates:"):
+            r.emit(g, "  " + re.sub(r"=[\d.]+", "=<rate>", s))
+        elif s.startswith(
+            ("✅ Baseline", "❌ No packets", "✅ Connected", "❌ Failed")
+        ):
             r.emit(g, "  " + re.sub(r"[\d.]+ pkt/s", "<rate> pkt/s", s))
         elif re.match(r"^\d+ passed, \d+ failed$", s):
             r.emit(g, "  " + s)

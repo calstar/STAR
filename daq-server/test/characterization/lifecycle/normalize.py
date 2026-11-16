@@ -36,7 +36,23 @@ EPOCH_KEYS = {
 }
 DURATION_KEYS = {"durationMs", "uptimeMs", "lagMs", "lifetimeMs"}
 # Derived from arrival jitter or from the host's DHCP lease table, never from the stack's logic.
-DROP_KEYS = {"frequencyHz", "dhcp"}
+# The key always stays (a rename or removal must show); only the value is masked, keeping its
+# JSON type visible: <frequency-hz:number>, <dhcp:object>, ...
+MASK_KEYS = {"frequencyHz": "frequency-hz", "dhcp": "dhcp"}
+
+
+def json_type(v) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "boolean"
+    if isinstance(v, (int, float)):
+        return "number"
+    if isinstance(v, str):
+        return "string"
+    if isinstance(v, list):
+        return "array"
+    return "object"
 
 
 def classify_ts(ts: int, recv_epoch_ms: int | None = None) -> str:
@@ -57,7 +73,8 @@ def json_value(obj, key: str | None = None):
     if isinstance(obj, dict):
         out = {}
         for k in sorted(obj):
-            if k in DROP_KEYS:
+            if k in MASK_KEYS:
+                out[k] = f"<{MASK_KEYS[k]}:{json_type(obj[k])}>"
                 continue
             out[k] = json_value(obj[k], k)
         return out
