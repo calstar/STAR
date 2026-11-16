@@ -33,6 +33,7 @@
 #include "config/LoadActiveBoards.hpp"
 #include "config/SensorAssignment.hpp"
 #include "config/SensorTables.hpp"
+#include "control/ActuatorCommander.hpp"
 #include "control/HoldParse.hpp"
 #include "control/PWMTargets.hpp"
 #include "control/ScriptStates.hpp"
@@ -40,8 +41,6 @@
 #include "elodin/DatabaseConfig.hpp"
 #include "script/ScriptConfig.hpp"
 #include "script/StateScript.hpp"
-
-#include "control/ActuatorCommander.hpp"
 
 // The one private view that remains (char_ac_private.cpp): the resolved actuator roles and the
 // bind address, which no public method reports and whose only observable effect is a UDP send to
