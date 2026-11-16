@@ -170,14 +170,22 @@ const SELF_TEST_WS_MS = parseInt(process.env.INTEGRATION_SELFTEST_WS_MS || '8000
 /** Window to collect BOARD_STATUS_UPDATE and see every enabled board as connected (matches Boards / Heartbeats UI). */
 const BOARD_STATUS_COLLECT_MS = parseInt(process.env.INTEGRATION_BOARD_STATUS_MS || '8000', 10);
 
-/** Board IDs skipped for Test 8 (e.g. integration_startup @ 60 — no heartbeat until Test 9 sim). Comma-separated env INTEGRATION_BOARD_STATUS_SKIP_IDS. */
+/**
+ * The startup board test_integration.sh declares as [boards.integration_startup], played by
+ * board_startup_sim.py. Its board_id must be on a free PT slot (1-8): it was 60, which is slot 10,
+ * and the packet-id low byte wrapped it onto pt_board_2 CH1 ([0x20,0x21] / [0x20,0x31]).
+ */
+const STARTUP_BOARD_ID = 23;
+const STARTUP_BOARD_IP = '127.0.0.60';
+
+/** Board IDs skipped for Test 8 (integration_startup — no heartbeat until Test 9 sim). Comma-separated env INTEGRATION_BOARD_STATUS_SKIP_IDS. */
 function boardStatusSkipIds(): Set<number> {
-  const raw = process.env.INTEGRATION_BOARD_STATUS_SKIP_IDS ?? '60';
+  const raw = process.env.INTEGRATION_BOARD_STATUS_SKIP_IDS ?? String(STARTUP_BOARD_ID);
   const ids = raw
     .split(/[,\s]+/)
     .map((s) => parseInt(s.trim(), 10))
     .filter((n) => !Number.isNaN(n));
-  return new Set(ids.length ? ids : [60]);
+  return new Set(ids.length ? ids : [STARTUP_BOARD_ID]);
 }
 
 // Shared types (inline to avoid import issues)
@@ -2976,7 +2984,7 @@ async function testBoardStatusToFrontend(ws: WebSocket): Promise<void> {
 
 // ── Test 9: Board startup → SELF_TEST → SENSOR_UPDATE ─────────────────────────
 //
-// board_startup_sim.py emulates one board (integration board 60 @ 127.0.0.60):
+// board_startup_sim.py emulates one board (integration_startup, STARTUP_BOARD_ID @ STARTUP_BOARD_IP):
 //   1) Binds UDP on the board listen port (SENSOR_CONFIG is sent *to* this address:port).
 //   2) Sends BOARD_HEARTBEAT every 1s with board_state = SETUP (real boards do this while waiting for config).
 //   3) Blocks until it receives a datagram whose first byte is SENSOR_CONFIG (type 5) from
@@ -2997,10 +3005,10 @@ async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> 
   }
   const preSpawnMs = parseInt(process.env.INTEGRATION_SELFTEST_PRESPAWN_MS || '3500', 10);
 
-  console.log('\n📬 Test 9: Board startup → SELF_TEST → WebSocket (board 60)');
+  console.log(`\n📬 Test 9: Board startup → SELF_TEST → WebSocket (board ${STARTUP_BOARD_ID})`);
   console.log('  What the sim does: SETUP heartbeats (1 Hz) → wait for SENSOR_CONFIG on board UDP → send SELF_TEST to DAQ.');
   console.log(
-    `  Addresses: board listens on 127.0.0.60:${TEST_STARTUP_LISTEN_PORT}; SELF_TEST UDP → DAQ :${TEST_DAQ_UDP_PORT}; expect WS entity SELF_TEST.BOARD_60 sensor_2 = pass (1).`,
+    `  Addresses: board listens on ${STARTUP_BOARD_IP}:${TEST_STARTUP_LISTEN_PORT}; SELF_TEST UDP → DAQ :${TEST_DAQ_UDP_PORT}; expect WS entity SELF_TEST.BOARD_${STARTUP_BOARD_ID} sensor_2 = pass (1).`,
   );
   if (INTEGRATION_SELFTEST_DEBUG || VERBOSE) {
     console.log('  Debug: set INTEGRATION_SELFTEST_DEBUG=1 or --verbose to log each SELF_TEST.* SENSOR_UPDATE on the socket.');
@@ -3013,7 +3021,7 @@ async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> 
   const sniff = attachSelfTestNineSniffer(ws);
   try {
     const pred = (payload: any) =>
-      payload.entity === 'SELF_TEST.BOARD_60' &&
+      payload.entity === `SELF_TEST.BOARD_${STARTUP_BOARD_ID}` &&
       payload.component === 'sensor_2' &&
       Number(payload.value) === 1;
 
@@ -3034,9 +3042,9 @@ async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> 
         '--daq-port',
         String(TEST_DAQ_UDP_PORT),
         '--board-ip',
-        '127.0.0.60',
+        STARTUP_BOARD_IP,
         '--board-id',
-        '60',
+        String(STARTUP_BOARD_ID),
       ],
       { stdio: 'pipe', encoding: 'utf-8', timeout: 95000 },
     );
@@ -3075,7 +3083,7 @@ async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> 
       if (INTEGRATION_SELFTEST_DEBUG || VERBOSE) {
         console.log(`  Matched on WebSocket after ${wsLagMs}ms (timer started when sim had already sent SELF_TEST).`);
       }
-      assert(true, 'SELF_TEST.BOARD_60.sensor_2 pass (value=1) received on WebSocket');
+      assert(true, `SELF_TEST.BOARD_${STARTUP_BOARD_ID}.sensor_2 pass (value=1) received on WebSocket`);
     } catch (e: any) {
       const { count, samples } = sniff.snapshot();
       console.error(`  FAIL: ${e.message}`);
@@ -3084,7 +3092,7 @@ async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> 
         console.error(`  Saw these SELF_TEST lines: ${samples.join(' | ')}`);
       } else {
         console.error(
-          '  No SELF_TEST traffic on WebSocket — trace DAQ (UDP from 127.0.0.60), board_id 60 in test config, Elodin publish, relay subscription 0x60, thin parser.',
+          `  No SELF_TEST traffic on WebSocket — trace DAQ (UDP from ${STARTUP_BOARD_IP}), board_id ${STARTUP_BOARD_ID} in test config, Elodin publish, relay subscription 0x60, thin parser.`,
         );
       }
       console.error('  Re-run with INTEGRATION_SELFTEST_DEBUG=1 or test_integration.sh -v for per-packet logs.');
@@ -3099,7 +3107,7 @@ async function testBoardStartupSelfTestToFrontend(ws: WebSocket): Promise<void> 
 // A browser that connects AFTER boards have already sent self-test packets must
 // still see the results (they're one-shot events during SETUP). The backend
 // replays them as SENSOR_UPDATE on connect. This test opens a *fresh* WS client
-// after Test 9 has already run and verifies it receives SELF_TEST.BOARD_60.
+// after Test 9 has already run and verifies it receives SELF_TEST.BOARD_<STARTUP_BOARD_ID>.
 
 async function testSelfTestReplayOnLateConnect(): Promise<void> {
   if (!IS_THIN || SKIP_STARTUP_E2E) return;
@@ -3135,11 +3143,11 @@ async function testSelfTestReplayOnLateConnect(): Promise<void> {
       return;
     }
 
-    const board60Keys = [...selfTestKeys.entries()].filter(([k]) => k.startsWith('SELF_TEST.BOARD_60.'));
-    assert(board60Keys.length > 0, `Late-connect received ${selfTestKeys.size} self-test keys (${board60Keys.length} for board 60)`);
+    const startupKeys = [...selfTestKeys.entries()].filter(([k]) => k.startsWith(`SELF_TEST.BOARD_${STARTUP_BOARD_ID}.`));
+    assert(startupKeys.length > 0, `Late-connect received ${selfTestKeys.size} self-test keys (${startupKeys.length} for board ${STARTUP_BOARD_ID})`);
 
-    const sensor2 = selfTestKeys.get('SELF_TEST.BOARD_60.sensor_2');
-    assert(sensor2 === 1, `Late-connect SELF_TEST.BOARD_60.sensor_2 = ${sensor2} (expected 1 = pass)`);
+    const sensor2 = selfTestKeys.get(`SELF_TEST.BOARD_${STARTUP_BOARD_ID}.sensor_2`);
+    assert(sensor2 === 1, `Late-connect SELF_TEST.BOARD_${STARTUP_BOARD_ID}.sensor_2 = ${sensor2} (expected 1 = pass)`);
   } finally {
     if (ws2 && ws2.readyState <= WebSocket.OPEN) ws2.close();
   }
@@ -3574,19 +3582,19 @@ async function testBoardLogs(ws: WebSocket): Promise<void> {
   }
 }
 
-// ── Test: a GUI logging-mode change reaches the board (frontend → config → config_broadcast → board 60) ──
-// board_startup_sim (127.0.0.60) receives SENSOR_CONFIG and reports the enable_serial_printing byte;
+// ── Test: a GUI logging-mode change reaches the board (frontend → config → config_broadcast → startup board) ──
+// board_startup_sim (STARTUP_BOARD_IP) receives SENSOR_CONFIG and reports the enable_serial_printing byte;
 // the board does NOT have to act on it — we only prove the changed byte arrives.
 async function testBoardLogMode(_ws: WebSocket): Promise<void> {
-  console.log('\n🎚️  Test: GUI log-mode change reaches board 60 (POST → config.toml → config_broadcast → SENSOR_CONFIG)');
+  console.log(`\n🎚️  Test: GUI log-mode change reaches board ${STARTUP_BOARD_ID} (POST → config.toml → config_broadcast → SENSOR_CONFIG)`);
   if (!BOARD_STARTUP_SIM || !fs.existsSync(BOARD_STARTUP_SIM) || TEST_STARTUP_LISTEN_PORT <= 0) {
     console.log('  SKIPPED (BOARD_STARTUP_SIM / port not available)');
     return;
   }
   const TARGET_MODE = 3;
-  const post = await httpPostJson('/api/board-log-mode', { boardId: 60, mode: TARGET_MODE });
+  const post = await httpPostJson('/api/board-log-mode', { boardId: STARTUP_BOARD_ID, mode: TARGET_MODE });
   assert(post.status === 200 && post.json?.success === true,
-    post.status === 200 ? `POST /api/board-log-mode {60,${TARGET_MODE}} accepted` : `POST /api/board-log-mode failed (status ${post.status})`);
+    post.status === 200 ? `POST /api/board-log-mode {${STARTUP_BOARD_ID},${TARGET_MODE}} accepted` : `POST /api/board-log-mode failed (status ${post.status})`);
   if (post.status !== 200) return;
 
   // Let config_broadcast (≥1.5s cycle) re-read the patched config and start sending the new byte.
@@ -3600,8 +3608,8 @@ async function testBoardLogMode(_ws: WebSocket): Promise<void> {
       BOARD_STARTUP_SIM,
       '--listen-port', String(TEST_STARTUP_LISTEN_PORT),
       '--daq-port', String(TEST_DAQ_UDP_PORT),
-      '--board-ip', '127.0.0.60',
-      '--board-id', '60',
+      '--board-ip', STARTUP_BOARD_IP,
+      '--board-id', String(STARTUP_BOARD_ID),
     ],
     { stdio: 'pipe', encoding: 'utf-8', timeout: 30000 },
   );
@@ -3610,8 +3618,8 @@ async function testBoardLogMode(_ws: WebSocket): Promise<void> {
   const seen = m ? parseInt(m[1], 10) : -1;
   assert(seen === TARGET_MODE,
     seen === TARGET_MODE
-      ? `Board 60 received the GUI-set log mode over the wire (enable_serial_printing=${seen})`
-      : `Board 60 should receive enable_serial_printing=${TARGET_MODE} (saw ${seen === -1 ? 'no config' : seen}). Sim out: ${out.slice(0, 300)}`);
+      ? `Board ${STARTUP_BOARD_ID} received the GUI-set log mode over the wire (enable_serial_printing=${seen})`
+      : `Board ${STARTUP_BOARD_ID} should receive enable_serial_printing=${TARGET_MODE} (saw ${seen === -1 ? 'no config' : seen}). Sim out: ${out.slice(0, 300)}`);
 }
 
 // Existing packet type 13: version, board milliseconds, Celsius, absolute Pa, %RH.

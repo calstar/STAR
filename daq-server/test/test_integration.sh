@@ -239,8 +239,9 @@ mkdir -p "$REPO_ROOT/.tmp"
 # ── macOS loopback aliases for board simulator ────────────────────────────────
 # On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless we add explicit
 # aliases. The board_simulator binds each board to 127.0.0.<host-octet> (the last octet of its
-# config IP, which equals its board_id here) so the DAQ bridge can route by source address. These
-# are the board_id octets from config_base.toml (enabled and not) plus the startup board (60).
+# config IP, which equals its board_id for config_base.toml's boards) so the DAQ bridge can route by
+# source address. These are the board_id octets from config_base.toml (enabled and not) plus the
+# startup board's IP octet (60; its board_id is 23, see [boards.integration_startup] below).
 if [ "$(uname)" = "Darwin" ]; then
   LOOPBACK_IPS=(11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71)
   NEED_ALIAS=false
@@ -697,12 +698,19 @@ sedi 's/^"GSE Low" = "cubic"$/"GSE Low" = "physics"/' "$TEST_CONFIG"
 # captured point is stored but cannot change the reading.
 printf '\n[calibration_model_labjack_1]\n"T7 Thrust LC" = "cubic"\n' >> "$TEST_CONFIG"
 
+# The startup board (board_startup_sim.py, Test 9 and the log-mode test). Its board_id must sit on a
+# free PT slot (board_id % 10 in 1-8, not 1 or 2, which pt_board / pt_board_2 hold): it used to be 60,
+# slot 10, whose packet-id low byte wrapped onto pt_board_2 CH1 ([0x20,0x21] raw, [0x20,0x31]
+# calibrated). daq_bridge and calibration_service then each registered those two tables as PT10.CH1
+# and, a moment later, as PT2.CH1; a backend subscription that landed in between stayed bound to the
+# PT10 components and PT2_Cal.CH1 never reached the GUI. The IP stays 127.0.0.60: daq_bridge matches
+# a board by its exact config IP first, and that loopback alias already exists.
 cat >> "$TEST_CONFIG" << EOF
 
 [boards.integration_startup]
 enabled = true
 type = "PT"
-board_id = 60
+board_id = 23
 ip = "127.0.0.60"
 send_port = $TEST_DAQ_UDP_PORT
 listen_port = $TEST_STARTUP_LISTEN_PORT
