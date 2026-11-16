@@ -1,0 +1,19 @@
+# session default/entry/Emergency Abort
+(walk legally Idle -> Idle)
+> TRANSITION:Emergency Abort
+  < OK
+  state Idle -> Emergency Abort
+  first datagram: ABORT
+      +0ms x3 (x2 sends) ACTUATOR_COMMAND v0 n=16: ch2=0[Fuel Fill Press|Fuel Vent] ch1=0[Fuel Fill Vent|LOX Main] ch7=0[Fuel Main|LOX Fill] ch3=1[Fuel Press|GSE High Press Control] ch2=1[Fuel Fill Press|Fuel Vent] ch6=1[GN2 Vent|LOX Vent] ch3=0[Fuel Press|GSE High Press Control] ch5=1[GSE High Press Vent|GSE Low Press Vent] ch10=0[GSE LOX Fill Vent] ch5=0[GSE High Press Vent|GSE Low Press Vent] ch4=0[GSE Med Press Control] ch8=1[LOX Dump|LOX Press] ch7=0[Fuel Main|LOX Fill] ch1=1[Fuel Fill Vent|LOX Main] ch8=0[LOX Dump|LOX Press] ch6=1[GN2 Vent|LOX Vent]
+              raw 0400........10020001000700030102010601030005010a000500040008010700010108000601
+      +0ms x4 (x2 sends) ABORT v0
+              raw 0700........
+       +3s x4 ABORT_DONE v0
+              raw 0800........
+  republish [Emergency Abort]: first ~1s into the state, every ~1s
+              ACTUATOR_COMMAND v0 n=16: ch2=0[Fuel Fill Press|Fuel Vent] ch1=0[Fuel Fill Vent|LOX Main] ch7=0[Fuel Main|LOX Fill] ch3=1[Fuel Press|GSE High Press Control] ch2=1[Fuel Fill Press|Fuel Vent] ch6=1[GN2 Vent|LOX Vent] ch3=0[Fuel Press|GSE High Press Control] ch5=1[GSE High Press Vent|GSE Low Press Vent] ch10=0[GSE LOX Fill Vent] ch5=0[GSE High Press Vent|GSE Low Press Vent] ch4=0[GSE Med Press Control] ch8=1[LOX Dump|LOX Press] ch7=0[Fuel Main|LOX Fill] ch1=1[Fuel Fill Vent|LOX Main] ch8=0[LOX Dump|LOX Press] ch6=1[GN2 Vent|LOX Vent]
+              raw 0400........10020001000700030102010601030005010a000500040008010700010108000601
+-- sequencer log (N6: load-time lines, then message counts)
+   [SequencerService] Fire state: Fire → expires to Armed after 500 ms (extended 600 ms)
+   [SequencerService] WARNING: fire opens "Fuel Main" 0.08 s after entry, but no [fire].gate_actuator is set — the burn window is measured from the TRANSITION, so that valve is open for 0.42 s, not 0.5 s.
+   [SequencerService] WARNING: fire opens "LOX Main" 0.001 s after entry, but no [fire].gate_actuator is set — the burn window is measured from the TRANSITION, so that valve is open for 0.499 s, not 0.5 s.

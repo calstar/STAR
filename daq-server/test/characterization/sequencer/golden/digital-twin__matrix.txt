@@ -1,0 +1,227 @@
+# session digital-twin/matrix
+# 15 states; each row entered with DEBUG_MODE, then every target
+Idle:
+  Idle -> Idle: OK
+  Idle -> Armed: OK
+  Idle -> Press Standby: ERR:transition rejected
+  Idle -> Dome Press: ERR:transition rejected
+  Idle -> COPV Fill: ERR:transition rejected
+  Idle -> Fuel Press: ERR:transition rejected
+  Idle -> LOX Press: ERR:transition rejected
+  Idle -> Vent: ERR:transition rejected
+  Idle -> Dome Vent: ERR:transition rejected
+  Idle -> High Press Vent: ERR:transition rejected
+  Idle -> Fuel Tank Vent: ERR:transition rejected
+  Idle -> Ready: ERR:transition rejected
+  Idle -> Fire: ERR:transition rejected
+  Idle -> Flow Test: ERR:transition rejected
+  Idle -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Armed:
+  Armed -> Idle: OK
+  Armed -> Armed: OK
+  Armed -> Press Standby: OK
+  Armed -> Dome Press: ERR:transition rejected
+  Armed -> COPV Fill: ERR:transition rejected
+  Armed -> Fuel Press: ERR:transition rejected
+  Armed -> LOX Press: ERR:transition rejected
+  Armed -> Vent: OK
+  Armed -> Dome Vent: ERR:transition rejected
+  Armed -> High Press Vent: ERR:transition rejected
+  Armed -> Fuel Tank Vent: ERR:transition rejected
+  Armed -> Ready: ERR:transition rejected
+  Armed -> Fire: ERR:transition rejected
+  Armed -> Flow Test: ERR:transition rejected
+  Armed -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Press Standby:
+  Press Standby -> Idle: OK
+  Press Standby -> Armed: OK
+  Press Standby -> Press Standby: OK
+  Press Standby -> Dome Press: OK
+  Press Standby -> COPV Fill: OK
+  Press Standby -> Fuel Press: OK
+  Press Standby -> LOX Press: OK
+  Press Standby -> Vent: OK
+  Press Standby -> Dome Vent: OK
+  Press Standby -> High Press Vent: OK
+  Press Standby -> Fuel Tank Vent: OK
+  Press Standby -> Ready: OK
+  Press Standby -> Fire: ERR:transition rejected
+  Press Standby -> Flow Test: ERR:transition rejected
+  Press Standby -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Dome Press:
+  Dome Press -> Idle: ERR:transition rejected
+  Dome Press -> Armed: ERR:transition rejected
+  Dome Press -> Press Standby: OK
+  Dome Press -> Dome Press: OK
+  Dome Press -> COPV Fill: ERR:transition rejected
+  Dome Press -> Fuel Press: ERR:transition rejected
+  Dome Press -> LOX Press: ERR:transition rejected
+  Dome Press -> Vent: ERR:transition rejected
+  Dome Press -> Dome Vent: ERR:transition rejected
+  Dome Press -> High Press Vent: ERR:transition rejected
+  Dome Press -> Fuel Tank Vent: ERR:transition rejected
+  Dome Press -> Ready: ERR:transition rejected
+  Dome Press -> Fire: ERR:transition rejected
+  Dome Press -> Flow Test: ERR:transition rejected
+  Dome Press -> Dynamic Test: ERR:GN2 High has produced no reading yet
+COPV Fill:
+  COPV Fill -> Idle: ERR:transition rejected
+  COPV Fill -> Armed: ERR:transition rejected
+  COPV Fill -> Press Standby: OK
+  COPV Fill -> Dome Press: ERR:transition rejected
+  COPV Fill -> COPV Fill: OK
+  COPV Fill -> Fuel Press: ERR:transition rejected
+  COPV Fill -> LOX Press: ERR:transition rejected
+  COPV Fill -> Vent: ERR:transition rejected
+  COPV Fill -> Dome Vent: ERR:transition rejected
+  COPV Fill -> High Press Vent: ERR:transition rejected
+  COPV Fill -> Fuel Tank Vent: ERR:transition rejected
+  COPV Fill -> Ready: ERR:transition rejected
+  COPV Fill -> Fire: ERR:transition rejected
+  COPV Fill -> Flow Test: ERR:transition rejected
+  COPV Fill -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Fuel Press:
+  Fuel Press -> Idle: ERR:transition rejected
+  Fuel Press -> Armed: ERR:transition rejected
+  Fuel Press -> Press Standby: OK
+  Fuel Press -> Dome Press: ERR:transition rejected
+  Fuel Press -> COPV Fill: ERR:transition rejected
+  Fuel Press -> Fuel Press: OK
+  Fuel Press -> LOX Press: ERR:transition rejected
+  Fuel Press -> Vent: ERR:transition rejected
+  Fuel Press -> Dome Vent: ERR:transition rejected
+  Fuel Press -> High Press Vent: ERR:transition rejected
+  Fuel Press -> Fuel Tank Vent: ERR:transition rejected
+  Fuel Press -> Ready: ERR:transition rejected
+  Fuel Press -> Fire: ERR:transition rejected
+  Fuel Press -> Flow Test: ERR:transition rejected
+  Fuel Press -> Dynamic Test: ERR:GN2 High has produced no reading yet
+LOX Press:
+  LOX Press -> Idle: ERR:transition rejected
+  LOX Press -> Armed: ERR:transition rejected
+  LOX Press -> Press Standby: OK
+  LOX Press -> Dome Press: ERR:transition rejected
+  LOX Press -> COPV Fill: ERR:transition rejected
+  LOX Press -> Fuel Press: ERR:transition rejected
+  LOX Press -> LOX Press: OK
+  LOX Press -> Vent: ERR:transition rejected
+  LOX Press -> Dome Vent: ERR:transition rejected
+  LOX Press -> High Press Vent: ERR:transition rejected
+  LOX Press -> Fuel Tank Vent: ERR:transition rejected
+  LOX Press -> Ready: ERR:transition rejected
+  LOX Press -> Fire: ERR:transition rejected
+  LOX Press -> Flow Test: ERR:transition rejected
+  LOX Press -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Vent:
+  Vent -> Idle: ERR:transition rejected
+  Vent -> Armed: ERR:transition rejected
+  Vent -> Press Standby: OK
+  Vent -> Dome Press: ERR:transition rejected
+  Vent -> COPV Fill: ERR:transition rejected
+  Vent -> Fuel Press: ERR:transition rejected
+  Vent -> LOX Press: ERR:transition rejected
+  Vent -> Vent: OK
+  Vent -> Dome Vent: OK
+  Vent -> High Press Vent: OK
+  Vent -> Fuel Tank Vent: OK
+  Vent -> Ready: OK
+  Vent -> Fire: ERR:transition rejected
+  Vent -> Flow Test: ERR:transition rejected
+  Vent -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Dome Vent:
+  Dome Vent -> Idle: ERR:transition rejected
+  Dome Vent -> Armed: ERR:transition rejected
+  Dome Vent -> Press Standby: OK
+  Dome Vent -> Dome Press: ERR:transition rejected
+  Dome Vent -> COPV Fill: ERR:transition rejected
+  Dome Vent -> Fuel Press: ERR:transition rejected
+  Dome Vent -> LOX Press: ERR:transition rejected
+  Dome Vent -> Vent: OK
+  Dome Vent -> Dome Vent: OK
+  Dome Vent -> High Press Vent: ERR:transition rejected
+  Dome Vent -> Fuel Tank Vent: ERR:transition rejected
+  Dome Vent -> Ready: ERR:transition rejected
+  Dome Vent -> Fire: ERR:transition rejected
+  Dome Vent -> Flow Test: ERR:transition rejected
+  Dome Vent -> Dynamic Test: ERR:GN2 High has produced no reading yet
+High Press Vent:
+  High Press Vent -> Idle: ERR:transition rejected
+  High Press Vent -> Armed: ERR:transition rejected
+  High Press Vent -> Press Standby: OK
+  High Press Vent -> Dome Press: ERR:transition rejected
+  High Press Vent -> COPV Fill: ERR:transition rejected
+  High Press Vent -> Fuel Press: ERR:transition rejected
+  High Press Vent -> LOX Press: ERR:transition rejected
+  High Press Vent -> Vent: OK
+  High Press Vent -> Dome Vent: ERR:transition rejected
+  High Press Vent -> High Press Vent: OK
+  High Press Vent -> Fuel Tank Vent: ERR:transition rejected
+  High Press Vent -> Ready: ERR:transition rejected
+  High Press Vent -> Fire: ERR:transition rejected
+  High Press Vent -> Flow Test: ERR:transition rejected
+  High Press Vent -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Fuel Tank Vent:
+  Fuel Tank Vent -> Idle: ERR:transition rejected
+  Fuel Tank Vent -> Armed: ERR:transition rejected
+  Fuel Tank Vent -> Press Standby: OK
+  Fuel Tank Vent -> Dome Press: ERR:transition rejected
+  Fuel Tank Vent -> COPV Fill: ERR:transition rejected
+  Fuel Tank Vent -> Fuel Press: ERR:transition rejected
+  Fuel Tank Vent -> LOX Press: ERR:transition rejected
+  Fuel Tank Vent -> Vent: OK
+  Fuel Tank Vent -> Dome Vent: ERR:transition rejected
+  Fuel Tank Vent -> High Press Vent: ERR:transition rejected
+  Fuel Tank Vent -> Fuel Tank Vent: OK
+  Fuel Tank Vent -> Ready: ERR:transition rejected
+  Fuel Tank Vent -> Fire: ERR:transition rejected
+  Fuel Tank Vent -> Flow Test: ERR:transition rejected
+  Fuel Tank Vent -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Ready:
+  Ready -> Idle: ERR:transition rejected
+  Ready -> Armed: ERR:transition rejected
+  Ready -> Press Standby: OK
+  Ready -> Dome Press: ERR:transition rejected
+  Ready -> COPV Fill: ERR:transition rejected
+  Ready -> Fuel Press: ERR:transition rejected
+  Ready -> LOX Press: ERR:transition rejected
+  Ready -> Vent: ERR:transition rejected
+  Ready -> Dome Vent: ERR:transition rejected
+  Ready -> High Press Vent: ERR:transition rejected
+  Ready -> Fuel Tank Vent: ERR:transition rejected
+  Ready -> Ready: OK
+  Ready -> Fire: OK
+  Ready -> Flow Test: OK
+  Ready -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Fire:
+  Fire -> Idle: ERR:transition rejected
+  Fire -> Armed: OK
+  Fire -> Press Standby: ERR:transition rejected
+  Fire -> Dome Press: ERR:transition rejected
+  Fire -> COPV Fill: ERR:transition rejected
+  Fire -> Fuel Press: ERR:transition rejected
+  Fire -> LOX Press: ERR:transition rejected
+  Fire -> Vent: ERR:transition rejected
+  Fire -> Dome Vent: ERR:transition rejected
+  Fire -> High Press Vent: ERR:transition rejected
+  Fire -> Fuel Tank Vent: ERR:transition rejected
+  Fire -> Ready: ERR:transition rejected
+  Fire -> Fire: OK
+  Fire -> Flow Test: ERR:transition rejected
+  Fire -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Flow Test:
+  Flow Test -> Idle: ERR:transition rejected
+  Flow Test -> Armed: ERR:transition rejected
+  Flow Test -> Press Standby: OK
+  Flow Test -> Dome Press: ERR:transition rejected
+  Flow Test -> COPV Fill: ERR:transition rejected
+  Flow Test -> Fuel Press: ERR:transition rejected
+  Flow Test -> LOX Press: ERR:transition rejected
+  Flow Test -> Vent: ERR:transition rejected
+  Flow Test -> Dome Vent: ERR:transition rejected
+  Flow Test -> High Press Vent: ERR:transition rejected
+  Flow Test -> Fuel Tank Vent: ERR:transition rejected
+  Flow Test -> Ready: OK
+  Flow Test -> Fire: ERR:transition rejected
+  Flow Test -> Flow Test: OK
+  Flow Test -> Dynamic Test: ERR:GN2 High has produced no reading yet
+Dynamic Test: cannot be entered: ERR:GN2 High has produced no reading yet

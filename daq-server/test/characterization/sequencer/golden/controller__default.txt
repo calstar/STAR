@@ -1,0 +1,33 @@
+# session controller/default
+> controller <- FIRE_START
+  < 'OK\n'
+  first datagram: PWM_ACTUATOR_COMMAND
+      +0ms x1 PWM_ACTUATOR_COMMAND v0 n=2: ch3[Fuel Press|GSE High Press Control] dur=2000ms duty=0 freq=6Hz; ch8[LOX Dump|LOX Press] dur=2000ms duty=0 freq=6Hz
+              raw 0a00........0203d0070000000000000000c04008d0070000000000000000c040
+> controller <- FIRE_START (again)
+  < 'OK\n'
+> controller <- FIRE_STOP
+  < 'OK\n'
+  first datagram: PWM_ACTUATOR_COMMAND
+      +0ms x1 PWM_ACTUATOR_COMMAND v0 n=2: ch3[Fuel Press|GSE High Press Control] dur=2000ms duty=0 freq=6Hz; ch8[LOX Dump|LOX Press] dur=2000ms duty=0 freq=6Hz
+              raw 0a00........0203d0070000000000000000c04008d0070000000000000000c040
+> controller <- FIRE_STOP (again)
+  < 'OK\n'
+> controller <- BOGUS
+  < 'ERR\n'
+> controller <- <empty line>
+  < 'ERR\n'
+> controller <- FIRE_START<CRLF>
+  < 'ERR\n'
+> controller <- FIRE_STOP<CRLF>
+  < 'ERR\n'
+> controller <- <connect, send nothing, half-close>
+  < ''
+> controller <- <partial, then half-close>
+  < ''
+-- controller log (N6: load-time lines, then message counts)
+   x2 'FIRE_START received — PWM gate open'
+   x2 'FIRE_STOP received — PWM gate closed'
+   x4 'Unknown control cmd:'
+   x3 'control connection closed with no command (timeout or peer went away)'
+   x1 'FIRE close command sent (duty=0)'
