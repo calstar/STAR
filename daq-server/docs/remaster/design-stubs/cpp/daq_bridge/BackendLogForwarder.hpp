@@ -1,4 +1,4 @@
-// DESIGN STUB (DESIGN-WP10 §4.3, move-only step 4) — not compiled. Becomes
+// DESIGN STUB (DESIGN-WP10 §4.3, commit 1) — not compiled. Becomes
 // diablo_server/daq_bridge/BackendLogForwarder.hpp, header-only (the class is all-inline today:
 // daq_bridge_main.cpp 49-90 moves verbatim, leaving its anonymous namespace for the global one).
 // This stub shows the declarations; the real header keeps today's inline bodies.
