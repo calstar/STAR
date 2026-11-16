@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the private fixture tree one pipeline characterization run reads and writes.
 
-    make_fixture.py <daq_root> <fixture_dir> <ports.json>
+    make_fixture.py <daq_root> <fixture_dir> <ports.json> [pt|boards]
 
 Everything a service writes lands under <fixture_dir>; nothing in the checkout is moved or
 touched (the integration harness parks the live calibration store instead — this does not).
@@ -16,7 +16,9 @@ Layout (the C++ services run with cwd = <fixture_dir>; every path they hard-code
   config/profiles/default/             the active profile (identical to config.toml)
   config/.active_profile
   scripts/calibration/calibrations/    copy of the committed store, minus the operator files
-  sim_config.toml                      the simulator's view: only pt_board enabled
+  sim_config.toml                      the simulator's view: pt — only pt_board enabled;
+                                       boards — every board config enables but the T7,
+                                       at 127.0.0.<id>
   home/                                HOME for the backend (~/.local/share/elodin run dirs)
 
 Config is config_base.toml with every 192.168.2.x rewritten to 127.0.0.x (as
@@ -49,6 +51,8 @@ def sub_line(text, pattern, repl, count=0, section=None):
 
 def main():
     daq_root, fx, ports_path = sys.argv[1:4]
+    mode = sys.argv[4] if len(sys.argv) > 4 else "pt"
+    assert mode in ("pt", "boards"), mode
     ports = json.load(open(ports_path))
     root = fx
     cfg_dir = os.path.join(root, "config")
@@ -68,10 +72,12 @@ def main():
     text = open(os.path.join(daq_root, "config", "config_base.toml")).read()
     # Hardware safety: no address on the board LAN survives into a config anything runs against.
     text = text.replace("192.168.2.", "127.0.0.")
-    # The one routed sensor board sends from 127.0.0.1, the only loopback address every host has.
-    text = sub_line(
-        text, r'^ip = "127\.0\.0\.21"$', 'ip = "127.0.0.1"', 1, "boards.pt_board"
-    )
+    if mode == "pt":
+        # The one routed sensor board sends from 127.0.0.1, the only loopback address every host
+        # has.
+        text = sub_line(
+            text, r'^ip = "127\.0\.0\.21"$', 'ip = "127.0.0.1"', 1, "boards.pt_board"
+        )
     text = sub_line(text, r"^port = 2240$", f"port = {ports['elodin']}", 1, "database")
     text = sub_line(
         text, r"^sensor_port = 5006$", f"sensor_port = {ports['daq_udp']}", 1
@@ -115,6 +121,24 @@ def main():
     # it in char/backend). An absolute path is NOT equivalent: the backend's legacy loaders join
     # the configured path onto other directories, so an absolute one is never found.
     os.makedirs(os.path.join(root, "char", "backend"), exist_ok=True)
+    if mode == "boards":
+        # The SETUP -> SELF_TEST startup board, exactly as test_integration.sh declares it;
+        # board_startup_sim.py plays it (session.ts), board_simulator.py skips it by name.
+        text += f"""
+[boards.integration_startup]
+enabled = true
+type = "PT"
+board_id = 60
+ip = "127.0.0.60"
+send_port = {ports['daq_udp']}
+listen_port = {ports['startup_udp']}
+num_sensors = 1
+active_connectors = [1]
+voltage_reference = 1
+necessary_for_abort = false
+enable_serial_printing = 0
+designated_survivor = false
+"""
     assert "192.168.2." not in text
 
     for name in os.listdir(os.path.join(daq_root, "config", "profiles", "default")):
@@ -131,14 +155,16 @@ def main():
     # The operator allowlist the WS/HTTP gates read: one operator, so both answers are reachable.
     open(os.path.join(fx, "operators.txt"), "w").write("operator@example.com\n")
 
-    # The simulator's view: every board but pt_board disabled, so it never tries to bind a
-    # 127.0.0.x it cannot have.
+    # The simulator's view. pt: every board but pt_board disabled, so it never tries to bind a
+    # 127.0.0.x it cannot have. boards: every board but the LabJack T7 (t7_bridge's, not the
+    # simulator's: board_simulator.py has no T7 model and refuses its address).
     sim = text
     out, pos = [], 0
     for m in re.finditer(r"^\[boards\.([A-Za-z0-9_]+)\]\n(?:(?!\[).*\n)*", sim, re.M):
         out.append(sim[pos : m.start()])
         block = m.group(0)
-        if m.group(1) != "pt_board":
+        is_t7 = re.search(r'^type = "T7"$', block, re.M) is not None
+        if (mode == "pt" and m.group(1) != "pt_board") or (mode == "boards" and is_t7):
             block = re.sub(r"^enabled = true$", "enabled = false", block, flags=re.M)
         out.append(block)
         pos = m.end()

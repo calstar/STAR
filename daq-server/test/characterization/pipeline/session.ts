@@ -3,16 +3,22 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json>
+ *   tsx session.ts <ws_port> <capture.json> [pt|boards]
+ *
+ * pt: the full scripted session against the one routed PT board. boards: every simulated board
+ * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
+ * by sim/board_startup_sim.py: BOARD_STARTUP_SIM, PYTHON_BIN, CHAR_DAQ_UDP_PORT, CHAR_STARTUP_PORT).
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
 import WebSocket from 'ws';
 import * as fs from 'fs';
 import * as http from 'http';
+import { spawn } from 'child_process';
 
 const PORT = parseInt(process.argv[2] ?? '', 10);
 const OUT = process.argv[3];
+const MODE = process.argv[4] ?? 'pt';
 if (!PORT || !OUT) {
   console.error('usage: session.ts <ws_port> <capture.json>');
   process.exit(2);
@@ -316,7 +322,55 @@ async function main(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
-main().then(() => process.exit(0)).catch((err) => {
+/** Every board type at once: the per-type frame shapes and channel sets, the board/sensor HTTP
+ *  endpoints, and one board's whole status lifecycle (SETUP, SELF_TEST, ACTIVE, lost). */
+async function boards(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(5000);
+
+  const sweep = async () => {
+    for (const p of [
+      '/stats', '/api/debug', '/api/sensor-config', '/api/config/validate', '/api/gui-config',
+      '/api/pressure-limits', '/api/ball_valve_cal', '/api/lc_tare', '/api/board-logs',
+      '/api/board-logs/stats', '/api/engine_state',
+    ]) await request('GET', p);
+  };
+  step('http_boards');
+  await sweep();
+
+  step('connect');
+  await openClient('A');
+  await sleep(2500);
+
+  step('live');
+  await sleep(5000);
+
+  step('startup_board');
+  const code = await new Promise<number>((resolve) => {
+    const p = spawn(process.env.PYTHON_BIN || 'python3', [
+      process.env.BOARD_STARTUP_SIM!, '--listen-port', process.env.CHAR_STARTUP_PORT!,
+      '--daq-port', process.env.CHAR_DAQ_UDP_PORT!, '--board-ip', '127.0.0.60', '--board-id', '60',
+      '--timeout-s', '30',
+    ], { stdio: 'ignore' });
+    p.on('exit', (c) => resolve(c ?? -1));
+  });
+  if (code !== 0) throw new Error(`board_startup_sim exited ${code}`);
+  // Long enough for the board's heartbeat to go stale (5 s) and the sweep to say so.
+  await sleep(8000);
+
+  step('http_after_startup');
+  await sweep();
+
+  step('disconnect');
+  await closeClient('A');
+  await sleep(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+(MODE === 'boards' ? boards() : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);

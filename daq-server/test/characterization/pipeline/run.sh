@@ -1,10 +1,15 @@
 #!/bin/bash
 # Pipeline characterization: board_simulator → daq_bridge → elodin-db → calibration_service →
 # backend (server.ts) → WebSocket + HTTP, with sequencer_service behind the backend's command path.
-# One scripted session (session.ts) is recorded, normalised (normalize.py) and compared against
-# golden/ (characterize.py). CHAR_UPDATE=1 rewrites the goldens instead.
+# Two scripted sessions (session.ts) are recorded, normalised (normalize.py) and compared against
+# goldens (characterize.py). CHAR_UPDATE=1 rewrites the goldens instead.
 #
-#   bash test/characterization/pipeline/run.sh
+#   bash test/characterization/pipeline/run.sh            # both sessions
+#   bash test/characterization/pipeline/run.sh pt         # one routed PT board, the full script → golden/
+#   bash test/characterization/pipeline/run.sh boards     # every simulated board type → golden/boards/
+#
+# "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS; it fails, never skips,
+# when one is missing. Linux has all of 127/8.
 #
 # Takes the machine-wide stack lock itself (re-entrant under gate.sh / run.sh). Off the stand
 # only. Every service runs against a private fixture tree in .tmp/char_pipeline_<pid>/ with its
@@ -21,10 +26,34 @@ if [ "${DAQ_STACK_LOCK_HELD:-}" = "" ]; then
   exec bash "$ROOT/test/characterization/with_stack_lock.sh" bash "$HERE/run.sh" "$@"
 fi
 
+MODE="${1:-all}"
+if [ "$MODE" = all ]; then
+  rc=0
+  bash "$HERE/run.sh" pt || rc=1
+  bash "$HERE/run.sh" boards || rc=1
+  exit $rc
+fi
+case "$MODE" in pt|boards) ;; *) echo "usage: run.sh [pt|boards]" >&2; exit 2 ;; esac
+
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
   echo "pipeline: this is the stand (star-rfs / board LAN). Refusing to run." >&2
   exit 3
+fi
+
+# The boards session sends as every simulated board from 127.0.0.<board_id>. Same list as
+# test/test_integration.sh: every board_id octet in config_base.toml plus the startup board (60).
+if [ "$MODE" = boards ] && [ "$(uname)" = "Darwin" ]; then
+  missing=()
+  for i in 11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71; do
+    ifconfig lo0 2>/dev/null | grep -q "inet 127\.0\.0\.$i " || missing+=("127.0.0.$i")
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "pipeline: the boards session needs loopback aliases that are missing: ${missing[*]}" >&2
+    echo "          add them (as test_integration.sh does):" >&2
+    echo "          for i in 11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71; do sudo ifconfig lo0 alias 127.0.0.\$i up; done" >&2
+    exit 7
+  fi
 fi
 
 BUILD="${CHAR_BUILD_DIR:-}"
@@ -32,7 +61,7 @@ if [ -z "$BUILD" ]; then
   for b in "$ROOT/build-gate" "$ROOT/build"; do [ -x "$b/bin/daq_bridge" ] && BUILD="$b" && break; done
 fi
 BIN="$BUILD/bin"
-for b in daq_bridge sequencer_service calibration_service; do
+for b in daq_bridge sequencer_service calibration_service config_broadcast_service; do
   [ -x "$BIN/$b" ] || { echo "pipeline: $BIN/$b missing — run scripts/build.sh" >&2; exit 2; }
 done
 # elodin-db: the version CI and setup.sh pin. Another version is a different DB with different
@@ -66,10 +95,10 @@ done
 # Private port range. 5008 is the one port daq_bridge hard-codes (FSWConfigManager); the stack
 # lock is what keeps it free.
 P_ELODIN=26401 P_DAQ_UDP=26402 P_WS=26403 P_ACT_UDP=26404 P_LOG_UDP=26405
-P_SEQ=26406 P_CTRL=26407 P_HB_UDP=26408 P_VID_API=26411 P_VID_RTC=26412 P_VID_AGENT=26413 P_OTA=26414
+P_SEQ=26406 P_CTRL=26407 P_HB_UDP=26408 P_START=26409 P_VID_API=26411 P_VID_RTC=26412 P_VID_AGENT=26413 P_OTA=26414
 
 mkdir -p "$ROOT/.tmp"
-FX="$ROOT/.tmp/char_pipeline_$$"
+FX="$ROOT/.tmp/char_pipeline_${MODE}_$$"
 rm -rf "$FX"; mkdir -p "$FX/logs"
 PIDS=()
 cleanup() {
@@ -90,10 +119,10 @@ done
 
 cat > "$FX/ports.json" <<EOF
 {"elodin":$P_ELODIN,"daq_udp":$P_DAQ_UDP,"ws":$P_WS,"act_udp":$P_ACT_UDP,"log_udp":$P_LOG_UDP,
- "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"video_api":$P_VID_API,
+ "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-"$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json"
+"$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$MODE"
 CFG="$FX/config/config.toml"
 
 wait_port() {  # port name seconds
@@ -107,7 +136,8 @@ alive() {  # pid name
   kill -0 "$1" 2>/dev/null || { echo "pipeline: $2 exited early" >&2; tail -20 "$FX/logs/$2.log" >&2; exit 5; }
 }
 
-# Same start order as test/test_integration.sh: DB, sequencer, bridge, backend, calibration, sim.
+# Same start order as test/test_integration.sh: DB, sequencer, bridge, (config broadcast),
+# backend, calibration, sim.
 "$ELODIN_DB" run "127.0.0.1:$P_ELODIN" "$FX/elodin_db" > "$FX/logs/elodin.log" 2>&1 &
 PIDS+=($!); wait_port $P_ELODIN elodin 15
 
@@ -116,6 +146,13 @@ PIDS+=($!); wait_port $P_SEQ sequencer 15
 
 (cd "$FX" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
+
+if [ "$MODE" = boards ]; then
+  # SENSOR_CONFIG to the boards: what moves the startup board (60) out of SETUP.
+  (cd "$FX" && exec "$BIN/config_broadcast_service" --config "$CFG" --interval-ms 1500) \
+    > "$FX/logs/config_broadcast.log" 2>&1 &
+  PIDS+=($!); sleep 0.5; alive "${PIDS[-1]}" config_broadcast
+fi
 
 # The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
 # legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
@@ -139,8 +176,8 @@ PIDS+=($!); wait_port $P_WS backend 30
   > "$FX/logs/calibration.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" calibration
 
-# --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the sim
-# config enables only pt_board, at 127.0.0.1.
+# --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the pt
+# sim config enables only pt_board, at 127.0.0.1; the boards one every board at 127.0.0.<id>.
 "$PY" "$ROOT/sim/board_simulator.py" --config "$FX/sim_config.toml" --target 127.0.0.1 \
   --port $P_DAQ_UDP --low-noise --skip-startup > "$FX/logs/sim.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" sim
@@ -151,7 +188,9 @@ fi
 
 START_MS="$("$PY" -c 'import time; print(int(time.time()*1000))')"
 CAPTURE="$FX/capture.json"
-(cd "$BACKEND" && NODE_PATH="$BACKEND/node_modules" "$TSX" "$HERE/session.ts" $P_WS "$CAPTURE") \
+(cd "$BACKEND" && NODE_PATH="$BACKEND/node_modules" PYTHON_BIN="$PY" \
+  BOARD_STARTUP_SIM="$ROOT/sim/board_startup_sim.py" CHAR_DAQ_UDP_PORT=$P_DAQ_UDP \
+  CHAR_STARTUP_PORT=$P_START "$TSX" "$HERE/session.ts" $P_WS "$CAPTURE" "$MODE") \
   > "$FX/logs/session.log" 2>&1 || { echo "pipeline: session failed" >&2; tail -30 "$FX/logs/session.log" >&2; tail -30 "$FX/logs/backend.log" >&2; exit 6; }
 
 cat > "$FX/context.json" <<EOF
@@ -168,14 +207,15 @@ fi
 
 OUT="$FX/out"
 "$PY" "$HERE/characterize.py" "$CAPTURE" "$FX/context.json" "$OUT"
+GOLD="$HERE/golden"; [ "$MODE" = boards ] && GOLD="$HERE/golden/boards"
 if [ "${CHAR_UPDATE:-0}" = 1 ]; then
-  rm -rf "$HERE/golden"; mkdir -p "$HERE/golden"; cp "$OUT"/* "$HERE/golden/"
-  echo "pipeline: goldens rewritten ($(ls "$HERE/golden" | wc -l | tr -d ' ') files)"
+  mkdir -p "$GOLD"; rm -f "$GOLD"/*.txt; cp "$OUT"/* "$GOLD/"
+  echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru "$HERE/golden" "$OUT"; then
-  echo "pipeline: PASS"
+if diff -ru -x boards "$GOLD" "$OUT"; then
+  echo "pipeline[$MODE]: PASS"
 else
-  echo "pipeline: FAIL — the pipeline's observable behaviour differs from golden/ (diff above)" >&2
+  echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
   exit 1
 fi

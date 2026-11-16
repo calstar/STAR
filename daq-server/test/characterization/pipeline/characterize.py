@@ -186,6 +186,28 @@ def handshake_frames(frames):
     return out
 
 
+def replay_by_board(frames):
+    """P10. The self-test replay (server.ts selfTestLatest) is a Map in the order results arrived
+    from Elodin, which across boards is a race. The run of SELF_TEST frames is regrouped by board id
+    (stable: each board's own frames keep their order); every other frame keeps its place.
+    """
+    out, run = [], []
+
+    def flush():
+        board = lambda m: int(re.sub(r"\D", "", m["payload"]["entity"]) or 0)
+        out.extend(sorted(run, key=board))  # sorted() is stable
+        run.clear()
+
+    for m in frames:
+        if handshake_phase(m) == HANDSHAKE_PHASES.index("selftest"):
+            run.append(m)
+        else:
+            flush()
+            out.append(m)
+    flush()
+    return out
+
+
 def main():
     cap_path, ctx_path, out_dir = sys.argv[1:4]
     cap = json.load(open(cap_path))
@@ -212,7 +234,7 @@ def main():
     health = set()
     for client, (sname, fs) in first_frames.items():
         hs.append(f"## client {client} (connected in step {sname})")
-        for m in handshake_frames(fs):
+        for m in replay_by_board(handshake_frames(fs)):
             if is_board_health(m):
                 health.add(dumps(n.value(m["payload"])))
                 continue
@@ -311,7 +333,10 @@ def main():
     for (sname, client), keys in by_req.items():
         out.append(f"# {sname} client {client}: {len(keys)} series")
         for k in sorted(keys):
-            out.append(f"  {k} {{{', '.join(sorted(keys[k]))}}}")
+            vals = sorted(keys[k])
+            # P7 applied to history: a stream with more than four values is "<varies>".
+            shown = "{" + ", ".join(vals) + "}" if len(vals) <= 4 else "<varies>"
+            out.append(f"  {k} {shown}")
     out.append("")
     open(os.path.join(out_dir, "ws_streams.txt"), "w").write("\n".join(out))
 

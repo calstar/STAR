@@ -1,8 +1,10 @@
 # pipeline/ — the whole stack, frozen at its WebSocket and HTTP edge
 
 ```bash
-bash test/characterization/pipeline/run.sh             # compare against golden/
-CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite golden/ (main's behaviour only)
+bash test/characterization/pipeline/run.sh             # both sessions: pt → golden/, boards → golden/boards/
+bash test/characterization/pipeline/run.sh pt          # one routed PT board, the full scripted session
+bash test/characterization/pipeline/run.sh boards      # every simulated board type at once
+CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
 `run.sh` takes the stack lock itself (re-entrant under `gate.sh` / `characterization/run.sh`),
@@ -74,6 +76,27 @@ the packets/calibration areas'). Side effect, frozen: `/api/config/validate` and
 `session_start` report `board_id 21 but ip 127.0.0.1` as an error, so the session is started with
 `force`.
 
+### The boards session (`run.sh boards` → `golden/boards/`)
+
+The complement: every board type the simulator models, streaming at once from its own
+`127.0.0.<board_id>` (config_base's 192.168.2.x → 127.0.0.x, no board moved): PT (21, 22), LC (42),
+TC (51), RTD (31), encoder (61), actuator (12, 14), ball valve (71), environmental (25), plus the
+startup board 60 (`[boards.integration_startup]`, as test_integration.sh declares it), played by
+`sim/board_startup_sim.py` through SETUP → SENSOR_CONFIG (from `config_broadcast_service`, which
+this session also runs) → SELF_TEST, after which it goes silent and is reported lost. The LabJack
+T7 (81) stays enabled for the services but not in the simulator, which has no T7 model.
+
+Script: readiness → GET the board/sensor endpoints (`/api/sensor-config`, `/api/ball_valve_cal`,
+`/api/lc_tare`, `/api/board-logs*`, `/api/debug`, `/stats`, `/api/config/validate`,
+`/api/gui-config`, `/api/pressure-limits`, `/api/engine_state`) → connect → 5 s live → startup
+board lifecycle → the same GETs → disconnect. It freezes per board type the entity/component set
+and value of every stream, the self-test results, the status lifecycle (`board_status_update`
+payloads, setup-stuck / connected / lost notifications) and those endpoints.
+
+On macOS it needs the 16 board_id loopback aliases (`11 12 13 14 21 22 25 31 32 41 42 51 52 60 61
+71`, the list test_integration.sh uses). `run.sh boards` checks `ifconfig lo0` first and fails
+(exit 7) naming every missing alias; it never skips. Linux has all of 127/8.
+
 ## The scripted session (`session.ts`)
 
 GET sweep → connect A → 3 s live → unknown `subscribe`, non-JSON, `get_state_transitions` →
@@ -136,6 +159,9 @@ those byte for byte (header, column order, cell format).
 | P7 | a stream's value is printed when the run saw one value (or a set of ≤4), else `<varies>` | `--low-noise` makes PT raw constant per channel |
 | P8 | history: per request, the series keys and the distinct values each carries (not their times or lengths) | lengths depend on uptime |
 | P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema; `/api/cubic_calibration` → sha256 + keys (it reads the committed store via `__dirname`, ignoring `DAQ_CALIBRATIONS_DIR`) | counters / wall clock |
+| P10 | the handshake's self-test replay is regrouped by board id (each board's frames keep their order) | `selfTestLatest` replays in Elodin arrival order, a race across boards |
+
+P7 also applies to history series (more than four distinct values → `<varies>`).
 
 Determinism: `CHAR_UPDATE=1` followed by two comparison runs, back to back, all identical; five
 earlier captures (before the fixture-cwd change) were identical to each other under the same rules.
