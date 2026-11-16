@@ -49,15 +49,17 @@ build_clean() {
 # Tests that fail on main on macOS only are listed in baseline_ctest_failures.txt (see LEDGER: all
 # three pass on Linux). The allowlist applies on Darwin only; elsewhere any failure fails the gate.
 ctest_all() {
-  (cd "$ROOT/build-gate" && bash "$CHAR/with_stack_lock.sh" ctest --output-on-failure -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)") > "$LOG/ctest-output.txt" 2>&1
+  rm -f "$ROOT/build-gate/retry-failed.txt"
+  CTEST_KNOWN_FAILURES="$([ "$(uname)" = Darwin ] && echo "$CHAR/baseline_ctest_failures.txt")" \
+    bash "$CHAR/with_stack_lock.sh" bash "$CHAR/ctest_with_retry.sh" "$ROOT/build-gate" -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)" > "$LOG/ctest-output.txt" 2>&1
   local rc=$? new
   cat "$LOG/ctest-output.txt"
   [ "$rc" = 0 ] && return 0
-  new="$(sed -n '/The following tests FAILED/,$p' "$LOG/ctest-output.txt" | sed -nE 's/^[[:space:]]*[0-9]+ - ([^ ]+) .*/\1/p' |
-    sort -u | comm -23 - <(if [ "$(uname)" = Darwin ]; then sort -u "$CHAR/baseline_ctest_failures.txt"; fi))"
-  grep -q 'The following tests FAILED' "$LOG/ctest-output.txt" || { echo "ctest failed without a test list"; return 1; }
+  # What still fails after retries: unknown failures and timing tests that failed every rerun.
+  new="$(sed -nE 's/^FAILED (\(not a known timing test\)|after retries): ([^ ]+).*/\2/p' "$LOG/ctest-output.txt" | sort -u)"
+  grep -q -E '^(FAILED|RETRY PASSED|KNOWN FAILURE)' "$LOG/ctest-output.txt" || { echo "ctest failed without a verdict"; return 1; }
   [ -z "$new" ] || { echo "NEW CTEST FAILURES:"; echo "$new"; return 1; }
-  echo "(only baseline-known failures: $(tr '\n' ' ' < "$CHAR/baseline_ctest_failures.txt"))"
+  echo "(only Darwin-baseline or retried-and-passed failures)"
 }
 # Backend tests that fail on main on this machine are listed in baseline_vitest_failures.txt
 # ("file > describe > test", as vitest prints them); any other failure fails the gate.

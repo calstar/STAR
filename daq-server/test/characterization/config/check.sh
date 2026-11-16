@@ -4,6 +4,7 @@
 #   check.sh cpp <dir of char_config_dump> <dir of state_script_check>   (ctest runs this)
 #   check.sh ts                                                          (run.sh runs this)
 #   check.sh py                                                          (run.sh runs this)
+#   check.sh bin <dir of the service binaries>      (run.sh runs this, under the stack lock)
 #
 # CHAR_UPDATE=1 rewrites the goldens instead of comparing (only ever on main's behaviour).
 # Always runs from this directory, with inputs named relative to it, so messages that echo a path
@@ -168,6 +169,17 @@ run_ts() {
   done < <(find "$out" -type f | LC_ALL=C sort)
 }
 
+run_bin() {
+  local bin out="$WORK/bin"
+  bin="$(cd "$1" && pwd -P)" || return 2
+  python3 bin_dump.py "$bin" "$out" > "$WORK/bin.log" 2>&1 || {
+    echo "bin_dump failed:"; cat "$WORK/bin.log"; return 1; }
+  local f
+  while IFS= read -r f; do
+    compare "bin/${f#"$out"/}" "$f"
+  done < <(find "$out" -type f | LC_ALL=C sort)
+}
+
 run_py() {
   local out="$WORK/py.txt"
   python3 py_dump.py > "$out" 2>&1
@@ -178,7 +190,8 @@ case "$MODE" in
   cpp) run_cpp "${2:?bin dir}" "${3:?tool bin dir}" || fail=1 ;;
   ts) run_ts || fail=1 ;;
   py) run_py || fail=1 ;;
-  *) echo "usage: check.sh cpp <bin> <toolbin> | ts | py" >&2; exit 2 ;;
+  bin) run_bin "${2:?bin dir}" || fail=1 ;;
+  *) echo "usage: check.sh cpp <bin> <toolbin> | ts | py | bin <bin>" >&2; exit 2 ;;
 esac
 
 if [ "${CHAR_UPDATE:-}" = 1 ]; then

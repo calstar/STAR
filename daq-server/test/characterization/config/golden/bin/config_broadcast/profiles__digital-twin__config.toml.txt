@@ -1,0 +1,38 @@
+⚠️  [ConfigBroadcast] abort_pts "Fuel Upstream": model "cubic" cannot be inverted for a board trip — set calibration_model = "physics", or this sensor has NO trip
+⚠️  [ConfigBroadcast] abort_pts "Ox Upstream": no PT sensor_role declares this name — NO board trip
+[ConfigBroadcast] board traffic pinned to <iface> 127.0.0.1 (auto)
+[ConfigBroadcast] Started — interval=60000ms (C++ standalone, live config reload)
+[ConfigBroadcast] 9 packet types
+=== stopped
+=== port 5005: 9 datagram(s)
+packet[0] type=6 len=101
+  0000: 06 00 00 00 00 00 01 0d 01 00 00 7f 03 00 00 01
+  0010: 00 00 7f 0a 00 00 01 00 00 7f 02 00 00 01 00 00
+  0020: 7f 05 00 00 01 00 00 7f 06 00 00 01 00 00 7f 01
+  0030: 00 00 01 00 00 7f 02 00 00 01 00 00 7f 03 00 00
+  0040: 01 00 00 7f 06 00 00 01 00 00 7f 07 00 00 01 00
+  0050: 00 7f 0a 00 00 01 00 00 7f 07 00 00 01 00 00 7f
+  0060: 09 00 00 00 01
+packet[1] type=6 len=101
+  0000: 06 00 00 00 00 00 00 0d 01 00 00 7f 03 00 00 01
+  0010: 00 00 7f 0a 00 00 01 00 00 7f 02 00 00 01 00 00
+  0020: 7f 05 00 00 01 00 00 7f 06 00 00 01 00 00 7f 01
+  0030: 00 00 01 00 00 7f 02 00 00 01 00 00 7f 03 00 00
+  0040: 01 00 00 7f 06 00 00 01 00 00 7f 07 00 00 01 00
+  0050: 00 7f 0a 00 00 01 00 00 7f 07 00 00 01 00 00 7f
+  0060: 09 00 00 00 01
+packet[2] type=5 len=12
+  0000: 05 00 00 00 00 00 02 01 02 01 00 00
+packet[3] type=5 len=11
+  0000: 05 00 00 00 00 00 01 01 01 00 01
+packet[4] type=5 len=11
+  0000: 05 00 00 00 00 00 01 01 00 00 01
+packet[5] type=5 len=24
+  0000: 05 00 00 00 00 00 0a 01 02 03 04 05 06 07 08 09
+  0010: 0a 01 01 7f 00 00 01 00
+packet[6] type=5 len=14
+  0000: 05 00 00 00 00 00 04 01 02 03 04 00 00 01
+packet[7] type=5 len=14
+  0000: 05 00 00 00 00 00 04 01 02 03 04 00 00 01
+packet[8] type=5 len=14
+  0000: 05 00 00 00 00 00 04 02 03 04 05 00 00 01

@@ -1,0 +1,14 @@
+=== DAQ Bridge - DiabloAvionics Packet Receiver ===
+Config: config/config.toml
+Listening on: 0.0.0.0:5006
+
+[Config] WARNING: actuator role 'Ball NO' is on ball valve board 71 and is marked NO; ball valves have no NO/NC, treating it as pass-through (1 = open).
+[TimeSync] mode=board-clock window=10s
+[Config] WARNING: actuator role 'Ball NO' is on ball valve board 71 and is marked NO; ball valves have no NO/NC, treating it as pass-through (1 = open).
+[DAQ] board traffic pinned to <iface> 127.0.0.1 (auto)
+[Config] Loopback fallback (127.0.0.<host-octet>): 2 enabled boards
+[Config] Board routing table (from config/config.toml):
+  127.0.0.12 → ACTUATOR (0 channels) ✅
+  127.0.0.71 → BALL_VALVE (0 channels) ✅
+[System] Mode: GROUND
+=== stopped
