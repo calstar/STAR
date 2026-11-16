@@ -92,28 +92,28 @@ the rules below were changed for those mechanisms, never to fit one golden.
   send or the stage.
 - **N4** Times are relative to the window's first datagram (or, after a `(note)`, to the moment the
   harness changed something). A *staged* send — an actuator send in the entered state's own loop,
-  for a state that is neither an abort nor scripted, i.e. the delays CSV at work — is rounded to the
-  nearest 50 ms below 1 s. Everything else is floored: to 100 ms below 1 s, 250 ms from 1 to 2 s,
-  1 s from 2 s. 50 ms is the coarsest bucket that still moves when a staged delay changes by 50 ms:
-  a stage is timed from its own batch on its own thread, measured jitter +0..+5 ms, so 0.001 -> 0,
-  0.080 -> 100, 0.2 -> 200 and 0.25 would be 250 (the profiles' 1.0 s delay is in the 250 ms band).
-  Everything else is a wait plus overhead that only ever overshoots, by up to ~60 ms under load
-  measured in the 3x runs: a hold expiry or a script's `transition_to` joins the 10 ms-sliced loop
-  thread; an abort's batch waits for its 4-repeat broadcast; ABORT_DONE is 60 x 50 ms sleeps
-  (3.0 s nominal, ~3.3 s on macOS). Flooring keeps those in one bucket. Hold and script durations
-  in the sessions are chosen to sit at the bottom of a band.
-- **N5** The continuous loop republishes the current state about once a second. A republish is an
-  actuator send >= 0.7 s into its state's loop (loop start = the sequencer's StateTransition publish,
-  via the fake Elodin) carrying the state's full column; it is dropped from the event list. Windows
-  marked for it print a summary instead: the period floored to 1 s (the 100 x 10 ms loop runs at
-  ~1.0 s on Linux, ~1.2 s on macOS and up to ~1.6 s on this machine under load), the first tick's
-  age when the state was entered in that window, and the distinct contents. The tick count is not
-  frozen. Such a window does not end on a timer: `Session.settle()` ends it `SETTLE_TAIL` (200 ms)
-  after the second complete tick round of whatever state the rig has landed in (after ABORT_DONE,
-  for an abort), so its ticks are fixed and the next command is ~0.8 s clear of the next tick. The
-  tail must exceed the 60 ms boundary lookahead: at 50 ms, on Linux under load, the next command's
-  transition publish arrived within 60 ms of the tick, the tick was taken for that state's entry,
-  and it showed up as an extra `+4s` command with the summary's `every` lost.
+  for a state that is neither an abort nor scripted, all of whose roles share one value in the
+  delays CSV — is printed with that **configured** delay (`+0.2s`), never the measurement, once the
+  measurement is proven within `[d - 5 ms, d + 0.1 s + 0.25 d]`. Outside it prints the measured
+  time and the configured one (`+400ms!=cfg0.2s`), so a send that ignores or mis-applies its delay
+  goes red, and so does any change to the configured value (the 0.2 -> 0.25 s mutation). Everything
+  else is a wait plus overhead that only overshoots (a hold expiry or a script's `transition_to`
+  joins the 10 ms-sliced loop thread; ABORT_DONE is 60 x 50 ms sleeps, 3.0 s nominal): floored to
+  100 ms below 1 s, 250 ms from 1 to 2 s, 1 s from 2 s.
+- **N5** The continuous loop republishes the current state. Its period is a code constant, not
+  configuration: `ActuatorCommander::startContinuousLoop` sleeps 100 x 10 ms between passes, so
+  `wire.REPUBLISH_S = 1.0`. A republish is an actuator send >= 0.7 s into its state's loop (loop
+  start = the sequencer's StateTransition publish, via the fake Elodin) carrying the state's full
+  column for that board; it is dropped from the event list. Windows marked for it print a summary:
+  the first tick's age (when the state was entered in that window) and every interval between
+  ticks, each checked against **[0.8, 1.5] x REPUBLISH_S** and printed as `1 s within [0.8, 1.5]x`
+  when inside (any interval outside prints itself, so a changed period goes red), and the distinct
+  contents. The tick count is not frozen. Such a window does not end on a timer: `Session.settle()`
+  ends it `SETTLE_TAIL` (200 ms) after the second complete tick round of whatever state the rig has
+  landed in (after ABORT_DONE, for an abort), so its ticks are fixed and the next command is ~0.8 s
+  clear of the next tick. The tail must exceed the 60 ms boundary lookahead: at 50 ms, on Linux
+  under load, the next command's transition publish arrived within 60 ms of the tick, the tick was
+  taken for that state's entry, and it showed up as an extra `+4s` command with `every` lost.
 - **N6** Service logs are written by several threads with no line atomicity, so lines can come
   out spliced (seen in the 3x runs). Only two things are frozen: the sequencer's load-time verdicts
   (printed by `init()` before its other threads talk: fire/flow/script verdicts, warnings, refusals),
@@ -128,6 +128,11 @@ the rules below were changed for those mechanisms, never to fit one golden.
   stream, already recorded where it started, and is not listed again.
   **N7b**: a stream packet repeating within 50 ms after the close command (the loop's straggler,
   see below) is dropped.
+
+**Timing assumptions** (the only ones the goldens make): a staged send lands no earlier than 5 ms
+before and no later than 0.1 s + 25% after its configured delay; the republish interval is within
+[0.8, 1.5] x 1 s; non-staged waits overshoot by less than their floor band (100 ms below 1 s). All
+hold on macOS and Linux arm64 at 1x synthetic load (one `yes` per core on top of the host).
 
 Goldens are recorded on macOS (darwin-arm64). N4/N5 are chosen so Linux timing should land in the
 same buckets, but that has not been verified.

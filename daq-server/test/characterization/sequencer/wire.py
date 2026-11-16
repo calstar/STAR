@@ -77,6 +77,37 @@ def ms_bucket(ns: int) -> str:
     return fmt_ms(bucket_ms(ns))
 
 
+# The continuous loop's republish period. Not configuration: ActuatorCommander::startContinuousLoop
+# sleeps 100 x 10 ms between passes. Asserted as a bound, never as an observed value (README, N5).
+REPUBLISH_S = 1.0
+REPUBLISH_BOUNDS = (0.8, 1.5)
+
+
+def period_ok(ns: int) -> bool:
+    lo, hi = REPUBLISH_BOUNDS
+    return lo * REPUBLISH_S <= ns / 1e9 <= hi * REPUBLISH_S
+
+
+def period_text(values: list[int]) -> str:
+    """N5: every interval within the bounds prints the same text; any outside prints itself."""
+    bad = sorted({f"{v / 1e9:.2f}s" for v in values if not period_ok(v)})
+    lo, hi = REPUBLISH_BOUNDS
+    if bad:
+        return f"OUTSIDE [{lo}, {hi}] x {REPUBLISH_S:g} s: " + ", ".join(bad)
+    return f"{REPUBLISH_S:g} s within [{lo}, {hi}]x"
+
+
+# N4: a staged send must land at or after its configured delay, and before this much past it.
+STAGE_EARLY_S = 0.005
+STAGE_HEADROOM = (0.1, 0.25)  # seconds, plus this fraction of the delay
+
+
+def stage_ok(measured_s: float, d: float) -> bool:
+    return (
+        d - STAGE_EARLY_S <= measured_s <= d + STAGE_HEADROOM[0] + STAGE_HEADROOM[1] * d
+    )
+
+
 def period_bucket(ns: int) -> str:
     """N5: republish period, floored to 1 s (the 100 x 10 ms loop runs 1.0-1.6 s under load)."""
     return f"~{int((ns / 1e6) // 1000)}s"
@@ -286,7 +317,7 @@ def render_window(
     t_open=0,
     from_open=False,
     t_close=None,
-    staged=lambda state: True,
+    stage_delay=lambda state, dest, raw: None,
 ) -> list[str]:
     """Events (N3 ordering, N4 times) then a republish summary per loop seen in the window (N5)."""
     lines: list[str] = []
@@ -335,16 +366,23 @@ def render_window(
         a_loop = events[0].loop
         rows = []
         for s in merged:
-            fine = (
-                not from_open
-                and s.ptype == 4
-                and s.loop == a_loop
-                and staged(boundaries[s.loop][1])
-            )
-            rows.append((bucket_ms(s.t - anchor, fine), s.key, s.count, s))
+            d = None
+            if not from_open and s.ptype == 4 and s.loop == a_loop:
+                d = stage_delay(boundaries[s.loop][1], s.dest, s.raw)
+            m = s.t - anchor
+            if d is None:
+                b = bucket_ms(m)
+                label = fmt_ms(b)
+            elif stage_ok(m / 1e9, d):
+                # The configured delay, not the measurement: proven within its bounds.
+                b = int(round(d * 1000))
+                label = f"+{d:g}s"
+            else:
+                b = bucket_ms(m, True)
+                label = f"{fmt_ms(b)}!=cfg{d:g}s"
+            rows.append((b, s.key, s.count, s, label))
         rows.sort(key=lambda r: (r[0], r[1], r[2]))
-        for b, _k, count, s in rows:
-            tb = fmt_ms(b)
+        for b, _k, count, s, tb in rows:
             mult = getattr(s, "mult", 1)
             times = f"x{count}" + (f" (x{mult} sends)" if mult > 1 else "")
             lines.append(
@@ -373,17 +411,12 @@ def render_window(
             per_dest: dict[str, list[Send]] = {}
             for x in ts:
                 per_dest.setdefault(x.dest, []).append(x)
-            gaps = sorted(
-                {
-                    period_bucket(b.t - a.t)
-                    for d in per_dest.values()
-                    for a, b in zip(d, d[1:])
-                }
-            )
+            gap_ns = [b.t - a.t for d in per_dest.values() for a, b in zip(d, d[1:])]
+            gaps = [period_text(gap_ns)] if gap_ns else []
             contents = sorted({(s.dest, masked_hex(s.raw)) for s in ts})
             # The first tick's age only means something when the state was entered in this window.
             first = (
-                f" first {period_bucket(ts[0].age)} into the state"
+                f" first after {period_text([ts[0].age])}"
                 if boundaries[loop][0] >= t_open
                 else ""
             )

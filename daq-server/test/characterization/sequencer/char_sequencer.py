@@ -288,6 +288,7 @@ class Model:
         delays = H.read_csv(workdir / "state_machine_actuator_delays.csv")
         dh = [c.strip() for c in delays[0]]
         self.max_delay: dict[str, float] = {}
+        self.delay: dict[tuple[str, str], float] = {}
         for r in delays[1:]:
             for col in range(1, min(len(dh), len(r))):
                 try:
@@ -295,6 +296,7 @@ class Model:
                 except ValueError:
                     continue
                 self.max_delay[dh[col]] = max(self.max_delay.get(dh[col], 0.0), v)
+                self.delay[(dh[col], r[0].strip())] = v
 
     def full_count(self, state: str, board) -> int:
         """How many pairs a republish of `state` carries to `board`: its column's roles there."""
@@ -568,6 +570,24 @@ class Session:
             out.append((t, self.model.names.get(to, f"id{to}")))
         return out
 
+    def _stage_delay(self, state: str, dest: str, raw: bytes):
+        """N4: the delays-CSV value every role in this send shares in `state`, or None.
+
+        None for an abort or scripted state (no schedule), or a send mixing delays."""
+        if not self._staged(state):
+            return None
+        board = W.board_of(dest)
+        by = {(b, ch): name for name, (_k, ch, b) in self.model.roles.items()}
+        body = raw[6:]
+        n = body[0] if body else 0
+        ds = set()
+        for i in range(n):
+            role = by.get((board, body[1 + 2 * i]))
+            if role is None:
+                return None
+            ds.add(self.model.delay.get((state, role), 0.0))
+        return ds.pop() if len(ds) == 1 else None
+
     def _staged(self, state: str) -> bool:
         """States whose entry is a delays-CSV schedule (N4's fine band): not abort, not scripted."""
         return state not in self.model.aborts and state not in self.model.dynamic
@@ -628,7 +648,7 @@ class Session:
                     st["t_open"],
                     from_open=st["reply"] is None,
                     t_close=t_hi,
-                    staged=self._staged,
+                    stage_delay=self._stage_delay,
                 )
             )
         for svc, load, facts, tag in (
