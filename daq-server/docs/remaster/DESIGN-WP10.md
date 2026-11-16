@@ -210,7 +210,8 @@ from two threads. C4-5's straggler PWM (the loop reads `fire_active_` at 699) st
 151-232, `resolve_board_config_by_source_ip` 282-305); 307-1074 `main` (signals 341-344, routing
 print 383-418, log forwarder 486-490, proactive SENSOR_CONFIG 502-527, Elodin connect and
 registration 574-606, loop 608-1067 with SERVER_HEARTBEAT 629, reconnect 749-776, self-test
-publish 816-883, raw batch 885-989). One thread, no mutex; the library objects start no threads.
+publish 816-883, raw batch 885-989 (extracted: 890-989, §4.3)). One thread, no mutex; the
+library objects start no threads.
 
 ### 4.2 The two registration sites stay separate
 
@@ -363,10 +364,11 @@ subsets only, D23/D36). Build and warnings after every commit; the rest on the i
 - [ ] `ctest -R 'actuator_delays|script_positions|ball_valve_commander|fire_lifecycle|hold_rules|script_states|script_runtime|sequencer_concurrency|abort_ordering|sequencer_elodin|controller_pwm_roles|robust_ddp|characterization_config_cpp'`.
 - [ ] Characterization, in subsets (iterate with `CHAR_SEQ_ONLY=<regex>`):
       ```
-      CHAR_AREAS=sequencer,packets,config,lifecycle bash test/characterization/with_stack_lock.sh \
-        bash test/characterization/run.sh                    # from daq-server/
-      CHAR_AREAS=elodin,pipeline bash test/characterization/with_stack_lock.sh \
-        bash test/characterization/run.sh
+      CHAR_AREAS=sequencer,packets,config,lifecycle \
+        bash daq-server/test/characterization/with_stack_lock.sh \
+        bash daq-server/test/characterization/run.sh
+      CHAR_AREAS=elodin,pipeline bash daq-server/test/characterization/with_stack_lock.sh \
+        bash daq-server/test/characterization/run.sh
       ```
 - [ ] `bash daq-server/test/characterization/linux/linux_gate.sh --areas sequencer,config,lifecycle,packets,elodin,pipeline <tip>`.
 - [ ] **CI run, required** (D34: any WP touching the sequencer). `actuator_delays`,
