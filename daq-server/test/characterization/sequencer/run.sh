@@ -7,9 +7,11 @@
 #   CHAR_SEQ_REPEAT=3 ...                                       # run each session 3x, fail on any difference
 #   CHAR_SEQ_ONLY='entry/Fire' ...                              # a subset (regex on session names)
 #
+# Each actuator board is captured on its own loopback address, 127.0.0.<board_id>: on macOS those
+# need lo0 aliases, and without them the suite FAILS (listing them) rather than skip.
 # Starts the real binaries, so it takes the machine-wide stack lock itself (re-entrant under
 # gate.sh). Off the stand only: it refuses on star-rfs or a host with a board-LAN address, and every
-# config it writes is rewritten to 127.0.0.1 (harness.patch_config asserts it).
+# config it writes is rewritten to loopback only (harness.patch_config asserts it).
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CHAR="$(cd "$HERE/.." && pwd -P)"

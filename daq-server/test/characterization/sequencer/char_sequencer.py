@@ -291,9 +291,13 @@ class Model:
                     continue
                 self.max_delay[dh[col]] = max(self.max_delay.get(dh[col], 0.0), v)
 
-    def full_count(self, state: str) -> int:
-        """How many pairs a republish of `state` carries: its column's configured roles."""
-        roles = {r for r in self.column.get(state, set()) if r in self.roles}
+    def full_count(self, state: str, board) -> int:
+        """How many pairs a republish of `state` carries to `board`: its column's roles there."""
+        roles = {
+            r
+            for r in self.column.get(state, set())
+            if r in self.roles and self.roles[r][2] == board
+        }
         if state == self.fire:
             roles -= self.pwm
         return len(roles)
@@ -523,9 +527,14 @@ class Session:
                 for s in sends
                 if s.tick and s.loop == cur and s.t > t0 and self._is_full(s, bounds)
             ]
+            # One republish is a send to each board: count complete rounds.
+            per_dest: dict[str, int] = {}
+            for x in mine:
+                per_dest[x.dest] = per_dest.get(x.dest, 0) + 1
+            rounds = min(per_dest.values()) if per_dest else 0
             if need is None and any(s.ptype == until_type and s.t > t0 for s in sends):
-                need = max(ticks, len(mine) + 1)
-            if need is not None and len(mine) >= need:
+                need = max(ticks, rounds + 1)
+            if need is not None and rounds >= need:
                 time.sleep(0.05)
                 return
             time.sleep(0.02)
@@ -560,7 +569,8 @@ class Session:
 
     def _is_full(self, s: W.Send, bounds) -> bool:
         n = s.raw[6] if len(s.raw) > 6 else -1
-        return n == self.model.full_count(bounds[s.loop][1])
+        board = W.board_of(s.dest)
+        return n > 0 and n == self.model.full_count(bounds[s.loop][1], board)
 
     # -- finish -----------------------------------------------------------------------------
 
@@ -1193,9 +1203,16 @@ def sessions():
 # ── runner ─────────────────────────────────────────────────────────────────────────────────────
 
 
+def capture_boards() -> set[int]:
+    ids = set()
+    for p in PROFILES.values():
+        ids |= H.board_ids(p["config"].read_text())
+    return ids
+
+
 class Run:
     def __init__(self):
-        self.rec = H.Recorder()
+        self.rec = H.Recorder(capture_boards())
         self.el = FakeElodin(H.DB_PORT)
 
     def close(self):
@@ -1213,6 +1230,19 @@ def main() -> int:
     repeat = int(os.environ.get("CHAR_SEQ_REPEAT", "1"))
     WORK.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
+    # Every actuator board gets its own loopback address so the capture names the board. On
+    # macOS those need lo0 aliases; without them this suite fails rather than skip.
+    missing = H.missing_aliases(capture_boards())
+    if missing:
+        print(
+            "sequencer characterization: FAIL — missing loopback addresses: "
+            + " ".join(missing)
+        )
+        print(
+            "  add them (macOS): "
+            + "; ".join(f"sudo ifconfig lo0 alias {a} up" for a in missing)
+        )
+        return 1
     run = Run()
     failures = []
     t_start = time.monotonic()

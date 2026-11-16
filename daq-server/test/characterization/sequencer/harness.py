@@ -10,6 +10,7 @@ from __future__ import annotations
 import csv
 import os
 import re
+import select
 import shutil
 import socket
 import struct
@@ -77,9 +78,42 @@ def _section_set(text: str, section: str, key: str, value: str) -> str:
         return new
 
 
+def _boards_to_loopback(text: str) -> str:
+    out = []
+    for part in re.split(r"(?m)^(?=\[)", text):
+        if part.startswith("[boards."):
+            m = re.search(r"^board_id = (\d+)", part, re.M)
+            if m:
+                part = re.sub(
+                    r'^ip = "[^"]*"',
+                    f'ip = "127.0.0.{int(m.group(1))}"',
+                    part,
+                    flags=re.M,
+                )
+        out.append(part)
+    return "".join(out)
+
+
+def board_ids(text: str, kinds=("ACTUATOR", "BALL_VALVE")) -> set[int]:
+    """board_id of every [boards.*] section of the given types (enabled or not)."""
+    ids = set()
+    for part in re.split(r"(?m)^(?=\[)", text):
+        if not part.startswith("[boards."):
+            continue
+        t = re.search(r'^type = "([^"]+)"', part, re.M)
+        b = re.search(r"^board_id = (\d+)", part, re.M)
+        if t and b and t.group(1) in kinds:
+            ids.add(int(b.group(1)))
+    return ids
+
+
 def patch_config(text: str, workdir: Path, overrides=None) -> str:
     """Point a profile config at loopback, the private ports and this run's CSV copies."""
     text = text.replace('subnet = "192.168.2.0/24"', 'subnet = "127.0.0.0/24"')
+    # Each board on its own loopback address, 127.0.0.<board_id>, so every captured datagram
+    # names the board it was sent to. Everything else on the stand's subnet (the broadcast, the
+    # stacklight) goes to 127.0.0.1.
+    text = _boards_to_loopback(text)
     text = re.sub(r"192\.168\.\d+\.\d+", "127.0.0.1", text)
     text = re.sub(r"^bind_ip = .*$", 'bind_ip = "127.0.0.1"', text, flags=re.M)
     text = re.sub(
@@ -105,6 +139,16 @@ def patch_config(text: str, workdir: Path, overrides=None) -> str:
         text = _section_set(text, section, key, value)
     # The point of all the above. Anything still naming the stand's subnet or ports is a bug here.
     assert "192.168." not in text, "a 192.168.x.x address survived patching"
+    for ip in re.findall(r'^\s*(?:\w+_)?ip = "([^"]+)"', text, re.M):
+        assert ip.startswith("127.") or ip == "0.0.0.0", f"non-loopback address: {ip}"
+    # ActuatorCommander falls back to 192.168.2.<board> for a role whose board has no [boards]
+    # entry. Refuse to run a config where that fallback could fire.
+    declared = {int(b) for b in re.findall(r"^board_id = (\d+)", text, re.M)}
+    sec = re.search(r"^\[actuator_roles\]\n((?:(?!\[).*\n)*)", text, re.M)
+    for b in re.findall(r"\[[^]]*?,\s*\d+\s*,\s*(\d+)", sec.group(1) if sec else ""):
+        assert (
+            int(b) in declared
+        ), f"a role names board {b}, which has no [boards] entry"
     live = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
     for bad in (r"= 5005\b", r"= 2240\b", r"^\s*port = 999[89]\b"):
         assert not re.search(bad, live, re.M), f"stand port survived patching: {bad}"
@@ -166,29 +210,34 @@ class Profile:
 
 
 class Recorder:
-    """Every datagram to ACT_PORT, with a monotonic arrival time. One socket for the whole run."""
+    """Every datagram to ACT_PORT on 127.0.0.1 and on each board's 127.0.0.<id>, with a monotonic
+    arrival time and the address it was sent to. Bound once for the whole run."""
 
-    def __init__(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind(("127.0.0.1", ACT_PORT))
-        self.sock.settimeout(0.05)
+    def __init__(self, ids: set[int]):
+        self.socks = {}
+        for host in ["127.0.0.1"] + [f"127.0.0.{b}" for b in sorted(ids)]:
+            sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sk.bind((host, ACT_PORT))
+            sk.setblocking(False)
+            self.socks[sk] = host
         self.lock = threading.Lock()
-        self.packets: list[tuple[int, bytes]] = []
+        self.packets: list[tuple[int, bytes, str]] = []
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
     def _run(self):
         while self.running:
-            try:
-                data, _ = self.sock.recvfrom(65536)
-            except socket.timeout:
-                continue
-            except OSError:
-                return
-            t = time.monotonic_ns()
-            with self.lock:
-                self.packets.append((t, data))
+            ready, _, _ = select.select(list(self.socks), [], [], 0.05)
+            for sk in ready:
+                while True:
+                    try:
+                        data, _ = sk.recvfrom(65536)
+                    except OSError:
+                        break
+                    t = time.monotonic_ns()
+                    with self.lock:
+                        self.packets.append((t, data, self.socks[sk]))
 
     def mark(self) -> int:
         return len(self.packets)
@@ -200,7 +249,22 @@ class Recorder:
     def close(self):
         self.running = False
         self.thread.join()
-        self.sock.close()
+        for sk in self.socks:
+            sk.close()
+
+
+def missing_aliases(ids: set[int]) -> list[str]:
+    """Loopback addresses this run binds that the host does not have (macOS needs aliases)."""
+    out = []
+    for b in sorted(ids):
+        sk = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sk.bind((f"127.0.0.{b}", 0))
+        except OSError:
+            out.append(f"127.0.0.{b}")
+        finally:
+            sk.close()
+    return out
 
 
 # ── processes ──────────────────────────────────────────────────────────────────────────────────

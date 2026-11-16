@@ -12,13 +12,19 @@
   < OK
   state Calibrate -> Vent
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 (x2 sends) ACTUATOR_COMMAND v0 n=11: ch2=0[Fuel Fill Press|Fuel Vent] ch1=0[Fuel Fill Vent|LOX Main] ch7=1[Fuel Main|LOX Fill] ch3=0[Fuel Press|GSE High Press Control] ch5=0[GSE High Press Vent|GSE Low Press Vent] ch10=0[GSE LOX Fill Vent] ch5=0[GSE High Press Vent|GSE Low Press Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump|LOX Press] ch7=0[Fuel Main|LOX Fill] ch1=0[Fuel Fill Vent|LOX Main]
-              raw 0400........0b020001000701030005000a0005000400080007000100
-    +200ms x3 ACTUATOR_COMMAND v0 n=5: ch3=1[Fuel Press|GSE High Press Control] ch2=1[Fuel Fill Press|Fuel Vent] ch6=1[GN2 Vent|LOX Vent] ch8=0[LOX Dump|LOX Press] ch6=1[GN2 Vent|LOX Vent]
-              raw 0400........0503010201060108000601
+      +0ms x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=3: ch7=1[Fuel Main] ch5=0[GSE Low Press Vent] ch1=0[LOX Main]
+              raw 0400........03070105000100
+      +0ms x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=8: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
+              raw 0400........0802000100030005000a00040008000700
+    +200ms x3 to board 12: ACTUATOR_COMMAND v0 n=4: ch3=1[Fuel Press] ch2=1[Fuel Vent] ch8=0[LOX Press] ch6=1[LOX Vent]
+              raw 0400........040301020108000601
+    +200ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch6=1[GN2 Vent]
+              raw 0400........010601
   republish [Vent]: first ~1s into the state, every ~1s
-              ACTUATOR_COMMAND v0 n=16: ch2=0[Fuel Fill Press|Fuel Vent] ch1=0[Fuel Fill Vent|LOX Main] ch7=1[Fuel Main|LOX Fill] ch3=1[Fuel Press|GSE High Press Control] ch2=1[Fuel Fill Press|Fuel Vent] ch6=1[GN2 Vent|LOX Vent] ch3=0[Fuel Press|GSE High Press Control] ch5=0[GSE High Press Vent|GSE Low Press Vent] ch10=0[GSE LOX Fill Vent] ch5=0[GSE High Press Vent|GSE Low Press Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump|LOX Press] ch7=0[Fuel Main|LOX Fill] ch1=0[Fuel Fill Vent|LOX Main] ch8=0[LOX Dump|LOX Press] ch6=1[GN2 Vent|LOX Vent]
-              raw 0400........10020001000701030102010601030005000a000500040008000700010008000601
+              to board 12: ACTUATOR_COMMAND v0 n=7: ch7=1[Fuel Main] ch3=1[Fuel Press] ch2=1[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=0[LOX Press] ch6=1[LOX Vent]
+              raw 0400........070701030102010500010008000601
+              to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=1[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
+              raw 0400........09020001000601030005000a00040008000700
 -- sequencer log (N6: load-time lines, then message counts)
    [SequencerService] Fire state: Fire → expires to Armed after 500 ms (extended 600 ms)
    [SequencerService] WARNING: fire opens "Fuel Main" 0.08 s after entry, but no [fire].gate_actuator is set — the burn window is measured from the TRANSITION, so that valve is open for 0.42 s, not 0.5 s.

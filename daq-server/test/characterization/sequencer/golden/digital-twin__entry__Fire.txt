@@ -10,13 +10,17 @@
   < OK
   state Ready -> Fire
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 (x2 sends) ACTUATOR_COMMAND v0 n=12: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch1=1[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=1[Ox Main|fuel vent] ch10=1[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
-              raw 0400........0c03000a0002000500010102000300060007010a0107010901
-    +1.00s x3 ACTUATOR_COMMAND v0 n=1: ch6=1[Fuel Main|Low Press Vent]
+      +0ms x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=6: ch3=0[Dome CTRL] ch1=1[Fuel Upstream] ch2=0[High Press CTRL] ch10=1[Ox Upstream] ch7=1[fuel vent] ch9=1[lox vent]
+              raw 0400........060300010102000a0107010901
+      +0ms x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=6: ch10=0[Dome CTRL Vent] ch2=0[Fuel Fill Press] ch5=0[Fuel Fill Vent] ch3=0[High Press Vent] ch6=0[Low Press Vent] ch7=1[Ox Main]
+              raw 0400........060a0002000500030006000701
+    +1.00s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch6=1[Fuel Main]
               raw 0400........010601
   republish [Fire]: first ~1s into the state, every ~1s
-              ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=1[Fuel Main|Low Press Vent] ch1=1[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=1[Ox Main|fuel vent] ch10=1[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
-              raw 0400........0d03000a00020005000601010102000300060007010a0107010901
+              to board 12: ACTUATOR_COMMAND v0 n=7: ch3=0[Dome CTRL] ch6=1[Fuel Main] ch1=1[Fuel Upstream] ch2=0[High Press CTRL] ch10=1[Ox Upstream] ch7=1[fuel vent] ch9=1[lox vent]
+              raw 0400........0703000601010102000a0107010901
+              to board 14: ACTUATOR_COMMAND v0 n=6: ch10=0[Dome CTRL Vent] ch2=0[Fuel Fill Press] ch5=0[Fuel Fill Vent] ch3=0[High Press Vent] ch6=0[Low Press Vent] ch7=1[Ox Main]
+              raw 0400........060a0002000500030006000701
 -- sequencer log (N6: load-time lines, then message counts)
    [SequencerService] Fire state: (none) — fire timer disabled
    [SequencerService] Flow hold: Flow Test 600 ms (max 10000) → Ready

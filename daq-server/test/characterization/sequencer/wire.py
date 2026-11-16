@@ -9,6 +9,7 @@ masked everywhere (N1) and the raw hex is printed with them as `........`.
 from __future__ import annotations
 
 import struct
+from collections import Counter
 
 PACKET_TYPES = {
     1: "BOARD_HEARTBEAT",
@@ -82,18 +83,31 @@ def period_bucket(ns: int) -> str:
 
 
 class RoleMap:
-    """Channel -> candidate role names, for readability only (boards share one IP here)."""
+    """(board, channel) -> the role [actuator_roles] puts there. For readability only: the board
+    itself is what is frozen, from the address the datagram was sent to."""
 
     def __init__(self, roles: dict[str, tuple[str, int, int]]):
-        self.by_ch: dict[int, list[str]] = {}
-        for name, (_kind, ch, _board) in sorted(roles.items()):
-            self.by_ch.setdefault(ch, []).append(name)
+        self.by: dict[tuple[int, int], list[str]] = {}
+        for name, (_kind, ch, board) in sorted(roles.items()):
+            self.by.setdefault((board, ch), []).append(name)
 
-    def names(self, ch: int) -> str:
-        return "|".join(self.by_ch.get(ch, ["?"]))
+    def names(self, board, ch: int) -> str:
+        return "|".join(self.by.get((board, ch), ["?"]))
 
 
-def decode(raw: bytes, roles: RoleMap) -> str:
+def board_of(dest: str):
+    """Board id from a destination 127.0.0.<id>; None for 127.0.0.1 (broadcast, heartbeat)."""
+    last = int(dest.rsplit(".", 1)[1])
+    return None if last == 1 else last
+
+
+def where(dest: str) -> str:
+    b = board_of(dest)
+    return "to 127.0.0.1" if b is None else f"to board {b}"
+
+
+def decode(raw: bytes, roles: RoleMap, dest: str = "127.0.0.1") -> str:
+    board = board_of(dest)
     if len(raw) < 6:
         return f"SHORT({len(raw)}B)"
     ptype, ver = raw[0], raw[1]
@@ -107,7 +121,7 @@ def decode(raw: bytes, roles: RoleMap) -> str:
             for i in range(n)
             if 2 + 2 * i < len(body)
         ]
-        items = " ".join(f"ch{c}={s}[{roles.names(c)}]" for c, s in pairs)
+        items = " ".join(f"ch{c}={s}[{roles.names(board, c)}]" for c, s in pairs)
         extra = "" if len(body) == 1 + 2 * n else f" TRAILING({len(body) - 1 - 2 * n}B)"
         return f"{head} n={n}: {items}{extra}"
     if ptype == 10 and body:
@@ -120,7 +134,7 @@ def decode(raw: bytes, roles: RoleMap) -> str:
                 break
             ch, dur, duty, freq = struct.unpack_from("<BIff", body, off)
             items.append(
-                f"ch{ch}[{roles.names(ch)}] dur={dur}ms duty={duty:.4g} freq={freq:.4g}Hz"
+                f"ch{ch}[{roles.names(board, ch)}] dur={dur}ms duty={duty:.4g} freq={freq:.4g}Hz"
             )
         return f"{head} n={n}: " + "; ".join(items)
     if ptype in (7, 8, 9):
@@ -131,8 +145,9 @@ def decode(raw: bytes, roles: RoleMap) -> str:
 class Send:
     """One logical send: a datagram and its retransmits (N2)."""
 
-    def __init__(self, t: int, raw: bytes, i: int = 0):
+    def __init__(self, t: int, raw: bytes, i: int = 0, dest: str = "127.0.0.1"):
         self.i = i  # index of its first datagram in the session's packet list
+        self.dest = dest  # the address it was sent to: which board
         self.t = t
         self.raw = raw
         self.count = 1
@@ -146,20 +161,20 @@ class Send:
 
     @property
     def key(self):
-        return (self.ptype, masked(self.raw))
+        return (self.ptype, self.dest, masked(self.raw))
 
 
-def to_sends(packets: list[tuple[int, bytes]]) -> list[Send]:
+def to_sends(packets: list[tuple[int, bytes, str]]) -> list[Send]:
     sends: list[Send] = []
-    open_: dict[bytes, Send] = {}
-    for i, (t, raw) in enumerate(packets):
-        s = open_.get(raw)
+    open_: dict[tuple[str, bytes], Send] = {}
+    for i, (t, raw, dest) in enumerate(packets):
+        s = open_.get((dest, raw))
         if s is not None and t - s.t <= REPEAT_WINDOW_NS and raw[:1] != b"\x0a":
             s.count += 1
             s.last = t
             continue
-        s = Send(t, raw, i)
-        open_[raw] = s
+        s = Send(t, raw, i, dest)
+        open_[(dest, raw)] = s
         sends.append(s)
     return sends
 
@@ -176,6 +191,34 @@ def mark_ticks(sends: list[Send], boundaries: list[tuple[int, str]]) -> None:
         s.tick = s.ptype == 4 and s.age >= TICK_AGE_NS
 
 
+def _pairs(s: Send) -> Counter:
+    body = s.raw[6:]
+    n = body[0] if body else 0
+    return Counter(
+        (body[1 + 2 * i], body[2 + 2 * i]) for i in range(n) if 2 + 2 * i < len(body)
+    )
+
+
+def _first_pass_of(s: Send, earlier: list[Send]):
+    """N3c: the earlier send `s` is the loop's first pass of, or None."""
+    if s.ptype != 4 or s.count != 3:
+        return None
+    mine = _pairs(s)
+    for p in reversed(earlier):
+        if p.ptype != 4 or p.dest != s.dest or s.t - p.t > MERGE_NS:
+            continue
+        extra = mine - _pairs(p)
+        if not extra or _pairs(p) - mine:
+            continue
+        staged = Counter()
+        for q in earlier:
+            if q is not p and q.ptype == 4 and q.dest == s.dest and p.t <= q.t <= s.t:
+                staged += _pairs(q)
+        if all(staged[k] >= v for k, v in extra.items()):
+            return p
+    return None
+
+
 def mark_pwm_tails(sends: list[Send]) -> None:
     """N7b: the controller loop's last stream packet can land just after the close command.
 
@@ -185,6 +228,7 @@ def mark_pwm_tails(sends: list[Send]) -> None:
     intervened, is that stray and is dropped from the record.
     """
     last_t: dict = {}
+    start: dict = {}  # key -> when the stream it belongs to began
     prev_key = None
     for s in sends:
         if s.ptype != 10:
@@ -197,6 +241,17 @@ def mark_pwm_tails(sends: list[Send]) -> None:
         ):
             s.tail = True
         else:
+            # N7: a stream packet that continues one running when its window opened belongs to
+            # that stream (already recorded where it started), not to the new window.
+            if (
+                t_prev is not None
+                and s.t - t_prev < PWM_STREAM_NS
+                and prev_key == s.key
+            ):
+                s.stream_start = start[s.key]
+            else:
+                start[s.key] = s.t
+                s.stream_start = s.t
             last_t[s.key] = s.t
             prev_key = s.key
 
@@ -235,7 +290,13 @@ def render_window(
 ) -> list[str]:
     """Events (N3 ordering, N4 times) then a republish summary per loop seen in the window (N5)."""
     lines: list[str] = []
-    events = [s for s in sends if not s.tick and not getattr(s, "tail", False)]
+    events = [
+        s
+        for s in sends
+        if not s.tick
+        and not getattr(s, "tail", False)
+        and getattr(s, "stream_start", s.t) >= t_open
+    ]
     ticks = [s for s in sends if s.tick]
     events = collapse_pwm(events)
     if events:
@@ -258,6 +319,14 @@ def render_window(
             if prev is not None and s.t - prev.t <= MERGE_NS and not s.repeats:
                 prev.mult = getattr(prev, "mult", 1) + 1
                 continue
+            # N3c: the loop's first pass skips roles whose stage is still pending
+            # (ActuatorCommander::applyForState, pending_roles_), and a stage due in ~1 ms (Fire's
+            # LOX Main, 0.001 s) races it on another thread. A pass that is an earlier send to the
+            # same board plus exactly the pairs a stage already sent there is that first pass.
+            base = _first_pass_of(s, merged)
+            if base is not None:
+                base.mult = getattr(base, "mult", 1) + 1
+                continue
             merged.append(s)
         # N3b/N4: a staged actuator send (the anchor's own state, timed by the delays CSV) gets the
         # fine band; everything else the floored one. Lines in one bucket are in canonical order
@@ -278,7 +347,9 @@ def render_window(
             tb = fmt_ms(b)
             mult = getattr(s, "mult", 1)
             times = f"x{count}" + (f" (x{mult} sends)" if mult > 1 else "")
-            lines.append(f"  {tb:>8} {times} {decode(s.raw, roles)}")
+            lines.append(
+                f"  {tb:>8} {times} {where(s.dest)}: {decode(s.raw, roles, s.dest)}"
+            )
             lines.append(f"  {'':>8}    raw {masked_hex(s.raw)}")
             if s.repeats:
                 gaps = sorted(y - x for x, y in zip([s.t] + s.repeats, s.repeats))
@@ -298,8 +369,18 @@ def render_window(
             by_loop.setdefault(s.loop, []).append(s)
         for loop, ts in sorted(by_loop.items()):
             state = boundaries[loop][1]
-            gaps = sorted({period_bucket(b.t - a.t) for a, b in zip(ts, ts[1:])})
-            contents = sorted({masked_hex(s.raw) for s in ts})
+            # A republish is one send per board; its period is measured board by board.
+            per_dest: dict[str, list[Send]] = {}
+            for x in ts:
+                per_dest.setdefault(x.dest, []).append(x)
+            gaps = sorted(
+                {
+                    period_bucket(b.t - a.t)
+                    for d in per_dest.values()
+                    for a, b in zip(d, d[1:])
+                }
+            )
+            contents = sorted({(s.dest, masked_hex(s.raw)) for s in ts})
             # The first tick's age only means something when the state was entered in this window.
             first = (
                 f" first {period_bucket(ts[0].age)} into the state"
@@ -310,9 +391,8 @@ def render_window(
                 f"  republish [{state}]:{first}"
                 + (f"{',' if first else ''} every {'/'.join(gaps)}" if gaps else "")
             )
-            for c in contents:
-                lines.append(
-                    f"  {'':>8}    {decode(bytes.fromhex(c.replace('.', '0')), roles)}"
-                )
+            for dest, c in contents:
+                raw = bytes.fromhex(c.replace(".", "0"))
+                lines.append(f"  {'':>8}    {where(dest)}: {decode(raw, roles, dest)}")
                 lines.append(f"  {'':>8}    raw {c}")
     return lines
