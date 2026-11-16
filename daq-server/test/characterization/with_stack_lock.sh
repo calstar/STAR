@@ -17,11 +17,14 @@ WAIT_S="${DAQ_STACK_LOCK_WAIT:-7200}"
 
 [ $# -gt 0 ] || { echo "usage: $0 <command> [args...]" >&2; exit 2; }
 
+# Never edit this file in place while runs may be executing it: bash reads scripts incrementally.
+# Write a new file and mv it over this one.
 # Re-entrant: a command already running under the lock (gate.sh → run.sh → an area's run.sh)
 # just runs.
 if [ "${DAQ_STACK_LOCK_HELD:-}" = "$LOCK_DIR" ]; then exec "$@"; fi
 
-# Priority: DAQ_STACK_LOCK_PRIORITY=1 (the orchestrator's baseline and merge-gate runs) registers a
+# Priority: DAQ_STACK_LOCK_PRIORITY=1 (the orchestrator's own baseline and merge-gate runs only —
+# never an agent's) registers a
 # ticket in $LOCK_DIR.priority/; while any live ticket exists, ordinary callers do not take the lock,
 # so a priority waiter cannot lose every race to a stream of ordinary ones (mkdir is not FIFO).
 PRIO_DIR="$LOCK_DIR.priority"
@@ -49,6 +52,13 @@ while priority_waiting || ! mkdir "$LOCK_DIR" 2>/dev/null; do
     rm -rf "$LOCK_DIR"
     continue
   fi
+  # A holder killed between mkdir and writing its pid leaves an empty lock dir nobody owns.
+  if [ -z "$owner" ] && [ -d "$LOCK_DIR" ] &&
+    [ $(($(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || date +%s))) -gt "${DAQ_STACK_LOCK_EMPTY_STALE_S:-10}" ]; then
+    echo "with_stack_lock: taking over an ownerless lock" >&2
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+    continue
+  fi
   if [ "$announced" = 0 ]; then
     echo "with_stack_lock: waiting for $LOCK_DIR (held by pid ${owner:-?}: $(cat "$LOCK_DIR/what" 2>/dev/null || echo '?'))" >&2
     announced=1
@@ -57,9 +67,9 @@ while priority_waiting || ! mkdir "$LOCK_DIR" 2>/dev/null; do
   sleep 2
 done
 
+trap 'rm -rf "$LOCK_DIR"; rm -f "$PRIO_DIR/$$"' EXIT INT TERM
 echo $$ > "$LOCK_DIR/pid"
 echo "$PWD: $*" > "$LOCK_DIR/what"
-trap 'rm -rf "$LOCK_DIR"; rm -f "$PRIO_DIR/$$"' EXIT INT TERM
 rm -f "$PRIO_DIR/$$"
 export DAQ_STACK_LOCK_HELD="$LOCK_DIR"
 
