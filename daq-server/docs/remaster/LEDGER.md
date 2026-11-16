@@ -32,6 +32,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D9 | Two empty agent worktrees (`agent-a129babb…`, `agent-af69f3b5…`) from a failed concurrent launch. | Removal was declined to me; the user had the reviewing session (star-f9) remove both and their branches. Resolved. |
 | D10 | Black 25.11.0 (CI pin) installed in the same venv as clang-format 19. | Local black is 24.2. |
 | D11 | Gate format step = clang-format-19 `--dry-run --Werror` on every daq-server C/C++ file format.sh targets (clean on `main`), plus black on Python files *added* since `main`. Agents must not run repo-wide `./format.sh` and must never commit files outside `daq-server/` that it touched. | `./format.sh --check` is red on `main` itself: black 25 reformats firmware/ Python (out of scope); daq-server Python (412 files) is not black-clean on `main` and format.sh does not target it. The completion criterion "format.sh leaves no diff" is therefore read as "no diff in what the remaster owns". |
+| D13 | No golden that depends on Elodin data is frozen until elodin-db is v0.16.1. Agents C3/C4/C5/C6 told so. | 0.14.2 delivers no data; such goldens would freeze a broken pipeline. |
 | D12 | Adopt the reviewer's (star-f9) advice: (a) tag `remaster-baseline` after C1–C6 merge and add a gate step `git diff --exit-code remaster-baseline -- <goldens> frontend/__tests__ frontend/e2e`; only the orchestrator moves the tag, each move logged here; (b) run the suite 3× back-to-back and once under parallel ctest load before trusting it; (c) the normaliser replaces timestamps/IDs only, never sorts, drops fields or rounds, and the mutation check targets it (extra WS field, reordered sensor list, changed 4th-decimal float); (d) WP1 checks deploy/, dev.sh, flake.nix, systemd units for build-ci/ users, and the gate's `npm ci` from clean must still work; (e) god-file splits (WP6/7, WP9/10) go in two packages each: a mechanical move-only split merged alone, then cleanup. | Enforces the golden rule mechanically; avoids flaky goldens being "fixed" by loosening; keeps diffs bisectable. |
 
 ## Baseline on `main` (this machine)
@@ -39,7 +40,14 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | suite | result |
 |---|---|
 | clean build | ok, 10 unique warnings (frozen in `baseline_warnings.txt`) |
-| _rest pending_ | |
+| ctest | 29/32 serial. Known failing on this Mac on `main` (`baseline_ctest_failures.txt`): `script_runtime` (republish burst count 2 < 3 in 2.3 s), `sequencer_concurrency` (all checks pass, then the fake controller's `accept` with `SO_RCVTIMEO` never returns on macOS → 120 s timeout in teardown), `t7_integration` (needed loopback aliases; rerun pending) |
+| backend vitest | 1 known failure on this Mac: `video.test.ts` "on macOS is the Bonjour name" expects `Theos-MacBook-Pro-774.local`, gets this Mac's `computer-9.local` |
+| frontend vitest, lint, vite build, shared types | ok |
+| format | daq-server C/C++ clang-format-19 clean; repo-wide `format.sh --check` red on `main` (firmware/ Python under black 25.11) — see D11 |
+| integration | 47 passed / 76 failed, 0 sensor samples. Loopback aliases fixed (user added the 16; they vanish at reboot). **Root cause of the rest: `~/.cargo/bin/elodin-db` is 0.14.2; the repo pins v0.16.1** (deploy/README.md). 0.14.2 rejects every packet (`Impeller(Postcard(SerdeDeCustom))`) and refuses all 331 backend subscriptions. daq_bridge receives board data fine. **BLOCKED on the user** installing v0.16.1 (the harness and `t7_integration.py` prefer `~/.cargo/bin/elodin-db` over PATH; replacing it was declined to me). Verified v0.16.1 tarball (sha256 f2f297af…) is staged in the scratchpad `elodin/` dir. |
+| t7_integration | fails for the same elodin-db reason (0 rows recorded); stays on the ctest allowlist until rerun on 0.16.1 |
+| backend vitest skips | the 9 skipped tests are all `test/video-gateway.integration.test.ts` (`describe.skipIf(!VIDEO_GATEWAY_IT)`), run in CI's separate video-gateway job; to be run here once the stack lock is free |
+| uWebSockets | `usockets` (services/CMakeLists.txt:84-99) is only for `archive/legacy/cpp/fsw_web_bridge.cpp`, which no target builds; `external/uWebSockets` does not exist. No live target unbuilt. Dead block → WP2 |
 
 ## Work packages
 
@@ -56,7 +64,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | queued (after suite) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
 | WP2 | delete C++ no target compiles | — | — | queued | BLOAT-MAP WP2 | WP1 |
 | WP3 | lib hygiene: PressureStateMachine, move db.hpp, split Parser/DatabaseConfig | — | — | queued | BLOAT-MAP WP3 | WP2 |
-| WP4 | dead launchers + superseded test scripts, `--legacy` branch | — | — | queued | BLOAT-MAP WP4 | WP1 |
+| WP4 | dead launchers + superseded test scripts, `--legacy` branch; make test_integration.sh fail loudly (non-zero, listing them) when a macOS loopback alias is missing instead of `|| true` + a false ✅ (reviewer suggestion) | — | — | queued | BLOAT-MAP WP4 | WP1 |
 | WP5 | backend dead TS + line client + slot helper | — | — | queued | BLOAT-MAP WP5 | WP1 |
 | WP6 | split server.ts | — | — | queued | BLOAT-MAP WP6 | WP5 |
 | WP7 | split api-server.ts | — | — | queued | BLOAT-MAP WP7 | WP5 |
