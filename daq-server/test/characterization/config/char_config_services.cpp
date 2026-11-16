@@ -7,9 +7,15 @@
 //
 // Same output convention as char_config_dump: the dump, then everything the code printed.
 
+#include <cstdio>
+#include <fstream>
+#include <initializer_list>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #define main char_service_main_unused
 #if CHAR_SERVICE_STACKLIGHT

@@ -43,6 +43,15 @@
 // ActuatorCommander keeps what it parsed (roles, both tables, the bind address) private, and its
 // public accessors are lookups that cannot enumerate. Open it up for this TU only; everything it
 // includes is included above first so the macro reaches nothing but this one class.
+#include <atomic>
+#include <map>
+#include <mutex>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "control/StateMachine.hpp"
 #include "elodin/ElodinClient.hpp"
 #define private public
 #include "control/ActuatorCommander.hpp"
