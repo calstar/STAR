@@ -151,10 +151,12 @@ Every caller keeps its own guard (`typeof … === 'number'`, the registry's `Num
 ## 4. Interfaces
 
 The public surface is written as type-checked stubs in `design-stubs/ts/src/` (see that directory's
-`tsconfig.json`; not under `diablo_server/`, imported by nothing):
+`tsconfig.json` and DESIGN-WP6 "Interfaces" for the command; not under `diablo_server/`, imported by
+nothing):
 
 - `sequencer-client.ts` — `SEQUENCER_PORT`, `SequencerReply`, `sendToSequencer`.
 - `sensor-config.ts` — `boardSlot` (and, from WP7, `buildSensorConfig` / `SensorConfigEntry`).
+- `elodin-vtable-registry.ts` — `VTablePair`, `PairState`, `duePairs` (commit 5.7).
 - `state-csv/state-actuators.ts`, `state-csv/state-transitions.ts`, `state-csv/state-ids.ts` — the
   exports that survive WP5.
 
@@ -312,7 +314,20 @@ already evaluated earlier (`server.ts:31`).
 - `duePairs` is the place a stale-binding or no-delivery clause would go (D-SUB, D-ECHO;
   `research/subscription-robustness.md` Ideas 2, 4): PROPOSALS for the team, not WP5.
 
-## 8. Choices to check against STYLE.md
+## 8. STYLE.md conformance (55d140ef; LEDGER D43)
 
-STYLE.md (branch `design/style`) did not exist when this note was written; the choices it should
-confirm or overrule are listed in DESIGN-WP6's "Interfaces" section, which covers all three notes.
+Applied: STYLE-S5 (`sequencer-client.ts` is named for the peer it owns the exchange with, not a
+pattern; `state-csv/` names what the directory holds); S6 (`sendToSequencer` sends to one peer;
+`boardSlot`, `duePairs` are pure queries); S7 (the env var `ACTUATOR_SERVICE_PORT` and the
+`→ actuator_service` / `actuator_service connect error` log texts are kept although the module is
+renamed); S14 (the client keeps `{ok, reply}` and never rejects); S15 (the `Trying:` and
+`📡 VTableStream:` lines byte-identical); S19 (the state-CSV loaders' import-time config read is
+frozen, not copied into new code); S30 (both new exports' modules have no import-time effects);
+S34 (no new class, interface or knob; `duePairs` is a one-call-site extraction that only moves
+code, its `PairState`/`VTablePair` types carry existing values); S35 (the :9999 sender is deleted,
+not generalised); S36 (stub headers); S40 (new file: 2 spaces, single quotes, semicolons).
+
+**Choice that needs the orchestrator's check:** STYLE-S20 says the process environment is read once,
+in `server/env.ts`. `SEQUENCER_PORT` is read in `sequencer-client.ts` instead (it lands before WP6,
+and a `src/`-level module importing `server/env.ts` would be an upward edge). Details and a proposed
+wording in DESIGN-WP6 "Interfaces", item 1.

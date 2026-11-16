@@ -727,3 +727,44 @@ labelled `// Kept: C5-5 (D17)` at the candidates in step 2 (STYLE-S12, S37) and 
 | (b) 3 operator identity rule | `api/http` + `ws-connection` | step 2.3 (after WP6 and WP7) |
 | (d) 4/7 live cubic store path | `routes/calibration-profiles.livePath` + `api/calibration` | **kept** (C5-5), labelled, Parked [B2] |
 | (a) 1 states list vs id resolution | active profile vs deployed config | by design, frozen; observation |
+
+---
+
+## Interfaces (design/ts2, 2026-11-16)
+
+Stubs in `docs/remaster/design-stubs/ts/src/` (how they are type-checked, and that nothing imports
+them: DESIGN-WP6 "Interfaces"). Each opens with the STYLE-S36 header: what it owns, what it must not
+know about, contract surfaces with their goldens, import-time effects; each group's handler doc
+lists its routes with their gates, error paths and callbacks.
+
+| stub | public surface |
+|---|---|
+| `api/http.ts` | `BoardScanRateHz`, `DebugInfo`, `APIHandlerOptions` (verbatim, with which options are never passed), `isConfigWriteAuthorized`, `readJsonBody`; step 2.1: `sendJson` (restricted to the 50 listed sites), `denyUnlessOperator` |
+| `api/config.ts` … `api/ota.ts` (10 groups) | one `handle<Group>Request(req, res, url, opts): Promise<boolean>` each |
+| `api-server.ts` | `createAPIHandler(opts?)`; re-exports `buildSensorConfig`, `SensorConfigEntry` (from `sensor-config.ts`), `APIHandlerOptions`, `BoardScanRateHz`, `DebugInfo` (from `api/http.ts`) |
+| `sensor-config.ts` (delta) | `SensorConfigEntry`, `buildSensorConfig(config?)` (WP7 1.2), beside WP5's `boardSlot` |
+
+What writing them confirmed or changed:
+
+- The route-group signature stays documentation only (WP7 §2): eleven modules share it, but a
+  declared `RouteHandler` type would be a callback type no code consumes generically (STYLE-S34).
+- `sendJson`'s body is fixed as `video/routes.ts:38`'s (`writeHead` before `JSON.stringify`), so even
+  inside the eligible list a `stringify` throw lands after the header exactly as today
+  (research `node-realtime-backend.md` §5); the restriction, not the helper, carries the safety.
+- `api/history.ts` keeps `ElodinQueryClient` type-only: it is elided at runtime today and must
+  stay elided ([B1]).
+- `api/calibration.ts` owns `SRC_DIR` from `import.meta.url` (STYLE-S30, D43(7)).
+
+### STYLE.md conformance (55d140ef; LEDGER D43)
+
+Applied: STYLE-S5 (`api/` = HTTP route handlers, `routes/` = domain libraries the harnesses import
+by path, untouched); S6 (`handle<Group>Request`); S7 (every URL, header, text and filename kept,
+including the mixed `snake_case`/`kebab-case` paths); S8/S10 (every frozen failure mode listed in
+the handlers' docs: the 500-vs-400 malformed-JSON split, the hang paths, the ungated OTA routes,
+the 503 stubs); S12/S37 (`// Kept: C5-5 (D17)` at the cubic store candidates in step 2, [B2]); S28
+(every group call awaited inside the one try); S29 (`setImmediate` deferral vs synchronous
+`onCalibrationReload`); S30, S31, S34, S36, S40 as for WP6.
+
+**Choices that need the orchestrator's check against STYLE:** none beyond DESIGN-WP6's list; the
+`sendJson` eligibility is enforced by a grep script rather than ESLint (STYLE-S40: no linter) —
+confirm that a ~20-line check script in the package (outside `src/`) is acceptable.

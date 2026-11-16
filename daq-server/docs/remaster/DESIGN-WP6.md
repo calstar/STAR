@@ -53,6 +53,11 @@ changed the following; each changed place is marked with its tag.
   ~200-300) are per WP, not per pass (STYLE-S33). Rules are cited as `STYLE-S<n>`, `WP6-R1`,
   `WP7-S1`.
 
+- **[A9]** Writing the interface stubs ("Interfaces" at the end): `raiseNotification` /
+  `clearNotification` take the payload only; `activeNotificationKeys` becomes `ReadonlySet` after
+  step 2.2 (tsc-enforced single owner); two missing downward edges (`calibration-state` →
+  `config-caches`, `mission-time` → `env`); step 2.8's functions return frame counts.
+
 Research cited: `docs/remaster/research/node-realtime-backend.md` (§1 elided imports, §2 timers,
 §3 backpressure, §4 D-SUB, §5 functional core) and `research/subscription-robustness.md` (Ideas
 2-5), merged at 963e81b9 (LEDGER D42).
@@ -1069,3 +1074,96 @@ Owners per step: one each after step 2.2. No new finding.
 | (c) 6 self-test snapshot + notification | `ingest` + `board-status` (step 1) | planned step 2.1 |
 | (d) 3 `calibrationHost.elodin` write | `elodin-link` + `calibration-state` (step 1) | planned step 2.2 |
 | (c) 3 T7 slot → board lookup | two lazy fillers (step 1) | planned step 2.4 |
+
+---
+
+## Interfaces (design/ts2, 2026-11-16)
+
+The public surface of every module of §2 is written as stubs in
+`docs/remaster/design-stubs/ts/src/` — exported types, signatures, and a header comment per
+module stating what it owns, what it must not know about or import, its contract surfaces and
+the golden that freezes them, its import-time effects, error paths and side effects (STYLE-S36).
+Bodies are `throw new Error('stub')` or `declare` only. The stubs are **not** under
+`diablo_server/`, are imported by nothing, and are excluded from the product's `tsc` (its
+`include` is `src/**/*`). They type-check against the product's real types:
+
+```bash
+cd daq-server/docs/remaster/design-stubs/ts
+npx --prefix ../../../../diablo_server/backend tsc --noEmit -p .    # exit 0 at 85a02f9a
+```
+
+(`src/product-types.ts` re-exports the product types the stubs name; a deliberate wrong name there
+goes red, checked.) The surface shown is the **target after step 2**; exports that exist only in
+step 1 (containers the moved bodies still mutate, WP6-R3) are marked `[step 1]`, step-2 additions
+`[step 2.n]`.
+
+| stub (`src/server/…`) | layer | public surface |
+|---|---|---|
+| `env.ts` | 0 | `WS_PORT`, `GUI_PORT`, `ELODIN_HOST`, `ELODIN_PORT`, three `THIN_*` flags |
+| `stats.ts` | 0 | `IngestStats`, `stats` |
+| `ws-clients.ts` | 1 | `WsWithControl`, `ClientStream`, `wss`, `clientStreams`, `KEEPALIVE_MS`, `attachWebSocketServer`, `broadcast`, `send`, `clientStreamStatus`, `flushClientOutboxes`, `resetOutboxStats`, `reapUnresponsiveClients` |
+| `notifications.ts` | 2 | `activeNotificationKeys` (`ReadonlySet` after 2.2), `notificationBuffer` [step 1], `pruneNotificationBuffer`, `broadcastNotification`, `raiseNotification`, `clearNotification`, `sendNotificationReplay` |
+| `history.ts` | 2 | `history`, `pruneHistory`, `sendHistoricalData` |
+| `mission-time.ts` | 2 | `firstPacketTimeMs`, `countdownTargetMs`, `initMissionTime`, `setFirstPacketTimeMs`/`setCountdownTargetMs` [step 1], `noteFirstSample`, `setCountdownTarget`, `sendMissionStartTime`, `sendCountdownTarget` |
+| `config-caches.ts` | 2 | `hpBoardNumbersCache`, `t7CalFieldsCache`, `initConfigCaches`, `resetConfigCaches`, `uniqueIdFromPtEntity`, `t7BoardIdForSlot` |
+| `sensor-stream.ts` | 3 | `StreamBudget`, `guiStreamConfig`, `envelope`/`encoderEnvelope`/`broadcastLastTime` [step 1], `streamBudgetFor`, `saneSampleTimeMs`, `initGuiStream`, `reloadGuiStreamConfig`, `emitSensorPoint`, `emitSensorWindow`, `flushEnvelopes`, `publishSample` |
+| `calibration-state.ts` | 3 | `calibrationHost`, `lastRawAdc` [step 1], `initCalibrationState`, `reloadCalibrationEntityMap`, `noteRawAdc`, `setCalibrationElodin` |
+| `board-status.ts` | 3 | `BOARD_STATUS_HZ`, `BOARD_HEARTBEAT_STALE_MS`, `boardsStatus`/`selfTestLatest`/`selfTestNotifiedBoards` [step 1], `loadBoardsFromConfig`, `updateBoard`, `countHeartbeat`, `noteT7Alive`, `markStaleBoards`, `broadcastBoardStatus`, `boardLabel`, `logDiagnostics`, `noteSelfTestResults`, `sendBoardStatus`, `sendSelfTestReplay` |
+| `engine-state.ts` | 3 | `currentState`, `debugMode`, `stateActuatorMap`, `initEngineState`, `reloadStateActuatorMap`, `configStateName`, `getExpectedPositions`, `broadcastCommandedActuatorsForState`, `broadcastStateUpdate`, `refreshScriptStatus`, `setDebugMode` [step 1], `applySequencerState`, `sendConnectStateUpdate`, `sendCommandedSnapshot`, `TransitionTarget`, `resolveTransitionTarget` |
+| `actuator-mismatch.ts` | 4 | `actuatorSensedState` [step 1], `scheduleActuatorMismatchCheck`, `noteSensedRow` |
+| `elodin-link.ts` | 4 | `elodin`, `noteIngest`, `isSimulated`, `connectionStatusPayload`, `broadcastConnectionStatus`, `syncElodinToSession`, `onElodinConnected`, `onElodinDbError`, `onElodinDisconnected`, `onElodinError` |
+| `ingest.ts` | 5 | `handleElodinPacket` |
+| `commands.ts` | 5 | `handleMessage` |
+| `ws-connection.ts` | 6 | `handleConnection` |
+| `../server.ts` | 7 | `applyDeployedConfigChange` |
+
+Also in the stub tree: WP5's `sequencer-client.ts`, `sensor-config.ts` (delta), `elodin-vtable-registry.ts`
+(delta: `duePairs`), `state-csv/*`; WP7's `api/*`, `api-server.ts`.
+
+### What writing the interfaces changed (amendments to §2 / §6.4, marked [A9])
+
+- **[A9a]** `raiseNotification(payload)` / `clearNotification(payload)` take the payload only; the
+  key is `payload.key` (§6.4 step 2.2 wrote `(key, payload)`; at all nine sites the two are the
+  same value, so one argument removes a way for them to disagree). Behaviour identical.
+- **[A9b]** After step 2.2 `activeNotificationKeys` is exported as `ReadonlySet<string>`: `tsc
+  --noEmit` then rejects an `add`/`delete` outside `notifications` — the same compile-time
+  enforcement of single ownership that TS2632 gives `let` bindings (STYLE-S32). Likewise the
+  `[step 1]` containers stop being exported in the step that moves their last outside writer
+  (2.1, 2.8), so a stale writer is a build error, not a review catch.
+- **[A9c]** Two import edges the step-2 functions need, both downward and missing from §2:
+  `calibration-state` → `config-caches` (`noteRawAdc` resolves the uniqueId) and `mission-time` →
+  `env` (`noteFirstSample`'s verbose log).
+- **[A9d]** The 2.8 functions return the number of frames sent, so `ws-connection` keeps its
+  `conn_close` counters without knowing what each owner sent.
+
+### STYLE.md conformance (55d140ef; LEDGER D43)
+
+Applied: STYLE-S5 (kebab-case, `server/` = WS-side modules, no new `*-manager`/`*-service`/
+`*-handler`); S6 (`handle*` at the four input boundaries, `on<Source><Event>`, `init*`/`reload*`/
+`reset*`, `broadcast*` vs `send*` — hence 2.8's `send…(ws)` names rather than the first draft's
+`replay…`, `note*`, `set*` as the owner's single writer); S7 (no log text, `type`, key, env var or
+`__daq*` property renamed); S9/S10 (catches only at `ws-connection`, `commands`, `ingest`, and the
+`server.ts` boundaries; the "log, drop, no reply" row is "today, kept"); S14 (the line client keeps
+`{ok, reply}`, never rejects); S15 (harness-read lines named in the headers); S28 (no `.catch` added
+to `registerVTables`); S29 (backfill and callback timing named as deliberate); S30 (no import-time
+effects; `elodin`'s constructor and `stats.startTimeMs` are the two pure top-level values WP6 §1.3
+already allows); S31 (no `server/*` ↔ `api/*` edge; injection only at `createAPIHandler`,
+`sessionManager.init`, `CalibrationHost`); S32 (live bindings, setters, [A9b]); S33 (sizes per WP);
+S34 (no new class, interface with one user, callback type or knob: the types declared are the
+existing ones plus `TransitionTarget`, a return type); S36 (every stub opens with the required
+header); S40 (2 spaces, single quotes, semicolons in new files; moved code not reformatted).
+
+**Choices that need the orchestrator's check against STYLE:**
+
+1. **STYLE-S20 "the process environment is read once, in one module (`server/env.ts`)".** Two reads
+   stay outside it: `SEQUENCER_PORT` in WP5's `sequencer-client.ts` (the port belongs to the module
+   that dials it; putting it in `server/env.ts` would make a `src/`-level module import `server/*`,
+   an upward edge, or force a port parameter every caller passes identically — STYLE-S34 says
+   that is a constant), and `USE_SIM` read **per call** in `elodin-link.isSimulated()` (moved
+   verbatim; reading it once at import is equivalent only while nothing mutates `process.env`,
+   which no code does, but it is a semantic change a move-only pass does not make). Proposal:
+   S20 reads "…in the module that owns the knob, once", or the orchestrator rules otherwise.
+2. **2.8's `send…(ws)` functions** are new exported functions with one caller each
+   (`ws-connection`). Under STYLE-S34/D43(3) they are one-call-site extractions that only move
+   code — not abstractions — but they are listed here because the reviewed note did not have them.
+3. **`raiseNotification(payload)` single argument** ([A9a]) departs from the reviewed signature.
