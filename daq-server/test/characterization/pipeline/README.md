@@ -9,7 +9,9 @@ CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (ma
 ```
 
 `run.sh` takes the stack lock itself (re-entrant under `gate.sh` / `characterization/run.sh`) and
-refuses to run on the stand. Once it holds the lock: pt ~75 s, nocal ~20 s, boards ~40 s. Env:
+refuses to run on the stand. Without a git repository (a `git archive` export, a deployed stand)
+it names the lock `$TMPDIR/daq-stack.lock` instead of asking git; nothing else in the harness or the
+stack calls git. Once it holds the lock: pt ~75 s, nocal ~20 s, boards ~40 s. Env:
 `CHAR_BUILD_DIR` (default `build-gate/`, then `build/`), `ELODIN_DB` (an elodin-db binary; default
 `~/.cargo/bin/elodin-db`), `CHAR_KEEP=1` (keep `.tmp/char_pipeline_<mode>_<pid>/` with every
 service log), `CHAR_CAPTURE_ONLY=<file>` (save the raw capture, skip the comparison),
@@ -85,12 +87,15 @@ OTA 26414. daq_bridge also hard-codes UDP 5008, which is why the lock matters.
   is a defect: the calibration a backend loads depends on filesystem order.
 - **Self-test results.** The simulator sends each board's SELF_TEST once, at start; the backend
   subscribes to the self-test tables over several request-id-capped passes, and a result
-  published before its pass is lost. `run.sh` starts the simulator only after a subscription pass
-  with nothing left queued.
+  published before its pass is lost. `run.sh` starts the simulator one pass (5 s) after the first
+  subscription pass with nothing left queued: a pass only sends its subscriptions, and on a loaded
+  Linux box the self-tests of four boards still beat the DB's processing of them.
 - **Sequencer boot transient.** At boot the sequencer publishes every valve de-energized
   (`publishInitialState`: a normally-open Fuel Main reads 1) and then applies the boot state
-  (Fuel Main 0). `run.sh` starts the backend only after the sequencer has logged the initial
-  publish and a state application after it.
+  (Fuel Main 0). A subscriber that arrives later is handed the table's latest row, and when both
+  writes land in one client flush (likely under load) that row is the transient 1. `run.sh` starts
+  the backend only after the sequencer has logged the initial publish and two state applications
+  after it — the boot one and a 1 Hz republish, its own flush.
 - **Connect backfill horizon.** The viewer client connects ~10 s after the first sample, well
   inside the backend's 60 s connect backfill; at ~60 s the one-shot self-test series fell outside
   it on the slower machine.
@@ -214,9 +219,24 @@ P7 also applies to history series (more than four distinct values → `<varies>`
 | T1 | the 10 s `query_historical` of `PT1.CH1.raw_adc_counts`: median spacing of consecutive points within [0.9 W, 2 W], W = 2000 / `[gui] points_per_second` (4 → 500 ms) | the envelope (`gui-stream.ts`) opens a window at a sample and closes it at the first sample ≥ W later, emitting a constant stream's window at its first sample time; samples come every 100 ms (sim 10 Hz). Measured on sample timestamps, so load cannot move it |
 | — | `QUIET_MS` 1.5 s / cap 20 s per step | a reply arrives within 20 s on a machine under 1× load |
 
-Determinism: `CHAR_UPDATE=1` followed by two comparison runs, back to back, all identical; five
-earlier captures (before the fixture-cwd change) were identical to each other under the same rules.
+Determinism (final evidence, commit `d4b56670`):
 
+| platform | pt | nocal | boards |
+|---|---|---|---|
+| macOS, idle | update + 1 check: same | same | same |
+| macOS, 14× `yes` (1-min load 15–28) | 2/2 pass | 2/2 pass | 2/2 pass |
+| Linux container (arm64, full-tree export), idle | 3/3 pass | 3/3 pass | 3/3 pass |
+| Linux container, 14× `yes` (load 9–12) | 1/2 pass | 1/2 pass | 0/2 pass |
+
+**Still not deterministic under load on Linux — recorded, not masked:**
+
+- `ACT_CMD.B2.CH7` (Fuel Main) history reads `{0, 1}` instead of `{0}`: the backend's first row of
+  that table is the sequencer's boot-time de-energized 1, handed over by elodin-db on subscribe,
+  even though the backend starts after the sequencer's initial publish and a republish. On macOS
+  and on idle Linux it never appears.
+- boards: the one-shot SELF_TEST results of some boards (22, 31, 42, 51, 61 seen) never reach the
+  backend, though the simulator starts a full subscription pass after the backend has subscribed.
+  The simulator sends each self-test once; the harness cannot make it resend.
 
 ## Mutation check
 
