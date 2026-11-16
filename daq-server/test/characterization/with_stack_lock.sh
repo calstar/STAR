@@ -15,12 +15,16 @@ set -euo pipefail
 LOCK_DIR="${DAQ_STACK_LOCK:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/daq-stack.lock}"
 WAIT_S="${DAQ_STACK_LOCK_WAIT:-7200}"
 
+# A file's mtime in epoch seconds. GNU stat first: on Linux `stat -f` is filesystem status (it
+# succeeds and prints the wrong thing); BSD stat rejects -c and falls through to -f %m.
+mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
+
 [ $# -gt 0 ] || { echo "usage: $0 <command> [args...] | --status" >&2; exit 2; }
 
 # --status: who holds the lock, for how long, and who is waiting.
 if [ "$1" = "--status" ]; then
   if [ -d "$LOCK_DIR" ]; then
-    age=$(($(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR")))
+    age=$(($(date +%s) - $(mtime_of "$LOCK_DIR")))
     echo "held ${age}s by pid $(cat "$LOCK_DIR/pid" 2>/dev/null || echo '?'): $(cat "$LOCK_DIR/what" 2>/dev/null || echo '?')"
     [ "$age" -lt 600 ] || echo "!! held over 10 min — iterate with a subset (LEDGER D23)"
   else
@@ -69,7 +73,7 @@ while priority_waiting || ! mkdir "$LOCK_DIR" 2>/dev/null; do
   fi
   # A holder killed between mkdir and writing its pid leaves an empty lock dir nobody owns.
   if [ -z "$owner" ] && [ -d "$LOCK_DIR" ] &&
-    [ $(($(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || date +%s))) -gt "${DAQ_STACK_LOCK_EMPTY_STALE_S:-10}" ]; then
+    [ $(($(date +%s) - $(mtime_of "$LOCK_DIR" 2>/dev/null || date +%s))) -gt "${DAQ_STACK_LOCK_EMPTY_STALE_S:-10}" ]; then
     echo "with_stack_lock: taking over an ownerless lock" >&2
     rmdir "$LOCK_DIR" 2>/dev/null || true
     continue
