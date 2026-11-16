@@ -92,6 +92,7 @@ class Run:
         )
         self.lines = []
         self.buf = b""
+        self.eof = False
 
     def read_until(self, pred, timeout):
         end = time.monotonic() + timeout
@@ -100,6 +101,7 @@ class Run:
             if r:
                 chunk = os.read(self.p.stdout.fileno(), 65536)
                 if not chunk:
+                    self.eof = True
                     return False
                 self.buf += chunk
                 while b"\n" in self.buf:
@@ -113,6 +115,11 @@ class Run:
 
     def finish(self):
         """Stop it if it is still running; return the closing line for the golden."""
+        if self.eof:  # it closed its output: it is exiting on its own, so wait for the status
+            try:
+                self.p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
         if self.p.poll() is None:
             try:
                 os.killpg(self.p.pid, signal.SIGKILL)
