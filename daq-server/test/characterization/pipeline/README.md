@@ -1,18 +1,19 @@
 # pipeline/ — the whole stack, frozen at its WebSocket and HTTP edge
 
 ```bash
-bash test/characterization/pipeline/run.sh             # both sessions: pt → golden/, boards → golden/boards/
-bash test/characterization/pipeline/run.sh pt          # one routed PT board, the full scripted session
-bash test/characterization/pipeline/run.sh boards      # every simulated board type at once
+bash test/characterization/pipeline/run.sh             # all three sessions
+bash test/characterization/pipeline/run.sh pt          # one routed PT board, the full script → golden/
+bash test/characterization/pipeline/run.sh nocal       # the backend with no PT calibration file → golden/nocal/
+bash test/characterization/pipeline/run.sh boards      # every simulated board type → golden/boards/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
-`run.sh` takes the stack lock itself (re-entrant under `gate.sh` / `characterization/run.sh`),
-refuses to run on the stand, and takes ~50 s once it holds the lock (waiting for the lock can take far longer on a busy machine). Env: `CHAR_BUILD_DIR`
-(default `build-gate/`, then `build/`), `ELODIN_DB` (an elodin-db binary; default
-`~/.cargo/bin/elodin-db`), `CHAR_KEEP=1` (keep `.tmp/char_pipeline_<pid>/` with every service log),
-`CHAR_CAPTURE_ONLY=<file>` (save the raw capture, skip the comparison), `CHAR_HOLD=<s>` (bring the
-stack up and leave it for poking).
+`run.sh` takes the stack lock itself (re-entrant under `gate.sh` / `characterization/run.sh`) and
+refuses to run on the stand. Once it holds the lock: pt ~75 s, nocal ~20 s, boards ~40 s. Env:
+`CHAR_BUILD_DIR` (default `build-gate/`, then `build/`), `ELODIN_DB` (an elodin-db binary; default
+`~/.cargo/bin/elodin-db`), `CHAR_KEEP=1` (keep `.tmp/char_pipeline_<mode>_<pid>/` with every
+service log), `CHAR_CAPTURE_ONLY=<file>` (save the raw capture, skip the comparison),
+`CHAR_HOLD=<s>` (bring the stack up and leave it for poking).
 
 ## What runs
 
@@ -20,9 +21,9 @@ stack up and leave it for poking).
 `calibration_service` → `diablo_server/backend/src/server.ts` (the thin backend; production's
 `sensor-backend.service` runs the same file via `npm run dev` with `SESSION_SERVICE_MODE=systemd`)
 → WebSocket + HTTP on one port. `sequencer_service` sits behind the backend's command path (TCP).
-Start order and readiness waits are `test/test_integration.sh`'s: DB, sequencer, bridge, backend,
-calibration, simulator; then `session.ts` waits until a probe client sees a raw and a calibrated PT
-sample and lets it settle 3 s.
+Start order is `test/test_integration.sh`'s — DB, sequencer, bridge, backend, calibration,
+simulator — with three readiness waits of its own (see "Platform neutrality"); then `session.ts`
+waits until a probe client sees a raw and a calibrated PT sample and lets it settle 3 s.
 
 `api-server.ts` is not a separate server: `createAPIHandler()` is mounted inside `server.ts`'s HTTP
 server and owns every `/api/*` path (with `video/routes.ts` for `/api/video/*`); `/stats` is
@@ -33,12 +34,11 @@ path gets a bare 404 with no body or content-type, an unknown `/api/*` path gets
 
 **elodin-db must be 0.16.1** (the CI / `setup.sh` / `bootstrap_daq.sh` pin). `run.sh` refuses any
 other version: 0.14.2 answers this stack with `VTableNotFound` / `InvalidMsgId` and delivers no data
-at all, which would freeze a dead pipeline. The goldens were recorded with the released 0.16.1
-binary.
+at all, which would freeze a dead pipeline.
 
-## Isolation — nothing in the checkout is touched
+## Isolation — nothing in the checkout is read for data or written
 
-`make_fixture.py` builds `.tmp/char_pipeline_<pid>/`:
+`make_fixture.py` and `run.sh` build `.tmp/char_pipeline_<mode>_<pid>/`:
 
 - `config/config.toml` — `config/config_base.toml` with every `192.168.2.` rewritten to
   `127.0.0.` (what `service-controller.ts ensureSimConfig()` does), every port moved to 264xx,
@@ -47,45 +47,53 @@ binary.
   `config/*.csv` paths, with the CSVs copied beside it. It is also the backend's `CONFIG_PATH`, so
   `profiles/`, `.active_profile`, `countdown_state.json`, `session_state.json` and `video.json`
   all land beside it.
-- `char/backend/` — the backend's cwd. Its legacy state-CSV loaders look in `<cwd>/../../config`,
-  exactly as from `diablo_server/backend`. (An absolute `transitions_csv` is not equivalent: those
-  loaders `join()` it onto other directories and never find it.) Because they try
-  `daq-server/config/*.csv` via `__dirname` first, `run.sh` refuses to run if a deployed copy
-  exists there.
+- `srv/` — **the backend runs from a copy of its own source** (`srv/diablo_server/backend/src`,
+  `package.json`, `shared/`; `node_modules` and the build dir symlinked), laid out like
+  `daq-server/`. Everything the backend resolves relative to its own file then lands in the
+  fixture, not the checkout: its PT calibration (`calibration.ts`: `srv/calibration/*.json`, the
+  newest by mtime), `/api/cubic_calibration` (`srv/scripts/calibration/calibrations`, the
+  fixture's store), the legacy state-CSV loaders (`srv/../config` — the fixture's), the
+  state-script checker (`srv/build`). The source is copied unchanged at every run, so an edit to
+  `diablo_server/backend/src` is what runs. pt and boards put exactly one file in
+  `srv/calibration/` (`calibration_2026-02-25T03-44-09.json`, chosen by name); nocal puts none.
+- `char/backend/` — the backend's cwd; its CSV loaders also look in `<cwd>/../../config`.
 - `firmware/Hotfire_Code/` — a fixed PlatformIO tree. The OTA project search
   (`ota-build.ts discoverProjects`) walks up from the backend's cwd to the first
-  `firmware/Hotfire_Code`; this one is found before the repo's, which the Linux gate's
-  `git archive` export does not contain and which changes with every firmware project.
-
-### Platform neutrality (macOS and Linux produce the same goldens)
-
-- **Backend PT calibration.** `calibration.ts loadPTCalibration` takes the newest
-  `daq-server/calibration/calibration*.json` by mtime. Checked-out (and `git archive`d) files share
-  one mtime, so the pick fell to directory order: macOS got `calibration_2026-02-25T03-44-09.json`,
-  Linux a file with no coefficients (`calibrationFilePath: null`). `run.sh` sets each committed
-  file's mtime to the timestamp in its name (content untouched), so both pick the newest by name.
-  The unpinned behaviour is a defect: the backend's calibration depends on filesystem order.
-- **Self-test results.** The simulator sends each board's SELF_TEST once, at start; the backend
-  subscribes to the self-test tables over several request-id-capped passes, and a result
-  published before its pass is lost (Linux lost board 21's sensors 2-10). `run.sh` starts the
-  simulator only after a subscription pass with nothing left queued.
-- **Sequencer boot transient.** At boot the sequencer publishes every valve de-energized
-  (`publishInitialState`: a normally-open Fuel Main reads 1) and then applies the boot state
-  (Fuel Main 0). Whether the backend's history caught the transient 1 was a race (macOS no, Linux
-  yes). `run.sh` starts the backend only after the sequencer logs its boot state applied.
-- **Connect backfill horizon.** The viewer client connects ~10 s after the first sample; at ~60 s
-  the one-shot self-test series fell outside the backend's 60 s connect backfill on the slower
-  machine.
+  `firmware/Hotfire_Code`; this one is found before the repo's, which changes with every firmware
+  project and is missing from partial exports.
 - `scripts/calibration/calibrations/` — the committed store minus `cubic_calibration.json`,
-  `lc_tare.json` and `adjustments.json`. Every C++ service runs with `cwd` = the fixture (all their store
-  paths are relative); the backend gets `DAQ_CALIBRATIONS_DIR`. The live JSONs are never parked.
+  `lc_tare.json` and `adjustments.json`. Every C++ service runs with `cwd` = the fixture (all their
+  store paths are relative); the backend gets `DAQ_CALIBRATIONS_DIR` too. The live JSONs are never
+  parked.
 - `home/` — the backend's `HOME`, so session run dirs (`~/.local/share/elodin/daq_*`) stay inside.
 - Also pinned: `GUI_PORT=0`, `SESSION_SERVICE_MODE=mock`, `DAQ_OPERATORS_FILE` (one operator),
   `STAR_DHCP_HOSTS` (absent), the video gateway/agent on unused 264xx ports.
 
 Ports: elodin 26401, sensor UDP 26402, backend 26403, actuator UDP 26404, board logs 26405,
-sequencer 26406, controller 26407, heartbeat UDP 26408, video 26411-13, OTA 26414. daq_bridge also
-hard-codes UDP 5008, which is why the lock matters.
+sequencer 26406, controller 26407, heartbeat UDP 26408, startup board 26409, video 26411-13,
+OTA 26414. daq_bridge also hard-codes UDP 5008, which is why the lock matters.
+
+### Platform neutrality (macOS and Linux must produce the same goldens)
+
+- **Backend PT calibration.** `calibration.ts loadPTCalibration` takes the newest
+  `daq-server/calibration/calibration*.json` **by mtime**, and all 13 are committed. A checkout or
+  `git archive` gives them one mtime, so the pick was directory order: macOS got
+  `calibration_2026-02-25T03-44-09.json`, a Linux export a file with no coefficients
+  (`calibrationFilePath: null`). The backend honours no override for this path, so the fixture
+  gives it its own copy of the source and a calibration directory it controls (above). The
+  file-present case is the pt session, the file-absent case the nocal session. The search itself
+  is a defect: the calibration a backend loads depends on filesystem order.
+- **Self-test results.** The simulator sends each board's SELF_TEST once, at start; the backend
+  subscribes to the self-test tables over several request-id-capped passes, and a result
+  published before its pass is lost. `run.sh` starts the simulator only after a subscription pass
+  with nothing left queued.
+- **Sequencer boot transient.** At boot the sequencer publishes every valve de-energized
+  (`publishInitialState`: a normally-open Fuel Main reads 1) and then applies the boot state
+  (Fuel Main 0). `run.sh` starts the backend only after the sequencer has logged the initial
+  publish and a state application after it.
+- **Connect backfill horizon.** The viewer client connects ~10 s after the first sample, well
+  inside the backend's 60 s connect backfill; at ~60 s the one-shot self-test series fell outside
+  it on the slower machine.
 
 ### Why one board
 
@@ -170,6 +178,7 @@ those byte for byte (header, column order, cell format).
 | rule | what is replaced | why |
 |---|---|---|
 | N1 | numbers under timestamp keys (`timestamp`, `ts`, `tMs`, `lastHeartbeatMs`, `missionStartTime`, `deadlineMs`, …) and **any number within a day of the run's clock** → `<ts>`; ISO datetimes in strings → `<iso>`; run dir names `daq_YYYYMMDD_HHMMSS` → `daq_<stamp>`; epoch-ms digits in strings → `<ts>` | wall clock. Numbers far from now (a countdown target pinned in 2100) stay. |
+| N1s | epoch **seconds** within a day of the run's clock under `updatedAt`/`generated_unix`/`createdAt`/`savedAt`, or with a fractional part → `<ts-s>` | calibration_service's cubic store stamps in seconds; whole numbers elsewhere stay (an ADC count can be ~1.8e9) |
 | N2 | `remainingMs`, `uptimeMs`, `lifetimeMs` → `<dur>` | elapsed wall time |
 | N3 | `freeDiskBytes` → `<bytes>`, `heapUsedMb` → `<mb>`, `ingestHost` → `<lan-name>` | the machine, not the code |
 | N4 | absolute paths given by the harness → `<cfgdir>`, `<home>`, `<fx>`, `<daq>` (longest first) | temp dirs, checkout location |
@@ -192,7 +201,7 @@ those byte for byte (header, column order, cell format).
 | P6 | a frame belongs to the step it arrived in | |
 | P7 | a stream's value is printed when the run saw one value (or a set of ≤4), else `<varies>` | `--low-noise` makes PT raw constant per channel |
 | P8 | history: per request, the series keys and the distinct values each carries (not their times or lengths) | lengths depend on uptime |
-| P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema; `/api/cubic_calibration` → sha256 + keys (it reads the committed store via `__dirname`, ignoring `DAQ_CALIBRATIONS_DIR`) | counters / wall clock |
+| P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema | counters / wall clock |
 | P10 | the handshake's self-test replay is regrouped by board id (each board's frames keep their order) | `selfTestLatest` replays in Elodin arrival order, a race across boards |
 | P11 | in a run of consecutive `error` / `state_update` frames within a step, errors are recorded first (each kind keeps its own order) | a command's TCP reply (`error`) and the sequencer's Elodin publish (`state_update`) take independent paths; their order swapped under load |
 
@@ -207,7 +216,7 @@ P7 also applies to history series (more than four distinct values → `<varies>`
 
 Determinism: `CHAR_UPDATE=1` followed by two comparison runs, back to back, all identical; five
 earlier captures (before the fixture-cwd change) were identical to each other under the same rules.
-No rule beyond P1-P9 / N1-N7 was needed.
+
 
 ## Mutation check
 
