@@ -6,7 +6,7 @@ CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite golden/ (ma
 ```
 
 `run.sh` takes the stack lock itself (re-entrant under `gate.sh` / `characterization/run.sh`),
-refuses to run on the stand, and takes ~1.5 min once it holds the lock. Env: `CHAR_BUILD_DIR`
+refuses to run on the stand, and takes ~50 s once it holds the lock (waiting for the lock can take far longer on a busy machine). Env: `CHAR_BUILD_DIR`
 (default `build-gate/`, then `build/`), `ELODIN_DB` (an elodin-db binary; default
 `~/.cargo/bin/elodin-db`), `CHAR_KEEP=1` (keep `.tmp/char_pipeline_<pid>/` with every service log),
 `CHAR_CAPTURE_ONLY=<file>` (save the raw capture, skip the comparison), `CHAR_HOLD=<s>` (bring the
@@ -137,9 +137,32 @@ those byte for byte (header, column order, cell format).
 | P8 | history: per request, the series keys and the distinct values each carries (not their times or lengths) | lengths depend on uptime |
 | P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema; `/api/cubic_calibration` → sha256 + keys (it reads the committed store via `__dirname`, ignoring `DAQ_CALIBRATIONS_DIR`) | counters / wall clock |
 
-Determinism: three consecutive runs produce byte-identical goldens after these rules.
+Determinism: `CHAR_UPDATE=1` followed by two comparison runs, back to back, all identical; five
+earlier captures (before the fixture-cwd change) were identical to each other under the same rules.
+No rule beyond P1-P9 / N1-N7 was needed.
 
 ## Mutation check
 
-Proven red (each applied locally, run, reverted): a renamed WS field in `server.ts`, a changed HTTP
-status, a changed CSV column order — see `docs/remaster/LEDGER.md` / the package report.
+Each applied to the backend source, run, reverted (none committed):
+
+| break | where it went red |
+|---|---|
+| `server.ts` `broadcastStateUpdate`: payload field `stateName` → `state_name` | `ws_events.txt` (every live `state_update`), `ws_schema.txt` |
+| `api-server.ts` `/api/feed-char/results` without a session: 409 → 410 | `http.txt` (three requests) |
+| `routes/config-profiles.ts` `readStateCsv`: swap the Idle/Armed columns | `csv.txt` (header and every row of all three CSVs) |
+
+## Frozen behaviour that looks like a defect (recorded, not fixed)
+
+- Session start and stop reload board status from config (`applyDeployedConfigChange` /
+  `onStopped` → `loadBoardsFromConfig`), so a board that is heartbeating can be reported
+  "connection lost" and then "connected" a second later (P1).
+- In mock mode the run's `dbDir` is never created, so `POST /api/feed-char/results` during a
+  session answers 500 `ENOENT`.
+- `debug_mode` produces two identical `state_update`s (the TCP-reply path and the Elodin path).
+- The legacy state-CSV loaders `join()` `[state_machine]` paths onto fixed directories, so an
+  absolute path in config is never found (`get_state_transitions` → `[]`, no commanded snapshot).
+- `/api/cubic_calibration` ignores `DAQ_CALIBRATIONS_DIR`; the backend's own PT calibration and
+  `calibration_status.calibrationFilePath` come from `daq-server/calibration/*.json` via `__dirname`.
+- `GET /api/state-script?name=<missing>` is 200 with an empty source; `PUT /api/video/config` with
+  no `revision` is 409 "changed since you opened Edit".
+- `sensor-backend.service` runs `npm run dev`, i.e. `tsx watch`, in production.
