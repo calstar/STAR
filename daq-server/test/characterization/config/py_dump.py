@@ -64,6 +64,8 @@ try:
         print(f"-- {rel(path)}")
         for k, v in sorted(cfg.to_dict().items()):
             print(f"  {k} = {v!r}")
-except ImportError as e:  # numpy is optional on a dev box
-    print(f"  skipped: {e}")
+except ImportError as e:  # calibration_robustness needs numpy (requirements.txt)
+    sys.exit(
+        f"py_dump: cannot import the SystemConfig reader ({e}); install requirements.txt"
+    )
 sys.exit(0)
