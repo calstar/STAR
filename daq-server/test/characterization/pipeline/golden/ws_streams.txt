@@ -61,7 +61,8 @@ PT1_Cal.CH9.raw_adc_counts  value=1199500000
 
 ## self-test (P12): per board, the exact expected result | not-received (one-shot UDP self-test, defect)
 board 21 (PT): sensor_0, sensor_1, sensor_10, sensor_2, sensor_3, sensor_4, sensor_5, sensor_6, sensor_7, sensor_8, sensor_9 all 1 | not-received (one-shot UDP self-test, defect)
-self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet: ok
+paths checked: handshake A; handshake B; handshake C; history connect A; history history A; history viewer_client B
+self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet, (d) every replay/full-history path complete when quiet: ok
 
 ## timing bounds (from config, not observed; README T1)
 envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): median within [0.9 W, 2 W]: yes; at least 5 gaps: yes
@@ -86,6 +87,16 @@ envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): 
 
 ## connection_status distinct payloads, client B
 {"connId": "c3", "connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
+{"connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
+
+## board_log distinct payloads, client C
+{"boardId": 21, "lines": ["[SIM] board 21 PT alive #<n>"], "totals": {"received": "<n>", "truncated": "<n>"}, "truncated": false, "ts": "<ts>"}
+
+## board_status_update distinct payloads, client C
+{"boards": [{"boardNumber": 21, "boardState": 2, "connected": true, "engineState": 0, "expected": true, "frequencyHz": "<hz>", "heartbeatTimes": "<ts[]>", "id": 21, "ip": "127.0.0.1", "lastHeartbeatMs": "<ts>", "type": "PT"}, {"boardNumber": 22, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 22, "ip": "127.0.0.22", "lastHeartbeatMs": null, "type": "PT"}, {"boardNumber": 12, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 12, "ip": "127.0.0.12", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 14, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 14, "ip": "127.0.0.14", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 42, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 42, "ip": "127.0.0.42", "lastHeartbeatMs": null, "type": "LC"}, {"boardNumber": 51, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 51, "ip": "127.0.0.51", "lastHeartbeatMs": null, "type": "TC"}, {"boardNumber": 31, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 31, "ip": "127.0.0.31", "lastHeartbeatMs": null, "type": "RTD"}, {"boardNumber": 25, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 25, "ip": "127.0.0.25", "lastHeartbeatMs": null, "type": "ENVIRONMENTAL"}, {"boardNumber": 61, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 61, "ip": "127.0.0.61", "lastHeartbeatMs": null, "type": "ENCODER"}, {"boardNumber": 81, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 81, "ip": "127.0.0.81", "lastHeartbeatMs": null, "type": "T7"}, {"boardNumber": 71, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 71, "ip": "127.0.0.71", "lastHeartbeatMs": null, "type": "BALL_VALVE"}]}
+
+## connection_status distinct payloads, client C
+{"connId": "c4", "connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
 {"connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
 
 ## historical_data (P8: series keys per step, the distinct values each carries)

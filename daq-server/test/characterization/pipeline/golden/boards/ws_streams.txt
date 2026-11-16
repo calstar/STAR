@@ -226,7 +226,8 @@ board 42 (LC): sensor_0, sensor_1, sensor_2, sensor_6 all 1 | not-received (one-
 board 51 (TC): sensor_0, sensor_2, sensor_3, sensor_4, sensor_5 all 1 | not-received (one-shot UDP self-test, defect)
 board 60 (PT (startup)): sensor_0, sensor_2 all 1 | not-received (one-shot UDP self-test, defect)
 board 61 (ENCODER): sensor_0, sensor_1, sensor_2 all 1 | not-received (one-shot UDP self-test, defect)
-self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet: ok
+paths checked: handshake A; history connect A
+self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet, (d) every replay/full-history path complete when quiet: ok
 
 ## timing bounds (from config, not observed; README T1)
 envelope spacing: fewer than 5 gaps in the history reply (0 points)

@@ -123,6 +123,8 @@
 > A {"type":"send_command","payload":{"commandType":"session_extend","data":{"addMs":1000}}}
 < A {"payload": {"message": "Session extend failed: No active run to extend."}, "timestamp": "<ts>", "type": "error"}
 
+## late_client
+
 ## http_errors
 
 ## disconnect
