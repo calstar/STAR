@@ -9,6 +9,13 @@ to `daq-server/diablo_server/` unless they start with `test/` or `docs/`. The `p
 `elodin/` characterization areas are **not on `backend-remastered` yet**: they are on `queue/C1`
 (f872c788); read them with `git show queue/C1:daq-server/test/characterization/packets/...`.
 
+**Prerequisites:** C1 (`packets/`, `elodin/`) merged into `backend-remastered`; the gaps marked
+"before pass 1" in §7.2 closed (characterization, merged and gated).
+
+**Orchestrator decisions recorded here (design review):** sharing functions rather than classes,
+and the narrower set of shared pieces in §0, is accepted. Pass 1 (adoption) and pass 2 (cleanup)
+are **separate queue items, each fully gated** (full gate + Linux leg + CI, D19).
+
 Order in the DAG: WP3 → **WP8** → WP9 → WP10. WP8 adopts the shared code in the files BLOAT-MAP
 gives it: `services/{heartbeat,stacklight,config_broadcast,ota,controller}/*_main.cpp`,
 `services/sequencer/{sequencer_main,AbortBroadcaster}.cpp`, `services/t7_bridge/t7_bridge_main.cpp`.
@@ -37,8 +44,10 @@ changes any of that and an abstraction with one user. What survives:
 Rejected, with the reason kept here so a later package does not reintroduce them:
 
 - **`ServiceMain` / a framework `main`.** No two services start in the same order (§1.2): signals
-  are installed before config in some, after `init()` in the sequencer, after `initialize()` in
-  the controller; a SIGTERM that arrives before installation kills the process with -15, after it
+  are installed after config in heartbeat/stacklight/config_broadcast, **before** `svc.init()` in
+  the sequencer (`sequencer_main.cpp:241-249`: handlers at 241-243, `init` at 245-249), after
+  `initialize()` and before `start()` in the controller (462-497), right after the positional
+  argv and the config-exists check in daq_bridge; a SIGTERM that arrives before installation kills the process with -15, after it
   exits 0. A framework that owns the order changes exit codes. The shared "pattern" is the stop
   flag, the handler installer and a documented skeleton (§2.1), not a function.
 - **A shared argv parser.** Nine flag sets, nine `--help` texts, three missing-value policies
@@ -237,7 +246,15 @@ Implementation notes (all load-bearing):
 
 - One file-static `std::atomic<bool> g_running{true}` (constant initialisation, no static-init
   order issue), one file-static `const char* g_line` and `ShutdownNotice g_notice`, written by
-  `installStopHandlers` before the `signal()` calls.
+  `installStopHandlers` before the `signal()` calls. They are plain globals, not atomics, and
+  that is safe because every thread in every service is created **after** its
+  `installStopHandlers` call (heartbeat 271 > 228, stacklight 295 > 264, ota 451 > 406, sequencer's
+  `svc.init` threads > 241, controller `service.start()` 494 and the control thread 500 > 490,
+  t7_bridge 351 > 343, daq_bridge's discovery 473 > 341; config_broadcast and calibration run one
+  thread; `ControllerService::initialize` at 462 starts none — its threads start in `start()`,
+  `ControllerService.cpp:203,208`). The writes happen-before every `std::thread` constructor, so
+  every thread sees them; the handler itself runs only after `signal()` returns. If a future
+  change starts a thread before the call, these must become atomics.
 - The handler is one function with a `switch (g_notice)`; each case is today's body **statement
   for statement**, including the non-async-signal-safe `std::cout << … << std::endl`. Making the
   handlers async-signal-safe is a parked defect (BLOAT-MAP defect 6), not WP8's: a `write(2)`
@@ -268,10 +285,16 @@ may bind `auto& g_running = fsw::service::running();` at the top of `main` to ke
 the declaration; lambdas and file-static functions that read it call `running()`).
 
 The documented skeleton every main follows (a pattern, not code): parse argv → locate and load
-config → resolve settings with the service's own precedence → `installStopHandlers` at the
-service's own point → open sockets → start-up log lines → start threads → loop on `running()` →
-tear down in the service's own order → final log line → `return 0`. Steps are kept in today's
-order per §1.2 even where that order looks wrong.
+config → resolve settings with the service's own precedence → open sockets → start-up log lines →
+start threads → loop on `running()` → tear down in the service's own order → final log line →
+`return 0`. **`installStopHandlers` has no fixed slot in that sequence**: it goes exactly where
+each service installs its handlers today (§1.2), always before the service's first thread:
+after config in heartbeat (228), stacklight (264) and config_broadcast (498); after the NIC
+resolve and before the listener in ota (406); **before `svc.init()` in the sequencer** (241-243,
+`init` at 245); after `initialize()` (462) and before `start()` (494) in the controller (490);
+after the board filter in t7_bridge (343); after the banner and before config load in calibration
+(656); after the config-exists check in daq_bridge (341). Steps are kept in today's order per §1.2
+even where that order looks wrong.
 
 ### 2.2 `lib/include/net/UdpSocket.hpp` + `lib/src/net/UdpSocket.cpp`
 
@@ -499,7 +522,10 @@ D23); format only touched files with the pinned clang-format 19.1.7.
    controller (§2.5).
 2. In each WP8 main, move the argv loop into a file-static `parseArgs(int, char**, Options&)`
    returning `std::optional<int>` (exit code for `--help`/errors). Help text and flag order
-   byte-identical. Not for daq_bridge or calibration (WP10/WP9).
+   byte-identical. Not for daq_bridge or calibration (WP10/WP9). t7_bridge's `next` lambda
+   (283-286) moves **verbatim**, `std::exit(2)` included: it is not converted to a returned exit
+   code (an `exit` from inside the loop skips destructors and flushes differently from a
+   `return` out of `main`).
 3. Leave stacklight's `trim`/`getTomlValue` (141-175) **where they are and with external
    linkage**: the config harness calls `getTomlValue` (§7.3).
 4. Do not touch the B4 encoders, the per-service constants, the precedence code, or the
@@ -530,6 +556,10 @@ D23); format only touched files with the pinned clang-format 19.1.7.
   controller's `control connection closed with no command (timeout or peer went away)`
   (sequencer N6); everything a `#include`d main prints during `dump()` (config `golden/cpp/`).
 - **Startup order:** §1.2, including where signals are installed.
+- **Warnings baseline:** `config_broadcast_service_main.cpp: warning: unused variable
+  'DEFAULT_LISTEN_PORT' [-Wunused-const-variable]` (`baseline_warnings.txt:8`, constant at 53)
+  survives both passes: the constant stays, unused, in that file's anonymous namespace. Removing it
+  is a baseline change for the orchestrator, not a WP8 cleanup.
 - **SIGPIPE per service:** §1.3 / §2.1 table.
 - **Shutdown order:** sequencer shutdown→join→close→`Stopped.`; controller `service.stop()` with the
   control thread detached (C4-5 >3 s exit stays); heartbeat `close(sock)` before `join`; ota's
@@ -553,29 +583,42 @@ D23); format only touched files with the pinned clang-format 19.1.7.
 
 ### 7.2 Gaps (proposed cases; design only, none written here)
 
-1. **SIGPIPE disposition is not covered anywhere.** Nothing in any area delivers SIGPIPE. Case for
+Classification (orchestrator): **must close before pass 1** — gaps 1, 2, 3, 5, 6, 7; **before
+pass 2 only** — gaps 4 and 8; **nice-to-have** — gap 9.
+
+1. **[before pass 1] SIGPIPE disposition is not covered anywhere.** Nothing in any area delivers SIGPIPE. Case for
    `lifecycle/`: start each of the nine services alone (loopback config), `kill -PIPE <pid>`,
    record `alive after 1 s` or `exit -13`. Expected: daq_bridge, ota, sequencer, t7_bridge alive;
    controller, calibration, heartbeat, config_broadcast, stacklight exit −13. Mutation: flip one
    service's `Sigpipe` value → red. This is the only test that would catch a uniform setting.
-2. **Shutdown of sequencer, controller and t7_bridge** is not in `shutdown.txt`. Add SIGTERM and
-   SIGINT exit code + bound for each (controller's > 3 s, C4-5, as a bound, not a fix).
-3. **The `Shutting down` line** printed by each handler is read by no test; nor is daq_bridge's
-   flag-then-print order. Add "handler line logged: True/False" per service to `shutdown.txt`.
-4. **`--help` text and exit code** of all nine binaries, and t7_bridge's exit 2 on an unknown flag
+2. **[before pass 1] Shutdown of sequencer, controller and t7_bridge** is not in `shutdown.txt`.
+   Add SIGTERM and SIGINT exit code and latency bound for each (controller's > 3 s, C4-5, as a
+   bound, not a fix). This also closes DESIGN-WP10 gap 2.
+3. **[before pass 1] The `Shutting down` line** printed by each handler is read by no test; nor is daq_bridge's
+   flag-then-print order. Add, per service, the handler's exact line (bytes, incl. the leading
+   newline and controller's U+2026) and its position relative to the service's final line to
+   `shutdown.txt`.
+4. **[before pass 2] `--help` text and exit code** of all nine binaries, and t7_bridge's exit 2 on an unknown flag
    and on a missing value: a `config/golden/bin/help/` golden (stdout, exit code).
-5. **`ERR:too many connections`**: no session opens 65 connections. Add to `sequencer/` for both
-   ports (hold 64 idle connections, the 65th gets the busy bytes; the 64 then close; a 66th gets
-   `OK`). Bounded by `SO_RCVTIMEO` 5 s.
-6. **Controller with its control port already bound**: today it keeps running, PWM gate
-   unreachable by TCP. Add a `sequencer/` controller session that pre-binds the port.
-7. **Follower reconnect**: no case restarts elodin-db and checks that heartbeat/stacklight
+5. **[before pass 1] `ERR:too many connections`**: no session opens 65 connections. Add to
+   `sequencer/` for both ports, :9998 and :9999 (hold 64 idle connections, the 65th gets the busy
+   bytes; the 64 then close; a 66th gets a normal reply). Bounded by `SO_RCVTIMEO` 5 s. Also
+   assert the busy **log line bytes**: `[Sequencer] client limit (64) reached — refusing
+   connection` and `[ControllerService] ⚠️  client limit (64) reached — refusing connection` —
+   U+26A0 U+FE0F followed by **two** spaces, and the em dash U+2014 in both.
+6. **[before pass 1] Every listener failure ladder.** Controller with its control port pre-bound:
+   keeps running, logs `[ControllerService] ❌ Control bind(N) failed: <strerror>`, PWM gate
+   unreachable by TCP. Sequencer with :9998 pre-bound: `[Sequencer] bind() failed on port N`,
+   exit 1. ota with its port pre-bound: `[OTAService] bind() failed on port N`, exit 1. Exact text
+   and exit code for each (socket()/listen() failures cannot be provoked black-box; they stay
+   uncovered and are named so).
+7. **[before pass 1] Follower reconnect and subscribe-refused**: no case restarts elodin-db and checks that heartbeat/stacklight
    re-subscribe (only "still sending" after the db dies). Add to `packets/` with the stand-in db:
    drop the connection, expect a second identical subscribe request and resumed state tracking.
    Also the subscribe-refused path (stand-in replies with an error).
-8. **Config path fallback** (heartbeat, stacklight, config_broadcast, controller) has no case
+8. **[before pass 2] Config path fallback** (heartbeat, stacklight, config_broadcast, controller) has no case
    where `--config` names a missing file and a fallback exists. Add to `config/golden/bin/`.
-9. **ota concurrency**: a second client during a flash, and SIGTERM during a flash (detached
+9. **[nice-to-have] ota concurrency**: a second client during a flash, and SIGTERM during a flash (detached
    threads: process exits without finishing). Add to `lifecycle/ota`.
 
 ### 7.3 White-box harness hooks
@@ -654,7 +697,6 @@ config_broadcast, and `config/run.sh` (bin half, under the lock) once per such c
 ## Open questions
 
 1. SIGPIPE: the team's decision (LEDGER Parked). Until then §2.1's column is frozen.
-2. Should gap 7.2-1 (SIGPIPE by `kill -PIPE`) and 7.2-5 (client cap) land as characterization
-   before WP8 starts? They are the only guards for the two settings most likely to be "unified".
+2. (Decided: gaps 1, 2, 3, 5, 6, 7 close before pass 1; 4 and 8 before pass 2; 9 optional.)
 3. daq_bridge's `std::stoi(argv[3])` abort on junk and t7_bridge's usage-on-unknown-flag are
    untested and stay per service; confirm nobody wants them in a shared parser later.
