@@ -16,7 +16,6 @@ Writes, into out_dir:
 Generic normalisation is normalize.py's (README N1..N8). The rules here are per message type /
 per route and are listed in README "Per-type rules" (P1..P9); a new one goes in both places.
 """
-import hashlib
 import json
 import math
 import os
@@ -494,12 +493,6 @@ def main():
                         rendered = "schema " + dumps(
                             {k: sorted(v) for k, v in sp.items()}
                         )
-                elif path == "/api/cubic_calibration":
-                    # The committed store, read via __dirname (it ignores DAQ_CALIBRATIONS_DIR).
-                    rendered = (
-                        f"sha256={hashlib.sha256(body.encode()).hexdigest()} keys="
-                        + dumps(sorted(obj))
-                    )
                 else:
                     rendered = dumps(n.value(obj))
             else:
