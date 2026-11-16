@@ -89,7 +89,7 @@ startup-order check (§6.3). "—" = no line of its own.
 | 5 | 285 | envelope flush, 50 ms | `setInterval(flushEnvelopes, 50);` |
 | 6 | 299 | read countdown target | `initMissionTime();` |
 | 7 | 313-320 | `loadPTCalibration()`, log | `initCalibrationState();` (with row 8's role map and row 9) |
-| 8 | 325, 329, 331 | sensor-role map, HP board set, T7 cal fields (config reads) | `initConfigCaches();` |
+| 8 | 325, 329, 331 | HP board set, T7 cal fields (config reads); the sensor-role map (325) belongs to `initCalibrationState()` (row 7, see Call order in §6.1) | `initConfigCaches();` |
 | 9 | 375 | `calibrationHost` (pure) | — (inside `initCalibrationState()`) |
 | 10 | 422 | `loadBoardsFromConfig()`, log | `loadBoardsFromConfig();` |
 | 11 | 430 | `getStateActuatorMap()` (CSV read, logs; a throw kills the process — the crash guards are not yet installed) | `reloadStateActuatorMap();` |
@@ -147,7 +147,7 @@ is read during evaluation — exactly the startup-order failure this split must 
 | 2 | `server/history.ts` | the rolling history cache and the backfill sent from it | `history`, `pruneHistory()`, `sendHistoricalData(ws, query?, onSent?)` |
 | 2 | `server/mission-time.ts` | mission T+0 and the countdown target | `firstPacketTimeMs`, `countdownTargetMs` (live), `initMissionTime()`, `setFirstPacketTimeMs(ms)`, `setCountdownTargetMs(ms)`; step 2: `noteFirstSample(epochNow)`, `setCountdownTarget(ms)` |
 | 2 | `server/config-caches.ts` | config-derived lookups on the Elodin hot path, rebuilt after a deploy | `hpBoardNumbersCache`, `t7CalFieldsCache` (live), `initConfigCaches()`, `resetConfigCaches()`, `uniqueIdFromPtEntity(entity)`, `t7BoardIdForSlot(slot)` |
-| 3 | `server/sensor-stream.ts` | GUI downsampling and the two sample exits (immediate / windowed) | `guiStreamConfig`, `envelope`, `encoderEnvelope`, `broadcastLastTime` (step 1 only), `streamBudgetFor`, `saneSampleTimeMs`, `initGuiStream()`, `reloadGuiStreamConfig()`, `emitSensorPoint`, `emitSensorWindow`, `flushEnvelopes()`; step 2: `publishSample(high, low, parsed, epochNow)` |
+| 3 | `server/sensor-stream.ts` | GUI downsampling and the two sample exits (immediate / windowed) | `guiStreamConfig`, `envelope`, `encoderEnvelope`, `broadcastLastTime` (step 1 only), `BROADCAST_MIN_MS` (read by `ingest`, `server.ts:1801`), `streamBudgetFor`, `saneSampleTimeMs`, `initGuiStream()`, `reloadGuiStreamConfig()`, `emitSensorPoint`, `emitSensorWindow`, `flushEnvelopes()`; step 2: `publishSample(high, low, parsed, epochNow)` |
 | 3 | `server/calibration-state.ts` | the backend's half of calibration: PT coefficients, raw-ADC tracking, the `CalibrationHost` handed to `calibration-handler.ts` | `calibrationHost` (live), `initCalibrationState()`, `reloadCalibrationEntityMap()`, `lastRawAdc`; step 2: `noteRawAdc(entity, value)`, `setCalibrationElodin(client)` |
 | 3 | `server/board-status.ts` | what the backend knows about each board: config baseline, heartbeats, T7 liveness, stale sweep and its notifications, self-test results, diagnostics log | `BOARD_STATUS_HZ`, `BOARD_HEARTBEAT_STALE_MS`, `boardsStatus`, `loadBoardsFromConfig()`, `updateBoard(low, payload)`, `countHeartbeat(id)`, `noteT7Alive(slot)`, `markStaleBoards()`, `broadcastBoardStatus()`, `boardLabel(status)`, `logDiagnostics()`, `selfTestLatest`, `selfTestNotifiedBoards`; step 2: `noteSelfTestResults(boardId, rows, epochNow)` |
 | 3 | `server/engine-state.ts` | the sequencer's state as the backend reports it: current state, debug mode, allowed set, refusal reasons, the CSV-derived commanded positions | `currentState`, `debugMode`, `STATE_ACTUATOR_MAP` (live), `initEngineState()`, `reloadStateActuatorMap()`, `configStateName(id)`, `getExpectedPositions(state)`, `broadcastCommandedActuatorsForState(state)`, `broadcastStateUpdate()`, `refreshScriptStatus()`, `setDebugMode(v)`, `applySequencerState(rows)`; step 2: `resolveTransitionTarget(id)` |
@@ -165,7 +165,8 @@ is read during evaluation — exactly the startup-order failure this split must 
 `engine-state` → `ws-clients`, `history`, `stats`, `sequencer-client`, `env` (`THIN_VERBOSE_CONNECTION_LOG`,
 `server.ts:1705`, in the moved `_SEQUENCER_STATE` block). `actuator-mismatch` →
 `engine-state`, `notifications`. `elodin-link` → `env`, `ws-clients`, `calibration-state`,
-`engine-state`. `ingest` → `elodin-link`, `board-status`, `engine-state`, `actuator-mismatch`,
+`engine-state`. `ingest` → `ws-clients` (the mission start time broadcast, `server.ts:1770`),
+`elodin-link`, `board-status`, `engine-state`, `actuator-mismatch`,
 `sensor-stream`, `mission-time`, `calibration-state`, `config-caches`, `notifications`, `stats`,
 `env`. `commands` → `ws-clients`, `engine-state`, `mission-time`, `history`, `calibration-state`,
 `elodin-link`, `sequencer-client` (`handleCommand` sends four of the five :9998 lines; an abort
@@ -357,7 +358,7 @@ Rules for every commit in step 1:
 |---|---|---|---|---|
 | 1.1 | `server/env.ts` | 61, 73-79, 1858 (`GUI_PORT`) | env constants | `CONTROL_COMMAND_TYPES` → 1.15, `WsWithControl` → 1.3; `ACT_SVC_PORT`/`CTRL_SVC_PORT` are WP5's |
 | 1.2 | `server/stats.ts` | 740-754 (+ comment 726-733) | `stats`, `initStats()` | `startTimeMs` starts at `0` and `initStats()` sets it (row 14). `lastIngestMs`/`DATA_FRESH_MS` (734-738) go to 1.13 |
-| 1.3 | `server/ws-clients.ts` | 66-72 (`WsWithControl`), 187-209 (`ClientStream`, `clientStreams`), 233-274 body → `flushClientOutboxes`, 278-280 body → `resetOutboxStats`, 901 → `attachWebSocketServer(httpServer)` assigning `export let wss`, 904-917 (`broadcast`, `send`), 941-960 body → `reapUnresponsiveClients` + `KEEPALIVE_MS`, 1557-1562 (`clientStreamStatus`) | §2 | `server.ts` keeps `setInterval(flushClientOutboxes, 100)` (row 3), `setInterval(resetOutboxStats, 10_000)` (row 4), `attachWebSocketServer(httpServer)` (row 18), `setInterval(reapUnresponsiveClients, KEEPALIVE_MS)` (row 21). **Same commit: re-point the drain slice of `__tests__/lc-tare.test.ts:199-202`** to `server/ws-clients.ts` (§8 R9), adding a non-vacuity assertion that both anchors are found (`indexOf(...) > -1` for `cs.outbox.drain()` and `cs.pacer.noteFlush`). Mutation: move the tare into the drain (subtract a `force_kg_tared` offset between the anchors) → red |
+| 1.3 | `server/ws-clients.ts` | 66-72 (`WsWithControl`), 187-209 (`ClientStream`, `clientStreams`), 233-274 body → `flushClientOutboxes`, 278-280 body → `resetOutboxStats`, 901 → `attachWebSocketServer(httpServer)` assigning `export let wss`, 904-917 (`broadcast`, `send`), 941-960 body → `reapUnresponsiveClients` + `KEEPALIVE_MS`, 1557-1562 (`clientStreamStatus`) | §2 | `server.ts` keeps `setInterval(flushClientOutboxes, 100)` (row 3), `setInterval(resetOutboxStats, 10_000)` (row 4), `attachWebSocketServer(httpServer)` (row 18), `setInterval(reapUnresponsiveClients, KEEPALIVE_MS)` (row 21). **Same commit: re-point the drain slice of `__tests__/lc-tare.test.ts:199-201`** to `server/ws-clients.ts` (§8 R9), adding a non-vacuity assertion that both anchors are found (`indexOf(...) > -1` for `cs.outbox.drain()` and `cs.pacer.noteFlush`). Mutation: move the tare into the drain (subtract a `force_kg_tared` offset between the anchors) → red |
 | 1.4 | `server/notifications.ts` | 627, 633-652 | §2 | |
 | 1.5 | `server/history.ts` | 81-86, 122-126, 129 body → `pruneHistory`, 1148-1203 | `history`, `pruneHistory`, `sendHistoricalData` | `broadcastLastTime` (127) → 1.7 |
 | 1.6 | `server/mission-time.ts` | 297-299 → `export let` + `initMissionTime()` | + `setFirstPacketTimeMs`, `setCountdownTargetMs` | imports `countdown-state.js`. `server.ts` keeps its own `countdown-state.js` import at `:298`; it becomes **bare** (R1a) in 1.15, when `handleCommand` takes `saveCountdownTargetTimeMs` (`:1362`) — never deleted |
@@ -466,8 +467,13 @@ G11 and G12 are WP6's own scripts, not C0 packages (D48(3)).
 **Review** with `git diff --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change
 backend-remastered -- diablo_server/backend/src`: in step 1 every non-dimmed line must be an import
 (including an R1a bare import), an `export` keyword, a function wrapper for a former inline arrow, a
-setter from §6.2, the `startTimeMs: 0` initialiser and `initStats()` (commit 1.2), or a startup
-statement in `server.ts`. A line that only re-indents or rewraps a moved statement is expected, not
+setter from §6.2, the `startTimeMs: 0` initialiser and `initStats()` (commit 1.2), a top-level
+initialiser split into an `export let` declaration and its assignment inside an
+`init*`/`reload*`/`attach*`/`note*` function (`initGuiStream` envelopes, `initMissionTime`,
+`initConfigCaches`, the `initCalibrationState` host, `initEngineState`, `attachWebSocketServer`
+`wss = …`, `reloadStateActuatorMap`, `noteIngest`), the `_SEQUENCER_STATE` branch left in
+`server.ts` at 1.11, `applyDeployedConfigChange`'s replaced try/catch, or a startup statement in
+`server.ts`. A line that only re-indents or rewraps a moved statement is expected, not
 a stop (D43(6)).
 
 ### 6.4 Step 2 — cleanup toward the target
