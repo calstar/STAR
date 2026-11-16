@@ -18,6 +18,9 @@ family=robust-prediction section="RobustCalibrationFramework" line="pred" abs=1e
 family=robust-prediction section="RobustCalibrationManager" line="pred" abs=1e-9
 family=robust-parameters section="RobustCalibrationFramework" rel=1e-7
 family=robust-parameters section="RobustCalibrationManager" rel=1e-7
+# The same learner's state as calibration_service writes it (stack golden, adj.json snapshots):
+# measured up to 3.7e-10 relative.
+family=robust-parameters block=adj.json rel=1e-7
 
 # Allan-variance noise fit (fit_noise_coefficients): a 4-column least-squares solve; K and
 # tau_min (fields 2 and 4 of the `fit` line) move by 5 ULP.
