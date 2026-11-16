@@ -17,7 +17,7 @@ gate, stack lock (priority, ownerless takeover, portable mtime, `--status`), bou
 
 | item | branch / worktree | state | next step |
 |---|---|---|---|
-| C1 packets (+ CHAR_EMULATED, D37 sleep-void, D38 timeouts) | `queue/C1` (86f87bca) in `.claude/worktrees/remaster` | macOS `--fast` PASS (11:46, no sleep). Linux arm64: all ok except integration (PT2_Cal.CH1), root-caused D41 = main's harness, reproduced on the tip (×3: 166/167/167) | wait for H2; stack H2 on queue/C1; full arm64 Linux leg on the stack; ff both; log two rows (D19/D25); push |
+| ~~C1 packets~~ MERGED (see Merge log) | `queue/C1` (86f87bca) in `.claude/worktrees/remaster` | macOS `--fast` PASS (11:46, no sleep). Linux arm64: all ok except integration (PT2_Cal.CH1), root-caused D41 = main's harness, reproduced on the tip (×3: 166/167/167) | wait for H2; stack H2 on queue/C1; full arm64 Linux leg on the stack; ff both; log two rows (D19/D25); push |
 | H2 harness fix (D41) | `fix/H2-startup-board-slot` in `.claude/worktrees/inv-pt2ch1`, agent a7939e890e34bd93b | implementing: startup board to a free slot, integration fails on `[Config] ERROR` (mutation: board 60 → red) | Linux integration alone ×5 (PT2_Cal.CH1 5/5), macOS ×2, keeps service logs for OI-1 |
 | stress pass (D27) | — | not started | after C1+H2: every area under 1× load (`yes` × 14 inside one lock hold, `CHAR_UNDER_LOAD=1` for pipeline), list any golden that moves |
 | tag candidate | — | not started | full gate (with integration), Linux arm64 full + `--amd64`, CI dispatch (`gh workflow run daq-server-ci.yml --ref backend-remastered`, judge format job per D24, timing tests per D34), then `git tag remaster-baseline`, add the golden/frontend-test diff gate step (D12a), push tag? — **tags: push only if the user asks; branch push is authorised (D1)** |
@@ -175,6 +175,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | 2026-11-15 | H1 harness: test_integration.sh restores the live `abort_thresholds.txt` (H-1); lock `--status` | queue/H1 ff | **full gate PASS** (integration 167/0; abort_thresholds.txt sha256 f8270df7… identical before/after; tree-unchanged flagged only the orchestrator's ledger edit, now exempt) |
 | 2026-11-15 | C6 char/lifecycle (queue/C6, ff) | 9d846bd6 | `--fast` PASS incl. characterization (LIFECYCLE PASS) |
 | 2026-11-15 | C2 char/config (merged before gate — one-off, D19) | 041a5246 | `--fast` PASS on 78aff6cd (after gate fixes: Ninja build, vitest allowlist); full integration on main code PASS 167/0 earlier |
+| 2026-11-16 | **C1 packets/Elodin + D37/D38 harness + H2** (queue/C1 → d2087993; tested tree 2ba67115) | 86f87bca, a52bb6c5, 86f87bca, 07cecad5, 9d029561 | macOS full gate (with integration): all steps ok, integration 167/167 with the `[Config] ERROR` guard clean; ctest red only on D34 timing (actuator_delays, script_positions after retries; judged on CI). Linux arm64 full leg: PASS — ctest ok (script_runtime RETRY PASSED), characterization PASS in every area, integration 167/167. H2: Linux integration alone 5/5 and macOS 2/2 at 167/167, guard mutation (board 60) red. Earlier C1 runs: f872c788 macOS void (system sleep, D37); arm64 integration red 2/2 = D41, root-caused to main's harness (board 60 → PT2.CH1), fixed by H2. Golden lines removed vs tip: 0 (new areas only). |
 
 ## Parked
 
