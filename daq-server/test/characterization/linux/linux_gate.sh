@@ -43,6 +43,7 @@ rm -rf "$LOGS"; mkdir -p "$LOGS"
 echo "linux_gate: full step logs in $LOGS"
 bash "$HERE/../with_stack_lock.sh" docker run --rm --security-opt seccomp=unconfined --platform "$PLATFORM" -v "$LOGS":/logs -v "$WORK":/src -w /src/daq-server "$TAG" bash -c "
   set -uo pipefail; export $CCS; export DAQ_STACK_LOCK=/tmp/daq-stack.lock  # no .git in an export
+  [ $FULL = 1 ] || export CHAR_EMULATED=1  # amd64 runs emulated: slow-start tests get their long timeout
   fails=()
   step() { local n=\$1; shift; printf '── %-18s ' \$n; if \"\$@\" > /logs/\$n.log 2>&1; then echo ok; grep -E '^(RETRY PASSED|KNOWN FAILURE)' /logs/\$n.log; else echo FAIL; tail -40 /logs/\$n.log; grep -E '^(RETRY PASSED|KNOWN FAILURE|FAILED )|FAILED:|^[A-Za-z ]+: (PASS|FAIL)|^CHARACTERIZATION' /logs/\$n.log; fails+=(\$n); fi; }
   step npm bash -c '(cd diablo_server/backend && npm ci --no-audit --no-fund) && (cd diablo_server/frontend && npm ci --no-audit --no-fund)'
