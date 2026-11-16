@@ -1,25 +1,48 @@
 #!/bin/bash
 # Pipeline characterization: board_simulator → daq_bridge → elodin-db → calibration_service →
 # backend (server.ts) → WebSocket + HTTP, with sequencer_service behind the backend's command path.
-# One scripted session (session.ts) is recorded, normalised (normalize.py) and compared against
-# golden/ (characterize.py). CHAR_UPDATE=1 rewrites the goldens instead.
+# Two scripted sessions (session.ts) are recorded, normalised (normalize.py) and compared against
+# goldens (characterize.py). CHAR_UPDATE=1 rewrites the goldens instead.
 #
-#   bash test/characterization/pipeline/run.sh
+#   bash test/characterization/pipeline/run.sh            # both sessions
+#   bash test/characterization/pipeline/run.sh pt         # one routed PT board, the full script → golden/
+#   bash test/characterization/pipeline/run.sh boards     # every simulated board type → golden/boards/
+#
+# "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS; it fails, never skips,
+# when one is missing. Linux has all of 127/8.
 #
 # Takes the machine-wide stack lock itself (re-entrant under gate.sh / run.sh). Off the stand
 # only. Every service runs against a private fixture tree in .tmp/char_pipeline_<pid>/ with its
 # board IPs on loopback and its ports in 264xx; nothing in the checkout is moved or written.
 #
 # Env: CHAR_BUILD_DIR (default build-gate/ or build/), CHAR_KEEP=1 keeps the fixture and logs,
-#      CHAR_CAPTURE_ONLY=<path> copies the raw capture there and skips the comparison.
+#      CHAR_CAPTURE_ONLY=<path> copies the raw capture there and skips the comparison,
+#      CHAR_UNDER_LOAD=1 says the machine is under deliberate synthetic load (set by whoever starts
+#      it): the self-test rule then tolerates not-received boards (README P12).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd "$HERE/../../.." && pwd -P)"   # daq-server/
 
 if [ "${DAQ_STACK_LOCK_HELD:-}" = "" ]; then
+  # with_stack_lock.sh puts the lock in the repository's common git dir. An export with no .git
+  # (the Linux leg's `git archive`, a deployed stand) has none, so name the lock outright rather
+  # than let it ask git. Nothing else in this harness or the stack it runs calls git.
+  if ! git -C "$ROOT" rev-parse --git-common-dir > /dev/null 2>&1; then
+    export DAQ_STACK_LOCK="${DAQ_STACK_LOCK:-${TMPDIR:-/tmp}/daq-stack.lock}"
+  fi
   exec bash "$ROOT/test/characterization/with_stack_lock.sh" bash "$HERE/run.sh" "$@"
 fi
+
+MODE="${1:-all}"
+if [ "$MODE" = all ]; then
+  rc=0
+  bash "$HERE/run.sh" pt || rc=1
+  bash "$HERE/run.sh" nocal || rc=1
+  bash "$HERE/run.sh" boards || rc=1
+  exit $rc
+fi
+case "$MODE" in pt|nocal|boards) ;; *) echo "usage: run.sh [pt|nocal|boards]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -27,12 +50,27 @@ if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr
   exit 3
 fi
 
+# The boards session sends as every simulated board from 127.0.0.<board_id>. Same list as
+# test/test_integration.sh: every board_id octet in config_base.toml plus the startup board (60).
+if [ "$MODE" = boards ] && [ "$(uname)" = "Darwin" ]; then
+  missing=()
+  for i in 11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71; do
+    ifconfig lo0 2>/dev/null | grep -q "inet 127\.0\.0\.$i " || missing+=("127.0.0.$i")
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "pipeline: the boards session needs loopback aliases that are missing: ${missing[*]}" >&2
+    echo "          add them (as test_integration.sh does):" >&2
+    echo "          for i in 11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71; do sudo ifconfig lo0 alias 127.0.0.\$i up; done" >&2
+    exit 7
+  fi
+fi
+
 BUILD="${CHAR_BUILD_DIR:-}"
 if [ -z "$BUILD" ]; then
   for b in "$ROOT/build-gate" "$ROOT/build"; do [ -x "$b/bin/daq_bridge" ] && BUILD="$b" && break; done
 fi
 BIN="$BUILD/bin"
-for b in daq_bridge sequencer_service calibration_service; do
+for b in daq_bridge sequencer_service calibration_service config_broadcast_service; do
   [ -x "$BIN/$b" ] || { echo "pipeline: $BIN/$b missing — run scripts/build.sh" >&2; exit 2; }
 done
 # elodin-db: the version CI and setup.sh pin. Another version is a different DB with different
@@ -52,28 +90,20 @@ BACKEND="$ROOT/diablo_server/backend"
 TSX="$BACKEND/node_modules/.bin/tsx"
 [ -x "$TSX" ] || { echo "pipeline: $TSX missing — npm ci in diablo_server/backend" >&2; exit 2; }
 PY="$(command -v python3)"
-# The backend's state-CSV loaders try <daq-server>/config/<csv> (via __dirname) before the
-# fixture's. Those files are generated deploy artefacts (gitignored); if a checkout has them they
-# would silently replace the fixture's tables.
-for f in state_machine_actuators.csv state_transitions.csv state_machine_actuator_delays.csv; do
-  if [ -e "$ROOT/config/$f" ]; then
-    echo "pipeline: $ROOT/config/$f exists (a deployed profile) and would shadow the fixture's" >&2
-    echo "          state tables in the backend; move it aside to run this." >&2
-    exit 2
-  fi
-done
 
 # Private port range. 5008 is the one port daq_bridge hard-codes (FSWConfigManager); the stack
 # lock is what keeps it free.
 P_ELODIN=26401 P_DAQ_UDP=26402 P_WS=26403 P_ACT_UDP=26404 P_LOG_UDP=26405
-P_SEQ=26406 P_CTRL=26407 P_HB_UDP=26408 P_VID_API=26411 P_VID_RTC=26412 P_VID_AGENT=26413 P_OTA=26414
+P_SEQ=26406 P_CTRL=26407 P_HB_UDP=26408 P_START=26409 P_VID_API=26411 P_VID_RTC=26412 P_VID_AGENT=26413 P_OTA=26414
 
 mkdir -p "$ROOT/.tmp"
-FX="$ROOT/.tmp/char_pipeline_$$"
+FX="$ROOT/.tmp/char_pipeline_${MODE}_$$"
 rm -rf "$FX"; mkdir -p "$FX/logs"
 PIDS=()
 cleanup() {
   set +e
+  # config_broadcast_service is started by session.ts (boards), which records its PID here.
+  [ -f "$FX/config_broadcast.pid" ] && PIDS+=("$(cat "$FX/config_broadcast.pid")")
   for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null; done
   sleep 1
   for p in "${PIDS[@]}"; do kill -9 "$p" 2>/dev/null; wait "$p" 2>/dev/null; done
@@ -90,10 +120,29 @@ done
 
 cat > "$FX/ports.json" <<EOF
 {"elodin":$P_ELODIN,"daq_udp":$P_DAQ_UDP,"ws":$P_WS,"act_udp":$P_ACT_UDP,"log_udp":$P_LOG_UDP,
- "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"video_api":$P_VID_API,
+ "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-"$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json"
+FXMODE="$MODE"; [ "$MODE" = nocal ] && FXMODE=pt
+"$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$FXMODE"
+
+# The backend runs from a copy of its own source under the fixture (srv/, the same layout as
+# daq-server/), so everything it resolves relative to its own file lands in the fixture rather
+# than in the checkout: its PT calibration (calibration.ts: <srv>/calibration/*.json, newest by
+# mtime -- in a checkout every committed file shares one mtime, so the pick was filesystem order:
+# macOS got one dated file, a Linux export another with no coefficients), /api/cubic_calibration
+# (<srv>/scripts/calibration/calibrations), the legacy state-CSV loaders (<srv>/../config = the
+# fixture's), the state-script checker (<srv>/build). The source is copied unchanged from this
+# checkout at every run, so a change to it is what runs. pt: one calibration file, chosen by name;
+# nocal: none.
+SRV="$FX/srv"
+mkdir -p "$SRV/diablo_server/backend" "$SRV/calibration" "$SRV/scripts/calibration"
+cp -R "$BACKEND/src" "$BACKEND/package.json" "$SRV/diablo_server/backend/"
+ln -s "$BACKEND/node_modules" "$SRV/diablo_server/backend/node_modules"
+cp -R "$ROOT/diablo_server/shared" "$SRV/diablo_server/shared"
+ln -s "$FX/scripts/calibration/calibrations" "$SRV/scripts/calibration/calibrations"
+ln -s "$BUILD" "$SRV/build"
+[ "$MODE" = nocal ] || cp "$ROOT/calibration/calibration_2026-02-25T03-44-09.json" "$SRV/calibration/"
 CFG="$FX/config/config.toml"
 
 wait_port() {  # port name seconds
@@ -107,15 +156,32 @@ alive() {  # pid name
   kill -0 "$1" 2>/dev/null || { echo "pipeline: $2 exited early" >&2; tail -20 "$FX/logs/$2.log" >&2; exit 5; }
 }
 
-# Same start order as test/test_integration.sh: DB, sequencer, bridge, backend, calibration, sim.
+# Same start order as test/test_integration.sh: DB, sequencer, bridge, (config broadcast),
+# backend, calibration, sim.
 "$ELODIN_DB" run "127.0.0.1:$P_ELODIN" "$FX/elodin_db" > "$FX/logs/elodin.log" 2>&1 &
 PIDS+=($!); wait_port $P_ELODIN elodin 15
 
 (cd "$FX" && exec "$BIN/sequencer_service" --config "$CFG" --port $P_SEQ) > "$FX/logs/sequencer.log" 2>&1 &
 PIDS+=($!); wait_port $P_SEQ sequencer 15
+# At boot the sequencer publishes every valve de-energized (ActuatorCommander publishInitialState:
+# a normally-open valve reads 1) and then applies the boot state's column (Fuel Main → 0). Whether
+# the backend, subscribing a moment later, records that transient 1 in its history was a race
+# (macOS missed it, Linux under load caught it). A subscriber that arrives later is handed the
+# table's latest row by elodin-db, and when the initial publish and the boot-state application
+# land in one client flush (which a loaded machine makes likely) that row is the transient 1: the
+# backend's first CH7 sample under load was 1, the 0 following ~1 s later with the republish. So
+# wait for the initial publish and two state applications after it -- the boot one and a 1 Hz
+# republish, which is its own flush -- before starting the backend.
+i=0
+until awk '/Published initial state/ {seen=1; next} seen && /commands for state/ {n++} END {exit !(n >= 2)}' \
+      "$FX/logs/sequencer.log" 2>/dev/null; do
+  sleep 0.25; i=$((i + 1))
+  [ $i -lt 120 ] || { echo "pipeline: sequencer never applied its boot state" >&2; tail -20 "$FX/logs/sequencer.log" >&2; exit 5; }
+done
 
 (cd "$FX" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
+
 
 # The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
 # legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
@@ -131,7 +197,7 @@ PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
   DAQ_OPERATORS_FILE="$FX/operators.txt" STAR_DHCP_HOSTS="$FX/no-dhcp-hosts" \
   VIDEO_GATEWAY_HOST=127.0.0.1 VIDEO_GATEWAY_API_PORT=$P_VID_API \
   VIDEO_GATEWAY_WEBRTC_PORT=$P_VID_RTC VIDEO_AGENT_PORT=$P_VID_AGENT \
-  "$TSX" "$BACKEND/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
+  "$TSX" "$SRV/diablo_server/backend/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
 PIDS+=($!); wait_port $P_WS backend 30
 
 (cd "$FX" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" --config "$CFG" \
@@ -139,8 +205,21 @@ PIDS+=($!); wait_port $P_WS backend 30
   > "$FX/logs/calibration.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" calibration
 
-# --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the sim
-# config enables only pt_board, at 127.0.0.1.
+# The simulator sends each board's SELF_TEST once, at start. The backend subscribes to the
+# self-test tables in passes capped by the request-id space; a result published before the pass
+# that covers its table never reaches it (seen on Linux: board 21's sensors 2-10 lost). Start the
+# simulator only after a pass with nothing left queued, and then one more pass (the backend runs
+# one every 5 s): a pass only SENDS its subscriptions, and on a loaded Linux box the self-tests of
+# four boards still beat the DB's processing of them.
+i=0
+until awk '/VTableStream: sent/ { if (done) more = 1; else if ($0 !~ /queued for the next pass/) done = 1 }
+           END { exit !more }' "$FX/logs/backend.log" 2>/dev/null; do
+  sleep 0.25; i=$((i + 1))
+  [ $i -lt 240 ] || { echo "pipeline: backend never finished subscribing" >&2; tail -20 "$FX/logs/backend.log" >&2; exit 5; }
+done
+
+# --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the pt
+# sim config enables only pt_board, at 127.0.0.1; the boards one every board at 127.0.0.<id>.
 "$PY" "$ROOT/sim/board_simulator.py" --config "$FX/sim_config.toml" --target 127.0.0.1 \
   --port $P_DAQ_UDP --low-noise --skip-startup > "$FX/logs/sim.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" sim
@@ -151,14 +230,19 @@ fi
 
 START_MS="$("$PY" -c 'import time; print(int(time.time()*1000))')"
 CAPTURE="$FX/capture.json"
-(cd "$BACKEND" && NODE_PATH="$BACKEND/node_modules" "$TSX" "$HERE/session.ts" $P_WS "$CAPTURE") \
+(cd "$BACKEND" && NODE_PATH="$BACKEND/node_modules" PYTHON_BIN="$PY" \
+  BOARD_STARTUP_SIM="$ROOT/sim/board_startup_sim.py" CHAR_DAQ_UDP_PORT=$P_DAQ_UDP \
+  CHAR_STARTUP_PORT=$P_START CHAR_CONFIG_BROADCAST="$BIN/config_broadcast_service" \
+  CHAR_CONFIG="$CFG" CHAR_FIXTURE="$FX" "$TSX" "$HERE/session.ts" $P_WS "$CAPTURE" "$MODE") \
   > "$FX/logs/session.log" 2>&1 || { echo "pipeline: session failed" >&2; tail -30 "$FX/logs/session.log" >&2; tail -30 "$FX/logs/backend.log" >&2; exit 6; }
 
 cat > "$FX/context.json" <<EOF
-{"now_ms": $START_MS,
+{"now_ms": $START_MS, "gui_points_per_second": $(sed -n "/^\[gui\]/,/^\[/s/^points_per_second = \([0-9.]*\)/\1/p" "$CFG"),
  "paths": {"$FX/config": "<cfgdir>", "$FX/home": "<home>", "$FX": "<fx>",
            "$ROOT": "<daq>"},
- "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))')}
+ "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))'),
+ "under_load": $([ "${CHAR_UNDER_LOAD:-0}" = 1 ] && echo true || echo false),
+ "selftest_expected": $("$PY" "$HERE/selftest_expected.py" "$FX/sim_config.toml" "$CFG")}
 EOF
 
 if [ -n "${CHAR_CAPTURE_ONLY:-}" ]; then
@@ -168,14 +252,16 @@ fi
 
 OUT="$FX/out"
 "$PY" "$HERE/characterize.py" "$CAPTURE" "$FX/context.json" "$OUT"
+GOLD="$HERE/golden"; [ "$MODE" = boards ] && GOLD="$HERE/golden/boards"
+[ "$MODE" = nocal ] && GOLD="$HERE/golden/nocal"
 if [ "${CHAR_UPDATE:-0}" = 1 ]; then
-  rm -rf "$HERE/golden"; mkdir -p "$HERE/golden"; cp "$OUT"/* "$HERE/golden/"
-  echo "pipeline: goldens rewritten ($(ls "$HERE/golden" | wc -l | tr -d ' ') files)"
+  mkdir -p "$GOLD"; rm -f "$GOLD"/*.txt; cp "$OUT"/* "$GOLD/"
+  echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru "$HERE/golden" "$OUT"; then
-  echo "pipeline: PASS"
+if diff -ru -x boards -x nocal "$GOLD" "$OUT"; then
+  echo "pipeline[$MODE]: PASS"
 else
-  echo "pipeline: FAIL — the pipeline's observable behaviour differs from golden/ (diff above)" >&2
+  echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
   exit 1
 fi

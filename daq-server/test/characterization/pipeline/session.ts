@@ -3,16 +3,22 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json>
+ *   tsx session.ts <ws_port> <capture.json> [pt|boards]
+ *
+ * pt: the full scripted session against the one routed PT board. boards: every simulated board
+ * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
+ * by sim/board_startup_sim.py: BOARD_STARTUP_SIM, PYTHON_BIN, CHAR_DAQ_UDP_PORT, CHAR_STARTUP_PORT).
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
 import WebSocket from 'ws';
 import * as fs from 'fs';
 import * as http from 'http';
+import { spawn } from 'child_process';
 
 const PORT = parseInt(process.argv[2] ?? '', 10);
 const OUT = process.argv[3];
+const MODE = process.argv[4] ?? 'pt';
 if (!PORT || !OUT) {
   console.error('usage: session.ts <ws_port> <capture.json>');
   process.exit(2);
@@ -38,6 +44,38 @@ function step(name: string): void {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const STREAM_TYPES = new Set([
+  'sensor_update', 'historical_data', 'connection_status', 'board_status_update', 'board_log',
+]);
+/** Event-like frames are what a step's golden records in order; streams are summarised. */
+function isEvent(raw: string): boolean {
+  try {
+    const m = JSON.parse(raw);
+    if (STREAM_TYPES.has(m.type)) return false;
+    // Board-health notifications come from a 1 Hz sweep, not from the step (README P1).
+    const key = String(m.payload?.key ?? '');
+    if (m.type === 'notification' && (key.startsWith('board_lost_') || key.startsWith('setup_stuck_')
+      || (!m.payload?.key && String(m.payload?.message ?? '').endsWith(' connected')))) return false;
+    return true;
+  } catch { return true; }
+}
+/** QUIET_MS: how long the event stream must be silent before a step may end. The slowest reply a
+ *  step waits for is the sequencer's (TCP reply and its Elodin publish); 1.5 s is several times
+ *  what it takes on an idle machine, so a loaded one still finishes the step inside the step. */
+const QUIET_MS = 1500;
+const SETTLE_CAP_MS = 20000;
+async function settle(minMs: number): Promise<void> {
+  const t0 = Date.now();
+  await sleep(minMs);
+  for (;;) {
+    const evs = cur!.frames.filter((f) => isEvent(f.raw));
+    const last = Math.max(t0, ...evs.map((f) => f.t), ...cur!.sent.map((x) => x.t));
+    if (Date.now() - last >= QUIET_MS) return;
+    if (Date.now() - t0 > SETTLE_CAP_MS) throw new Error(`step ${cur!.name} never went quiet`);
+    await sleep(100);
+  }
+}
 
 function openClient(name: string, headers: Record<string, string> = {}): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
@@ -151,10 +189,20 @@ async function main(): Promise<void> {
 
   step('connect');
   await openClient('A');
-  await sleep(2500);
+  await settle(2500);
 
   step('live');
   await sleep(3000);
+
+  step('viewer_client');
+  await openClient('B', VIEWER);
+  await settle(1500);
+  send('B', { type: 'control_unlock', payload: {} });
+  await settle(400);
+  command('B', 'state_transition', { state: 2 });
+  await settle(600);
+  await closeClient('B');
+  await settle(300);
 
   step('subscribe');
   // The thin backend has no subscription protocol: every client gets everything. An unknown
@@ -162,89 +210,89 @@ async function main(): Promise<void> {
   send('A', { type: 'subscribe', payload: { keys: ['PT1.CH1.raw_adc_counts'] } });
   send('A', 'not json');
   send('A', { type: 'get_state_transitions' });
-  await sleep(1000);
+  await settle(1000);
 
   step('history');
-  send('A', { type: 'query_historical', payload: { keys: ['PT1.CH1.raw_adc_counts'], sinceMs: Date.now() - 2000 } });
-  await sleep(700);
+  send('A', { type: 'query_historical', payload: { keys: ['PT1.CH1.raw_adc_counts'], sinceMs: Date.now() - 10000 } });
+  await settle(700);
   send('A', { type: 'query_historical', payload: { keys: ['NO_SUCH.KEY.value'] } });
-  await sleep(700);
+  await settle(700);
   send('A', { type: 'query_historical', payload: { sinceMs: Date.now() + 3_600_000 } });
-  await sleep(700);
+  await settle(700);
   send('A', { type: 'query_historical', payload: {} });
-  await sleep(1500);
+  await settle(1500);
 
   step('control_locked');
   command('A', 'state_transition', { state: 2 });
   command('A', 'actuator', { actuatorName: 'Fuel Vent', actuatorState: 1 });
-  await sleep(600);
+  await settle(600);
 
   step('unlock');
   send('A', { type: 'control_unlock', payload: {} });
-  await sleep(600);
+  await settle(600);
 
   step('transition_rejected_locally');
   command('A', 'state_transition', { state: 99 });
   command('A', 'state_transition', { state: 2, holdMs: -5 });
-  await sleep(800);
+  await settle(800);
 
   step('transition_refused_by_sequencer');
   command('A', 'state_transition', { state: 16 });
-  await sleep(1500);
+  await settle(1500);
 
   step('transition_armed');
   command('A', 'state_transition', { state: 2 });
-  await sleep(2500);
+  await settle(2500);
 
   step('debug_on');
   command('A', 'debug_mode', { debugMode: true });
-  await sleep(1200);
+  await settle(1200);
 
   step('actuator_open_close');
   command('A', 'actuator', { actuatorName: 'Fuel Vent', actuatorState: 1 });
-  await sleep(1200);
+  await settle(1200);
   command('A', 'actuator', { actuatorName: 'Fuel Vent', actuatorState: 0 });
-  await sleep(1200);
+  await settle(1200);
   command('A', 'actuator', { actuatorName: 'No Such Valve', actuatorState: 1 });
-  await sleep(1000);
+  await settle(1000);
 
   step('debug_off');
   command('A', 'debug_mode', { debugMode: false });
-  await sleep(1200);
+  await settle(1200);
 
   step('extend_fire_not_firing');
   command('A', 'extend_fire');
-  await sleep(1000);
+  await settle(1000);
 
   step('transition_idle');
   command('A', 'state_transition', { state: 1 });
-  await sleep(2500);
+  await settle(2500);
 
   step('countdown');
   command('A', 'set_countdown_target', { targetTimeMs: 4102444000000 });
-  await sleep(500);
+  await settle(500);
   command('A', 'set_countdown_target', { targetTimeMs: null });
-  await sleep(500);
+  await settle(500);
 
   step('calibration_command');
   send('A', { type: 'calibration_command', payload: { commandType: 'char_probe' } });
-  await sleep(600);
+  await settle(600);
 
   step('unsupported_command');
   command('A', 'controller_frequency', { frequency: 10 });
-  await sleep(600);
+  await settle(600);
 
   step('session_start_blocked');
   command('A', 'session_start', { keepData: true, durationMs: 600000 });
-  await sleep(2000);
+  await settle(2000);
 
   step('session_start_forced');
   command('A', 'session_start', { keepData: true, durationMs: 600000, force: true });
-  await sleep(3000);
+  await settle(3000);
 
   step('session_start_again');
   command('A', 'session_start', { keepData: true, durationMs: 600000, force: true });
-  await sleep(800);
+  await settle(800);
 
   step('http_during_session');
   await getSweep();
@@ -253,28 +301,26 @@ async function main(): Promise<void> {
 
   step('session_extend');
   command('A', 'session_extend', { addMs: 60000 });
-  await sleep(600);
+  await settle(600);
   command('A', 'session_extend', { addMs: -1 });
-  await sleep(600);
+  await settle(600);
 
   step('session_stop');
   command('A', 'session_stop');
-  await sleep(2500);
+  await settle(2500);
 
   step('session_stop_idle');
   command('A', 'session_stop');
   command('A', 'session_extend', { addMs: 1000 });
-  await sleep(800);
+  await settle(800);
 
-  step('viewer_client');
-  await openClient('B', VIEWER);
-  await sleep(1500);
-  send('B', { type: 'control_unlock', payload: {} });
-  await sleep(400);
-  command('B', 'state_transition', { state: 2 });
-  await sleep(600);
-  await closeClient('B');
-  await sleep(300);
+  step('late_client');
+  // A client that connects after the session: what the backend replays to it -- the notification
+  // buffer (session warnings cleared at start/extend/stop) and the self-test results.
+  await openClient('C');
+  await settle(1500);
+  await closeClient('C');
+  await settle(300);
 
   step('http_errors');
   await request('GET', '/nope');
@@ -309,14 +355,89 @@ async function main(): Promise<void> {
 
   step('disconnect');
   await closeClient('A');
-  await sleep(500);
+  await settle(500);
   cur!.t1 = Date.now();
 
   fs.writeFileSync(OUT, JSON.stringify(capture));
   console.log(`[session] wrote ${OUT}`);
 }
 
-main().then(() => process.exit(0)).catch((err) => {
+/** Every board type at once: the per-type frame shapes and channel sets, the board/sensor HTTP
+ *  endpoints, and one board's whole status lifecycle (SETUP, SELF_TEST, ACTIVE, lost). */
+async function boards(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(5000);
+
+  const sweep = async () => {
+    for (const p of [
+      '/stats', '/api/debug', '/api/sensor-config', '/api/config/validate', '/api/gui-config',
+      '/api/pressure-limits', '/api/ball_valve_cal', '/api/lc_tare', '/api/board-logs',
+      '/api/board-logs/stats', '/api/engine_state',
+    ]) await request('GET', p);
+  };
+  step('http_boards');
+  await sweep();
+
+  step('connect');
+  await openClient('A');
+  await sleep(2500);
+
+  step('live');
+  await sleep(5000);
+
+  step('startup_board');
+  const code = await new Promise<number>((resolve) => {
+    const p = spawn(process.env.PYTHON_BIN || 'python3', [
+      process.env.BOARD_STARTUP_SIM!, '--listen-port', process.env.CHAR_STARTUP_PORT!,
+      '--daq-port', process.env.CHAR_DAQ_UDP_PORT!, '--board-ip', '127.0.0.60', '--board-id', '60',
+      '--timeout-s', '30',
+    ], { stdio: 'ignore' });
+    p.on('exit', (c) => resolve(c ?? -1));
+  });
+  if (code !== 0) throw new Error(`board_startup_sim exited ${code}`);
+  // Long enough for the board's heartbeat to go stale (5 s) and the sweep to say so.
+  await sleep(8000);
+
+  step('http_after_startup');
+  await sweep();
+
+  step('disconnect');
+  await closeClient('A');
+  await sleep(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+/** The backend with no PT calibration file of its own: what calibration_status, the calibration
+ *  command reply and the cubic store look like then. The pt session is the file-present case. */
+async function nocal(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(3000);
+
+  step('http_calibration');
+  for (const p of ['/api/calibration_status', '/api/cubic_calibration', '/api/calibration_profiles', '/api/lc_tare'])
+    await request('GET', p);
+
+  step('connect');
+  await openClient('A');
+  await settle(2500);
+
+  step('calibration_command');
+  send('A', { type: 'calibration_command', payload: { commandType: 'char_probe' } });
+  await settle(600);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);
