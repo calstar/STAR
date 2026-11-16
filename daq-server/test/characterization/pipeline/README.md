@@ -232,6 +232,27 @@ Determinism (final evidence, commit `d4b56670`):
 
 Under load on Linux two races remained. They are frozen as the bounded, named alternatives A1 and P12 above; everything else is exact. `CHAR_UNDER_LOAD=1` must be set by whoever starts the synthetic load (an idle run still requires every self-test).
 
+### Open findings: the boards session under load (Linux)
+
+The `boards` session is required exact only while the load average is below the core count (the
+gate's load guard provides that). It is the one named exception to "goldens hold under load";
+`pt` and `nocal` must hold under 1× synthetic load on macOS and Linux. Under 1× load (14× `yes`,
+1-min load ~11) in the Linux container, two cases remain that no rule covers. They are left red on
+purpose:
+
+- **Board 22 partial self-test.** The backend received sensors 0–3 of board 22's self-test and not
+  sensor 4. The simulator sends all of a board's results in one packet (and re-sends ~1 Hz for 6 s),
+  so a partial set suggests rows lost between the DB and the backend, not a lost packet. P12 rule
+  (a) treats a partial board as a mismatch.
+- **`PT2.CH1` stream missing.** In loaded runs the raw (`PT2.CH1.raw_adc_counts`) and calibrated
+  (`PT2_Cal.CH1.*`) series of PT board 22, connector 1, were absent from both the live stream and
+  history, while the board's other channels arrived. Seen once on idle Linux too, earlier.
+- What is known: both appeared only on Linux; macOS under the same load passes. They look like
+  Elodin subscription timing (the backend subscribes in request-id-capped passes and retries
+  refused pairs with backoff; rows written before a pair's subscription takes effect are never
+  delivered), the same mechanism that lost board 21's self-test sensors 2–10 before the harness
+  waited for subscriptions. Not proven: the backend logs no per-pair subscription acceptance.
+
 ## Mutation check
 
 Each applied to the backend source, run, reverted (none committed):
