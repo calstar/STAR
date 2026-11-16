@@ -66,7 +66,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | C3 | calibration math (C++, calibration_service, TS) | agent | `char/calibration` | running | `test/characterization/calibration/` | C0 |
 | C4 | sequencer/controller UDP streams, TCP replies, aborts | agent | `char/sequencer` | running | `test/characterization/sequencer/` | C0 |
 | C5 | pipeline WS frames, HTTP, logger CSV | agent | `char/pipeline` | running | `test/characterization/pipeline/` | C0 |
-| C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | running | `test/characterization/lifecycle/` | C0 |
+| C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | reported (7 goldens, 5 mutations, black-box); sent back: normaliser must mask values, never drop keys | `test/characterization/lifecycle/` | C0 |
 | B0 | bloat-map research (read-only) | agent | none | done → `docs/remaster/BLOAT-MAP.md` | — | — |
 | WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | queued (after suite) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
 | WP2 | delete C++ no target compiles | — | — | queued | BLOAT-MAP WP2 | WP1 |
@@ -107,6 +107,18 @@ From C1 (packets/Elodin; each frozen in a golden):
 - C1-5 Parsers ignore the version byte and accept trailing bytes (the pipeline enforces both only for ENVIRONMENTAL_DATA).
 - C1-6 TS `ElodinClient` never resyncs on an implausible length: waits forever, buffers, re-schedules `setImmediate` every tick.
 - C1-7 With config_base's cubic models and no thresholds file, ACTUATOR_CONFIG carries no abort-PT thresholds.
+
+From C6 (lifecycle):
+- C6-1 daq_bridge logs "✅ Proactive SENSOR_CONFIG sent to N sense boards" but `FSWConfigManager` sends nothing (0 packets).
+- C6-2 Duplicate VTableStream subscriptions multiply delivery on elodin-db 0.16.1 (~2× and 5×); `test_duplicate_subscription.ts` exits 1.
+- C6-3 Nothing detects loss of the server heartbeat: when heartbeat_service dies, daq_bridge does not take over (`send_from_daq_bridge` fixed at startup).
+- C6-4 A board that sends data but no heartbeats is marked disconnected while its data is still shown.
+- C6-5 Backend has no SIGTERM/SIGINT handler: exits by signal; WS clients see close 1006.
+- C6-6 config_broadcast sends nothing unless an ACTUATOR board is the designated survivor.
+- C6-7 stacklight_service default target is a placeholder (192.168.2.70:5006) and config overrides CLI flags.
+- C6-8 `[boards.integration_startup]` (board 60) collides with another board's slot (daq_bridge's own error log); test_integration.sh uses it.
+- C6-9 calibration_service exits 1 if Elodin is not up yet; no retry.
+- C6-10 ota_service reports success when the board closes without replying.
 
 From C2 (config characterization; each frozen in a golden):
 - C2-1 `config/profiles/digital-twin` `[fire]` has no `state` → `fire.state=""` → sequencer disables the fire timer for that profile.
