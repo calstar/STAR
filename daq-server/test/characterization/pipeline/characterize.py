@@ -243,6 +243,27 @@ def handshake_frames(frames):
     return out
 
 
+# P11. A command's TCP reply (an `error` from server.ts sendToActuatorService) and the
+# sequencer's own Elodin publish (a `state_update`) reach the client by two independent paths
+# (sequencer → TCP → backend, sequencer → elodin-db → backend), so their relative order is a race
+# (seen swapped under 1x load). Within a run of consecutive error/state_update frames the two
+# kinds are recorded errors first; every other order is kept as it arrived.
+CROSS_PATH = ("error", "state_update")
+
+
+def order_cross_path(lines):
+    out, run = [], []
+    for kind, text in lines + [(None, None)]:
+        if kind in CROSS_PATH:
+            run.append((CROSS_PATH.index(kind), len(run), text))
+            continue
+        out.extend(t for _, _, t in sorted(run))
+        run = []
+        if text is not None:
+            out.append(text)
+    return out
+
+
 def main():
     cap_path, ctx_path, out_dir = sys.argv[1:4]
     cap = json.load(open(cap_path))
@@ -297,6 +318,7 @@ def main():
                 if first_frames.get(client, (None,))[0] == st["name"]
                 else set()
             )
+            lines = []
             for m in fs:
                 if id(m) in hs_ids or m["type"] in STREAM_TYPES:
                     continue
@@ -304,7 +326,8 @@ def main():
                     if id(m) not in flaps:
                         health.add(dumps(n.value(m["payload"])))
                     continue
-                ev.append(f"< {client} {dumps(norm_event(n, m))}")
+                lines.append((m["type"], f"< {client} {dumps(norm_event(n, m))}"))
+            ev.extend(order_cross_path(lines))
         ev.append("")
     ev.append(
         "## board-health notifications seen (any step, any client; P1, reset flaps P1b)"

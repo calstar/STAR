@@ -161,6 +161,7 @@ those byte for byte (header, column order, cell format).
 | P7 | a stream's value is printed when the run saw one value (or a set of ≤4), else `<varies>` | `--low-noise` makes PT raw constant per channel |
 | P8 | history: per request, the series keys and the distinct values each carries (not their times or lengths) | lengths depend on uptime |
 | P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema; `/api/cubic_calibration` → sha256 + keys (it reads the committed store via `__dirname`, ignoring `DAQ_CALIBRATIONS_DIR`) | counters / wall clock |
+| P11 | in a run of consecutive `error` / `state_update` frames within a step, errors are recorded first (each kind keeps its own order) | a command's TCP reply (`error`) and the sequencer's Elodin publish (`state_update`) take independent paths; their order swapped under load |
 
 ### Timing bounds (from config or spec, never observed values)
 

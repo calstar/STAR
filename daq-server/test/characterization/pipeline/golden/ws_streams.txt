@@ -71,7 +71,7 @@ SELF_TEST.BOARD_21.sensor_8  value=1
 SELF_TEST.BOARD_21.sensor_9  value=1
 
 ## timing bounds (from config, not observed; README T1)
-envelope spacing: too few points (3)
+envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): median within [0.9 W, 2 W]: yes; at least 5 gaps: yes
 
 ## board_log distinct payloads, client A
 {"boardId": 21, "lines": ["[SIM] board 21 PT alive #<n>"], "totals": {"received": "<n>", "truncated": "<n>"}, "truncated": false, "ts": "<ts>"}
