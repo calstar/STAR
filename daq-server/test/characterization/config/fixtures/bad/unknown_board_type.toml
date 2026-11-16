@@ -1,0 +1,17 @@
+[boards.widget_board]
+type = "WIDGET"
+ip = "192.168.2.31"
+board_id = 31
+enabled = true
+active_connectors = [1, 2]
+
+[boards.untyped_board]
+ip = "192.168.2.32"
+board_id = 32
+active_connectors = [1]
+
+[boards.lowercase_board]
+type = "pt"
+ip = "192.168.2.33"
+board_id = 33
+active_connectors = [1]

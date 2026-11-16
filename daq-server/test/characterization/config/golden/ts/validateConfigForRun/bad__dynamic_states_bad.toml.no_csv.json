@@ -1,0 +1,45 @@
+{
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "Fire is the fire state and cannot also run a script.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "Engine Abort is an abort state and cannot run a script — an abort must reach the valves immediately, never behind an interpreter.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "Armed: script file \"../escape.script\" must be a bare <name>.script filename (letters, digits, _ and - only). A path here is refused rather than sanitised.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "Fuel Fill runs a script but has no timeout. An unbounded script has no safe degraded mode, so the sequencer will refuse to make this state enterable.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "Ox Fill: script timeout 600001 ms is above the 600000 ms ceiling — a typo must not arm a valve-open window measured in hours.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "GN2 Low Press runs a script but has no end-of-script target — where it lands when the script runs off its end must be stated, not defaulted.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "GN2 Low Vent: timeout target \"Nowhere\" is not in the state list.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "Fuel Press is both the flow-test state and a scripted state. The characterization hold and the script would both own its timer.",
+      "page": "state"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+if elapsed() > 0:
+    if elapsed() > 1:
+        if elapsed() > 2:
+            if elapsed() > 3:
+                if elapsed() > 4:
+                    if elapsed() > 5:
+                        if elapsed() > 6:
+                            if elapsed() > 7:
+                                if elapsed() > 8:
+                                    if elapsed() > 9:
+                                        delay(1)

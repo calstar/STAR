@@ -1,0 +1,6 @@
+=== stdout
+10:37: E_TOO_DEEP nested 9 deep; the limit is 8
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

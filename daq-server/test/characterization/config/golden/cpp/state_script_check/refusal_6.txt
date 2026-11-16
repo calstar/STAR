@@ -1,0 +1,5 @@
+=== args --config fixtures/bad/missing_sections.toml --state Idle ../../../config/profiles/digital-twin/scripts/dynamic_test.script
+=== stdout
+=== stderr
+config declares no [[states]] (or failed to parse): fixtures/bad/missing_sections.toml
+=== exit 2

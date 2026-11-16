@@ -1,0 +1,43 @@
+{
+  "assertValidProfileName": [
+    [
+      "default",
+      "accepted"
+    ],
+    [
+      "rig_2-a",
+      "accepted"
+    ],
+    [
+      "",
+      "Error: Invalid profile name \"\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "../x",
+      "Error: Invalid profile name \"../x\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "a.b",
+      "Error: Invalid profile name \"a.b\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "accepted"
+    ],
+    [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "Error: Invalid profile name \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "_lead",
+      "Error: Invalid profile name \"_lead\" (use letters, digits, _ or -, max 64 chars)"
+    ]
+  ],
+  "listCalibrationProfiles": {
+    "logs": [],
+    "value": {
+      "active": "",
+      "profiles": []
+    }
+  }
+}
