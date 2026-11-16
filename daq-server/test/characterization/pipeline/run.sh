@@ -206,13 +206,15 @@ PIDS+=($!); sleep 1; alive "${PIDS[-1]}" calibration
 # The simulator sends each board's SELF_TEST once, at start. The backend subscribes to the
 # self-test tables in passes capped by the request-id space; a result published before the pass
 # that covers its table never reaches it (seen on Linux: board 21's sensors 2-10 lost). Start the
-# simulator only after a pass with nothing left queued.
+# simulator only after a pass with nothing left queued, and then one more pass (the backend runs
+# one every 5 s): a pass only SENDS its subscriptions, and on a loaded Linux box the self-tests of
+# four boards still beat the DB's processing of them.
 i=0
-until grep 'VTableStream: sent' "$FX/logs/backend.log" 2>/dev/null | grep -vq 'queued for the next pass'; do
+until awk '/VTableStream: sent/ { if (done) more = 1; else if ($0 !~ /queued for the next pass/) done = 1 }
+           END { exit !more }' "$FX/logs/backend.log" 2>/dev/null; do
   sleep 0.25; i=$((i + 1))
   [ $i -lt 240 ] || { echo "pipeline: backend never finished subscribing" >&2; tail -20 "$FX/logs/backend.log" >&2; exit 5; }
 done
-sleep 1
 
 # --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the pt
 # sim config enables only pt_board, at 127.0.0.1; the boards one every board at 127.0.0.<id>.
