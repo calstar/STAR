@@ -111,7 +111,8 @@ def sys_ms() -> int:
 
 def steady_ms() -> int:
     """std::chrono::steady_clock in ms: CLOCK_MONOTONIC_RAW under libc++ on macOS (Python's
-    monotonic is mach uptime there, which stops across sleep), CLOCK_MONOTONIC on Linux."""
+    monotonic is mach uptime there, which stops across sleep), CLOCK_MONOTONIC on Linux.
+    """
     if sys.platform == "darwin":
         return time.clock_gettime_ns(time.CLOCK_MONOTONIC_RAW) // 1_000_000
     return time.monotonic_ns() // 1_000_000

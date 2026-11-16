@@ -7,10 +7,12 @@
 // is frozen: MessageSize, alignof, and per field its serialized offset, size, type, the value of a
 // known-valued instance and its bytes. sizeof(CommsMessage) is a std::tuple's size, which libc++
 // and libstdc++ lay out differently, so it is deliberately not frozen.
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <type_traits>
