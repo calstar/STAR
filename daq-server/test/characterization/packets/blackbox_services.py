@@ -550,20 +550,44 @@ def pwm_session(out, binp, work, name, cfg_text, db):
                 hi = bb.sys_ms()
                 out.append(f"## {cmd} -> reply {reply!r}")
                 # How many repeats arrive is timing; which distinct packets arrive, in
-                # first-seen order, is not. After FIRE_STOP, repeats of the open command are the
-                # control loop's last ticks racing the stop on another thread, so they are
-                # skipped wherever they land.
+                # first-seen order, is not. After FIRE_STOP the control loop may still send the
+                # open command once per board before it sees the gate closed (one straggler,
+                # defect C4-5): that is counted, bounded at 1 per board before that board's
+                # close packet and 0 after it, and anything beyond the bound fails, by count.
                 seen = []
+                strays: dict[str, list[int]] = (
+                    {}
+                )  # dst -> [opens before close, opens after]
+                closed: set[str] = set()
                 for dst, _s, g, _t in got:
                     ok = bb.clock_ok(g[2:], lo, hi) if len(g) >= 6 else False
                     masked = g[:2] + b"\0\0\0\0" + g[6:] if len(g) >= 6 else g
                     if cmd == "FIRE_STOP" and masked in open_cmds:
+                        strays.setdefault(dst, [0, 0])[1 if dst in closed else 0] += 1
                         continue
+                    if cmd == "FIRE_STOP":
+                        closed.add(dst)
                     if cmd == "FIRE_START":
                         open_cmds.add(masked)
                     key = (dst, masked, ok)
                     if key not in seen:
                         seen.append(key)
+                if cmd == "FIRE_STOP":
+                    bad = [
+                        (d, b, a)
+                        for d, (b, a) in sorted(strays.items())
+                        if b > 1 or a > 0
+                    ]
+                    for d, b, a in bad:
+                        out.append(
+                            f"  !! open command repeated to {d} after FIRE_STOP: {b} before its "
+                            f"close packet (bound 1), {a} after it (bound 0)"
+                        )
+                    if not bad:
+                        out.append(
+                            "  open repeats after FIRE_STOP: within bound (at most 1 per board "
+                            "before its close packet, none after)"
+                        )
                 for dst, masked, ok in seen:
                     ts = "<system_clock ms, LE u32>" if ok else "OUT OF RANGE"
                     out.append(f"  -> {dst} len={len(masked)} timestamp {ts}")
@@ -623,9 +647,10 @@ def _guarded(fn):
         r = fn(*a)
         name = {v: k for k, v in MODES.items()}[fn]
         text_file = GOLDEN / GOLDEN_OF[name]
-        if text_file.exists() and "OUT OF RANGE" in text_file.read_text():
+        text = text_file.read_text() if text_file.exists() else ""
+        if "OUT OF RANGE" in text or "\n  !! " in text:
             print(
-                f"{text_file.name}: a clock-stamped field was OUT OF RANGE",
+                f"{text_file.name}: an OUT OF RANGE stamp or a '!!' failure line",
                 file=sys.stderr,
             )
             return 1
