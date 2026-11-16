@@ -402,7 +402,34 @@ async function boards(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
-(MODE === 'boards' ? boards() : main()).then(() => process.exit(0)).catch((err) => {
+/** The backend with no PT calibration file of its own: what calibration_status, the calibration
+ *  command reply and the cubic store look like then. The pt session is the file-present case. */
+async function nocal(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(3000);
+
+  step('http_calibration');
+  for (const p of ['/api/calibration_status', '/api/cubic_calibration', '/api/calibration_profiles', '/api/lc_tare'])
+    await request('GET', p);
+
+  step('connect');
+  await openClient('A');
+  await settle(2500);
+
+  step('calibration_command');
+  send('A', { type: 'calibration_command', payload: { commandType: 'char_probe' } });
+  await settle(600);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);
