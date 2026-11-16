@@ -22,14 +22,17 @@ builds by more than a few ULP of their result. Those, and only those, are named 
 file, one family per line (the first rule that matches a value wins):
 
     family=<name> [section=<header>] [block=<file>] [line=<regex>] [fields=<i,j>] [below=<x>]
-                  [ulps=<n>] [abs=<x>] [rel=<x>]
+                  [ulps=<n>] [abs=<x>] [rel=<x>] [ignore=1]
 
+Values containing spaces or double quotes are quoted with '...' (or "...").
 `section` is the text of the enclosing `== <header> ==` line in the golden, `block` the file a
 stack-golden snapshot (`  --- <file> ---` / `  --- <file>: diff`) is printing, `line` a regex the
 golden line must match (search), `fields` the 0-based indices of the numbers on that line it
 covers, `below` restricts the rule to golden values with |v| < x. A value
 under a rule passes when it is within the rule's ulps (default ULPS), or |out - golden| <= abs, or
-<= rel * |golden|. Integers and text are never relaxed. Every failure prints its family, the limit
+<= rel * |golden|. Integers and text are never relaxed, except by `ignore=1`, which skips the
+matched fields entirely (for a value that is not portable by construction, such as a hash of
+floating-point results). Every failure prints its family, the limit
 applied and the observed distance.
 """
 
@@ -58,6 +61,7 @@ class Rule:
     ulps: float | None = None
     abs: float = 0.0
     rel: float = 0.0
+    ignore: bool = False
 
     def describe(self, default_ulps: float) -> str:
         parts = [f"{self.ulps if self.ulps is not None else default_ulps:g} ULP"]
@@ -77,7 +81,10 @@ def load_rules(path: str | None) -> list[Rule]:
             text = raw.strip()
             if not text or text.startswith("#"):
                 continue
-            kv = {k: v.strip('"') for k, v in re.findall(r'(\w+)=("[^"]*"|\S+)', text)}
+            kv = {
+                k: v[1:-1] if v[:1] in "'\"" else v
+                for k, v in re.findall(r"""(\w+)=('[^']*'|"[^"]*"|\S+)""", text)
+            }
             if "family" not in kv:
                 raise SystemExit(f"golden_compare: rule without family: {text}")
             rules.append(
@@ -95,6 +102,7 @@ def load_rules(path: str | None) -> list[Rule]:
                     ulps=float(kv["ulps"]) if "ulps" in kv else None,
                     abs=float(kv.get("abs", 0)),
                     rel=float(kv.get("rel", 0)),
+                    ignore=kv.get("ignore") == "1",
                 )
             )
     return rules
@@ -164,6 +172,9 @@ def compare(
             continue
         for k, (a, b) in enumerate(zip(gn, on)):
             if a == b:
+                continue
+            ig = rule_for(rules, section, block, g, k, float(a.rstrip("f")))
+            if ig is not None and ig.ignore:
                 continue
             if INT.match(a) and INT.match(b):
                 errs.append(f"line {n} field {k}: integer {a} -> {b} (exact)\n  - {g}")

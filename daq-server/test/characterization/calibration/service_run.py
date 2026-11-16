@@ -23,7 +23,6 @@ Never run on the stand. Binds one 127.0.0.1 port: run it under with_stack_lock.s
 from __future__ import annotations
 
 import argparse
-import difflib
 import os
 import re
 import shutil
@@ -128,7 +127,6 @@ class Run:
         self.marker = 4_000_000
         self.proc: subprocess.Popen | None = None
         self.out: list[str] = []
-        self.seen: dict[str, list[str]] = {}  # last snapshot of each file, for diffs
 
     # ── service lifecycle ───────────────────────────────────────────────────────────────────
     def start(self) -> None:
@@ -252,22 +250,15 @@ class Run:
         self.dump("adj.json", self.work / "adj.json")
 
     def dump(self, label: str, path: Path) -> None:
-        """A file's first snapshot in full, every later one as a diff against the previous."""
+        """A file's snapshot in full, every time. (Diffs between snapshots are not portable: a
+        value that moves in its last bits on one platform and not another changes the hunks.)
+        """
         lines = (
             normalize(path.read_text()).splitlines() if path.exists() else ["<absent>"]
         )
-        prev = self.seen.get(label)
-        self.seen[label] = lines
-        if prev is None:
-            self.p(f"  --- {label} ---")
-            self.out.extend(lines)
-            self.p(f"  --- end {label} ---")
-        elif prev == lines:
-            self.p(f"  --- {label}: unchanged")
-        else:
-            self.p(f"  --- {label}: diff")
-            for d in list(difflib.unified_diff(prev, lines, lineterm="", n=2))[2:]:
-                self.p("  " + d)
+        self.p(f"  --- {label} ---")
+        self.out.extend(lines)
+        self.p(f"  --- end {label} ---")
 
 
 def normalize(text: str) -> str:
@@ -569,7 +560,7 @@ def main() -> int:
         (cal / "rtd").mkdir()
         shutil.copy(fixtures / "rtd/root_poly.json", cal / "rtd/root_poly.json")
 
-        r = Run(a.cal, fixtures, work)
+        r = Run(str(Path(a.cal).resolve()), fixtures, work)
         try:
             r.p("== startup ==")
             r.start()
