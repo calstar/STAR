@@ -2,7 +2,7 @@
 
 Single source of truth for the remaster. **After any context loss, read this first.**
 
-## CHECKPOINT — read this first after any context loss (updated 2026-11-16 ~12:30)
+## CHECKPOINT — read this first after any context loss (updated 2026-11-16 ~13:00)
 
 Then read `git log --oneline -30 backend-remastered` and the Merge log below before acting.
 
@@ -11,19 +11,25 @@ C2 (config + black-box rework), C3 (calibration), C5/C5b (pipeline, all board ty
 C4/C4b/C4L (sequencer + destination boards + load), H1 (abort-thresholds harness fix), and the harness:
 gate, stack lock (priority, ownerless takeover, portable mtime, `--status`), bounded ctest retry
 (D31), leftover-process + port check (D33), Linux leg with full-tree export, per-Dockerfile image tag,
-`--areas` (D36), load guard (D27). Tip: 18a4b519 (docs-only on top of b2599617; queue/C1 pending). Pushed to origin.
+`--areas` (D36), load guard (D27). Tip: 85a02f9a (docs-only on top of b2599617; queue/C1 + H2 pending). Pushed to origin.
 
 **In flight (next step for each):**
 
 | item | branch / worktree | state | next step |
 |---|---|---|---|
-| C1 packets (+ CHAR_EMULATED, D37 sleep-void, D38 timeouts) | `queue/C1` (86f87bca) in `.claude/worktrees/remaster` | macOS `--fast` PASS (11:46). Linux arm64: all ok except integration, PT2_Cal.CH1 missing 2/2 (D41) | bisect D41 (integration alone ×3 on C1, then the tip); on resolution ff, log, push; then merge backend-remastered's docs commits into the next queue item |
-| stress pass (D27) | — | not started | after C1: every area under 1× load (`yes` × 14 inside one lock hold, `CHAR_UNDER_LOAD=1` for pipeline), list any golden that moves |
+| C1 packets (+ CHAR_EMULATED, D37 sleep-void, D38 timeouts) | `queue/C1` (86f87bca) in `.claude/worktrees/remaster` | macOS `--fast` PASS (11:46, no sleep). Linux arm64: all ok except integration (PT2_Cal.CH1), root-caused D41 = main's harness, reproduced on the tip (×3: 166/167/167) | wait for H2; stack H2 on queue/C1; full arm64 Linux leg on the stack; ff both; log two rows (D19/D25); push |
+| H2 harness fix (D41) | `fix/H2-startup-board-slot` in `.claude/worktrees/inv-pt2ch1`, agent a7939e890e34bd93b | implementing: startup board to a free slot, integration fails on `[Config] ERROR` (mutation: board 60 → red) | Linux integration alone ×5 (PT2_Cal.CH1 5/5), macOS ×2, keeps service logs for OI-1 |
+| stress pass (D27) | — | not started | after C1+H2: every area under 1× load (`yes` × 14 inside one lock hold, `CHAR_UNDER_LOAD=1` for pipeline), list any golden that moves |
 | tag candidate | — | not started | full gate (with integration), Linux arm64 full + `--amd64`, CI dispatch (`gh workflow run daq-server-ci.yml --ref backend-remastered`, judge format job per D24, timing tests per D34), then `git tag remaster-baseline`, add the golden/frontend-test diff gate step (D12a), push tag? — **tags: push only if the user asks; branch push is authorised (D1)** |
 | tsc gate step (D40) | — | not started | own harness queue item after C1, with mutation |
 | design notes WP6–WP10 | merged (D39) | reviewed, revised | must-close-first gaps are C0 test-only work before each step (lists in each note) |
 | WP1 (tracked junk, 6101 files) | `wp/WP1-junk` (10ced66a), evidence `WP1-EVIDENCE.md` | ready | queue after the tag; full gate + Linux leg |
 | WP2 (37 dead C++ files) | `wp/WP2-dead-cpp` (4cc0b2e4), evidence `WP2-EVIDENCE.md` | ready; keeps 14 headers C1's comms_messages.cpp includes (WP3 must keep ControlMessages.hpp or change C0's test) | queue after WP1 |
+| design deepening (relayed user request, D17) | `design/style` (STYLE.md), `design/ts2` (WP5-7), `design/cpp2` (WP3, WP8-10) | agents writing: alternatives, interface stubs, walkthroughs | review, merge as docs; then Fable debates |
+| research (5 briefs) | `research/{teststand-architecture,abort-statemachines,cpp-service-plumbing,node-realtime-backend,subscription-robustness}` | agents writing | merge as docs; feed debates; behaviour-changing ideas = team proposals |
+| Fable debates | `docs/remaster/debates/WP<n>/` | waits on alternatives + research | WP6, WP10, STYLE error-handling first: 3 advocates, 2-3 rebuttal rounds, separate judge, DESIGN note updated, then adversarial simplicity rounds until no change |
+
+**Design work never takes the stack lock; the tag path has it.** OI-1 (T7/ENV25 calibration stall) stays open: if it reappears in the stress pass or tag gates, investigate, do not retry past it.
 
 Finished characterization agents (idle, resumable by ID for follow-ups): config a7914367a1c4a926a,
 packets a8e7fa24dc102066b, calibration aaaf2cc5c24c84367, sequencer a2460b6ec7ac10557, pipeline
