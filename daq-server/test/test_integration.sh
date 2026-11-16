@@ -1100,6 +1100,32 @@ echo "  All services running. Starting tests..."
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 
+# ── The stack's config is one the services accept without error ──────────────────────────────
+# The C++ config loader reports a config it cannot honour (two boards on one slot, a board_id whose
+# slot the packet id cannot encode, a bad pt_type) as "[Config] ERROR" on stderr and then carries on.
+# A board_id 60 here once did exactly that: it was logged on every run and nothing failed, while its
+# channel silently aliased pt_board_2 CH1. The services running the generated test config must
+# therefore print none. integration_badpwm_*.log is left out: it is a deliberately broken config.
+# Checked here, once every service has loaded the config and before the WS test, because a failing
+# WS test ends the script under set -e and this line must be reported either way.
+CONFIG_ERROR_FAILED=0
+CONFIG_ERROR_LINES=""
+for svc_log in daq calibration sequencer controller heartbeat config_broadcast t7 backend; do
+  f="$REPO_ROOT/.tmp/integration_${svc_log}_$$.log"
+  [ -f "$f" ] || continue
+  hits=$(grep -F "[Config] ERROR" "$f" 2>/dev/null | sort -u || true)  # set -e + pipefail: no match is fine
+  if [ -n "$hits" ]; then
+    CONFIG_ERROR_LINES="${CONFIG_ERROR_LINES}    ${svc_log}: ${hits}"$'\n'
+  fi
+done
+if [ -n "$CONFIG_ERROR_LINES" ]; then
+  CONFIG_ERROR_FAILED=1
+  echo "  ❌ Service config errors on the test config:"
+  printf '%s' "$CONFIG_ERROR_LINES"
+else
+  echo "  ✅ No [Config] ERROR from any service on the test config"
+fi
+
 # ── Run WebSocket Data Flow Test ──────────────────────────────────────────────
 
 VERBOSE_FLAG=""
@@ -1171,6 +1197,7 @@ FINAL_EXIT=0
 UDP_CHECK_FAILED=${UDP_CHECK_FAILED:-0}
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
 [ "$UDP_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
+[ "$CONFIG_ERROR_FAILED" -ne 0 ] && FINAL_EXIT=1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -1180,6 +1207,7 @@ else
   echo "  ❌ INTEGRATION TEST FAILED"
   [ "$WS_TEST_EXIT" -ne 0 ] && echo "     WS test failed (exit code: $WS_TEST_EXIT)"
   [ "$UDP_CHECK_FAILED" -ne 0 ] && echo "     UDP test failed (0 or dropped packets)"
+  [ "$CONFIG_ERROR_FAILED" -ne 0 ] && echo "     A service reported [Config] ERROR on the test config"
 fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
