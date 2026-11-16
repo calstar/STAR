@@ -169,7 +169,7 @@ is read during evaluation — exactly the startup-order failure this split must 
 `env`. `commands` → `ws-clients`, `engine-state`, `mission-time`, `history`, `calibration-state`,
 `elodin-link`, `sequencer-client` (`handleCommand` sends four of the five :9998 lines; an abort
 is a `state_transition` and passes the same control gate, frozen in `ws_events.txt`).
-`ws-connection` → everything above. **`server/*` never imports `api-server.ts` or `api/*`, and
+`ws-connection` → everything above except `ingest`. **`server/*` never imports `api-server.ts` or `api/*`, and
 they never import `server/*`** (STYLE-S31): the HTTP side reaches the WS side only through the
 `createAPIHandler` options, which `server.ts` builds.
 
@@ -652,6 +652,9 @@ own scripts (§6.3, D48(3)).
 ---
 
 ## 8. Risks
+
+(Numbering kept; the reviewed R2 (cycles) and R6 (live bindings) are folded into §6.3 item 3 and
+R1.)
 
 - **R1 Shared state.** Single ownership (§1.1), setters checked by `tsc` (§6.2), cross-module
   `Map`/`Set` mutation verbatim until step 2. `calibrationHost` must be built after the PT load
