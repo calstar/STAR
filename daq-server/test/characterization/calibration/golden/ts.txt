@@ -1,0 +1,1405 @@
+
+== calibration.ts validateCalibrationCoefficients / calculatePressure ==
+zero valid(default) = true
+zero valid([0,16777216]) = true
+zero psi = [0,0,0,0,0,0,0,0,0,0,0,0,"<NaN>","<NaN>"]
+linearRaw valid(default) = true
+linearRaw valid([0,16777216]) = true
+linearRaw psi = [-214.75,-214.749999,-214.750001,-0.0016350000000215914,-213.75,-197.972784,185.25,858.991824,1932.733647,3785.25,4085.25,-2362.233648,"<NaN>","<NaN>"]
+cubicRaw valid(default) = true
+cubicRaw valid([0,16777216]) = true
+cubicRaw psi = [-124,-123.99999942,-124.00000058,0.47172149980158906,-123.420001999,-114.26977294758694,107.74399999999997,497.7023549500716,1122.220663532183,2228,2412.527,-1388.6674081911376,"<NaN>","<NaN>"]
+bigA valid(default) = false
+bigA valid([0,16777216]) = false
+bigA psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
+diverges valid(default) = false
+diverges valid([0,16777216]) = false
+diverges psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
+normCubic valid(default) = true
+normCubic valid([0,16777216]) = true
+normCubic psi = [-362.90809327846364,-362.9080920718793,-362.908094485048,-101.96618647408035,-361.70146777091907,-342.65341586959,125.8710562414266,971.6066575201351,2350.0680313071784,4682.908093278464,5040.99451303155,-2696.3215838910332,"<NaN>","<NaN>"]
+normZeroScale valid(default) = true
+normZeroScale valid([0,16777216]) = true
+normZeroScale psi = [0,0.000001,-0.000001,214.74836499999998,1,16.777216,400,1073.741824,2147.483647,4000,4300,-2147.483648,"<NaN>","<NaN>"]
+polyNorm valid(default) = true
+polyNorm valid([0,16777216]) = true
+polyNorm psi = [-362.9080932784637,-362.9080920718793,-362.90809448504797,-101.96618647408033,-361.70146777091907,-342.65341586959005,125.8710562414266,971.6066575201352,2350.0680313071784,4682.908093278464,5040.994513031551,-2696.3215838910332,"<NaN>","<NaN>"]
+polyNormWild valid(default) = false
+polyNormWild valid([0,16777216]) = false
+polyNormWild psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
+polyRaw valid(default) = true
+polyRaw valid([0,16777216]) = true
+polyRaw psi = [-100,-99.999999,-100.000001,114.74836499999998,-99,-83.222784,300,973.741824,2047.483647,3900,4200,-2247.483648,"<NaN>","<NaN>"]
+polyNaN valid(default) = false
+polyNaN valid([0,16777216]) = false
+polyNaN psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
+polyEmpty valid(default) = true
+polyEmpty valid([0,16777216]) = true
+polyEmpty psi = [1,1.000001,0.999999,215.74836499999998,2,17.777216,401,1074.741824,2148.483647,4001,4301,-2146.483648,"<NaN>","<NaN>"]
+nonFinite valid(default) = false
+nonFinite valid([0,16777216]) = false
+nonFinite psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
+negOut valid(default) = false
+negOut valid([0,16777216]) = true
+negOut psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
+
+== calibration.ts inversePressureToAdc ==
+linear24 inv = ["<NaN>",0,1000000,1004000,1050000,2000000,5000000,11000000,16777216,"<NaN>",16777216]
+cubic24 inv = ["<NaN>","<NaN>",845137,851995,930978,2610624,8635549,"<NaN>","<NaN>","<NaN>",16777216]
+decreasing inv = ["<NaN>","<NaN>",16000000,15996000,15950000,15000000,12000000,6000000,222784,"<NaN>",16777216]
+flat inv = ["<NaN>","<NaN>","<NaN>","<NaN>",8388608,"<NaN>","<NaN>","<NaN>","<NaN>","<NaN>",16777216]
+rawCubic inv = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>",16777216]
+
+== calibration.ts loadPTCalibration ==
+ts_fill.json filePath = "<TMP>/pt_ts_fill.json"
+ts_fill.json map = [[1,{"A":1e-27,"B":-2e-18,"C":5.8e-7,"D":-124}],[2,{"A":1.1e-27,"B":-2.1e-18,"C":5.82e-7,"D":-125}],[3,{"A":9e-28,"B":-1.9e-18,"C":5.81e-7,"D":-124.5}],[4,{"A":1e-27,"B":-2e-18,"C":5.83e-7,"D":-125.5}],[6,{"A":1.05e-27,"B":-2.05e-18,"C":5.79e-7,"D":-123.5}],[7,{"A":5e-25,"B":3e-15,"C":0.000009,"D":400}],[8,{"A":9.77734656920985e-28,"B":-1.919474986438215e-18,"C":5.814621519238273e-7,"D":-123.79560903399144}],[9,{"A":9.984387975327728e-28,"B":-2.1218981333670018e-18,"C":5.798694823246823e-7,"D":-123.35807651960671}],[10,{"A":1.0036562649465718e-27,"B":-2.0886088596588686e-18,"C":5.810184622304533e-7,"D":-125.27908787318393}],[11,{"A":0,"B":0,"C":1e-8,"D":0}],[12,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-120,1100,30,-5],"adcNormMin":200000000,"adcNormScale":900000000}],[14,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[10,20],"adcNormMin":0,"adcNormScale":1000000}]]
+  ts_fill.json ch 1 psi = [0.47172149980158906,249.0994460857014,497.7023549500716]
+  ts_fill.json ch 2 psi = [-0.10240310419121101,249.37317060438585,498.85834045153956]
+  ts_fill.json ch 3 psi = [0.19009119879443404,249.25845684901702,498.26759492060387]
+  ts_fill.json ch 4 psi = [-0.3840334051984087,249.5321813677014,499.4235804220716]
+  ts_fill.json ch 6 psi = [0.7551624678051923,248.94781815704368,497.13286405280564]
+  ts_fill.json ch 7 psi = ["<NaN>","<NaN>","<NaN>"]
+  ts_fill.json ch 8 psi = [0.9936002563542559,250.27328965992174,499.54199544984385]
+  ts_fill.json ch 9 psi = [1.07997950223276,249.60627270378632,498.0616644893313]
+  ts_fill.json ch 10 psi = [-0.592703427083535,248.44069791357003,497.419199746862]
+  ts_fill.json ch 11 psi = [2.14748365,6.4424509400000005,10.73741824]
+  ts_fill.json ch 12 psi = [-101.96618647408033,429.67429585288636,971.6066575201352]
+  ts_fill.json ch 14 psi = [4304.9673,12894.90188,21484.836479999998]
+gui_pt_calibration.json filePath = "<TMP>/pt_gui_pt_calibration.json"
+gui_pt_calibration.json map = [[101,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-0.39787479146300453,954.4969902395802,-9.975424323357409,40.89526936932684],"adcNormMin":243631936,"adcNormScale":1655525661}],[102,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-0.8467227299794714,966.6812202172131,27.570013147742536,-4.923363988834175],"adcNormMin":227271534,"adcNormScale":1694883670}],[103,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-1.2006443282406485,973.9964621940605,-10.509014782108991,26.273897221712023],"adcNormMin":227849356,"adcNormScale":1683398690}],[104,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-4.777417335753107,1079.9748562244172,-1915.1758181756172,1617.7563098863973],"adcNormMin":211610318,"adcNormScale":1911724898}],[105,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-1.151650304150204,966.5060717177354,7.006442618913653,16.556863155404525],"adcNormMin":243569905,"adcNormScale":1682084599}],[106,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-0.9135130227428291,965.080328136295,-2.0323920205992465,26.863536720458143],"adcNormMin":257955462,"adcNormScale":1689416269}],[107,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-0.5551911233692589,966.1262850972694,4.987105835569494,-12.811962],"adcNormMin":214268841,"adcNormScale":1684817961}],[1101,{"A":0,"B":0,"C":1e-8,"D":0}],[1103,{"A":0,"B":0,"C":1e-8,"D":0}],[1104,{"A":0,"B":0,"C":1e-8,"D":0}]]
+  gui_pt_calibration.json ch 101 psi = [-17.054015283346185,230.571882361737,480.85131847726626]
+  gui_pt_calibration.json ch 102 psi = [-7.987836925216947,238.5705834500527,488.2031665256242]
+  gui_pt_calibration.json ch 103 psi = [-8.78138636345428,239.47612072953092,488.90375306757375]
+  gui_pt_calibration.json ch 104 psi = [-3.0098196939530775,160.29277344071676,241.13555837772276]
+  gui_pt_calibration.json ch 105 psi = [-17.710195253503176,229.6929321050674,479.5524092462313]
+  gui_pt_calibration.json ch 106 psi = [-25.59737878460549,219.96961376246827,467.655867490816]
+  gui_pt_calibration.json ch 107 psi = [-0.2802169531031102,246.11823341680957,491.8899711503762]
+  gui_pt_calibration.json ch 1101 psi = [2.14748365,6.4424509400000005,10.73741824]
+  gui_pt_calibration.json ch 1103 psi = [2.14748365,6.4424509400000005,10.73741824]
+  gui_pt_calibration.json ch 1104 psi = [2.14748365,6.4424509400000005,10.73741824]
+profiles/restored-sep05.json filePath = "<TMP>/pt_restored-sep05.json"
+profiles/restored-sep05.json map = [[2,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[257.04376570014495,512.4782826560757,11.496535664744025,-39.73085251379725],"adcNormMin":706461387.6302084,"adcNormScale":860068972.046875}],[3,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[230.07799699768304,488.3144270242733,-11.143244029364073,59.16328594318461],"adcNormMin":618715876.7756697,"adcNormScale":870437145.7734375}],[11,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[227.55418457149202,508.6426853937093,9.818215070147435,-32.59103632245569],"adcNormMin":489696551.1629464,"adcNormScale":166212264.78125}],[13,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[256.3866033478879,510.73487177920856,7.3956295929398825,-33.76083091116416],"adcNormMin":498706788.21875,"adcNormScale":165743768.2734375}],[14,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[232.42796988927824,510.0160594517714,12.837239118686318,-34.81477869819433],"adcNormMin":491031395.08928573,"adcNormScale":166056566.3984375}]]
+  profiles/restored-sep05.json ch 2 psi = [-24.764829170996023,220.04693954295428,474.8929528020355]
+  profiles/restored-sep05.json ch 3 psi = [-4.861475567821824,244.3917712491366,490.7537625790748]
+  profiles/restored-sep05.json ch 11 psi = [-439.45217904510343,682.7920113778916,722.0791768028444]
+  profiles/restored-sep05.json ch 13 psi = [-427.1440761507399,687.7035184806584,707.4742705054243]
+  profiles/restored-sep05.json ch 14 psi = [-420.24901676856985,686.5819274808105,675.8379299379662]
+
+== calibration-handler.ts ==
+elodin capture_reference ok = ["publish [46,0] c054b1ed301e62180100350800807a43","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_reference no ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_reference requires sensorId and a numeric referencePressure (PSI)\"}}"]
+elodin capture_reference bad ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_reference requires sensorId and a numeric referencePressure (PSI)\"}}"]
+elodin capture_reference not active = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 9 on Board 21 is not a valid PT/LC channel\"}}"]
+elodin capture_reference uid form = ["publish [46,0] c054b1ed301e6218010069100000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_cubic_point = ["publish [46,0] c054b1ed301e621803009b0800409c44","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_cubic_point bad = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_cubic_point requires sensorId and a numeric referencePressure (PSI)\"}}"]
+elodin clear_cubic_channel = ["publish [46,0] c054b1ed301e62180400370800000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin clear_cubic_channel none = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"clear_cubic_channel requires sensorId and boardId\"}}"]
+elodin tare_lc one = ["publish [46,0] c054b1ed301e62180800691000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin tare_lc all = ["publish [46,0] c054b1ed301e62180800000000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin clear_tare_lc one = ["publish [46,0] c054b1ed301e621808006e100000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin clear_tare_lc all zero = ["publish [46,0] c054b1ed301e6218080000000000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin tare_lc unknown = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Unknown channel for tare_lc: CH5 on board 42\"}}"]
+elodin tare_lc t7 = ["publish [46,0] c054b1ed301e62180800a81f00000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_point = ["publish [46,0] c054b1ed301e62180500aa1f000050c0","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_point big ref = ["publish [46,0] c054b1ed301e6218050035080000807f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_point not active = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 2 on Board 81 is not a valid PT/LC channel\"}}"]
+elodin new_calibration = ["publish [46,0] c054b1ed301e621806006a1000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin new_calibration none = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"new_calibration requires sensorId and boardId\"}}"]
+elodin enable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin disable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin reset_channel = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"reset_channel is not supported from the GUI; edit adjustments on disk or restart calibration_service.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin zero_all = ["publish [46,0] c054b1ed301e62180000000000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin clear_calibration = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+  host after clear_calibration = {"pt":{"<Map>":[[2101,{"A":0,"B":0,"C":1e-8,"D":0}],[2102,{"A":0,"B":0,"C":1e-8,"D":0}],[2103,{"A":0,"B":0,"C":1e-8,"D":0}],[2104,{"A":0,"B":0,"C":1e-8,"D":0}],[2105,{"A":0,"B":0,"C":1e-8,"D":0}],[2201,{"A":0,"B":0,"C":1e-8,"D":0}],[2202,{"A":0,"B":0,"C":1e-8,"D":0}],[2203,{"A":0,"B":0,"C":1e-8,"D":0}],[2204,{"A":0,"B":0,"C":1e-8,"D":0}],[4201,{"A":0,"B":0,"C":1e-8,"D":0}],[4202,{"A":0,"B":0,"C":1e-8,"D":0}],[4206,{"A":0,"B":0,"C":1e-8,"D":0}],[8101,{"A":0,"B":0,"C":1e-8,"D":0}],[8104,{"A":0,"B":0,"C":1e-8,"D":0}],[8106,{"A":0,"B":0,"C":1e-8,"D":0}]]},"points":{"<Map>":[]},"raw":{"<Map>":[]}}
+elodin unknown = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin null payload = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin capture_reference ok = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — start calibration_service and DB; cannot forward capture_reference.\"}}"]
+no-elodin capture_reference no ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_reference requires sensorId and a numeric referencePressure (PSI)\"}}"]
+no-elodin capture_reference bad ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_reference requires sensorId and a numeric referencePressure (PSI)\"}}"]
+no-elodin capture_reference not active = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 9 on Board 21 is not a valid PT/LC channel\"}}"]
+no-elodin capture_reference uid form = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — start calibration_service and DB; cannot forward capture_reference.\"}}"]
+no-elodin capture_cubic_point = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — start calibration_service and DB; cannot forward capture_cubic_point.\"}}"]
+no-elodin capture_cubic_point bad = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_cubic_point requires sensorId and a numeric referencePressure (PSI)\"}}"]
+no-elodin clear_cubic_channel = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — cannot forward clear_cubic_channel.\"}}"]
+no-elodin clear_cubic_channel none = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"clear_cubic_channel requires sensorId and boardId\"}}"]
+no-elodin tare_lc one = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — cannot forward tare_lc.\"}}"]
+no-elodin tare_lc all = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — cannot forward tare_lc.\"}}"]
+no-elodin clear_tare_lc one = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — cannot forward clear_tare_lc.\"}}"]
+no-elodin clear_tare_lc all zero = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — cannot forward clear_tare_lc.\"}}"]
+no-elodin tare_lc unknown = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Unknown channel for tare_lc: CH5 on board 42\"}}"]
+no-elodin tare_lc t7 = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — cannot forward tare_lc.\"}}"]
+no-elodin capture_point = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — start calibration_service and DB; cannot forward capture_point.\"}}"]
+no-elodin capture_point big ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — start calibration_service and DB; cannot forward capture_point.\"}}"]
+no-elodin capture_point not active = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 2 on Board 81 is not a valid PT/LC channel\"}}"]
+no-elodin new_calibration = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — cannot forward new_calibration.\"}}"]
+no-elodin new_calibration none = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"new_calibration requires sensorId and boardId\"}}"]
+no-elodin enable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin disable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin reset_channel = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"reset_channel is not supported from the GUI; edit adjustments on disk or restart calibration_service.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin zero_all = ["broadcast {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"ZERO ALL failed: Elodin not connected. Start calibration_service and the database.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin clear_calibration = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+  host after clear_calibration = {"pt":{"<Map>":[[2101,{"A":0,"B":0,"C":1e-8,"D":0}],[2102,{"A":0,"B":0,"C":1e-8,"D":0}],[2103,{"A":0,"B":0,"C":1e-8,"D":0}],[2104,{"A":0,"B":0,"C":1e-8,"D":0}],[2105,{"A":0,"B":0,"C":1e-8,"D":0}],[2201,{"A":0,"B":0,"C":1e-8,"D":0}],[2202,{"A":0,"B":0,"C":1e-8,"D":0}],[2203,{"A":0,"B":0,"C":1e-8,"D":0}],[2204,{"A":0,"B":0,"C":1e-8,"D":0}],[4201,{"A":0,"B":0,"C":1e-8,"D":0}],[4202,{"A":0,"B":0,"C":1e-8,"D":0}],[4206,{"A":0,"B":0,"C":1e-8,"D":0}],[8101,{"A":0,"B":0,"C":1e-8,"D":0}],[8104,{"A":0,"B":0,"C":1e-8,"D":0}],[8106,{"A":0,"B":0,"C":1e-8,"D":0}]]},"points":{"<Map>":[]},"raw":{"<Map>":[]}}
+no-elodin unknown = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin null payload = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+publishCalibrationReload + publishClearAllTares = ["publish [46,0] c054b1ed301e62180700000000000000","publish [46,0] c054b1ed301e6218080000000000803f"]
+publish without elodin = []
+fallback board maps sensor 1 = "publish [46,0] c054b1ed301e6218050035080000803f"
+fallback board maps sensor 3 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 3 on Board 21 is not a valid PT/LC channel\"}}"
+fallback board maps sensor 4 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 4 on Board 21 is not a valid PT/LC channel\"}}"
+fallback board maps sensor 7 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 7 on Board 21 is not a valid PT/LC channel\"}}"
+fallback board maps sensor 10 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 10 on Board 21 is not a valid PT/LC channel\"}}"
+fallback board maps sensor 11 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 11 on Board 21 is not a valid PT/LC channel\"}}"
+fallback channel map sensor 1 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 1 on Board 1 is not a valid PT/LC channel\"}}"
+fallback channel map sensor 3 = "publish [46,0] c054b1ed301e6218050067000000803f"
+fallback channel map sensor 4 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 4 on Board 1 is not a valid PT/LC channel\"}}"
+fallback channel map sensor 7 = "publish [46,0] c054b1ed301e621805006b000000803f"
+fallback channel map sensor 10 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 10 on Board 1 is not a valid PT/LC channel\"}}"
+fallback channel map sensor 11 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 11 on Board 1 is not a valid PT/LC channel\"}}"
+fallback nothing sensor 1 = "publish [46,0] c054b1ed301e6218050065000000803f"
+fallback nothing sensor 3 = "publish [46,0] c054b1ed301e6218050067000000803f"
+fallback nothing sensor 4 = "publish [46,0] c054b1ed301e6218050068000000803f"
+fallback nothing sensor 7 = "publish [46,0] c054b1ed301e621805006b000000803f"
+fallback nothing sensor 10 = "publish [46,0] c054b1ed301e621805006e000000803f"
+fallback nothing sensor 11 = "send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 11 on Board 1 is not a valid PT/LC channel\"}}"
+unreadable config, channel 105 = "publish [46,0] c054b1ed301e6218050069000000803f"
+
+== lc-tare.ts ==
+tarePath = "<TMP>/calibrations/lc_tare.json"
+COMPONENT_TARED = "force_kg_tared"
+absent: map = {"<Map>":[]}
+absent: expand = [{"entity":"LC2_Cal.CH1","component":"force_kg","value":30.5,"timestamp":1},{"entity":"LC2_Cal.CH1","component":"raw_adc","value":123,"timestamp":1},{"entity":"LC2_Cal.CH6","component":"force_kg","value":-2,"timestamp":2},{"entity":"T71_Cal.AIN4","component":"force_kg","value":125,"timestamp":3},{"entity":"LC9_Cal.CH9","component":"force_kg","value":7,"timestamp":4},{"entity":"LC2_Cal.CH1","component":"force_kg","value":"<NaN>","timestamp":5},{"entity":"LC2_Cal.CH1","component":"force_kg_tared","value":30.5,"timestamp":1},{"entity":"LC2_Cal.CH6","component":"force_kg_tared","value":-2,"timestamp":2},{"entity":"T71_Cal.AIN4","component":"force_kg_tared","value":125,"timestamp":3},{"entity":"LC9_Cal.CH9","component":"force_kg_tared","value":7,"timestamp":4}]
+fixture: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}],["ignored",{"uid":0,"offsetKg":1,"adcAtTare":1,"setAtMs":1}]]}
+fixture: offsets = [17.5,0,1.25,0,1]
+fixture: expand = [{"entity":"LC2_Cal.CH1","component":"force_kg","value":30.5,"timestamp":1},{"entity":"LC2_Cal.CH1","component":"raw_adc","value":123,"timestamp":1},{"entity":"LC2_Cal.CH6","component":"force_kg","value":-2,"timestamp":2},{"entity":"T71_Cal.AIN4","component":"force_kg","value":125,"timestamp":3},{"entity":"LC9_Cal.CH9","component":"force_kg","value":7,"timestamp":4},{"entity":"LC2_Cal.CH1","component":"force_kg","value":"<NaN>","timestamp":5},{"entity":"LC2_Cal.CH1","component":"force_kg_tared","value":13,"timestamp":1},{"entity":"LC2_Cal.CH6","component":"force_kg_tared","value":-2,"timestamp":2},{"entity":"T71_Cal.AIN4","component":"force_kg_tared","value":123.75,"timestamp":3},{"entity":"LC9_Cal.CH9","component":"force_kg_tared","value":7,"timestamp":4}]
+fixture: current = [{"entity":"LC2_Cal.CH1","uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000},{"entity":"LC2_Cal.CH6","uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000},{"entity":"T71_Cal.AIN4","uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000},{"entity":"ignored","uid":0,"offsetKg":1,"adcAtTare":1,"setAtMs":1}]
+no force rows: expand returns same array = true
+changed: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}],["LC3_Cal.CH2",{"uid":0,"offsetKg":2.5,"adcAtTare":0,"setAtMs":0}]]}
+torn: map (held) = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}],["LC3_Cal.CH2",{"uid":0,"offsetKg":2.5,"adcAtTare":0,"setAtMs":0}]]}
+no tares array: map (held) = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}],["LC3_Cal.CH2",{"uid":0,"offsetKg":2.5,"adcAtTare":0,"setAtMs":0}]]}
+removed: map = {"<Map>":[]}
+rewritten: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}],["ignored",{"uid":0,"offsetKg":1,"adcAtTare":1,"setAtMs":1}]]}
+clearTareFile: exists = false
+after clearTareFile: map = {"<Map>":[]}
+--- run lc_tare.jsonl ---
+{"entity":"LC2_Cal.CH1","uid":4201,"event":"set","offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000,"appliedAtMs":1757000000123}
+{"entity":"LC2_Cal.CH6","uid":4206,"event":"set","offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000,"appliedAtMs":1757000000123}
+{"entity":"T71_Cal.AIN4","uid":8104,"event":"set","offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000,"appliedAtMs":1757000000123}
+{"entity":"ignored","uid":0,"event":"set","offsetKg":1,"adcAtTare":1,"setAtMs":1,"appliedAtMs":1757000000123}
+{"entity":"LC2_Cal.CH1","uid":4201,"event":"recal","offsetKg":20,"adcAtTare":1100000,"setAtMs":5,"appliedAtMs":1757000000123}
+{"entity":"LC2_Cal.CH6","uid":4206,"event":"set","offsetKg":1,"adcAtTare":4100000,"setAtMs":6,"appliedAtMs":1757000000123}
+{"entity":"LC3_Cal.CH2","uid":0,"event":"set","offsetKg":2.5,"adcAtTare":0,"setAtMs":0,"appliedAtMs":1757000000123}
+{"entity":"T71_Cal.AIN4","uid":8104,"event":"clear","offsetKg":0,"adcAtTare":2500,"setAtMs":1757000022000,"appliedAtMs":1757000000123}
+{"entity":"ignored","uid":0,"event":"clear","offsetKg":0,"adcAtTare":1,"setAtMs":1,"appliedAtMs":1757000000123}
+{"entity":"LC2_Cal.CH1","uid":4201,"event":"clear","offsetKg":0,"adcAtTare":1100000,"setAtMs":5,"appliedAtMs":1757000000123}
+{"entity":"LC2_Cal.CH6","uid":4206,"event":"clear","offsetKg":0,"adcAtTare":4100000,"setAtMs":6,"appliedAtMs":1757000000123}
+{"entity":"LC3_Cal.CH2","uid":0,"event":"clear","offsetKg":0,"adcAtTare":0,"setAtMs":0,"appliedAtMs":1757000000123}
+{"entity":"LC2_Cal.CH1","uid":4201,"event":"set","offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000,"appliedAtMs":1757000000123}
+{"entity":"LC2_Cal.CH6","uid":4206,"event":"set","offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000,"appliedAtMs":1757000000123}
+{"entity":"T71_Cal.AIN4","uid":8104,"event":"set","offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000,"appliedAtMs":1757000000123}
+{"entity":"ignored","uid":0,"event":"set","offsetKg":1,"adcAtTare":1,"setAtMs":1,"appliedAtMs":1757000000123}
+
+--- end run lc_tare.jsonl ---
+no run dir: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}],["ignored",{"uid":0,"offsetKg":1,"adcAtTare":1,"setAtMs":1}]]}
+no run dir: jsonl unchanged lines = 17
+
+== ball-valve-cal.ts ==
+constants = [496,2482,100,1000,3]
+ballValveCalPath = "<TMP>/calibrations/ball_valve_endpoints.json"
+percentOpen ideal = [0,0,0,1.2084592145015105,25.377643504531722,27.895266868076536,50,75.73011077542799,95.87109768378652,100,100,0,"<NaN>","<NaN>"]
+percentOpen closed only = [0,0,0,0,21.253985122210413,23.910733262486715,47.23698193411265,74.38894792773645,95.64293304994686,100,100,0,"<NaN>","<NaN>"]
+percentOpen open only = [0,0,0,1.5957446808510638,33.51063829787234,36.83510638297872,66.02393617021278,100,100,100,100,0,"<NaN>","<NaN>"]
+percentOpen both = [0,0,0,0,25.53191489361702,28.191489361702125,51.54255319148936,78.72340425531915,100,100,100,0,"<NaN>","<NaN>"]
+percentOpen reversed = [100,100,100,100,74.46808510638297,71.80851063829788,48.45744680851064,21.27659574468085,0,0,0,100,"<NaN>","<NaN>"]
+percentOpen narrow = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
+percentOpen exact span = [0,0,0,0,0,50,100,100,100,100,100,0,"<NaN>","<NaN>"]
+parseEndpointsFile = {"<Map>":[["BV1_Cal.CH1",{"closedCounts":500,"closedAtMs":1,"openCounts":2470,"openAtMs":2}],["BV1_Cal.CH2",{"openCounts":2400,"openAtMs":"<undefined>"}],["BV2_Cal.CH10",{"closedCounts":480.5,"closedAtMs":"n"}]]}
+parseEndpointsFile(garbage) THREW = "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+parseEndpointsFile(empty obj) = {"<Map>":[]}
+apply, no endpoints = [{"entity":"BV1_Cal.CH1","component":"position_pct","value":6.5,"timestamp":1},{"entity":"BV1_Cal.CH1","component":"raw_adc","value":600,"timestamp":1},{"entity":"BV1_Cal.CH1","component":"cal_status","value":1,"timestamp":1}]
+capture closed, one sample = {"ok":false,"error":"No live position from this valve in the last second. Is a session running?"}
+capture closed = {"ok":true,"endpoints":{"closedCounts":602,"closedAtMs":1757000000500}}
+capture open too close = {"ok":false,"error":"This reads 621 counts, within 100 of the stored fully closed reading (602). Is the valve actually open?"}
+capture open = {"ok":true,"endpoints":{"closedCounts":602,"closedAtMs":1757000000500,"openCounts":2391,"openAtMs":1757000002100}}
+apply with endpoints = [{"entity":"BV1_Cal.CH1","component":"position_pct","value":50.19564002235886,"timestamp":1},{"entity":"BV1_Cal.CH1","component":"raw_adc","value":1500,"timestamp":1},{"entity":"BV1_Cal.CH1","component":"cal_status","value":1,"timestamp":1}]
+apply no signal = [{"entity":"BV1_Cal.CH1","component":"position_pct","value":0,"timestamp":1},{"entity":"BV1_Cal.CH1","component":"raw_adc","value":10,"timestamp":1},{"entity":"BV1_Cal.CH1","component":"cal_status","value":2,"timestamp":1}]
+capture while no signal in window = {"ok":false,"error":"The position loop reads below 2 mA (no signal). Check the valve power and feedback wiring."}
+apply other entity, raw missing = [{"entity":"BV1_Cal.CH2","component":"position_pct","value":3,"timestamp":1}]
+apply non-BV = [{"entity":"PT1_Cal.CH1","component":"position_pct","value":50,"timestamp":1},{"entity":"PT1_Cal.CH1","component":"raw_adc","value":1500,"timestamp":1},{"entity":"PT1_Cal.CH1","component":"cal_status","value":1,"timestamp":1}]
+capture bad entity = {"ok":false,"error":"PT1_Cal.CH1 is not a ball valve channel"}
+snapshot = [{"entity":"BV1_Cal.CH1","endpoints":{"closedCounts":602,"closedAtMs":1757000000500,"openCounts":2391,"openAtMs":1757000002100},"liveCounts":2094,"noSignal":true}]
+snapshot later (window empty) = [{"entity":"BV1_Cal.CH1","endpoints":{"closedCounts":602,"closedAtMs":1757000000500,"openCounts":2391,"openAtMs":1757000002100},"liveCounts":null,"noSignal":false}]
+--- ball_valve_endpoints.json ---
+{
+  "valves": {
+    "BV1_Cal.CH1": {
+      "closed_counts": 602,
+      "closed_at_ms": 1757000000500,
+      "open_counts": 2391,
+      "open_at_ms": 1757000002100
+    }
+  }
+}
+
+--- end ball_valve_endpoints.json ---
+--- ball_valve_endpoints.json after clear ---
+{
+  "valves": {}
+}
+
+--- end ball_valve_endpoints.json after clear ---
+loadEndpoints = {"<Map>":[]}
+
+== routes/calibration-profiles.ts ==
+assertValidProfileName("default")
+assertValidProfileName("restored-sep05")
+assertValidProfileName("a")
+assertValidProfileName("A_b-9")
+assertValidProfileName("-x") THREW = "Invalid profile name \"-x\" (use letters, digits, _ or -, max 64 chars)"
+assertValidProfileName("_x") THREW = "Invalid profile name \"_x\" (use letters, digits, _ or -, max 64 chars)"
+assertValidProfileName("") THREW = "Invalid profile name \"\" (use letters, digits, _ or -, max 64 chars)"
+assertValidProfileName("has space") THREW = "Invalid profile name \"has space\" (use letters, digits, _ or -, max 64 chars)"
+assertValidProfileName("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+assertValidProfileName("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") THREW = "Invalid profile name \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" (use letters, digits, _ or -, max 64 chars)"
+assertValidProfileName("../etc") THREW = "Invalid profile name \"../etc\" (use letters, digits, _ or -, max 64 chars)"
+assertValidProfileName("é") THREW = "Invalid profile name \"é\" (use letters, digits, _ or -, max 64 chars)"
+paths = ["<TMP>/calibrations/cubic_calibration.json","<TMP>/calibrations/lc_tare.json","<TMP>/calibrations/profiles","<TMP>/calibrations/ball_valve_endpoints.json"]
+list (no profiles dir) = {"profiles":[],"active":""}
+save with no live store THREW = "No live calibration to save (capture some points first)"
+newBlankCalibration() with nothing on disk
+--- live after blank-from-nothing ---
+{
+  "cubic_state": {}
+}
+--- end live after blank-from-nothing ---
+newBlankCalibration() from default
+--- live after blank-from-default ---
+{
+  "calibration_adc_norm_min": {},
+  "calibration_adc_norm_scale": {},
+  "calibration_poly_coeffs": {},
+  "calibration_polynomials": {},
+  "cubic_state": {
+    "2101": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 1,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 1,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Fuel Upstream",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2102": {
+      "active_model": "physics",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 2,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 2,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "GSE Low",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2103": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 3,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 3,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Fuel Downstream",
+      "status": "uncalibrated",
+      "updatedAt": 1788577382.258884,
+      "fitCurve": []
+    },
+    "2104": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 4,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 4,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Chamber Mid PT 1",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2105": {
+      "active_model": "robust",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 5,
+      "degree": 0,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 5,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Ox Upstream",
+      "status": "uncalibrated",
+      "updatedAt": 1788577373.470213
+    },
+    "2106": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 6,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 6,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "GN2 Regulated",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2107": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 7,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 7,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Ox Downstream",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2108": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 8,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 8,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Chamber Mid PT 2",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2109": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 9,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 9,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Chamber Throat PT 1",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2110": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 10,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 10,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Chamber Throat PT 2",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2201": {
+      "active_model": "physics",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 1,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 11,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "GSE High",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2202": {
+      "active_model": "physics",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 2,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 12,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Excitation V",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2203": {
+      "active_model": "physics",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 3,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 13,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "GSE Mid",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "2204": {
+      "active_model": "physics",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 4,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 14,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "GN2 High",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    },
+    "6001": {
+      "active_model": "cubic",
+      "adcNormMin": 0,
+      "adcNormScale": 1,
+      "boardId": 60,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 1,
+      "degree": 0,
+      "last_error": 0,
+      "logicalCh": 91,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 0,
+      "fitCurve": []
+    }
+  },
+  "framework": "cubic",
+  "generated_unix": 1788577385.861982,
+  "sensor_type": "PT",
+  "unit": "PSI"
+}
+--- end live after blank-from-default ---
+list = {"profiles":[{"name":"default","active":false},{"name":"restored-sep05","active":false}],"active":""}
+load restored-sep05
+live == restored-sep05 = true
+list after load = {"profiles":[{"name":"default","active":false},{"name":"restored-sep05","active":true}],"active":"restored-sep05"}
+load missing THREW = "Calibration profile \"missing\" not found"
+load invalid name THREW = "Invalid profile name \"../x\" (use letters, digits, _ or -, max 64 chars)"
+save as mine
+list after save = {"profiles":[{"name":"default","active":false},{"name":"mine","active":true},{"name":"restored-sep05","active":false}],"active":"mine"}
+newBlankCalibration("blank1") from live restored-sep05
+--- profiles/blank1.json ---
+{
+  "calibration_adc_norm_min": {},
+  "calibration_adc_norm_scale": {},
+  "calibration_poly_coeffs": {},
+  "calibration_polynomials": {},
+  "cubic_state": {
+    "2101": {
+      "active_model": "physics",
+      "adcNormMin": 214829164.8828125,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 1,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 1,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Fuel Fill Vent",
+      "status": "uncalibrated",
+      "updatedAt": 1788657554.9556522
+    },
+    "2102": {
+      "active_model": "physics",
+      "adcNormMin": 706461387.6302084,
+      "adcNormScale": 860068972.046875,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 2,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 2,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Fuel Upstream",
+      "status": "uncalibrated",
+      "updatedAt": 1788657554.983277
+    },
+    "2103": {
+      "active_model": "physics",
+      "adcNormMin": 618715876.7756697,
+      "adcNormScale": 870437145.7734375,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 3,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 3,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Dome CTRL",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.01101
+    },
+    "2104": {
+      "active_model": "physics",
+      "adcNormMin": 204089748.8828125,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 4,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 4,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Low Press",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.0379975
+    },
+    "2105": {
+      "active_model": "cubic",
+      "adcNormMin": 207457781.84375,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 5,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 5,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.0661223
+    },
+    "2106": {
+      "active_model": "cubic",
+      "adcNormMin": 212169061.5,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 6,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 6,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.0940077
+    },
+    "2107": {
+      "active_model": "cubic",
+      "adcNormMin": 219537716.0546875,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 7,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 7,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.121902
+    },
+    "2108": {
+      "active_model": "cubic",
+      "adcNormMin": 223005910.2734375,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 8,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 8,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.1496136
+    },
+    "2109": {
+      "active_model": "cubic",
+      "adcNormMin": 229158422.453125,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 9,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 9,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.1770077
+    },
+    "2110": {
+      "active_model": "cubic",
+      "adcNormMin": 251027659.671875,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 10,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 10,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.2055533
+    },
+    "2201": {
+      "active_model": "physics",
+      "adcNormMin": 489696551.1629464,
+      "adcNormScale": 166212264.78125,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 1,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 11,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "GN2 High",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.2326682
+    },
+    "2202": {
+      "active_model": "physics",
+      "adcNormMin": 1579726099.15625,
+      "adcNormScale": 1,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 2,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 12,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Excitation V",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.2598808
+    },
+    "2203": {
+      "active_model": "physics",
+      "adcNormMin": 498706788.21875,
+      "adcNormScale": 165743768.2734375,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 3,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 13,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Dome Mid",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.2838912
+    },
+    "2204": {
+      "active_model": "physics",
+      "adcNormMin": 491031395.08928573,
+      "adcNormScale": 166056566.3984375,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 4,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 14,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "High Press",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.3100572
+    }
+  },
+  "framework": "cubic",
+  "generated_unix": 1788657555.3180325,
+  "sensor_type": "PT",
+  "unit": "PSI"
+}
+--- end profiles/blank1.json ---
+live == blank1 = true
+newBlankCalibration("bad name") THREW = "Invalid profile name \"bad name\" (use letters, digits, _ or -, max 64 chars)"
+list after blank1 = {"profiles":[{"name":"blank1","active":true},{"name":"default","active":false},{"name":"mine","active":false},{"name":"restored-sep05","active":false}],"active":"blank1"}
+create copy2 from default
+create blank3
+create existing THREW = "Calibration profile \"copy2\" already exists"
+create from missing THREW = "Calibration profile \"nope\" not found"
+copy2 == default = true
+--- profiles/blank3.json ---
+{
+  "calibration_adc_norm_min": {},
+  "calibration_adc_norm_scale": {},
+  "calibration_poly_coeffs": {},
+  "calibration_polynomials": {},
+  "cubic_state": {
+    "2101": {
+      "active_model": "physics",
+      "adcNormMin": 214829164.8828125,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 1,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 1,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Fuel Fill Vent",
+      "status": "uncalibrated",
+      "updatedAt": 1788657554.9556522
+    },
+    "2102": {
+      "active_model": "physics",
+      "adcNormMin": 706461387.6302084,
+      "adcNormScale": 860068972.046875,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 2,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 2,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Fuel Upstream",
+      "status": "uncalibrated",
+      "updatedAt": 1788657554.983277
+    },
+    "2103": {
+      "active_model": "physics",
+      "adcNormMin": 618715876.7756697,
+      "adcNormScale": 870437145.7734375,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 3,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 3,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Dome CTRL",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.01101
+    },
+    "2104": {
+      "active_model": "physics",
+      "adcNormMin": 204089748.8828125,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 4,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 4,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Low Press",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.0379975
+    },
+    "2105": {
+      "active_model": "cubic",
+      "adcNormMin": 207457781.84375,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 5,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 5,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.0661223
+    },
+    "2106": {
+      "active_model": "cubic",
+      "adcNormMin": 212169061.5,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 6,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 6,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.0940077
+    },
+    "2107": {
+      "active_model": "cubic",
+      "adcNormMin": 219537716.0546875,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 7,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 7,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.121902
+    },
+    "2108": {
+      "active_model": "cubic",
+      "adcNormMin": 223005910.2734375,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 8,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 8,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.1496136
+    },
+    "2109": {
+      "active_model": "cubic",
+      "adcNormMin": 229158422.453125,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 9,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 9,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.1770077
+    },
+    "2110": {
+      "active_model": "cubic",
+      "adcNormMin": 251027659.671875,
+      "adcNormScale": 1,
+      "boardId": 21,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 10,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 10,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.2055533
+    },
+    "2201": {
+      "active_model": "physics",
+      "adcNormMin": 489696551.1629464,
+      "adcNormScale": 166212264.78125,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 1,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 11,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "GN2 High",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.2326682
+    },
+    "2202": {
+      "active_model": "physics",
+      "adcNormMin": 1579726099.15625,
+      "adcNormScale": 1,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 2,
+      "degree": 1,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 12,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Excitation V",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.2598808
+    },
+    "2203": {
+      "active_model": "physics",
+      "adcNormMin": 498706788.21875,
+      "adcNormScale": 165743768.2734375,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 3,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 13,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "Dome Mid",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.2838912
+    },
+    "2204": {
+      "active_model": "physics",
+      "adcNormMin": 491031395.08928573,
+      "adcNormScale": 166056566.3984375,
+      "boardId": 22,
+      "coeffs": {
+        "A": 0,
+        "B": 0,
+        "C": 0,
+        "D": 0
+      },
+      "connector": 4,
+      "degree": 3,
+      "fitCurve": [],
+      "last_error": 0,
+      "logicalCh": 14,
+      "numPoints": 0,
+      "points": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "role": "High Press",
+      "status": "uncalibrated",
+      "updatedAt": 1788657555.3100572
+    }
+  },
+  "framework": "cubic",
+  "generated_unix": 1788657555.3180325,
+  "sensor_type": "PT",
+  "unit": "PSI"
+}
+--- end profiles/blank3.json ---
+create blank5 from a torn live store
+--- profiles/blank5.json ---
+{
+  "cubic_state": {}
+}
+--- end profiles/blank5.json ---
+create blank6 from an odd store
+--- profiles/blank6.json ---
+{
+  "cubic_state": {
+    "1": null,
+    "2": {
+      "coeffs": {
+        "A": 0,
+        "Z": 0
+      },
+      "points": [],
+      "extra": true,
+      "numPoints": 0,
+      "fitCurve": [],
+      "polyCoeffs": [],
+      "rmse": 0,
+      "last_error": 0,
+      "status": "uncalibrated"
+    }
+  },
+  "lc_calibration_polynomials": {},
+  "other": 5
+}
+--- end profiles/blank6.json ---
+remove blank3
+remove missing
+remove invalid THREW = "Invalid profile name \"../x\" (use letters, digits, _ or -, max 64 chars)"
+newBlankCalibration() clears active
+list final = {"profiles":[{"name":"blank1","active":false},{"name":"blank5","active":false},{"name":"blank6","active":false},{"name":"copy2","active":false},{"name":"default","active":false},{"name":"mine","active":false},{"name":"restored-sep05","active":false}],"active":""}
+files = ["ball_valve_endpoints.json","cubic_calibration.default.json","cubic_calibration.json","profiles/.active","profiles/bad name.json","profiles/blank1.json","profiles/blank5.json","profiles/blank6.json","profiles/copy2.json","profiles/default.json","profiles/mine.json","profiles/notes.txt","profiles/restored-sep05.json"]
+--- profiles/.active ---
+
+--- end profiles/.active ---
