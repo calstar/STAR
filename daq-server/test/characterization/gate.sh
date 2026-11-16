@@ -46,15 +46,15 @@ build_clean() {
   [ -z "$new" ] || { echo "NEW WARNINGS:"; echo "$new"; return 1; }
 }
 # ctest binds real UDP ports (BoardListener), so it shares the stack lock with the integration run.
-# Tests that fail on main on this machine are listed in baseline_ctest_failures.txt (see LEDGER);
-# any other failure fails the gate.
+# Tests that fail on main on macOS only are listed in baseline_ctest_failures.txt (see LEDGER: all
+# three pass on Linux). The allowlist applies on Darwin only; elsewhere any failure fails the gate.
 ctest_all() {
   (cd "$ROOT/build-gate" && bash "$CHAR/with_stack_lock.sh" ctest --output-on-failure -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)") > "$LOG/ctest-output.txt" 2>&1
   local rc=$? new
   cat "$LOG/ctest-output.txt"
   [ "$rc" = 0 ] && return 0
   new="$(sed -n '/The following tests FAILED/,$p' "$LOG/ctest-output.txt" | sed -nE 's/^[[:space:]]*[0-9]+ - ([^ ]+) .*/\1/p' |
-    sort -u | comm -23 - <(sort -u "$CHAR/baseline_ctest_failures.txt"))"
+    sort -u | comm -23 - <(if [ "$(uname)" = Darwin ]; then sort -u "$CHAR/baseline_ctest_failures.txt"; fi))"
   grep -q 'The following tests FAILED' "$LOG/ctest-output.txt" || { echo "ctest failed without a test list"; return 1; }
   [ -z "$new" ] || { echo "NEW CTEST FAILURES:"; echo "$new"; return 1; }
   echo "(only baseline-known failures: $(tr '\n' ' ' < "$CHAR/baseline_ctest_failures.txt"))"
