@@ -18,8 +18,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>

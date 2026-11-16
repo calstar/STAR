@@ -14,7 +14,10 @@
 #include <cstdint>
 #include <cstring>
 #include <functional>
+#include <iostream>
+#include <memory>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "daq-protocol.h"
