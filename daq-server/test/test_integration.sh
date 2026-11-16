@@ -78,6 +78,12 @@ CUBIC_STORE="$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json"
 # this run needs it absent, and a tare an operator set is their state, not scratch.
 TARE_STORE="$REPO_ROOT/scripts/calibration/calibrations/lc_tare.json"
 
+# The live abort thresholds. calibration_service regenerates this tracked file in place on every
+# start, so a run used to overwrite the operator's thresholds. Unlike the two stores above the run
+# keeps it where it is (what the services see is unchanged); a byte copy is taken first and put back
+# on exit.
+THRESH_STORE="$REPO_ROOT/scripts/calibration/calibrations/abort_thresholds.txt"
+
 # Delete only inside .tmp/. Every rm in this script goes through here so a path that came out
 # empty — REPO_ROOT unset, a variable renamed — cannot expand into something outside the scratch
 # directory. Refuses rather than guesses.
@@ -175,6 +181,12 @@ cleanup() {
     mv -f "$STASH_DIR/lc_tare.json" "$TARE_STORE" \
       && echo "  📦 restored the operator load-cell tares" \
       || echo "  ⚠️  COULD NOT restore the tares — they are at $STASH_DIR/lc_tare.json"
+  fi
+  if [ -f "$STASH_DIR/abort_thresholds.txt" ]; then
+    mkdir -p "$(dirname "$THRESH_STORE")"
+    mv -f "$STASH_DIR/abort_thresholds.txt" "$THRESH_STORE" \
+      && echo "  📦 restored the operator abort thresholds" \
+      || echo "  ⚠️  COULD NOT restore the abort thresholds — they are at $STASH_DIR/abort_thresholds.txt"
   fi
 
   tmp_rm "$TEST_DB_PATH" "$TEST_CONFIG" "$UDP_COMMANDS_FILE" "$SIM_STATS_FILE" \
@@ -885,6 +897,13 @@ if [ -n "$CALIB_SVC" ]; then
     mkdir -p "$STASH_DIR"
     mv "$TARE_STORE" "$STASH_DIR/lc_tare.json"
     echo "  📦 parked the operator load-cell tares in .tmp (restored on exit)"
+  fi
+  # Abort thresholds: copied, not moved — the run sees the file exactly as before; cleanup() puts the
+  # operator's bytes back over whatever calibration_service regenerates.
+  if [ -f "$THRESH_STORE" ]; then
+    mkdir -p "$STASH_DIR"
+    cp -p "$THRESH_STORE" "$STASH_DIR/abort_thresholds.txt"
+    echo "  📦 saved the operator abort thresholds in .tmp (restored on exit)"
   fi
   (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \

@@ -1037,7 +1037,7 @@ GET /api/ota-flash/projects
   access-control-allow-origin: *
   access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
   access-control-allow-headers: Content-Type
-  body: {"projects": [{"name": "Actuator_Hotfire", "path": "firmware/Hotfire_Code/Actuator_Hotfire"}, {"name": "BallValve_Hotfire", "path": "firmware/Hotfire_Code/BallValve_Hotfire"}, {"name": "LC_Hotfire", "path": "firmware/Hotfire_Code/LC_Hotfire"}, {"name": "ProtoEncoder", "path": "firmware/Hotfire_Code/ProtoEncoder"}, {"name": "PT_Hotfire", "path": "firmware/Hotfire_Code/PT_Hotfire"}, {"name": "RTD_Hotfire", "path": "firmware/Hotfire_Code/RTD_Hotfire"}, {"name": "TC_Hotfire", "path": "firmware/Hotfire_Code/TC_Hotfire"}, {"name": "ValveEncoder", "path": "firmware/Hotfire_Code/ValveEncoder"}]}
+  body: {"projects": [{"name": "LC_Hotfire", "path": "firmware/Hotfire_Code/Group/LC_Hotfire"}, {"name": "PT_Hotfire", "path": "firmware/Hotfire_Code/PT_Hotfire"}]}
 GET /api/video/streams
   status 200
   content-type: application/json

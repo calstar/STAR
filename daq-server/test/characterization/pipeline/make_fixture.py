@@ -11,8 +11,8 @@ Layout (the C++ services run with cwd = <fixture_dir>; every path they hard-code
   config/config.toml                   services config (also the backend's CONFIG_PATH)
   config/*.csv                         state-machine CSVs (config.toml's relative paths)
   char/backend/                        the backend's cwd: its CSV loaders look in cwd/../../config,
-                                       and its OTA root search walks up from cwd (6 levels) to the
-                                       repo's firmware/, both as from diablo_server/backend
+                                       as from diablo_server/backend
+  firmware/Hotfire_Code/               a fixed project tree the OTA project search finds first
   config/profiles/default/             the active profile (identical to config.toml)
   config/.active_profile
   scripts/calibration/calibrations/    copy of the committed store, minus the operator files
@@ -121,6 +121,7 @@ def main():
     # it in char/backend). An absolute path is NOT equivalent: the backend's legacy loaders join
     # the configured path onto other directories, so an absolute one is never found.
     os.makedirs(os.path.join(root, "char", "backend"), exist_ok=True)
+<<<<<<< HEAD
     if mode == "boards":
         # The SETUP -> SELF_TEST startup board, exactly as test_integration.sh declares it;
         # board_startup_sim.py plays it (session.ts), board_simulator.py skips it by name.
@@ -139,6 +140,18 @@ necessary_for_abort = false
 enable_serial_printing = 0
 designated_survivor = false
 """
+=======
+    # The OTA project list (ota-build.ts discoverProjects) walks up from the backend's cwd to the
+    # first firmware/Hotfire_Code. Without one here it found the repo's, which the Linux gate's
+    # `git archive` export does not contain (and which changes with every firmware project). A
+    # fixed tree one level above cwd's parent makes it the same everywhere: two flashable
+    # projects, one nested, one non-flashable (Hotfire_Tests) and a .pio dir, both skipped.
+    hc = os.path.join(root, "firmware", "Hotfire_Code")
+    for d in ("PT_Hotfire", "Group/LC_Hotfire", "Hotfire_Tests", "PT_Hotfire/.pio/x"):
+        os.makedirs(os.path.join(hc, d), exist_ok=True)
+    for d in ("PT_Hotfire", "Group/LC_Hotfire", "Hotfire_Tests", "PT_Hotfire/.pio/x"):
+        open(os.path.join(hc, d, "platformio.ini"), "w").write("[env]\n")
+>>>>>>> char/pipeline-linux
     assert "192.168.2." not in text
 
     for name in os.listdir(os.path.join(daq_root, "config", "profiles", "default")):
