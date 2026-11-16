@@ -4,6 +4,9 @@
 build/
 build-ns/
 build-gate/
+build-ci/
+build-clang-ci/
+diablo_server/backend/dist/
 *.o
 *.a
 *.so
