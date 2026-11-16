@@ -16,6 +16,7 @@
   cmd[1].duty_cycle @25   +4  : cd cc cc 3d
   cmd[1].frequency @29   +4  : 00 00 c0 40
 ## FIRE_STOP -> reply 'OK'
+  open repeats after FIRE_STOP: within bound (at most 1 per board before its close packet, none after)
   -> 127.0.0.12 len=33 timestamp <system_clock ms, LE u32>
   header.packet_type @0    +1  : 0a
   header.version @1    +1  : 00
@@ -52,6 +53,7 @@
   cmd[0].duty_cycle @12   +4  : cd cc cc 3d
   cmd[0].frequency @16   +4  : 00 00 c0 40
 ## FIRE_STOP -> reply 'OK'
+  open repeats after FIRE_STOP: within bound (at most 1 per board before its close packet, none after)
   -> 127.0.0.12 len=20 timestamp <system_clock ms, LE u32>
   header.packet_type @0    +1  : 0a
   header.version @1    +1  : 00
