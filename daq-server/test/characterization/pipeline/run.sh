@@ -117,6 +117,22 @@ PIDS+=($!); wait_port $P_SEQ sequencer 15
 (cd "$FX" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
 
+# The backend loads its own PT calibration (calibration.ts loadPTCalibration) from the newest
+# daq-server/calibration/calibration*.json BY MTIME. A checkout, and a `git archive` export even
+# more so, gives those committed files equal mtimes; the tie then falls to directory order, which
+# differs by filesystem: macOS picked calibration_2026-02-25T03-44-09.json, Linux a file with no
+# coefficients, so calibrationFilePath came out null. Pin the order the file names state: each
+# file's mtime becomes the timestamp in its name. Content is untouched (git sees no change).
+"$PY" - "$ROOT/calibration" <<'PYEOF'
+import os, re, sys, calendar
+d = sys.argv[1]
+for name in os.listdir(d):
+    m = re.fullmatch(r"calibration_(\d{4})-(\d\d)-(\d\d)T(\d\d)-(\d\d)-(\d\d)\.json", name)
+    if m:
+        t = calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0))
+        os.utime(os.path.join(d, name), (t, t))
+PYEOF
+
 # The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
 # legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
 # (diablo_server/backend) sees daq-server/config.
@@ -138,6 +154,17 @@ PIDS+=($!); wait_port $P_WS backend 30
   --adjustments "$FX/adjustments.json" --elodin-host 127.0.0.1 --elodin-port $P_ELODIN) \
   > "$FX/logs/calibration.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" calibration
+
+# The simulator sends each board's SELF_TEST once, at start. The backend subscribes to the
+# self-test tables in passes capped by the request-id space; a result published before the pass
+# that covers its table never reaches it (seen on Linux: board 21's sensors 2-10 lost). Start the
+# simulator only after a pass with nothing left queued.
+i=0
+until grep 'VTableStream: sent' "$FX/logs/backend.log" 2>/dev/null | grep -vq 'queued for the next pass'; do
+  sleep 0.25; i=$((i + 1))
+  [ $i -lt 240 ] || { echo "pipeline: backend never finished subscribing" >&2; tail -20 "$FX/logs/backend.log" >&2; exit 5; }
+done
+sleep 1
 
 # --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the sim
 # config enables only pt_board, at 127.0.0.1.
