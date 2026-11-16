@@ -15,6 +15,8 @@ Sections: `daq_bridge`, `calibration` (calibration_service), `sequencer` (sequen
 The first version replayed `DatabaseConfig` calls with arguments derived inside the test. These
 lines from it are gone, with the reason:
 
+- `# Elodin registration captured from fsw::elodin::DatabaseConfig for <config> ...`: the old
+  title line; the new one says what is captured now.
 - `boards PT: ...` … `boards BALL_VALVE: ...`, `daq_bridge config_board_ids: ...`,
   `raw_sensor_tables: ...`, `calibrated_sensor_tables: ...`, `ball_valve raw/cal/cmd tables: ...`:
   the test's own calls to `load_active_boards()` / `raw_sensor_tables()` etc. No service prints
@@ -36,3 +38,7 @@ lines from it are gone, with the reason:
 - Packet-index lines (`#N len=... `) that only those removed sections had at that index.
 
 The `daq_bridge` and `sequencer` sections are line-for-line what the white-box version had.
+
+`profile_default` records `t7_bridge --fake: never connected` (the profile declares no T7) and
+`stacklight_service: never connected`: that profile's `[stacklight_service] elodin_port = 2240`
+wins over the `--elodin-port` the test passes, so the service dials 2240, not the stand-in.
