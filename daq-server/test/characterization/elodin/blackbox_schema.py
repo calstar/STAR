@@ -1,11 +1,13 @@
 """Characterization, black box: the Elodin schema the services register, as they send it.
 
-daq_bridge, calibration_service, sequencer_service and controller_service are each started
-against a loopback copy of a committed config whose [database] points at a stand-in elodin-db
-(packets/bb.py FakeElodin). Everything they send in their first quiet second is captured; the MSG
-packets (VTableMsg, SetComponentMetadata, SetEntityMetadata, VTableStream subscriptions) are
-decoded here with an independent postcard reader and printed with their raw bytes. TABLE rows are
-data, not schema, and their count is timing: they are counted per table id but not printed.
+daq_bridge, calibration_service, sequencer_service, controller_service, t7_bridge --fake,
+heartbeat_service and stacklight_service are each started against a loopback copy of a committed
+config whose [database] points at a stand-in elodin-db (packets/bb.py FakeElodin). Their MSG
+packets (VTableMsg, SetComponentMetadata, SetEntityMetadata, VTableStream subscriptions) up to the
+first quiet 1.5 s are decoded here with an independent postcard reader and printed with their raw
+bytes. TABLE rows are data, not schema: only which tables a service sends rows for is listed.
+A service that never connects (no T7 in the config; a config elodin_port that overrides the CLI)
+is recorded as such.
 
 Golden: elodin/golden/schema_<config>.txt. Usage:
   blackbox_schema.py <bin dir> <daq-server dir> <work dir> <config_base|profile_default>
