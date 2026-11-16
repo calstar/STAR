@@ -20,7 +20,9 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-TAG="daq-remaster-linux:${PLATFORM#linux/}"
+# Tagged by the Dockerfile's content: worktrees share Docker's image store, and a shared tag let an
+# older Dockerfile (without numpy) overwrite a newer one's image.
+TAG="daq-remaster-linux:${PLATFORM#linux/}-$(shasum -a 256 "$HERE/Dockerfile" 2>/dev/null | cut -c1-12 || sha256sum "$HERE/Dockerfile" | cut -c1-12)"
 docker build -q --platform "$PLATFORM" -t "$TAG" "$HERE" >/dev/null
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 # The whole tree, as CI checks it out: the backend reads repo-level paths (firmware/Hotfire_Code for
