@@ -931,8 +931,10 @@ orchestrator already declined in D-c) — research §5 reaches the same verdict.
 its central file recreates the god file under a new name and splits board health, the most
 stateful concern, across three files.
 
-**No divergence from the reviewed design**; the deeper pass amends it in places ([A1]-[A7] at the
-top), none of which changes the module list or the layering.
+**Module list and layering unchanged.** The deeper pass amends the reviewed design in places —
+[A1]-[A9] at the top (client name and port owner, a missing edge, elided imports, two new step-2
+commits 2.8 and 2.9, the timer rule, the D-SUB room, STYLE conformance, the interface
+refinements); each is marked where it lands.
 
 ---
 
