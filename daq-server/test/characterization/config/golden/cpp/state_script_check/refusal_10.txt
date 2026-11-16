@@ -1,0 +1,7 @@
+=== args --config ../../../config/profiles/digital-twin/config.toml --state 'No Such State' ../../../config/profiles/digital-twin/scripts/dynamic_test.script
+=== stdout
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Cannot open state_transitions.csv (tried: config/state_transitions.csv, ../config/state_transitions.csv, ../../config/state_transitions.csv, config/profiles/default/state_transitions.csv, ../config/profiles/default/state_transitions.csv, ../../config/profiles/default/state_transitions.csv)
+cannot read state_transitions.csv: config/state_transitions.csv (pass --transitions to point at it)
+=== exit 2

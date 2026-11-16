@@ -1,0 +1,46 @@
+vent["Fuel Fill Press"] = 0
+vent["Fuel Fill Vent"] = 0
+vent["Fuel Main"] = 0
+vent["Fuel Press"] = 1
+vent["Fuel Vent"] = 1
+vent["GN2 Vent"] = 1
+vent["GSE High Press Control"] = 0
+vent["GSE High Press Vent"] = 0
+vent["GSE LOX Fill Vent"] = 0
+vent["GSE Low Press Vent"] = 0
+vent["GSE Med Press Control"] = 0
+vent["LOX Dump"] = 0
+vent["LOX Fill"] = 0
+vent["LOX Main"] = 0
+vent["LOX Press"] = 1
+vent["LOX Vent"] = 1
+abort["Fuel Fill Press"] = 0
+abort["Fuel Fill Vent"] = 0
+abort["Fuel Main"] = 1
+abort["Fuel Press"] = 1
+abort["Fuel Vent"] = 1
+abort["GN2 Vent"] = 1
+abort["GSE High Press Control"] = 0
+abort["GSE High Press Vent"] = 0
+abort["GSE LOX Fill Vent"] = 0
+abort["GSE Low Press Vent"] = 0
+abort["GSE Med Press Control"] = 0
+abort["LOX Dump"] = 1
+abort["LOX Fill"] = 0
+abort["LOX Main"] = 1
+abort["LOX Press"] = 1
+abort["LOX Vent"] = 1
+packets.count = 3
+packet[0] type=6 dest=192.168.2.12:5005 len=24
+  0000: 06 00 00 00 00 00 01 02 0c 02 a8 c0 01 00 01 0c
+  0010: 02 a8 c0 01 00 00 00 00
+packet[1] type=5 dest=192.168.2.21:5005 len=13
+  0000: 05 00 00 00 00 00 03 01 02 03 00 00 00
+packet[2] type=5 dest=192.168.2.21:5005 len=12
+  0000: 05 00 00 00 00 00 02 01 02 00 00 00
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

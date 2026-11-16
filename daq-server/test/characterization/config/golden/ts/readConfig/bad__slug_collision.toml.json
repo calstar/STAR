@@ -1,0 +1,69 @@
+{
+  "logs": [],
+  "value": {
+    "actuator_roles": {
+      "???": [
+        "NC",
+        3,
+        12
+      ],
+      "Fuel Main": [
+        "NC",
+        1,
+        12
+      ],
+      "fuel-main": [
+        "NC",
+        2,
+        12
+      ]
+    },
+    "boards": {
+      "actuator_board": {
+        "board_id": 12,
+        "ip": "192.168.2.12",
+        "type": "ACTUATOR"
+      }
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    },
+    "states": [
+      {
+        "id": 1,
+        "is_boot": true,
+        "name": "Idle"
+      },
+      {
+        "id": 2,
+        "name": "Armed",
+        "script_file": "fine.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      }
+    ]
+  }
+}

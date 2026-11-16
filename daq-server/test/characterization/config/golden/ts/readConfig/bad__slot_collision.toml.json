@@ -1,0 +1,75 @@
+{
+  "logs": [],
+  "value": {
+    "boards": {
+      "pt_a": {
+        "active_connectors": [
+          1,
+          2
+        ],
+        "board_id": 21,
+        "ip": "192.168.2.21",
+        "type": "PT"
+      },
+      "pt_b": {
+        "active_connectors": [
+          1,
+          2
+        ],
+        "board_id": 31,
+        "ip": "192.168.2.31",
+        "type": "PT"
+      },
+      "pt_c": {
+        "active_connectors": [
+          1
+        ],
+        "board_id": 29,
+        "ip": "192.168.2.29",
+        "type": "PT"
+      },
+      "pt_disabled": {
+        "active_connectors": [
+          1
+        ],
+        "board_id": 41,
+        "enabled": false,
+        "ip": "192.168.2.41",
+        "type": "PT"
+      },
+      "tc_d": {
+        "active_connectors": [
+          3
+        ],
+        "board_id": 20,
+        "ip": "192.168.2.20",
+        "type": "TC"
+      }
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    }
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "diffVsDefaultHeader": {
+    "missing": [
+      "Idle",
+      "Armed",
+      "Fuel Fill",
+      "Ox Fill",
+      "Press Standby",
+      "GN2 Low Press",
+      "GN2 Low Vent",
+      "Fuel Press",
+      "Fuel Vent",
+      "Ox Press",
+      "Ox Vent",
+      "GN2 High Press",
+      "GN2 High Vent",
+      "Calibrate",
+      "Ready",
+      "Fire",
+      "Vent",
+      "Engine Abort",
+      "GSE Abort",
+      "Emergency Abort"
+    ],
+    "orphan": []
+  },
+  "grid": {
+    "logs": [],
+    "value": {
+      "rows": [],
+      "states": []
+    }
+  },
+  "roundTrip": ",\n",
+  "roundTripIdentical": false
+}

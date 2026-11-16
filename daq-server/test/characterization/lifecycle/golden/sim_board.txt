@@ -1,0 +1,114 @@
+== board_simulator.py, PT board, full lifecycle (no --skip-startup)
+  SETUP, first 2.5 s, packet types in order of first appearance:
+    ['BOARD_HEARTBEAT', 'LOGS']
+  SENSOR_DATA while in SETUP: 0
+  first BOARD_HEARTBEAT:
+    BOARD_HEARTBEAT len=41
+    @0   type = 1   [01]
+    @1   version = 0   [00]
+    @2   timestamp = <board-ms>
+    @6   firmware_hash = zero   [00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+    @38  board_id = 21   [15]
+    @39  engine_state = 0   [00]
+    @40  board_state = 1   [01]
+  first LOGS:
+    LOGS len=35
+    @0   type = 15   [0F]
+    @1   version = 0   [00]
+    @2   timestamp = <board-ms>
+    @6   flags = 0   [00]
+    @7   text_len = 26   [1A 00]
+    @9   text = '[SIM] board 21 PT alive #<n>'
+  BOARD_HEARTBEAT period: 1 s
+  after config_broadcast_service starts:
+    first SELF_TEST:
+      SELF_TEST len=28
+      @0   type = 12   [0C]
+      @1   version = 0   [00]
+      @2   timestamp = <board-ms>
+      @6   adc_good = 1   [01]
+      @7   num_sensors = 10   [0A]
+      @8   result[0].sensor_id = 1   [01]
+      @9   result[0].result = 1   [01]
+      @10  result[1].sensor_id = 2   [02]
+      @11  result[1].result = 1   [01]
+      @12  result[2].sensor_id = 3   [03]
+      @13  result[2].result = 1   [01]
+      @14  result[3].sensor_id = 4   [04]
+      @15  result[3].result = 1   [01]
+      @16  result[4].sensor_id = 5   [05]
+      @17  result[4].result = 1   [01]
+      @18  result[5].sensor_id = 6   [06]
+      @19  result[5].result = 1   [01]
+      @20  result[6].sensor_id = 7   [07]
+      @21  result[6].result = 1   [01]
+      @22  result[7].sensor_id = 8   [08]
+      @23  result[7].result = 1   [01]
+      @24  result[8].sensor_id = 9   [09]
+      @25  result[8].result = 1   [01]
+      @26  result[9].sensor_id = 10   [0A]
+      @27  result[9].result = 1   [01]
+    first SENSOR_DATA:
+      SENSOR_DATA len=62
+      @0   type = 3   [03]
+      @1   version = 0   [00]
+      @2   timestamp = <board-ms>
+      @6   num_chunks = 1   [01]
+      @7   num_sensors = 10   [0A]
+      @8   chunk[0].timestamp = <board-ms>
+      @12  chunk[0].sensor[0].id = 1   [01]
+      @13  chunk[0].sensor[0].data = <sample>
+      @17  chunk[0].sensor[1].id = 2   [02]
+      @18  chunk[0].sensor[1].data = <sample>
+      @22  chunk[0].sensor[2].id = 3   [03]
+      @23  chunk[0].sensor[2].data = <sample>
+      @27  chunk[0].sensor[3].id = 4   [04]
+      @28  chunk[0].sensor[3].data = <sample>
+      @32  chunk[0].sensor[4].id = 5   [05]
+      @33  chunk[0].sensor[4].data = <sample>
+      @37  chunk[0].sensor[5].id = 6   [06]
+      @38  chunk[0].sensor[5].data = <sample>
+      @42  chunk[0].sensor[6].id = 7   [07]
+      @43  chunk[0].sensor[6].data = <sample>
+      @47  chunk[0].sensor[7].id = 8   [08]
+      @48  chunk[0].sensor[7].data = <sample>
+      @52  chunk[0].sensor[8].id = 9   [09]
+      @53  chunk[0].sensor[8].data = <sample>
+      @57  chunk[0].sensor[9].id = 10   [0A]
+      @58  chunk[0].sensor[9].data = <sample>
+    BOARD_HEARTBEAT board_state after SELF_TEST: [2]
+    SENSOR_DATA period: 100 ms
+    SELF_TEST sends in the 6 s re-send window: 5-8 (one, then ~1 Hz for 6 s)
+    sim log: [pt_board] SENSOR_CONFIG received from ('127.0.0.1', <port>), running self-test
+    sim log: [pt_board] SELF_TEST sent, transitioning to ACTIVE
+  SIGTERM -> exit 0 within 1 s
+  stats file keys: ['boards', 'total_sensor_packets', 'total_sensor_updates']; boards: ['pt_board']
+  stats board keys: ['board_id', 'channels_per_packet', 'chunks_per_packet', 'clock_drift_ppm', 'clock_offset_ms', 'net_jitter_ms', 'packets_sent', 'rebooted_at', 'start_near_wrap', 'total_sensor_updates', 'type']
+
+== board_simulator.py --skip-startup
+  packet types in order of first appearance (3 s): ['BOARD_HEARTBEAT', 'LOGS', 'SENSOR_DATA', 'SELF_TEST']
+  first BOARD_HEARTBEAT board_state: 2
+  one-shot SELF_TEST after: 2 s (run_started + 2.0)
+  SIGINT -> exit 0
+
+== board_startup_sim.py
+  first BOARD_HEARTBEAT:
+    BOARD_HEARTBEAT len=41
+    @0   type = 1   [01]
+    @1   version = 0   [00]
+    @2   timestamp = <epoch-ms-u32>
+    @6   firmware_hash = zero   [00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]
+    @38  board_id = 60   [3C]
+    @39  engine_state = 0   [00]
+    @40  board_state = 1   [01]
+  SENSOR_CONFIG (mode byte 3) -> 3 SELF_TEST packet(s), then exit 0
+    SELF_TEST len=10
+    @0   type = 12   [0C]
+    @1   version = 0   [00]
+    @2   timestamp = <epoch-ms-u32>
+    @6   adc_good = 1   [01]
+    @7   num_sensors = 1   [01]
+    @8   result[0].sensor_id = 2   [02]
+    @9   result[0].result = 1   [01]
+  log: [board_startup_sim] SENSOR_CONFIG received enable_serial_printing=3, sending SELF_TEST
+  no SENSOR_CONFIG within --timeout-s -> exit 2

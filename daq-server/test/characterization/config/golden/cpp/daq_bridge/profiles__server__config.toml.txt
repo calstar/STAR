@@ -1,0 +1,64 @@
+db_host = "127.0.0.1"
+db_port = 2240
+sensor_port = 5006
+bind_ip = "0.0.0.0"
+log_port = 8092
+hb = {interval_ms=200 broadcast_port=5005 broadcast_ip="192.168.2.255" send_from_daq_bridge=false}
+time_sync = {mode=BoardClock window_seconds=10 max_plausible_gap_s=60 max_batch_age_s=20 resync_threshold_ms=1000 log_interval_s=10}
+board_map["192.168.2.11"] = {type=ACTUATOR ip="192.168.2.11" active_channels=10 enabled=false board_id=11 wire_u8=5}
+board_map["192.168.2.12"] = {type=ACTUATOR ip="192.168.2.12" active_channels=10 enabled=true board_id=12 wire_u8=5}
+board_map["192.168.2.13"] = {type=ACTUATOR ip="192.168.2.13" active_channels=10 enabled=false board_id=13 wire_u8=5}
+board_map["192.168.2.14"] = {type=ACTUATOR ip="192.168.2.14" active_channels=10 enabled=true board_id=14 wire_u8=5}
+board_map["192.168.2.21"] = {type=PT ip="192.168.2.21" active_channels=10 enabled=true board_id=21 wire_u8=1}
+board_map["192.168.2.22"] = {type=PT ip="192.168.2.22" active_channels=4 enabled=true board_id=22 wire_u8=1}
+board_map["192.168.2.31"] = {type=RTD ip="192.168.2.31" active_channels=4 enabled=true board_id=31 wire_u8=3}
+board_map["192.168.2.32"] = {type=RTD ip="192.168.2.32" active_channels=4 enabled=false board_id=32 wire_u8=3}
+board_map["192.168.2.41"] = {type=LC ip="192.168.2.41" active_channels=3 enabled=false board_id=41 wire_u8=2}
+board_map["192.168.2.42"] = {type=LC ip="192.168.2.42" active_channels=3 enabled=true board_id=42 wire_u8=2}
+board_map["192.168.2.51"] = {type=TC ip="192.168.2.51" active_channels=4 enabled=true board_id=51 wire_u8=4}
+board_map["192.168.2.52"] = {type=TC ip="192.168.2.52" active_channels=10 enabled=false board_id=52 wire_u8=4}
+board_map["192.168.2.61"] = {type=ENCODER ip="192.168.2.61" active_channels=2 enabled=true board_id=61 wire_u8=6}
+board_map["192.168.2.71"] = {type=BALL_VALVE ip="192.168.2.71" active_channels=2 enabled=false board_id=71 wire_u8=8}
+board_by_octet[12] = {type=ACTUATOR ip="192.168.2.12" active_channels=10 enabled=true board_id=12 wire_u8=5}
+board_by_octet[14] = {type=ACTUATOR ip="192.168.2.14" active_channels=10 enabled=true board_id=14 wire_u8=5}
+board_by_octet[21] = {type=PT ip="192.168.2.21" active_channels=10 enabled=true board_id=21 wire_u8=1}
+board_by_octet[22] = {type=PT ip="192.168.2.22" active_channels=4 enabled=true board_id=22 wire_u8=1}
+board_by_octet[31] = {type=RTD ip="192.168.2.31" active_channels=4 enabled=true board_id=31 wire_u8=3}
+board_by_octet[42] = {type=LC ip="192.168.2.42" active_channels=3 enabled=true board_id=42 wire_u8=2}
+board_by_octet[51] = {type=TC ip="192.168.2.51" active_channels=4 enabled=true board_id=51 wire_u8=4}
+board_by_octet[61] = {type=ENCODER ip="192.168.2.61" active_channels=2 enabled=true board_id=61 wire_u8=6}
+resolve("192.168.2.11") = null
+resolve("127.0.0.11") = null
+resolve("192.168.2.12") = {type=ACTUATOR ip="192.168.2.12" active_channels=10 enabled=true board_id=12 wire_u8=5}
+resolve("127.0.0.12") = {type=ACTUATOR ip="192.168.2.12" active_channels=10 enabled=true board_id=12 wire_u8=5}
+resolve("192.168.2.13") = null
+resolve("127.0.0.13") = null
+resolve("192.168.2.14") = {type=ACTUATOR ip="192.168.2.14" active_channels=10 enabled=true board_id=14 wire_u8=5}
+resolve("127.0.0.14") = {type=ACTUATOR ip="192.168.2.14" active_channels=10 enabled=true board_id=14 wire_u8=5}
+resolve("192.168.2.21") = {type=PT ip="192.168.2.21" active_channels=10 enabled=true board_id=21 wire_u8=1}
+resolve("127.0.0.21") = {type=PT ip="192.168.2.21" active_channels=10 enabled=true board_id=21 wire_u8=1}
+resolve("192.168.2.22") = {type=PT ip="192.168.2.22" active_channels=4 enabled=true board_id=22 wire_u8=1}
+resolve("127.0.0.22") = {type=PT ip="192.168.2.22" active_channels=4 enabled=true board_id=22 wire_u8=1}
+resolve("192.168.2.31") = {type=RTD ip="192.168.2.31" active_channels=4 enabled=true board_id=31 wire_u8=3}
+resolve("127.0.0.31") = {type=RTD ip="192.168.2.31" active_channels=4 enabled=true board_id=31 wire_u8=3}
+resolve("192.168.2.32") = null
+resolve("127.0.0.32") = null
+resolve("192.168.2.41") = null
+resolve("127.0.0.41") = null
+resolve("192.168.2.42") = {type=LC ip="192.168.2.42" active_channels=3 enabled=true board_id=42 wire_u8=2}
+resolve("127.0.0.42") = {type=LC ip="192.168.2.42" active_channels=3 enabled=true board_id=42 wire_u8=2}
+resolve("192.168.2.51") = {type=TC ip="192.168.2.51" active_channels=4 enabled=true board_id=51 wire_u8=4}
+resolve("127.0.0.51") = {type=TC ip="192.168.2.51" active_channels=4 enabled=true board_id=51 wire_u8=4}
+resolve("192.168.2.52") = null
+resolve("127.0.0.52") = null
+resolve("192.168.2.61") = {type=ENCODER ip="192.168.2.61" active_channels=2 enabled=true board_id=61 wire_u8=6}
+resolve("127.0.0.61") = {type=ENCODER ip="192.168.2.61" active_channels=2 enabled=true board_id=61 wire_u8=6}
+resolve("192.168.2.71") = null
+resolve("127.0.0.71") = null
+resolve("10.9.8.7") = null
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

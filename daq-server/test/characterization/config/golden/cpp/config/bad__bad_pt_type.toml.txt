@@ -1,0 +1,656 @@
+input fixtures/bad/bad_pt_type.toml readable=true bytes=680
+
+=== config::load
+network.bind_ip = "0.0.0.0"
+network.sensor_port = 5006
+network.actuator_cmd_port = 5005
+database.host = "127.0.0.1"
+database.port = 2240
+server_heartbeat.interval_ms = 1000
+server_heartbeat.broadcast_port = 5005
+server_heartbeat.broadcast_ip = "255.255.255.255"
+server_heartbeat.send_from_daq_bridge = true
+heartbeat_service.enabled = false
+heartbeat_service.interval_ms = 1000
+heartbeat_service.broadcast_ip = "192.168.2.255"
+heartbeat_service.broadcast_port = 5005
+heartbeat_service.elodin_host = "127.0.0.1"
+heartbeat_service.elodin_port = 2240
+logs.backend_udp_port = 8092
+time_sync.mode = BoardClock
+time_sync.window_seconds = 10
+time_sync.max_plausible_gap_s = 60
+time_sync.max_batch_age_s = 5
+time_sync.resync_threshold_ms = 1000
+time_sync.log_interval_s = 10
+config_broadcast_interval_ms = 1000
+boards.count = 4
+boards[0].section = "boards.pt_absolute"
+boards[0].type = "PT"
+boards[0].ip = "192.168.2.21"
+boards[0].board_id = 21
+boards[0].slot() = 1
+boards[0].enabled = true
+boards[0].num_actuators = 0
+boards[0].send_port = 5005
+boards[0].listen_port = 5005
+boards[0].enable_serial_printing = 0
+boards[0].voltage_reference = 0
+boards[0].necessary_for_abort = false
+boards[0].designated_survivor = false
+boards[0].active_connectors = [1]
+boards[0].pt_type = "0-5V absolute"
+boards[0].adc_ref_voltage = 2.5
+boards[0].has_hp_pt_keys = false
+boards[0].hp_pt_full_scale_psi = 5000
+boards[0].hp_pt_sense_resistor_ohms = 120
+boards[0].kind_of(type) = PT
+boards[0].board_key_of = "pt_absolute"
+boards[1].section = "boards.pt_legacy"
+boards[1].type = "PT"
+boards[1].ip = "192.168.2.23"
+boards[1].board_id = 23
+boards[1].slot() = 3
+boards[1].enabled = true
+boards[1].num_actuators = 0
+boards[1].send_port = 5005
+boards[1].listen_port = 5005
+boards[1].enable_serial_printing = 0
+boards[1].voltage_reference = 0
+boards[1].necessary_for_abort = false
+boards[1].designated_survivor = false
+boards[1].active_connectors = [1, 2]
+boards[1].pt_type = ""
+boards[1].adc_ref_voltage = 2.5
+boards[1].has_hp_pt_keys = true
+boards[1].hp_pt_full_scale_psi = 10000
+boards[1].hp_pt_sense_resistor_ohms = 120
+boards[1].kind_of(type) = PT
+boards[1].board_key_of = "pt_legacy"
+boards[2].section = "boards.pt_legacy_2"
+boards[2].type = "PT"
+boards[2].ip = "192.168.2.24"
+boards[2].board_id = 24
+boards[2].slot() = 4
+boards[2].enabled = true
+boards[2].num_actuators = 0
+boards[2].send_port = 5005
+boards[2].listen_port = 5005
+boards[2].enable_serial_printing = 0
+boards[2].voltage_reference = 0
+boards[2].necessary_for_abort = false
+boards[2].designated_survivor = false
+boards[2].active_connectors = [1]
+boards[2].pt_type = ""
+boards[2].adc_ref_voltage = 2.5
+boards[2].has_hp_pt_keys = true
+boards[2].hp_pt_full_scale_psi = 3000
+boards[2].hp_pt_sense_resistor_ohms = 249
+boards[2].kind_of(type) = PT
+boards[2].board_key_of = "pt_legacy_2"
+boards[3].section = "boards.pt_unknown"
+boards[3].type = "PT"
+boards[3].ip = "192.168.2.22"
+boards[3].board_id = 22
+boards[3].slot() = 2
+boards[3].enabled = true
+boards[3].num_actuators = 0
+boards[3].send_port = 5005
+boards[3].listen_port = 5005
+boards[3].enable_serial_printing = 0
+boards[3].voltage_reference = 0
+boards[3].necessary_for_abort = false
+boards[3].designated_survivor = false
+boards[3].active_connectors = [1]
+boards[3].pt_type = "4-20mA"
+boards[3].adc_ref_voltage = 2.5
+boards[3].has_hp_pt_keys = false
+boards[3].hp_pt_full_scale_psi = 5000
+boards[3].hp_pt_sense_resistor_ohms = 120
+boards[3].kind_of(type) = PT
+boards[3].board_key_of = "pt_unknown"
+t7_boards.count = 0
+t7_errors.count = 0
+actuator_roles.count = 0
+fire.state = ""
+fire.expiry_target = ""
+fire.duration_ms = 6000
+fire.extended_ms = 10000
+fire.gate_actuator = ""
+flow.return_target = ""
+flow.duration_ms = 0
+flow.max_ms = 0
+flow.gate_actuator = ""
+controller_service.port = 9999
+controller_service.host = "127.0.0.1"
+controller_service.fire_duration_ms = 6000
+controller_service.fire_extended_ms = 10000
+controller_service.sequencer_owns_valves = false
+controller.pwm_frequency_hz = 10
+controller.pwm_duration_ms = 10000
+controller.controller_loop_hz = 10
+controller.P_copv_min_pa = 0
+controller.fallback_fuel_duty_cycle = 0
+controller.fallback_ox_duty_cycle = 0
+controller.lut_path = ""
+controller.thrust_curve_path = ""
+actuator_service.port = 9998
+actuator_service.bind_address = "0.0.0.0"
+calibration.tc_adc_ref_voltage = 2.5
+calibration.rtd_adc_ref_voltage = 2.5
+calibration.rtd_excitation_ua = 1000
+calibration.rtd_r0_ohm = 1000
+calibration.lc_sensitivity_mv_per_v = 2
+calibration.lc_pga_gain = 32
+calibration.lc_full_scale_value = 300
+calibration.tc_json_dir = ""
+calibration.tc_csv_path = ""
+calibration.rtd_json_dir = ""
+calibration.rtd_csv_path = ""
+calibration.lc_json_dir = ""
+calibration.lc_csv_path = ""
+state_machine.transitions_csv = "config/state_transitions.csv"
+state_machine.actuator_csv = "config/state_machine_actuators.csv"
+state_machine.actuator_delay_csv = "config/state_machine_actuator_delays.csv"
+states.count = 0
+sensor_roles["sensor_roles_pt_absolute"]["Chamber"] = 1
+calibration_models["calibration_model_pt_absolute"]["Chamber"] = "neural"
+sensor_roles.sections = 1
+calibration_models.sections = 1
+calibration_full_scale["calibration_full_scale_pt_absolute"]["Chamber"] = -100
+calibration_full_scale.sections = 1
+calibration_sense_resistor.sections = 0
+calibration_sensitivity.sections = 0
+calibration_pga_gain.sections = 0
+sensor_roles_for(sensor_roles_pt_absolute) = {"Chamber": 1}
+calibration_model_for(pt_absolute) = set; full_scale_for = set; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_pt_legacy) = null
+calibration_model_for(pt_legacy) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_pt_legacy_2) = null
+calibration_model_for(pt_legacy_2) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_pt_unknown) = null
+calibration_model_for(pt_unknown) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+
+=== config::load_from_string
+identical to config::load
+
+=== active_boards
+PT board_id=21 board_number=1 channels=[1]
+PT board_id=23 board_number=3 channels=[1, 2]
+PT board_id=24 board_number=4 channels=[1]
+PT board_id=22 board_number=2 channels=[1]
+elodin.raw_sensor_tables (5) = 0x20:0x01 0x20:0x41 0x20:0x42 0x20:0x61 0x20:0x21
+elodin.calibrated_sensor_tables (5) = 0x20:0x11 0x20:0x51 0x20:0x52 0x20:0x71 0x20:0x31
+elodin.ball_valve_raw_tables (0) =
+elodin.ball_valve_calibrated_tables (0) =
+elodin.ball_valve_cmd_tables (0) =
+
+=== pt_boards
+slot 1 = {board_id=21 board_number=1 interface=ABSOLUTE_0_5V is_current_loop=false full_scale_psi=5000 sense_resistor_ohms=120 adc_ref_voltage=2.5}
+slot 2 = {board_id=22 board_number=2 interface=RATIOMETRIC_0_5V is_current_loop=false full_scale_psi=5000 sense_resistor_ohms=120 adc_ref_voltage=2.5}
+slot 3 = {board_id=23 board_number=3 interface=CURRENT_LOOP_4_20MA is_current_loop=true full_scale_psi=10000 sense_resistor_ohms=120 adc_ref_voltage=2.5}
+slot 4 = {board_id=24 board_number=4 interface=CURRENT_LOOP_4_20MA is_current_loop=true full_scale_psi=3000 sense_resistor_ohms=249 adc_ref_voltage=2.5}
+
+=== pt_role_tables
+"Chamber" board_key="pt_absolute" board="boards.pt_absolute" t7=null channel=1 board_number=1 table=0x20:0x11
+find_pt_role("Chamber") = "pt_absolute" ch=1 table=0x20:0x11
+find_pt_role("__no_such_role__") = nullopt
+
+=== build_slug_tables
+ok = true
+sensor CHAMBER = "Chamber"
+
+=== resolvePWMTargets
+fuel = {board_ip="" channel=0 actuator_name="" resolved=false}
+ox = {board_ip="" channel=0 actuator_name="" resolved=false}
+ok = false
+issue "no [actuator_roles] entry is assigned \"pwm_fuel\" — no actuator serves this PWM output"
+issue "no [actuator_roles] entry is assigned \"pwm_ox\" — no actuator serves this PWM output"
+boardIpMap[21] = "192.168.2.21"
+boardIpMap[22] = "192.168.2.22"
+boardIpMap[23] = "192.168.2.23"
+boardIpMap[24] = "192.168.2.24"
+
+=== StateMachine
+load(../../../config/profiles/default/state_transitions.csv) = true isLoaded=true
+bootState = 1 "Idle"
+state 0 "Debug" isAbort=false fromName(name)=0 bitmask=0x00000000 allowedFrom=[]
+state 1 "Idle" isAbort=false fromName(name)=1 bitmask=0x000C0006 allowedFrom=[1, 2, 18, 19]
+state 2 "Armed" isAbort=false fromName(name)=2 bitmask=0x0016001E allowedFrom=[1, 2, 3, 4, 17, 18, 20]
+state 3 "Fuel Fill" isAbort=false fromName(name)=3 bitmask=0x0006000C allowedFrom=[2, 3, 17, 18]
+state 4 "Ox Fill" isAbort=false fromName(name)=4 bitmask=0x00060014 allowedFrom=[2, 4, 17, 18]
+state 5 "GN2 Low Press" isAbort=false fromName(name)=5 bitmask=0x00171560 allowedFrom=[5, 6, 8, 10, 12, 16, 17, 18, 20]
+state 6 "GN2 Low Vent" isAbort=false fromName(name)=6 bitmask=0x00171560 allowedFrom=[5, 6, 8, 10, 12, 16, 17, 18, 20]
+state 7 "Fuel Press" isAbort=false fromName(name)=7 bitmask=0x001715C0 allowedFrom=[6, 7, 8, 10, 12, 16, 17, 18, 20]
+state 8 "Fuel Vent" isAbort=false fromName(name)=8 bitmask=0x00171540 allowedFrom=[6, 8, 10, 12, 16, 17, 18, 20]
+state 9 "Ox Press" isAbort=false fromName(name)=9 bitmask=0x00171740 allowedFrom=[6, 8, 9, 10, 12, 16, 17, 18, 20]
+state 10 "Ox Vent" isAbort=false fromName(name)=10 bitmask=0x00171540 allowedFrom=[6, 8, 10, 12, 16, 17, 18, 20]
+state 11 "GN2 High Press" isAbort=false fromName(name)=11 bitmask=0x001C7D40 allowedFrom=[6, 8, 10, 11, 12, 13, 14, 18, 19, 20]
+state 12 "GN2 High Vent" isAbort=false fromName(name)=12 bitmask=0x001C3D40 allowedFrom=[6, 8, 10, 11, 12, 13, 18, 19, 20]
+state 13 "Vent" isAbort=false fromName(name)=13 bitmask=0x001E2004 allowedFrom=[2, 13, 17, 18, 19, 20]
+state 14 "Calibrate" isAbort=false fromName(name)=14 bitmask=0x001CE000 allowedFrom=[13, 14, 15, 18, 19, 20]
+state 15 "Ready" isAbort=false fromName(name)=15 bitmask=0x000DA000 allowedFrom=[13, 15, 16, 18, 19]
+state 16 "Fire" isAbort=false fromName(name)=16 bitmask=0x000D0006 allowedFrom=[1, 2, 16, 18, 19]
+state 17 "Engine Abort" isAbort=true fromName(name)=17 bitmask=0x000E0000 allowedFrom=[17, 18, 19]
+state 18 "GSE Abort" isAbort=true fromName(name)=18 bitmask=0x001C2006 allowedFrom=[1, 2, 13, 18, 19, 20]
+state 19 "Emergency Abort" isAbort=true fromName(name)=19 bitmask=0x00080002 allowedFrom=[1, 19]
+state 20 "Press Standby" isAbort=false fromName(name)=20 bitmask=0x00171FE0 allowedFrom=[5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 20]
+fromName("Abort") = 19
+fromName("Quick Fire") = 15
+fromName("GN2 Press") = 5
+fromName("GN2 Vent") = 6
+fromName("High Press") = 11
+fromName("fire") = 16
+fromName("IDLE") = 1
+fromName("No Such State") = 255
+fromName("") = 255
+
+=== ActuatorCommander
+load = true isLoaded=true
+bind_addr_ = "0.0.0.0" explicit=false actuator_port_ = 5005
+positions "Armed" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Calibrate" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Emergency Abort" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 1
+  "Fuel Press" = 1
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 1
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 1
+  "LOX Fill" = 0
+  "LOX Main" = 1
+  "LOX Press" = 1
+  "LOX Vent" = 1
+positions "Engine Abort" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 1
+  "Fuel Press" = 1
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 1
+  "LOX Fill" = 0
+  "LOX Main" = 1
+  "LOX Press" = 1
+  "LOX Vent" = 1
+positions "Fire" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 1
+  "Fuel Press" = 1
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 1
+  "LOX Press" = 1
+  "LOX Vent" = 0
+positions "Fuel Fill" (16)
+  "Fuel Fill Press" = 1
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 1
+positions "Fuel Press" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 1
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Fuel Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 1
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GN2 High Press" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 1
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GN2 High Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GN2 Low Press" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 1
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GN2 Low Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GSE Abort" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 1
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Idle" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 1
+  "LOX Vent" = 0
+positions "Ox Fill" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 1
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 1
+positions "Ox Press" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 1
+  "LOX Vent" = 0
+positions "Ox Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 1
+positions "Press Standby" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Ready" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 1
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 1
+  "LOX Vent" = 1
+delay "Emergency Abort" "Fuel Main" = 0.2
+delay "Emergency Abort" "Fuel Press" = 0.2
+delay "Emergency Abort" "Fuel Vent" = 0.2
+delay "Emergency Abort" "GN2 Vent" = 0.2
+delay "Emergency Abort" "GSE High Press Vent" = 0.2
+delay "Emergency Abort" "LOX Dump" = 0.2
+delay "Emergency Abort" "LOX Main" = 0.2
+delay "Emergency Abort" "LOX Press" = 0.2
+delay "Emergency Abort" "LOX Vent" = 0.2
+delay "Engine Abort" "Fuel Main" = 0.2
+delay "Engine Abort" "Fuel Press" = 0.2
+delay "Engine Abort" "Fuel Vent" = 0.2
+delay "Engine Abort" "GN2 Vent" = 0.2
+delay "Engine Abort" "LOX Dump" = 0.2
+delay "Engine Abort" "LOX Main" = 0.2
+delay "Engine Abort" "LOX Press" = 0.2
+delay "Engine Abort" "LOX Vent" = 0.2
+delay "Fire" "Fuel Main" = 0.08
+delay "Fire" "LOX Main" = 0.001
+delay "Fuel Fill" "Fuel Fill Press" = 0.2
+delay "Fuel Press" "Fuel Press" = 0.2
+delay "Fuel Vent" "Fuel Vent" = 0.2
+delay "GN2 High Press" "GSE High Press Control" = 0.2
+delay "GN2 High Vent" "GN2 Vent" = 0.2
+delay "GN2 Low Vent" "GN2 Vent" = 0.2
+delay "GSE Abort" "GSE High Press Vent" = 0.2
+delay "Ox Fill" "GN2 Vent" = 0.2
+delay "Ox Fill" "LOX Fill" = 0.2
+delay "Ox Press" "LOX Press" = 0.2
+delay "Ox Vent" "LOX Vent" = 0.2
+delay "Press Standby" "GSE Med Press Control" = 0.2
+delay "Vent" "Fuel Press" = 0.2
+delay "Vent" "Fuel Vent" = 0.2
+delay "Vent" "GN2 Vent" = 0.2
+delay "Vent" "LOX Press" = 0.2
+delay "Vent" "LOX Vent" = 0.2
+positionsForState("No Such State").size = 0
+
+=== load_dynamic_states
+
+=== hold_rule_inputs
+fire_state = 255 "Unknown"
+fire_expiry = 255 "Unknown"
+fire isAllowed(state, expiry) = false
+parseHoldMs("1500") = true 1500
+parseHoldMs(" 250 ") = true 250
+parseHoldMs("0") = false 0
+parseHoldMs("1e3") = false 0
+parseHoldMs("-5") = false 0
+parseHoldMs("3600000") = true 3600000
+parseHoldMs("3600001") = false 0
+parseHoldMs("") = false 0
+parseHoldMs("12x") = false 0
+
+=== captured stdout
+[StateMachine] Loaded 20 states from ../../../config/profiles/default/state_transitions.csv
+[ActuatorCommander] Loaded 0 actuator roles from config
+[ActuatorCommander] Loaded 36 non-zero actuator delay(s) from ../../../config/profiles/default/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 20 states from ../../../config/profiles/default/state_machine_actuators.csv
+
+=== captured stderr
+[Config] ERROR: [boards.pt_absolute] pt_type "0-5V absolute" is not supported by the PT firmware.
+[Config] DEPRECATED: [boards.pt_legacy] has no pt_type; inferring "4-20 mA absolute" from its hp_pt_* keys. Add pt_type to the board.
+[Config] ERROR: [boards.pt_unknown] unknown pt_type "4-20mA"; treating as 0-5V ratiometric.
+
+=== exit 0
