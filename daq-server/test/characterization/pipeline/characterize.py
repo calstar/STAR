@@ -101,27 +101,29 @@ def envelope_check(steps, pps):
     sample timestamps (not delivery), so machine load cannot move it: median spacing within
     [0.9 W, 2 W]. Halving the window (doubling the rate) lands at ~W/2 and fails."""
     w = 2000.0 / pps
+    # The reply to a narrowed query arrives as several time slices (history-backfill.ts): join
+    # every single-series slice of the history step.
+    t = set()
     for st, frames in steps:
         if st["name"] != "history":
             continue
         for m in frames.get("A", []):
-            if m["type"] != "historical_data":
+            if m["type"] != "historical_data" or len(m["payload"]) != 1:
                 continue
             series = m["payload"].get("PT1.CH1.raw_adc_counts")
-            if not series or len(m["payload"]) != 1:
-                continue
-            t = series["time"]
-            gaps = sorted(b - a for a, b in zip(t, t[1:]))
-            if len(gaps) < 5:
-                return f"envelope spacing: too few points ({len(t)})"
-            med = gaps[len(gaps) // 2]
-            ok = 0.9 * w <= med <= 2 * w
-            return (
-                f"envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/{pps:g} pts/s"
-                f" = {w:g} ms): median within [0.9 W, 2 W]: {'yes' if ok else 'NO'}"
-                f"{'' if ok else f' (median {med} ms)'}; at least 5 gaps: yes"
-            )
-    return "envelope spacing: no single-series history reply"
+            if series:
+                t.update(series["time"])
+    t = sorted(t)
+    gaps = sorted(b - a for a, b in zip(t, t[1:]))
+    if len(gaps) < 5:
+        return f"envelope spacing: fewer than 5 gaps in the history reply ({len(t)} points)"
+    med = gaps[len(gaps) // 2]
+    ok = 0.9 * w <= med <= 2 * w
+    return (
+        f"envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/{pps:g} pts/s"
+        f" = {w:g} ms): median within [0.9 W, 2 W]: {'yes' if ok else 'NO'}"
+        f"{'' if ok else f' (median {med} ms)'}; at least 5 gaps: yes"
+    )
 
 
 def schema_paths(v, prefix, out):
