@@ -21,13 +21,15 @@ A few computations are ill-conditioned (a cancellation, a least-squares solve) a
 builds by more than a few ULP of their result. Those, and only those, are named in the tolerance
 file, one family per line (the first rule that matches a value wins):
 
-    family=<name> [section=<header>] [block=<file>] [line=<regex>] [fields=<i,j>] [below=<x>]
+    family=<name> [section=<header>] [block=<file>] [line=<regex>] [key=<regex>]
+                  [fields=<i,j>] [below=<x>]
                   [ulps=<n>] [abs=<x>] [rel=<x>] [ignore=1]
 
 Values containing spaces or double quotes are quoted with '...' (or "...").
-`section` is the text of the enclosing `== <header> ==` line in the golden, `block` the file a
+`section` is a regex the whole text of the enclosing `== <header> ==` line must match, `block` the file a
 stack-golden snapshot (`  --- <file> ---` / `  --- <file>: diff`) is printing, `line` a regex the
-golden line must match (search), `fields` the 0-based indices of the numbers on that line it
+golden line must match (search), `key` a regex the text just before the number must match (its label, e.g. `B=` or `"B": `),
+`fields` the 0-based indices of the numbers on that line it
 covers, `below` restricts the rule to golden values with |v| < x. A value
 under a rule passes when it is within the rule's ulps (default ULPS), or |out - golden| <= abs, or
 <= rel * |golden|. Integers and text are never relaxed, except by `ignore=1`, which skips the
@@ -56,6 +58,7 @@ class Rule:
     section: str | None = None
     block: str | None = None
     line: re.Pattern | None = None
+    key: re.Pattern | None = None
     fields: set[int] | None = None
     below: float | None = None
     ulps: float | None = None
@@ -93,6 +96,7 @@ def load_rules(path: str | None) -> list[Rule]:
                     section=kv.get("section"),
                     block=kv.get("block"),
                     line=re.compile(kv["line"]) if "line" in kv else None,
+                    key=re.compile(kv["key"]) if "key" in kv else None,
                     fields=(
                         {int(x) for x in kv["fields"].split(",")}
                         if "fields" in kv
@@ -127,14 +131,22 @@ def split(line: str) -> tuple[list[str], list[str]]:
 
 
 def rule_for(
-    rules: list[Rule], section: str, block: str, line: str, field: int, value: float
+    rules: list[Rule],
+    section: str,
+    block: str,
+    line: str,
+    field: int,
+    value: float,
+    key: str = "",
 ) -> Rule | None:
     for r in rules:
+        if r.key is not None and not r.key.search(key):
+            continue
         if r.block is not None and r.block != block:
             continue
         if r.fields is not None and field not in r.fields:
             continue
-        if r.section is not None and r.section != section:
+        if r.section is not None and not re.fullmatch(r.section, section):
             continue
         if r.line is not None and not r.line.search(line):
             continue
@@ -173,7 +185,7 @@ def compare(
         for k, (a, b) in enumerate(zip(gn, on)):
             if a == b:
                 continue
-            ig = rule_for(rules, section, block, g, k, float(a.rstrip("f")))
+            ig = rule_for(rules, section, block, g, k, float(a.rstrip("f")), gt[k])
             if ig is not None and ig.ignore:
                 continue
             if INT.match(a) and INT.match(b):
@@ -186,7 +198,7 @@ def compare(
             ga, ob = float(a.rstrip("f")), float(b.rstrip("f"))
             diff = abs(ob - ga)
             dist = diff / (f32_ulp(ga) if single else math.ulp(ga))
-            r = rule_for(rules, section, block, g, k, ga)
+            r = rule_for(rules, section, block, g, k, ga, gt[k])
             limit = r.ulps if r is not None and r.ulps is not None else ulps
             if dist <= limit:
                 continue
