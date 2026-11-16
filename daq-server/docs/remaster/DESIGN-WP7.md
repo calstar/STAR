@@ -273,7 +273,8 @@ After 1.12 `api-server.ts` is the router (~90 lines): imports, re-exports, `crea
 363-393 verbatim, ten `if (await handle…Request(req, res, url, opts)) return true;` lines, 1257-1267
 verbatim.
 
-**Checks for every commit:** `npx tsc --noEmit` (exit 0 on the baseline), backend `npm test`
+**Checks for every commit:** `npx tsc --noEmit` (exit 0 on the baseline), backend `npm test` with no
+failure outside `test/characterization/baseline_vitest_failures.txt`
 (`t7.test.ts`, `config-profile-create-calibration.test.ts` exercise the exports), then under the
 stack lock `pipeline/run.sh pt nocal boards` and `lifecycle/run.sh` (its `ota` golden drives
 `POST /api/ota-flash`); `test_integration.sh` once at the end of the step. **Route-table check**
