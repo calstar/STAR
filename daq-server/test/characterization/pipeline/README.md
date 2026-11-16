@@ -47,11 +47,28 @@ binary.
   `config/*.csv` paths, with the CSVs copied beside it. It is also the backend's `CONFIG_PATH`, so
   `profiles/`, `.active_profile`, `countdown_state.json`, `session_state.json` and `video.json`
   all land beside it.
-- `char/backend/` — the backend's cwd. Its legacy state-CSV loaders look in `<cwd>/../../config`
-  and its OTA project search walks up six levels from cwd to `firmware/`, both exactly as from
-  `diablo_server/backend`. (An absolute `transitions_csv` is not equivalent: those loaders `join()`
-  it onto other directories and never find it.) Because they try `daq-server/config/*.csv` via
-  `__dirname` first, `run.sh` refuses to run if a deployed copy exists there.
+- `char/backend/` — the backend's cwd. Its legacy state-CSV loaders look in `<cwd>/../../config`,
+  exactly as from `diablo_server/backend`. (An absolute `transitions_csv` is not equivalent: those
+  loaders `join()` it onto other directories and never find it.) Because they try
+  `daq-server/config/*.csv` via `__dirname` first, `run.sh` refuses to run if a deployed copy
+  exists there.
+- `firmware/Hotfire_Code/` — a fixed PlatformIO tree. The OTA project search
+  (`ota-build.ts discoverProjects`) walks up from the backend's cwd to the first
+  `firmware/Hotfire_Code`; this one is found before the repo's, which the Linux gate's
+  `git archive` export does not contain and which changes with every firmware project.
+
+### Platform neutrality (macOS and Linux produce the same goldens)
+
+- **Backend PT calibration.** `calibration.ts loadPTCalibration` takes the newest
+  `daq-server/calibration/calibration*.json` by mtime. Checked-out (and `git archive`d) files share
+  one mtime, so the pick fell to directory order: macOS got `calibration_2026-02-25T03-44-09.json`,
+  Linux a file with no coefficients (`calibrationFilePath: null`). `run.sh` sets each committed
+  file's mtime to the timestamp in its name (content untouched), so both pick the newest by name.
+  The unpinned behaviour is a defect: the backend's calibration depends on filesystem order.
+- **Self-test results.** The simulator sends each board's SELF_TEST once, at start; the backend
+  subscribes to the self-test tables over several request-id-capped passes, and a result
+  published before its pass is lost (Linux lost board 21's sensors 2-10). `run.sh` starts the
+  simulator only after a subscription pass with nothing left queued.
 - `scripts/calibration/calibrations/` — the committed store minus `cubic_calibration.json`,
   `lc_tare.json` and `adjustments.json`. Every C++ service runs with `cwd` = the fixture (all their store
   paths are relative); the backend gets `DAQ_CALIBRATIONS_DIR`. The live JSONs are never parked.

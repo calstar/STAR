@@ -104,6 +104,16 @@ format_check() {
   [ -z "$newpy" ] || (cd "$REPO" && echo "$newpy" | xargs black --check)
 }
 
+# Tests must not write tracked files (H-1: test_integration.sh used to rewrite the live
+# abort_thresholds.txt). Files already dirty when the gate starts (work in progress) are ignored,
+# and so is docs/remaster/ (the orchestrator's ledger, edited while gates run).
+git -C "$ROOT" diff --name-only > "$LOG/dirty-before.txt"
+tree_unchanged() {
+  local new
+  new="$(comm -13 <(sort "$LOG/dirty-before.txt") <(git -C "$ROOT" diff --name-only | sort) | grep -v '^daq-server/docs/remaster/' || true)"
+  [ -z "$new" ] || { echo "the gate's runs modified tracked files:"; echo "$new"; git -C "$ROOT" diff --stat -- $new; return 1; }
+}
+
 step build build_clean
 step ctest ctest_all
 step backend-vitest backend_vitest
@@ -115,6 +125,7 @@ step shared-types shared_types
 [ -x "$CHAR/run.sh" ] || [ -f "$CHAR/run.sh" ] && step characterization characterization
 [ "$FAST" = 1 ] || step integration integration
 step format format_check
+step tree-unchanged tree_unchanged
 
 echo
 if [ ${#fails[@]} -eq 0 ]; then echo "GATE: PASS"; else echo "GATE: FAIL — ${fails[*]}"; exit 1; fi
