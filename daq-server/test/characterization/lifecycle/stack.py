@@ -183,6 +183,13 @@ def make_cwd(path: str):
         ).stdout.split()
     except (OSError, subprocess.CalledProcessError):
         files = []
+    if not files:
+        # Not a git checkout (a `git archive` export, as the Linux gate runs): the directory then
+        # holds exactly the tracked files, so take all of them.
+        base = os.path.join(ROOT, "scripts", "calibration", "calibrations")
+        for d, _dirs, names in os.walk(base):
+            for n in names:
+                files.append(os.path.relpath(os.path.join(d, n), ROOT))
     for rel in files:
         dst = os.path.join(path, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -320,9 +327,12 @@ class Capture:
 
     def __init__(self):
         self.socks: dict[str, socket.socket] = {}
-        self.packets: list[tuple[str, float, int, bytes]] = (
-            []
-        )  # name, mono, epoch_ms, data
+        # name, mono, epoch_ms, data, source port
+        self.packets: list[tuple[str, float, int, bytes, int]] = []
+        # name -> the one source port accepted there (only_from); a process left over from an
+        # earlier scenario, or another board on 127.0.0.1, can never be mistaken for the sender
+        self.sources: dict[str, int] = {}
+        self.passes = 0  # capture-loop passes started (release() waits on it)
         self.lock = threading.Lock()
         self._stop = False
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -335,11 +345,41 @@ class Capture:
         with self.lock:
             self.socks[name] = s
 
-    def release(self, name: str):
+    def only_from(self, name: str, port: int | None):
+        with self.lock:
+            if port is None:
+                self.sources.pop(name, None)
+            else:
+                self.sources[name] = port
+
+    def release(self, name: str, port: int | None = None, timeout: float = 10.0):
+        """Stop listening on `name` and give its port back.
+
+        On Linux a socket closed while another thread sits in select() on it stays bound until
+        that select returns, so a simulator started right after the close can fail its bind
+        (EADDRINUSE -> board_simulator.py exits 1). Close only once the capture thread has
+        finished a full pass without this socket, then (with `port`) wait, bounded, until the
+        port can actually be bound."""
         with self.lock:
             s = self.socks.pop(name, None)
+            seen = self.passes
         if s:
+            end = time.monotonic() + timeout
+            while (
+                self.passes < seen + 2
+                and self.thread.is_alive()
+                and time.monotonic() < end
+            ):
+                time.sleep(0.01)
             s.close()
+        if port is not None:
+            end = time.monotonic() + timeout
+            while not port_free(port, udp=True) and time.monotonic() < end:
+                time.sleep(0.05)
+            if not port_free(port, udp=True):
+                raise RuntimeError(
+                    f"capture port {port} still bound {timeout}s after release"
+                )
 
     def sock(self, name: str) -> socket.socket:
         return self.socks[name]
@@ -347,6 +387,9 @@ class Capture:
     def _run(self):
         while not self._stop:
             with self.lock:
+                self.passes += (
+                    1  # a pass that starts here cannot see a socket popped before
+                )
                 items = list(self.socks.items())
             if not items:
                 time.sleep(0.01)
@@ -360,11 +403,11 @@ class Capture:
                 if s in r:
                     while True:
                         try:
-                            data, _ = s.recvfrom(65536)
+                            data, addr = s.recvfrom(65536)
                         except (BlockingIOError, OSError):
                             break
                         with self.lock:
-                            self.packets.append((name, now, epoch, data))
+                            self.packets.append((name, now, epoch, data, addr[1]))
 
     def get(
         self,
@@ -374,10 +417,12 @@ class Capture:
         ptype: int | None = None,
     ):
         with self.lock:
+            src = self.sources.get(name)
             return [
                 (t, e, d)
-                for n, t, e, d in self.packets
+                for n, t, e, d, sp in self.packets
                 if n == name
+                and (src is None or sp == src)
                 and t >= since
                 and (until is None or t < until)
                 and (ptype is None or (d and d[0] == ptype))
