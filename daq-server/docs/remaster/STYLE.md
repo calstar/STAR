@@ -301,7 +301,7 @@ rewrite every file). `tsc --noEmit` (D40) is the only static gate. WPs: 5–7.
    `read_file_text`. WP8's `fsw::net` helpers (`openUdpSocket`, `openTcpListener`,
    `serveTcpClients`, `ipv4Destination`) match `bindToDaqInterface`. WP10 §5 mints camelCase
    `registerAllTables` in snake_case `daq_bridge` (0:13) because BLOAT-MAP named it; S1 gives
-   `register_all_tables` (a planning name is not an observable). WP9's snake_case in
+   `register_all_tables` (a planning name is not an observable; the function itself was later dropped, LEDGER D49(10)). WP9's snake_case in
    `services/calibration` conforms. Decide before WP8 pass 1 (renaming later is a second diff).
 3. **What "abstraction" means (S34).** D17(d) read strictly ("no abstraction with a single
    user") would reject WP9's `CalibrationContext`/`StreamState` and WP10's one-call-site cleanup
