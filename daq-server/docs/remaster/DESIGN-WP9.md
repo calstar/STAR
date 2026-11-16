@@ -7,6 +7,16 @@ built or run. Every line number below is
 BLOAT-MAP §4 ranges were a draft; these are re-anchored and differ in places (e.g. the Elodin
 connect block is 1477-1562, the read loop 1564-2128).
 
+**Prerequisites:** C1 (`packets/`, `elodin/`) merged into `backend-remastered`; WP8 pass 1 merged;
+the "must close before WP9" characterization in §7 merged and gated (tares-before-reload, G5,
+G1 Blend); DESIGN-WP8 gap 1 (`kill -PIPE`) merged before cleanup C1.
+
+**Orchestrator decisions recorded here (design review):** placing the new TUs under
+`services/calibration/` (not `lib/`) is accepted. BLOAT-MAP's "main < 400" DoD is **waived**: the
+target is ~430 lines after move-only, with `main` holding argv, construction in today's order,
+the loop head with dispatch, and shutdown. There is no C1b. The move-only pass and the cleanup
+pass are **separate queue items, each fully gated**.
+
 Constraints that shape everything below: D17 (behaviour bit for bit, no single-user
 abstractions, move-only split first, then cleanup), D18/D20 (harness), D22 + the LEDGER WP9 row
 (no arithmetic reordering; robust predictions held at abs 1e-9 psi), the Parked SIGPIPE entry
@@ -141,10 +151,8 @@ All `[&]` over `main`'s frame. Captured locals: `cal_cfg`, `pt_calibration`, `ro
 All new files go under `diablo_server/services/calibration/` and are compiled **into the
 `calibration_service` executable only** — not into `fsw_daq_lib`. BLOAT-MAP WP9 proposed
 `lib/src/calibration/{Conversions,SensorModelRegistry,CalibrationController}.cpp`; rejected
-because (a) every piece has exactly one consumer, calibration_service (D17(d)); (b) `fsw_daq_lib`
-is `SHARED` (`lib/CMakeLists.txt:45`) and built `-fPIC`, where GCC's default semantic
-interposition stops inlining exported functions — the hot-path functions would lose the
-inlining context they compile in today (see §6.3); (c) service state does not belong in the lib.
+because (a) every piece has exactly one consumer, calibration_service (D17(d)); (b) service
+state does not belong in the lib.
 
 Namespace for everything new: `fsw::calibration_service` (lib uses `fsw::calibration`).
 
@@ -165,12 +173,10 @@ methods, virtuals or getters: `CalibrationContext` is needed because the functio
 captured; `StreamState` holds the loop locals two handlers
 share. `Conversions.hpp` and `SensorModels.hpp` each have ≥ 3 including TUs.
 
-`calibration_main.cpp` after the move-only pass is ~430 lines. Cleanup C1 (stop handlers) removes
-only ~8, because DESIGN-WP8 shares no subscriber loop or argv parser. BLOAT-MAP's DoD ("main <
-400") is therefore met only if cleanup C1b also moves the Elodin connect/register/subscribe
-lambdas (1477-1548) verbatim into `RawStream.cpp` as file functions taking `CalibrationContext`
-(same text, same call order; frozen by the elodin schema golden). Otherwise main ends near 420
-lines and the DoD needs the orchestrator's waiver (open question 4).
+`calibration_main.cpp` is ~430 lines after move-only; `main` holds argv, construction in today's
+order, the loop head with dispatch, and shutdown. Cleanup C1 (stop handlers) removes ~8 more.
+BLOAT-MAP's "main < 400" DoD is waived by the orchestrator; there is no C1b, and the Elodin
+connect/register/subscribe lambdas (1477-1548) stay in `main`.
 
 ## 3. Ownership and data flow
 
@@ -195,6 +201,10 @@ struct CalibrationContext {
     const double lc_sensitivity_mv_per_v, lc_pga_gain, lc_full_scale_value;
 };
 ```
+
+On reconnect (1564-1578), the clear at 1575 becomes **`stream.last_adc_map.clear();`** (the map
+now lives in `StreamState`); `capture_window.clear()` at 1574 is unchanged. Both stay in main's
+loop head, in that order, before `[Cal] Reconnected to Elodin`.
 
 and, before the loop, `StreamState` (RawStream.hpp): references to `elodin_client`,
 `tc_calibration`, `rtd_calibration`, `pt_boards`, `lc_boards`; copies of the const doubles
@@ -254,12 +264,15 @@ else that throws terminates (SIGABRT). The split adds no `try`/`catch` and remov
 **CalibrationCommand has no reply.** Nothing is sent back on `0x46`; a command's observable
 effects are the files it writes, the values published afterwards and its log lines.
 
-How it stays identical: every branch moves with its body; each `continue` inside a moved loop
-section becomes `return` from the handler, and the handler is the last statement of its loop
-branch in `main` followed by `continue`, so control reaches the same next statement. The
+How it stays identical: every branch moves with its body. **Only the `continue`s of the outer
+read loop that sit inside moved code become `return`**, exactly these: **1637, 1829, 1838, 1841,
+1845, 1910, 1915, 1922, 1924, 1930, 1939**. The handler call is the last statement of its branch
+in `main`, followed by `continue`, so control reaches the same next statement. **1673, 1789 and
+1796 are `continue`s of inner `for` loops inside the 0x46 handler: they stay `continue`.** 1601,
+1608, 1617 (loop head) and 1820 (after the 0x46 dispatch) stay in `main` as `continue`. The
 specific traps:
 
-- 1820 `continue` after the whole `0x46` block (also when `pkt_len < 24`): main does
+- 1820 `continue` after the whole `0x46` block (also when `pkt_len < 24`) stays in main:
   `if (type_hi == 0x46) { handle_calibration_command(...); continue; }`.
 - 1910 `continue` after the T7 block, and the T7 early `continue`s at 1829, 1838, 1841, 1845
   (before `begin_batch`): `return` in `handle_t7_raw`; main `continue`s.
@@ -383,6 +396,18 @@ Checks for the move-only package, all required:
   `/tmp/wp9-pre.txt` **byte-identical** (stronger than the golden's 4 ULP; masked fields are
   masked in both).
 - Warnings: `calibration_main.cpp: unused variable 'logged_ch5'` still present, nothing new.
+- **Moved-code diff rule.** `git diff -M --color-moved=dimmed-zebra
+  --color-moved-ws=allow-indentation-change backend-remastered...HEAD -- diablo_server/services/calibration`:
+  every line that is **not** dimmed (i.e. not recognised as moved) must be one of: an
+  `#include`; a namespace line (`namespace …{`, `}  // namespace`, `using namespace`);
+  `static` → `inline`; a `ctx.` / `st.` (or `stream.`) prefix on a formerly captured local; a
+  function signature replacing a lambda head or a `{`/`}` that closes it; one of the listed
+  `continue` → `return` lines (§4). Any other non-dimmed line is a review stop.
+- **Same-machine and Linux byte identity.** In addition to the macOS check above, run the same
+  `service_run.py` pre/post on the **Linux arm64 gcc-12 Release** leg (the build CI and probably
+  the stand use; GCC contracts across statements after inlining): `cmp` byte-identical.
+- **Same external calls.** `nm -C --undefined-only calibration_service | sort` before and after:
+  identical (no lib function newly called or dropped, so no math moved across the lib boundary).
 - The guarding runs in §7.
 
 ### 6.2 Cleanup pass (separate package, each item its own commit, each gated by §7)
@@ -432,8 +457,10 @@ them**:
 | `SensorCalibrationManager::calculate` | `lib/src/calibration/SensorCalibration.cpp` | LC/TC/RTD |
 
 Both cubic evaluation and robust prediction are compiled in lib TUs, out of line from the service.
-Their inlining and contraction context cannot change as long as `lib/` is untouched, which the
-move-only check enforces. That is how WP9 meets the LEDGER constraint: the robust path and
+Their inlining and contraction context should not change while `lib/` is untouched, which the
+move-only check enforces; this is an argument, not a proof (LTO is off today, but a lib header
+inlined into a moved function compiles in a new TU), so it is backed by the byte-identical
+macOS and Linux arm64 gcc-12 outputs and the `nm --undefined-only` check (§6.1). That is how WP9 meets the LEDGER constraint: the robust path and
 `calculate_pressure` keep their arithmetic order because WP9 does not touch them.
 
 Floating-point arithmetic that does move (inside `calibration_service`):
@@ -466,9 +493,8 @@ The two contractible expressions stay where their inlining context is today:
   psi);` after `select_pt_psi`) in the same function body (now `handle_*_raw`), in a TU built with
   the same flags.
 
-**Coverage warning:** the Blend expression is in no golden (§7 gap G1). The proof for it is the
-same-machine byte-identical `service_run.py` output plus the unchanged expression text; extend
-the stack fixture before WP9 if the orchestrator wants a black-box guard (G1).
+**Coverage:** the Blend expression is in no golden today; G1 (§7) must close before WP9 with a
+reseed case such that changing `kFactoryWeight` 0.25 → 0.75 (line 299) goes red.
 
 Verification of the arithmetic, in addition to the byte-identical same-machine check:
 
@@ -495,7 +521,7 @@ family is a contract change until proven otherwise; stop and report.
 | registration + subscription order and bytes | elodin `## calibration` section (`schema_config_base.txt`, `schema_profile_default.txt`) and `stack.txt` startup frames | elodin/packets areas are on `queue/C1`, **not merged on `backend-remastered`** at the time of writing; read with `git show queue/C1:daq-server/test/characterization/elodin/…` |
 | T7 end to end, restart, re-subscribe after late T7 registration (refusal retry with real elodin-db) | ctest `t7_integration` (`test/t7_integration.py`, RUN_SERIAL, 180 s) | in `timing_ctests.txt`; Darwin baseline allowlist; judged on the Linux leg / CI (D31, D34) |
 | robust streaming end to end | integration `cal_robust_learn` (config patched to `"Ox Upstream" = "robust"`; asserts > 15 psi move) | loose; integration is the orchestrator's gate |
-| lib math (`calculate_pressure`, robust predictions at abs 1e-9) | `calibration/golden/lib.txt` | untouched by WP9 by construction |
+| lib math (`calculate_pressure`, robust predictions at abs 1e-9) | `calibration/golden/lib.txt` | `lib/` unchanged by WP9 (diff empty); still re-run, since lib headers inline into moved code |
 
 White-box hooks: **none for this file.** `calibration/README.md` and
 `calibration/CMakeLists.txt:22` state that `calibration_main.cpp` is reached only through the
@@ -503,14 +529,17 @@ built binary; `config/char_config_services.cpp` includes the daq_bridge, stackli
 config_broadcast mains, not this one; no `#define private public` touches calibration. WP9
 re-points no harness file; any harness diff in the WP9 packages is a red flag for review.
 
-Gaps (propose; do not write in WP9 — a characterization package before WP9, or recorded as
-accepted):
+Gaps (propose; do not write in WP9). **Must close before WP9:** tares-before-reload (run the
+mutation "`lc_tare_store.load()` after the first `reload_live_store()`" against `stack.txt`; if it
+stays green, add a "profile swapped on disk while the service is down, then start" case), G5,
+and G1 Blend. **Before cleanup C1:** DESIGN-WP8 gap 1. The rest are recorded as accepted:
 
-- **G1 Blend and Robust streaming in the stack golden.** Fixture has no `robust`/`blend` role and
+- **G1 [before WP9] Blend and Robust streaming in the stack golden.** Fixture has no `robust`/`blend` role and
   the harness strips `CAL_*`. Robust values are wall-clock dependent (C3-1), so freeze
   `cal_status`, the frame set, and Blend/Robust values only where `has_robust` is false
   (Robust → 0, Blend → factory) or after a reseed with no learning; mask the rest as `fitCurve`
-  is masked.
+  is masked. Required minimum: a reseed case with a Blend role whose published value makes the
+  mutation `kFactoryWeight` 0.25 → 0.75 (line 299) go red.
 - **G2 env overrides** `CAL_USE_FACTORY_PT` / `CAL_USE_ROBUST_BLEND` / `CAL_USE_ROBUST_PT`
   (precedence 773-778, the summary line 1436-1441, abort model 1073), `CAL_HP_MA_HYST=0`.
 - **G3 reconnect**: stand-in Elodin drops the connection; expect re-registration, re-subscription,
@@ -518,13 +547,12 @@ accepted):
 - **G4 refusal retry** in the stack: stand-in answers one subscription with ErrorResponse; expect
   a re-subscribe of exactly that table about 1 s later (today only `t7_integration` part 4, with
   real elodin-db, which is skipped when elodin-db is absent).
-- **G5 Elodin down at start (C6-9)**: exit code 1, and `abort_thresholds.txt` / cubic store
-  written before the exit; no `adj.json` save.
+- **G5 [before WP9] Elodin down at start (C6-9)**: exit code 1, with `abort_thresholds.txt` and
+  the cubic store written first, and no `adj.json` written.
 - **G6 CLI**: `--help` text and exit 0; adjustments discovery (newest `calibration_backup_*.json`,
   `CAL_BACKUP_PATH`; the harness always passes `--adjustments`).
-- **G7 SIGPIPE**: no test shows calibration dies on SIGPIPE. A lifecycle case (stand-in closes
-  the socket mid-stream; expect exit by signal 13, not 0/1) would freeze the Parked entry for this
-  service; timing-sensitive (the write must hit the closed socket), so bound it.
+- **G7 SIGPIPE**: replaced by DESIGN-WP8 gap 1 (`kill -PIPE` on every service; calibration exits
+  −13). Must close before cleanup C1.
 - **G8 5-minute auto-save**: not practical to freeze (300 s); stays a review item (the tail of
   `handle_esp32_raw`).
 - **G9 debug-limit/log text**: not read by any test; held by the literal-multiset check.
@@ -562,9 +590,6 @@ accepted):
    command and stream handlers left in `calibration_main.cpp` (main would then stay ~900 lines)?
 2. Merge `resolve_pt_sensor_uid` / `resolve_lc_sensor_uid` (identical bodies; comment 505-509
    says the copy was deliberate)? Behaviour-neutral; team's call.
-3. Does any golden go red if `lc_tare_store.load()` is moved after the first
-   `reload_live_store()`? If not, add a stack case (profile swapped on disk while the service is
-   down, then start) before WP9 so the load-bearing order is guarded black-box.
-4. DESIGN-WP8 shares no subscriber loop, so the < 400-line DoD depends on C1b (moving the Elodin
-   lambdas into `RawStream.cpp`). Accept C1b, or waive the DoD at ~420 lines?
+3. (Decided: tares-before-reload must be guarded before WP9; see §7.)
+4. (Decided: the < 400-line DoD is waived; no C1b.)
 5. `logged_ch5`: delete in cleanup (and the baseline line) or keep?
