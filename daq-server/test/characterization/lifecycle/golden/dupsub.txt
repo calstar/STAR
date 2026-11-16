@@ -1,0 +1,6 @@
+== test/test_duplicate_subscription.ts against the running stack (PT1.CH1 [0x20,0x01])
+  exit 1
+  ✅ Baseline: <rate> pkt/s
+  ❌ 2 subscriptions: DUPLICATES DETECTED (ratio ~2x)
+  ❌ 5 subscriptions: DUPLICATES DETECTED (ratio ~5x)
+  0 passed, 2 failed
