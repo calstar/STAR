@@ -26,7 +26,7 @@ G-W5 (§6) exists before commit 5.5.
 |---|---|---|
 | dead files | `calibration-sidecar.ts` (143), `ota-flash.ts` (138), `server-types.ts` (40): unreachable from every entrypoint, imported by no test or harness | BLOAT-MAP §2a (re-checked: `grep -rn` over `src`, `frontend`, `shared`, `test/` finds only `api-server.ts`'s URL string `/api/ota-flash`) |
 | misplaced test | `operators.test.ts` beside its module (vitest has no config; it collects `**/*.test.ts`, so the move changes nothing it runs) | BLOAT-MAP §2a |
-| the `:9998` line client | `server.ts:1411-1441` `sendToActuatorService` (3 callers: `state_transition`, `actuator`, `debug_mode`, `extend_fire` in `handleCommand`, and `refreshScriptStatus`); `server.ts:74` `ACT_SVC_PORT` | BLOAT-MAP §3 |
+| the `:9998` line client | `server.ts:1411-1441` `sendToActuatorService` (5 call sites: 4 in `handleCommand` — `state_transition`, `actuator`, `debug_mode`, `extend_fire` — and 1 in `refreshScriptStatus`); `server.ts:74` `ACT_SVC_PORT` | BLOAT-MAP §3 |
 | the dead `:9999` client | `server.ts:1443-1467` `sendToControllerService` (no caller), `server.ts:75` `CTRL_SVC_PORT` (read only by it) | D39: delete, do not fold |
 | the slot rule `board_id % 10, 0 → 10` | **six** copies in the backend: `sensor-config.ts:59`, `:116`; `elodin-vtable-registry.ts:249`; `legacy/state-actuators.ts:122`; `api-server.ts:97` (`elodinSlotFromBoardId`); `server.ts:344` | BLOAT-MAP §3 (five) + DESIGN-WP6 R5 (sixth) |
 | `legacy/` | `state-actuators.ts`, `state-transitions.ts`, `state-ids.ts`: live (server.ts:39-41), misnamed | BLOAT-MAP §3 |

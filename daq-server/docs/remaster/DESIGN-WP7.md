@@ -634,8 +634,9 @@ abstraction (`research/node-realtime-backend.md` §5 reaches the same verdict, a
 Fastify-style routers would also keep 404-not-405, which is reassurance, not a reason to adopt a
 framework). **C lost** on the WP's goal and on STYLE-S33.
 
-**No divergence from the reviewed design**; the deeper pass amends it in places ([B1]-[B4] at the
-top), none of which changes the module list.
+**Module list unchanged.** The deeper pass amends the reviewed design in places — [B1]-[B4] at
+the top (elided imports and bare imports, the kept two-owner cubic-store path, gap H9 and a grep
+check instead of ESLint, STYLE conformance); each is marked where it lands.
 
 ---
 
