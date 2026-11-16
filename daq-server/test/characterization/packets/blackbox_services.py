@@ -519,30 +519,62 @@ def pwm_fields(g: bytes):
     return fs
 
 
-def do_pwm(binp, src, work):
-    bb.require_aliases(["127.0.0.12"])
-    db = bb.FakeElodin()
+def pwm_session(out, binp, work, name, cfg_text, db):
+    """FIRE_START then FIRE_STOP to one controller_service; append what reaches the boards."""
     tcp = bb.free_port(socket.SOCK_STREAM)
-    d = work / "controller_pwm"
+    d = work / name
     shutil.rmtree(d, ignore_errors=True)
     d.mkdir(parents=True)
-    cfg = bb.patched(
-        (src / "config/config_base.toml").read_text(),
-        database__port=str(db.port),
-        controller__fallback_fuel_duty_cycle="0.1",
-        controller__fallback_ox_duty_cycle="0.1",
-    )
-    (d / "config.toml").write_text(cfg)
+    (d / "config.toml").write_text(cfg_text)
     cap = bb.UdpCapture(BOARD_PORT)
     argv = [str(binp / "controller_service"), "--config", "config.toml"]
-    argv += [
-        "--elodin-host",
-        "127.0.0.1",
-        "--elodin-port",
-        str(db.port),
-        "--control-port",
-        str(tcp),
-    ]
+    argv += ["--elodin-host", "127.0.0.1", "--elodin-port", str(db.port)]
+    argv += ["--control-port", str(tcp)]
+    try:
+        with bb.Service(argv, d, d / "service.log") as svc:
+            if not wait_tcp(tcp, svc):
+                out.append("!! control port never opened")
+                return
+            pre = cap.collect(until_quiet=0.5, max_s=1.0, first_s=1.0)
+            out.append(f"## before FIRE_START: {len(pre)} datagrams")
+            open_cmds: set[bytes] = set()
+            for cmd in ("FIRE_START", "FIRE_STOP"):
+                # While the gate is open the control loop repeats the open command every tick.
+                # Take the clock reading first, then drop what is already queued (sent before it),
+                # so every packet kept was stamped after `lo`.
+                lo = bb.sys_ms()
+                while cap.recv(0.0) is not None:
+                    pass
+                reply = tcp_command(tcp, cmd)
+                got = cap.collect(until_quiet=0.6, max_s=1.5, first_s=1.0)
+                hi = bb.sys_ms()
+                out.append(f"## {cmd} -> reply {reply!r}")
+                # How many repeats arrive is timing; which distinct packets arrive, in
+                # first-seen order, is not. After FIRE_STOP, repeats of the open command are the
+                # control loop's last ticks racing the stop on another thread, so they are
+                # skipped wherever they land.
+                seen = []
+                for dst, _s, g, _t in got:
+                    ok = bb.clock_ok(g[2:], lo, hi) if len(g) >= 6 else False
+                    masked = g[:2] + b"\0\0\0\0" + g[6:] if len(g) >= 6 else g
+                    if cmd == "FIRE_STOP" and masked in open_cmds:
+                        continue
+                    if cmd == "FIRE_START":
+                        open_cmds.add(masked)
+                    key = (dst, masked, ok)
+                    if key not in seen:
+                        seen.append(key)
+                for dst, masked, ok in seen:
+                    ts = "<system_clock ms, LE u32>" if ok else "OUT OF RANGE"
+                    out.append(f"  -> {dst} len={len(masked)} timestamp {ts}")
+                    out += bb.fields(masked, pwm_fields(masked))
+    finally:
+        cap.close()
+
+
+def do_pwm(binp, src, work):
+    bb.require_aliases(["127.0.0.12", "127.0.0.14"])
+    db = bb.FakeElodin()
     out = [
         "# controller_service (black box), config_base with fallback duty 0.1/0.1: what reaches"
     ]
@@ -550,34 +582,26 @@ def do_pwm(binp, src, work):
         "# the boards' port on FIRE_START / FIRE_STOP sent to its TCP control port."
     )
     try:
-        with bb.Service(argv, d, d / "service.log") as svc:
-            if not wait_tcp(tcp, svc):
-                out.append("!! control port never opened")
-            else:
-                pre = cap.collect(until_quiet=0.5, max_s=1.0, first_s=1.0)
-                out.append(f"## before FIRE_START: {len(pre)} datagrams")
-                for cmd in ("FIRE_START", "FIRE_STOP"):
-                    lo = bb.sys_ms()
-                    reply = tcp_command(tcp, cmd)
-                    got = cap.collect(until_quiet=0.6, max_s=1.5, first_s=1.0)
-                    hi = bb.sys_ms()
-                    out.append(f"## {cmd} -> reply {reply!r}")
-                    # The control loop repeats the command every tick while the gate is open, so
-                    # how many arrive is timing; which distinct packets arrive, in first-seen order,
-                    # is not.
-                    seen = []
-                    for dst, _s, g, _t in got:
-                        ok = bb.clock_ok(g[2:], lo, hi) if len(g) >= 6 else False
-                        masked = g[:2] + b"\0\0\0\0" + g[6:] if len(g) >= 6 else g
-                        key = (dst, masked, ok)
-                        if key not in seen:
-                            seen.append(key)
-                    for dst, masked, ok in seen:
-                        ts = "<system_clock ms, LE u32>" if ok else "OUT OF RANGE"
-                        out.append(f"  -> {dst} len={len(masked)} timestamp {ts}")
-                        out += bb.fields(masked, pwm_fields(masked))
+        cfg = bb.patched(
+            (src / "config/config_base.toml").read_text(),
+            database__port=str(db.port),
+            controller__fallback_fuel_duty_cycle="0.1",
+            controller__fallback_ox_duty_cycle="0.1",
+        )
+        pwm_session(out, binp, work, "controller_pwm", cfg, db)
+        # The PWM actuators on different boards: one single-command packet per board.
+        split = cfg.replace(
+            '"LOX Press" = ["NO", 8, 12, "pwm_ox"]',
+            '"LOX Press" = ["NO", 8, 14, "pwm_ox"]',
+            1,
+        )
+        assert split != cfg, "config_base no longer declares LOX Press on board 12"
+        out.append("")
+        out.append(
+            '# variant: "LOX Press" (pwm_ox) moved to board 14, fuel stays on board 12'
+        )
+        pwm_session(out, binp, work, "controller_pwm_split", split, db)
     finally:
-        cap.close()
         db.close()
     return bb.finish(GOLDEN, "service_pwm.txt", "\n".join(out) + "\n")
 
