@@ -330,8 +330,9 @@ rewrite every file). `tsc --noEmit` (D40) is the only static gate. WPs: 5–7.
    waived), `UdpSender`/`LineCommandServer`/`SubscriberLoop`/`ServiceMain` (WP8: functions), "8 CMake
    test targets" (WP10: 6 + 4 + the executable). D39 says the orchestrator amends them; not yet done.
    STYLE cites the design notes.
-9. **Interim size.** WP10's move-only pass leaves `daq_bridge_main.cpp` at ~835 lines (> S33's
-   700); only cleanup brings it under. Fine if the DoD is read per WP, not per pass; say so.
+9. **Interim size.** WP10's move-only pass leaves `daq_bridge_main.cpp` at ~841 lines
+   (DESIGN-WP10 §6.3; > S33's 700); only cleanup brings it under. Fine if the DoD is read per WP,
+   not per pass; say so.
 10. **Tooling the brief assumed.** There are no eslint/prettier settings to reference (S40). And
     `daq-server/.pre-commit-config.yaml` pins black 24.1.1 and flake8 at 120 columns, stale against
     D10 (black 25.11.0); not touched here — WP12 or the team.
