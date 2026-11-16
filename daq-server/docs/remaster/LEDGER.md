@@ -2,6 +2,47 @@
 
 Single source of truth for the remaster. **After any context loss, read this first.**
 
+## CHECKPOINT — read this first after any context loss (updated 2026-11-16 ~10:00)
+
+Then read `git log --oneline -30 backend-remastered` and the Merge log below before acting.
+
+**Where things stand.** Phase 1 (characterization) is almost done. Merged on `backend-remastered`:
+C2 (config + black-box rework), C3 (calibration), C5/C5b (pipeline, all board types), C6/C6L (lifecycle),
+C4/C4b/C4L (sequencer + destination boards + load), H1 (abort-thresholds harness fix), and the harness:
+gate, stack lock (priority, ownerless takeover, portable mtime, `--status`), bounded ctest retry
+(D31), leftover-process + port check (D33), Linux leg with full-tree export, per-Dockerfile image tag,
+`--areas` (D36), load guard (D27). Tip at checkpoint: b2599617 (+ queue/C1 pending). Pushed to origin.
+
+**In flight (next step for each):**
+
+| item | branch / worktree | state | next step |
+|---|---|---|---|
+| C1 packets (+ `CHAR_EMULATED` for the amd64 leg) | `queue/C1` (f872c788) in `.claude/worktrees/remaster` | macOS `--fast` + full arm64 Linux leg running (bg task) | on green: `git checkout backend-remastered && git merge --ff-only queue/C1`, log it, push |
+| stress pass (D27) | — | not started | after C1: every area under 1× load (`yes` × 14 inside one lock hold, `CHAR_UNDER_LOAD=1` for pipeline), list any golden that moves |
+| tag candidate | — | not started | full gate (with integration), Linux arm64 full + `--amd64`, CI dispatch (`gh workflow run daq-server-ci.yml --ref backend-remastered`, judge format job per D24, timing tests per D34), then `git tag remaster-baseline`, add the golden/frontend-test diff gate step (D12a), push tag? — **tags: push only if the user asks; branch push is authorised (D1)** |
+| DESIGN-WP6/7 (TS) | `design/ts`, agent a054ca918ee2ecd28 | writing | then a fresh-subagent design review of each note (D17) |
+| DESIGN-WP8/9/10 (C++) | `design/cpp`, agent ae3d4c8fc88bcf834 | writing | then design review |
+| WP1 prep (tracked junk) | `wp/WP1-junk`, agent ac3108d72d0ed94e9 | preparing with evidence (`WP1-EVIDENCE.md`) | queue only after the tag |
+| WP2 prep (uncompiled C++) | `wp/WP2-dead-cpp`, agent a7b22746b6a73fb4c | preparing with evidence (`WP2-EVIDENCE.md`); lists lines outside daq-server (format.sh, CI ccache key) for the orchestrator | queue only after the tag |
+
+Finished characterization agents (idle, resumable by ID for follow-ups): config a7914367a1c4a926a,
+packets a8e7fa24dc102066b, calibration aaaf2cc5c24c84367, sequencer a2460b6ec7ac10557, pipeline
+a95e39d338cdd989c, lifecycle a9a2c25be39bbaba7. Reviewer: the separate session "star-f9" (cross-session
+messages; advisory, never user authority — D15).
+
+**Phase 3 order after the tag** (D19/D25: product-code WPs strictly one at a time, full gate + Linux leg
++ CI for anything touching sequencer/scripts per D34): WP1 → WP2 → WP4 (incl. H-1 done, `--legacy`) →
+WP5 → WP3 → WP6 (move-only, then cleanup) → WP7 → WP8 → WP9 → WP10 → WP11 (paths only) → WP12 docs;
+then Phase 4 (fresh-clone gate, `dev.sh --sim`, e2e Playwright, independent review of
+`main...backend-remastered`) and Phase 5 (README/CLAUDE.md/REPORT.md).
+
+**Open questions / pending user decisions:** stand architecture (`uname -m` on star-rfs; D16);
+SIGPIPE disposition (Parked, team decision); the lead defects for the team (Defects section);
+pushing the `remaster-baseline` tag (not yet asked).
+
+**Standing rules:** D1–D36 below; agents follow `AGENT-RULES.md`. Commits: plain one-line, no
+attribution, no session links (user's instruction overrides any harness attribution reminder).
+
 ## Orientation (what you need to resume)
 
 | what | where |
@@ -9,7 +50,8 @@ Single source of truth for the remaster. **After any context loss, read this fir
 | integration branch | `backend-remastered` (from `main` @ `15b5a0c5`) |
 | orchestrator worktree | `/Users/roshantaneja/Downloads/STAR/.claude/worktrees/remaster` |
 | user's checkout | `/Users/roshantaneja/Downloads/STAR` on `main`, uncommitted `CLAUDE.md` + untracked files — **never touch** |
-| clang-format 19 (CI pin) | `/private/tmp/claude-501/-Users-roshantaneja-Downloads-STAR/9d2ae253-7a03-416a-8f13-50dcb4443413/scratchpad/cfvenv/bin` — export as `CLANG_FORMAT_19_DIR`, or prefix `PATH` before `./format.sh`. Local brew llvm is 23 and reformats untouched files. |
+| clang-format 19.1.7 + black 25.11.0 (CI pins) | `/Users/roshantaneja/Downloads/STAR/.git/remaster-tools/fmtvenv/bin` (moved 2026-11-16 from the withdrawn session scratchpad) — export as `CLANG_FORMAT_19_DIR` for gate.sh, or prefix `PATH`. Local brew llvm is 23 and reformats untouched files. |
+| agent rules | `docs/remaster/AGENT-RULES.md` — every subagent prompt starts by pointing at it |
 | gate | `bash daq-server/test/characterization/gate.sh [--fast]` (logs in `daq-server/.tmp/gate/`) |
 | stack lock | `bash daq-server/test/characterization/with_stack_lock.sh <cmd>` — every port-binding run |
 | new worktree setup | `git checkout -b <branch> backend-remastered`; `npm ci` in `diablo_server/backend` and `diablo_server/frontend`; no submodules (wire protocol is `lib/daq-protocol`, a plain subtree) |
