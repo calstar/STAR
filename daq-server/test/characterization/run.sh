@@ -14,8 +14,8 @@ export CHAR_BUILD_DIR="$BUILD"
 fail=0
 echo "── stack lock self-test"
 bash "$HERE/test_stack_lock.sh" || fail=1
-echo "── ctest -L characterization ($BUILD)"
-(cd "$BUILD" && ctest -L characterization --output-on-failure) || fail=1
+echo "── ctest -L characterization ($BUILD)${CHAR_AREAS:+ -R ${CHAR_AREAS//,/|}}"
+(cd "$BUILD" && ctest -L characterization ${CHAR_AREAS:+-R "${CHAR_AREAS//,/|}"} --output-on-failure) || fail=1
 # Processes launched from this checkout that outlive an area's run would pollute the next area's
 # captures (LEDGER D33: a straggler simulator once fed PT data into lifecycle's ball-valve capture).
 # Under the stack lock nothing else from this checkout runs, so anything matching ROOT is a leak.
@@ -32,9 +32,11 @@ leftover_ports() {
   lsof -nP -iTCP -sTCP:LISTEN -iUDP 2>/dev/null | awk 'NR>1 {n=$9; sub(/.*:/,"",n); print n" "$1" pid="$2}' |
     while read -r port rest; do [[ "$port" =~ $TEST_PORTS ]] && echo "port $port held by $rest"; done | sort -u
 }
+# CHAR_AREAS="a,b": run only these areas' run.sh (in this order); empty runs every area.
 for r in "$HERE"/*/run.sh; do
   [ -f "$r" ] || continue
   area="$(basename "$(dirname "$r")")"
+  if [ -n "${CHAR_AREAS:-}" ] && [[ ",${CHAR_AREAS}," != *",$area,"* ]]; then continue; fi
   echo "── $area/run.sh"
   bash "$r" || { echo "   FAILED: $r"; fail=1; }
   left="$(leftovers; leftover_ports)"

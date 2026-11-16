@@ -5,14 +5,17 @@
 #
 # arm64 (native here): build, ctest, characterization, integration.
 # --amd64 (emulated): build, ctest, characterization only (integration is too slow emulated).
+# --areas a,b: build, then only those characterization areas (with the leftover checks) — the mode
+# agents use (LEDGER D36). The full leg is for queue/* branches and the tag candidate.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO="$(git -C "$HERE" rev-parse --show-toplevel)"
-PLATFORM=linux/arm64; FULL=1; CC_KIND=gcc; REV=HEAD
+PLATFORM=linux/arm64; FULL=1; CC_KIND=gcc; REV=HEAD; AREAS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --amd64) PLATFORM=linux/amd64; FULL=0 ;;
     --cc) CC_KIND="$2"; shift ;;
+    --areas) AREAS="$2"; shift ;;
     *) REV="$1" ;;
   esac
   shift
@@ -31,7 +34,7 @@ while load="$(uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/')" &&
   [ "$SECONDS" -lt "$deadline" ] || { echo "linux_gate: load $load still >= $NCPU after 5 min; running anyway" >&2; break; }
   echo "linux_gate: load $load >= $NCPU cores, waiting" >&2; sleep 30
 done
-echo "linux_gate: $(git -C "$REPO" rev-parse --short "$REV") on $PLATFORM with $CC_KIND"
+echo "linux_gate: $(git -C "$REPO" rev-parse --short "$REV") on $PLATFORM with $CC_KIND${AREAS:+, areas $AREAS only}"
 # Under the stack lock: the VM's CPU would otherwise overlap a stress pass or a gate (D27).
 LOGS="$(cd "$HERE/../../.." && pwd -P)/.tmp/linux-gate/${PLATFORM#linux/}"
 rm -rf "$LOGS"; mkdir -p "$LOGS"
@@ -42,9 +45,11 @@ bash "$HERE/../with_stack_lock.sh" docker run --rm --security-opt seccomp=unconf
   step() { local n=\$1; shift; printf '── %-18s ' \$n; if \"\$@\" > /logs/\$n.log 2>&1; then echo ok; grep -E '^(RETRY PASSED|KNOWN FAILURE)' /logs/\$n.log; else echo FAIL; tail -40 /logs/\$n.log; grep -E '^(RETRY PASSED|KNOWN FAILURE|FAILED )|FAILED:|^[A-Za-z ]+: (PASS|FAIL)|^CHARACTERIZATION' /logs/\$n.log; fails+=(\$n); fi; }
   step npm bash -c '(cd diablo_server/backend && npm ci --no-audit --no-fund) && (cd diablo_server/frontend && npm ci --no-audit --no-fund)'
   step build bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -Wno-dev && cmake --build build'
-  step ctest bash test/characterization/ctest_with_retry.sh build -j\$(nproc)
-  step backend-vitest bash -c 'cd diablo_server/backend && npm test'
-  step characterization bash -c 'CHAR_BUILD_DIR=/src/daq-server/build bash test/characterization/run.sh'
-  [ $FULL = 1 ] && step integration bash test/test_integration.sh
+  if [ -z '$AREAS' ]; then
+    step ctest bash test/characterization/ctest_with_retry.sh build -j\$(nproc)
+    step backend-vitest bash -c 'cd diablo_server/backend && npm test'
+  fi
+  step characterization bash -c 'CHAR_AREAS=$AREAS CHAR_BUILD_DIR=/src/daq-server/build bash test/characterization/run.sh'
+  [ $FULL = 1 ] && [ -z '$AREAS' ] && step integration bash test/test_integration.sh
   echo; [ \${#fails[@]} -eq 0 ] && echo 'LINUX GATE: PASS' || { echo \"LINUX GATE: FAIL — \${fails[*]}\"; exit 1; }
 "
