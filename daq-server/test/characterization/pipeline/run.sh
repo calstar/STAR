@@ -113,6 +113,15 @@ PIDS+=($!); wait_port $P_ELODIN elodin 15
 
 (cd "$FX" && exec "$BIN/sequencer_service" --config "$CFG" --port $P_SEQ) > "$FX/logs/sequencer.log" 2>&1 &
 PIDS+=($!); wait_port $P_SEQ sequencer 15
+# At boot the sequencer publishes every valve de-energized (ActuatorCommander publishInitialState:
+# a normally-open valve reads 1) and then applies the boot state's column (Fuel Main → 0). Whether
+# the backend, subscribing a moment later, records that transient 1 in its history was a race
+# (macOS missed it, Linux caught it). Start the backend only once the boot state is applied.
+i=0
+until grep -q 'commands for state' "$FX/logs/sequencer.log" 2>/dev/null; do
+  sleep 0.25; i=$((i + 1))
+  [ $i -lt 120 ] || { echo "pipeline: sequencer never applied its boot state" >&2; tail -20 "$FX/logs/sequencer.log" >&2; exit 5; }
+done
 
 (cd "$FX" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
