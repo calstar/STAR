@@ -58,9 +58,19 @@ shared_types() {
 }
 characterization() { CHAR_BUILD_DIR="$ROOT/build-gate" bash "$CHAR/with_stack_lock.sh" bash "$CHAR/run.sh"; }
 integration() { bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"; }
+# format.sh --check is red on main in firmware/ Python (out of scope), so the gate checks what this
+# refactor owns: every daq-server C/C++ file format.sh targets must be clang-format-19 clean (it is
+# on main), and every Python file added since main must be black-clean.
 format_check() {
   local cf="${CLANG_FORMAT_19_DIR:-}"
-  (cd "$REPO" && PATH="${cf:+$cf:}$PATH" ./format.sh --check)
+  export PATH="${cf:+$cf:}$PATH"
+  clang-format --version | grep -q 'version 19\.' || { echo "need clang-format 19 (CLANG_FORMAT_19_DIR)"; return 1; }
+  (cd "$REPO" && git ls-files 'daq-server/diablo_server' 'daq-server/archive/legacy/utl' 'daq-server/test' |
+    grep -E '\.(c|cc|cpp|h|hpp)$' | grep -v -E '/(nlohmann|toml\+\+)/' |
+    xargs clang-format --dry-run --Werror) || return 1
+  local newpy
+  newpy="$(cd "$REPO" && git diff --name-only --diff-filter=A "$(git merge-base HEAD main)" -- 'daq-server/*.py')"
+  [ -z "$newpy" ] || (cd "$REPO" && echo "$newpy" | xargs black --check)
 }
 
 step build build_clean
