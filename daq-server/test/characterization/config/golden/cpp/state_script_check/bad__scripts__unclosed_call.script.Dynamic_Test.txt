@@ -1,0 +1,6 @@
+=== stdout
+1:13: E_EXPECTED_RPAREN expected ')' — elapsed() takes no arguments, found end of line
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

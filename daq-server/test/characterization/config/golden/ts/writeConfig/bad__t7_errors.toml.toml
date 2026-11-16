@@ -1,0 +1,50 @@
+[boards.labjack_1]
+type = "T7"
+ip = "192.168.2.81"
+board_id = 81
+scan_rate_hz = 0
+
+[[boards.labjack_1.channels]]
+ain = 1
+kind = "PT"
+role = "LOX Tank"
+range = 5
+full_scale = 1000
+signal = "0-5V"
+
+[[boards.labjack_1.channels]]
+ain = 1
+kind = "TC"
+role = "Nozzle"
+
+[[boards.labjack_1.channels]]
+ain = 14
+kind = "VOLTAGE"
+role = "Rail"
+
+[[boards.labjack_1.channels]]
+ain = 3
+kind = "PT"
+differential = true
+role = "Odd Diff"
+full_scale = 500
+signal = "4-20mA"
+
+[[boards.labjack_1.channels]]
+ain = 4
+kind = "STRAIN"
+role = "Strain"
+
+[[boards.labjack_1.channels]]
+ain = 6
+kind = "RTD"
+role = "Line Temp"
+r0_ohms = 100
+
+[controller]
+duty_sweep_steps = [ [ 0.1, 0.1 ], [ 0.3, 0.2 ], [ 0.5, 0.4 ], [ 0.3, 0.3 ], [ 0.1, 0.1 ] ]
+duty_sweep_step_duration_sec = 2
+
+[calibration_model_labjack_1]
+"LOX Tank" = "physics"
+"Odd Diff" = "physics"

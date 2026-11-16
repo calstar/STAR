@@ -1,0 +1,15 @@
+[boards.env_a]
+type = "ENVIRONMENTAL"
+ip = "192.168.2.90"
+board_id = 90
+enabled = true
+
+[boards.env_b]
+type = "ENVIRONMENTAL"
+ip = "192.168.2.91"
+id = 90
+enabled = true
+
+[controller]
+duty_sweep_steps = [ [ 0.1, 0.1 ], [ 0.3, 0.2 ], [ 0.5, 0.4 ], [ 0.3, 0.3 ], [ 0.1, 0.1 ] ]
+duty_sweep_step_duration_sec = 2

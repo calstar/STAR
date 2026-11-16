@@ -1,0 +1,5 @@
+,Idle,Armed,Fire,Engine Abort,Emergency Abort
+Idle,1,1
+Armed,1,1,1,1,1,1,1
+Fire,0,1,1,1,1
+Emergency Abort,1

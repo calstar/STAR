@@ -1,0 +1,42 @@
+{
+  "hpBoardNumbers": {
+    "logs": [],
+    "value": []
+  },
+  "loadActuatorChannelToEntityMap": {
+    "logs": [],
+    "value": {
+      "1": "ACT.Fuel_Main",
+      "2": "ACT.fuel-main",
+      "3": "ACT.???",
+      "11": "ACT.Fuel_Main",
+      "12": "ACT.fuel-main",
+      "13": "ACT.???"
+    }
+  },
+  "loadLcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadRtdBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadSensorRoleMap": {
+    "logs": [
+      "log: 📋 Loaded sensor role map from config.toml (0 channels): {}"
+    ],
+    "value": {
+      "boardChannelToEntityMaps": [],
+      "channelToEntityMap": {}
+    }
+  },
+  "loadTcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "t7CalFields": {
+    "logs": [],
+    "value": []
+  }
+}

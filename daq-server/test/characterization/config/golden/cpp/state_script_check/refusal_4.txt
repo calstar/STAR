@@ -1,0 +1,5 @@
+=== args --config fixtures/bad/no_such.toml --state Idle ../../../config/profiles/digital-twin/scripts/dynamic_test.script
+=== stdout
+=== stderr
+cannot read config: fixtures/bad/no_such.toml
+=== exit 2

@@ -1,0 +1,6 @@
+=== stdout
+1:1: E_CALL_NOT_A_STATEMENT 'pressure' produces a value and cannot stand alone as a statement
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

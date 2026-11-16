@@ -1,0 +1,48 @@
+{
+  "hpBoardNumbers": {
+    "logs": [],
+    "value": []
+  },
+  "loadActuatorChannelToEntityMap": {
+    "logs": [],
+    "value": {}
+  },
+  "loadLcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadRtdBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadSensorRoleMap": {
+    "logs": [
+      "log: 📋 Loaded sensor role map from config.toml (0 channels): {}"
+    ],
+    "value": {
+      "boardChannelToEntityMaps": [],
+      "channelToEntityMap": {}
+    }
+  },
+  "loadTcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "t7CalFields": {
+    "logs": [],
+    "value": [
+      [
+        17,
+        "temperature_c"
+      ],
+      [
+        19,
+        "pressure_psi"
+      ],
+      [
+        22,
+        "temperature_c"
+      ]
+    ]
+  }
+}
