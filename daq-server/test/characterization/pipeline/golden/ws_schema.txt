@@ -1,0 +1,143 @@
+## board_log
+.payload.boardId: number
+.payload.lines: []
+.payload.lines[]: string
+.payload.totals.received: number
+.payload.totals.truncated: number
+.payload.truncated: bool
+.payload.ts: number
+.timestamp: number
+.type: string
+
+## board_status_update
+.payload.boards: []
+.payload.boards[].boardNumber: number
+.payload.boards[].boardState: null|number
+.payload.boards[].connected: bool
+.payload.boards[].engineState: null|number
+.payload.boards[].expected: bool
+.payload.boards[].frequencyHz: number
+.payload.boards[].heartbeatTimes: []
+.payload.boards[].heartbeatTimes[]: number
+.payload.boards[].id: number
+.payload.boards[].ip: string
+.payload.boards[].lastHeartbeatMs: null|number
+.payload.boards[].type: string
+.timestamp: number
+.type: string
+
+## calibration_status
+.payload.calibrationFilePath: string
+.payload.channels: []
+.payload.message: string
+.payload.phase2Enabled: bool
+.payload.timestamp: number
+.timestamp: number
+.type: string
+
+## config_updated
+.payload: {}
+.timestamp: number
+.type: string
+
+## connection_status
+.payload.connId: string
+.payload.connected: bool
+.payload.dataFresh: bool
+.payload.elodinConnected: bool
+.payload.lagMs: number
+.payload.resolutionPct: number
+.payload.simulated: bool
+.payload.throttled: bool
+.timestamp: number
+.type: string
+
+## control_status
+.payload.email: null|string
+.payload.operator: bool
+.timestamp: number
+.type: string
+
+## control_unlock_result
+.payload.ok: bool
+.payload.reason: string
+.timestamp: number
+.type: string
+
+## countdown_target_update
+.payload.targetTimeMs: null|number
+.timestamp: number
+.type: string
+
+## error
+.payload.message: string
+.timestamp: number
+.type: string
+
+## historical_data
+.payload.<key>.time: []
+.payload.<key>.time[]: number
+.payload.<key>.values: []
+.payload.<key>.values[]: number
+.timestamp: number
+.type: string
+
+## mission_start_time
+.payload.missionStartTime: number
+.timestamp: number
+.type: string
+
+## notification
+.payload.category: string
+.payload.key: string
+.payload.message: string
+.payload.ongoing: bool
+.payload.timestampMs: number
+.timestamp: number
+.type: string
+
+## sensor_update
+.payload.component: string
+.payload.entity: string
+.payload.timestamp: number
+.payload.value: number
+.timestamp: number
+.type: string
+
+## session_start_blocked
+.payload.errors: number
+.payload.issues: []
+.payload.issues[].level: string
+.payload.issues[].message: string
+.payload.issues[].page: string
+.payload.profile: string
+.payload.warnings: number
+.timestamp: number
+.type: string
+
+## session_update
+.payload.active: bool
+.payload.dbDir: null|string
+.payload.deadlineMs: null|number
+.payload.enabled: bool
+.payload.freeDiskBytes: null
+.payload.keepData: bool
+.payload.remainingMs: null|number
+.payload.simulated: bool
+.timestamp: number
+.type: string
+
+## state_transitions
+.payload.transitions: []
+.timestamp: number
+.type: string
+
+## state_update
+.payload.allowedBitmask: number
+.payload.currentState: number
+.payload.debugMode: bool
+.payload.stateName: string
+.payload.stateRefusalReasons: {}
+.payload.timestamp: number
+.timestamp: number
+.type: string
