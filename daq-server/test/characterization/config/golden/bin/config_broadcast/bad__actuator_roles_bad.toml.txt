@@ -1,0 +1,17 @@
+[Config] WARNING: actuator role 'Ball NO' is on ball valve board 71 and is marked NO; ball valves have no NO/NC, treating it as pass-through (1 = open).
+[Config] WARNING: actuator role 'Ball NO' is on ball valve board 71 and is marked NO; ball valves have no NO/NC, treating it as pass-through (1 = open).
+[ConfigBroadcast] board traffic pinned to <iface> 127.0.0.1 (auto)
+[ConfigBroadcast] Started — interval=60000ms (C++ standalone, live config reload)
+[ConfigBroadcast] 2 packet types
+=== stopped
+=== port 5005: 2 datagram(s)
+packet[0] type=6 len=52
+  0000: 06 00 00 00 00 00 01 06 01 00 00 7f 0b 00 00 01
+  0010: 00 00 7f 02 00 00 01 00 00 7f 06 00 00 01 00 00
+  0020: 7f 04 00 00 01 00 00 7f 05 00 00 01 00 00 7f 03
+  0030: 00 00 00 00
+packet[1] type=6 len=52
+  0000: 06 00 00 00 00 00 00 06 01 00 00 7f 0b 00 00 01
+  0010: 00 00 7f 02 00 00 01 00 00 7f 06 00 00 01 00 00
+  0020: 7f 04 00 00 01 00 00 7f 05 00 00 01 00 00 7f 03
+  0030: 00 00 00 00

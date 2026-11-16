@@ -1,0 +1,6 @@
+=== DAQ Bridge - DiabloAvionics Packet Receiver ===
+Config: config/config.toml
+Listening on: 0.0.0.0:5006
+
+❌ FATAL: daq_bridge config not found: 'config/config.toml'. Refusing to start as a 0-board no-op. For a simulated run the backend generates config/sim_config.toml at session start; for hardware it is config/config.toml (generated from config/profiles/*.toml).
+=== stopped
