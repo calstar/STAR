@@ -1,0 +1,36 @@
+# stacklight_service (black box): STACKLIGHT_COMMAND datagrams it sends to
+# --target-ip 127.0.0.1, following SequencerState rows from a stand-in elodin-db.
+## Elodin traffic it sends on connect: 1 packets
+  len=6 ty=0 id=[0x11,0x0d] req=0
+    payload: 50 00
+## before any SequencerState row
+  len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 01 01
+## after a SequencerState [0x50,0x00] row with current_state = s
+  0: len=10: 0e 00 [<system_clock ms, LE u32>] 00 01 00 00
+  1: len=10: 0e 00 [<system_clock ms, LE u32>] 00 00 01 00
+  2: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 00 00
+  3: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 00
+  4: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 00
+  5: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 00
+  6: len=10: 0e 00 [<system_clock ms, LE u32>] 00 01 00 00
+  7: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 00
+  8: len=10: 0e 00 [<system_clock ms, LE u32>] 00 01 00 00
+  9: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 00
+  10: len=10: 0e 00 [<system_clock ms, LE u32>] 00 01 00 00
+  11: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 00
+  12: len=10: 0e 00 [<system_clock ms, LE u32>] 00 01 00 00
+  13: len=10: 0e 00 [<system_clock ms, LE u32>] 00 01 00 00
+  14: len=10: 0e 00 [<system_clock ms, LE u32>] 00 01 00 00
+  15: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 00 00
+  16: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 01
+  17: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 01
+  18: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 01
+  19: len=10: 0e 00 [<system_clock ms, LE u32>] 01 00 00 01
+  20: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 00 00
+  21: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 01 01
+  22: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 01 01
+  23: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 01 01
+  24: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 01 01
+  25: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 01 01
+  254: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 01 01
+  255: len=10: 0e 00 [<system_clock ms, LE u32>] 01 01 01 01

@@ -1,19 +1,8 @@
-# Elodin registration captured from fsw::elodin::DatabaseConfig for config_base (IPs patched to 127.0.0.x)
-boards PT: {id=21 slot=1 ch=1,2,3,4,5,6,7,8,9,10,} {id=22 slot=2 ch=1,2,3,4,}
-boards ACTUATOR: {id=12 slot=2 ch=1,2,3,4,5,6,7,8,9,10,} {id=14 slot=4 ch=1,2,3,4,5,6,7,8,9,10,}
-boards TC: {id=51 slot=1 ch=2,3,4,5,}
-boards RTD: {id=31 slot=1 ch=1,2,3,4,}
-boards LC: {id=42 slot=2 ch=1,2,6,}
-boards ENCODER: {id=61 slot=1 ch=1,2,}
-boards ENVIRONMENTAL: {id=25 slot=5 ch=1,}
-boards BALL_VALVE: {id=71 slot=1 ch=1,2,}
-daq_bridge config_board_ids: 0c 0e 15 16 19 1f 2a 33 3d 47
-raw_sensor_tables: 0x20/0x01 0x20/0x02 0x20/0x03 0x20/0x04 0x20/0x05 0x20/0x06 0x20/0x07 0x20/0x08 0x20/0x09 0x20/0x0a 0x20/0x21 0x20/0x22 0x20/0x23 0x20/0x24 0x30/0x21 0x30/0x22 0x30/0x23 0x30/0x24 0x30/0x25 0x30/0x26 0x30/0x27 0x30/0x28 0x30/0x29 0x30/0x2a 0x30/0x61 0x30/0x62 0x30/0x63 0x30/0x64 0x30/0x65 0x30/0x66 0x30/0x67 0x30/0x68 0x30/0x69 0x30/0x6a 0x21/0x02 0x21/0x03 0x21/0x04 0x21/0x05 0x22/0x01 0x22/0x02 0x22/0x03 0x22/0x04 0x23/0x21 0x23/0x22 0x23/0x26 0x24/0x01 0x24/0x02
-calibrated_sensor_tables: 0x20/0x11 0x20/0x12 0x20/0x13 0x20/0x14 0x20/0x15 0x20/0x16 0x20/0x17 0x20/0x18 0x20/0x19 0x20/0x1a 0x20/0x31 0x20/0x32 0x20/0x33 0x20/0x34 0x21/0x12 0x21/0x13 0x21/0x14 0x21/0x15 0x22/0x11 0x22/0x12 0x22/0x13 0x22/0x14 0x23/0x31 0x23/0x32 0x23/0x36 0x24/0x11 0x24/0x12 0x31/0x31 0x31/0x32 0x31/0x33 0x31/0x34 0x31/0x35 0x31/0x36 0x31/0x37 0x31/0x38 0x31/0x39 0x31/0x3a 0x31/0x71 0x31/0x72 0x31/0x73 0x31/0x74 0x31/0x75 0x31/0x76 0x31/0x77 0x31/0x78 0x31/0x79 0x31/0x7a
-ball_valve raw/cal/cmd tables: 0x33/0x01 0x33/0x02 0x34/0x11 0x34/0x12 0x35/0x01 0x35/0x02
+# Elodin MSG traffic each service sends on start-up to a stand-in elodin-db, config_base
+# (IPs patched to 127.0.0.x; actuator/transition CSVs from the default profile).
 
-# daq_bridge returns: register_tables=1 register_calibrated_tables=1 register_ball_valve_tables=1 register_heartbeat_tables=1 register_environmental_tables=1 register_self_test_tables=1
 ## daq_bridge: 1559 packets, 92700 bytes
+  connections: 1 (MSG packets only; TABLE rows are data)
 #0 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
   table=[0x20,0x01] ops=25 fields=5 data_len=80 consumed=175/175
   field[0] offset=0 len=8 type=U64 shape=[] component=PT1.CH1.timestamp_ns (0x3db1268750cf0940)
@@ -6251,8 +6240,8 @@ ball_valve raw/cal/cmd tables: 0x33/0x01 0x33/0x02 0x34/0x11 0x34/0x12 0x35/0x01
   entity "SELF_TEST.BOARD_71" id=0x0000000000006f47 metadata=0
   raw: 1b 00 00 00 00 b2 36 00 c7 de 01 12 53 45 4c 46 5f 54 45 53 54 2e 42 4f 41 52 44 5f 37 31 00
 
-# calibration returns: register_calibrated_tables=1 register_ball_valve_calibrated_tables=1
-## calibration: 343 packets, 20565 bytes
+## calibration: 426 packets, 22801 bytes
+  connections: 1 (MSG packets only; TABLE rows are data)
 #0 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
   table=[0x20,0x11] ops=25 fields=5 data_len=80 consumed=175/175
   field[0] offset=0 len=8 type=U64 shape=[] component=PT1_Cal.CH1.timestamp_ns (0x3a96febf265e7f89)
@@ -7625,9 +7614,287 @@ ball_valve raw/cal/cmd tables: 0x33/0x01 0x33/0x02 0x34/0x11 0x34/0x12 0x35/0x01
 #342 len=19 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
   entity "BV1_Cal.CH2" id=0x0000000000003412 metadata=0
   raw: 13 00 00 00 00 b2 36 00 92 68 0b 42 56 31 5f 43 61 6c 2e 43 48 32 00
+#343 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x26,0x11] ops=25 fields=5 data_len=80 consumed=175/175
+  field[0] offset=0 len=8 type=U64 shape=[] component=T71_Cal.AIN1.timestamp_ns (0x58f588816eff1abb)
+  field[1] offset=8 len=1 type=U8 shape=[] component=T71_Cal.AIN1.channel_id (0x253447b3cb872470)
+  field[2] offset=12 len=4 type=F32 shape=[] component=T71_Cal.AIN1.pressure_psi (0x0cbf58247916bcfd)
+  field[3] offset=16 len=4 type=I32 shape=[] component=T71_Cal.AIN1.raw_uv (0x11dd899c05525c8d)
+  field[4] offset=20 len=1 type=U8 shape=[] component=T71_Cal.AIN1.cal_status (0x10e6ea21c97b6fa6)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
+  data: 03 00 00 00 00 00 00 00 bb 1a ff 6e 81 88 f5 58 00 00 00 00 00 00 00 00 70 24 87 cb b3 47 34 25 09 00 00 00 00 00 00 00 fd bc 16 79 24 58 bf 0c 06 00 00 00 00 00 00 00 8d 5c 52 05 9c 89 dd 11 00 00 00 00 00 00 00 00 a6 6f 7b c9 21 ea e6 10
+  raw: b3 00 00 00 00 47 b7 00 26 11 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 bb 1a ff 6e 81 88 f5 58 00 00 00 00 00 00 00 00 70 24 87 cb b3 47 34 25 09 00 00 00 00 00 00 00 fd bc 16 79 24 58 bf 0c 06 00 00 00 00 00 00 00 8d 5c 52 05 9c 89 dd 11 00 00 00 00 00 00 00 00 a6 6f 7b c9 21 ea e6 10
+#344 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN1.timestamp_ns" id=0x58f588816eff1abb metadata=0 asset=0
+  raw: 29 00 00 00 00 b7 ca 00 bb b5 fc f7 96 90 e2 fa 58 19 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#345 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN1.channel_id" id=0x253447b3cb872470 metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 f0 c8 9c dc bc f6 91 9a 25 17 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
+#346 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN1.pressure_psi" id=0x0cbf58247916bcfd metadata=0 asset=0
+  raw: 29 00 00 00 00 b7 ca 00 fd f9 da c8 c7 84 d6 df 0c 19 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 70 72 65 73 73 75 72 65 5f 70 73 69 00 00
+#347 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN1.raw_uv" id=0x11dd899c05525c8d metadata=0 asset=0
+  raw: 23 00 00 00 00 b7 ca 00 8d b9 c9 aa c0 b3 e2 ee 11 13 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 72 61 77 5f 75 76 00 00
+#348 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN1.cal_status" id=0x10e6ea21c97b6fa6 metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 a6 df ed cb 9c c4 ba f3 10 17 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 63 61 6c 5f 73 74 61 74 75 73 00 00
+#349 len=20 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "T71_Cal.AIN1" id=0x0000000000002611 metadata=0
+  raw: 14 00 00 00 00 b2 36 00 91 4c 0c 54 37 31 5f 43 61 6c 2e 41 49 4e 31 00
+#350 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x26,0x12] ops=25 fields=5 data_len=80 consumed=175/175
+  field[0] offset=0 len=8 type=U64 shape=[] component=T71_Cal.AIN2.timestamp_ns (0x5be1672cd82a7c9c)
+  field[1] offset=8 len=1 type=U8 shape=[] component=T71_Cal.AIN2.channel_id (0x0c77d7ed3f4ebb67)
+  field[2] offset=12 len=4 type=F32 shape=[] component=T71_Cal.AIN2.temperature_c (0x6b58ded81d6ca9de)
+  field[3] offset=16 len=4 type=I32 shape=[] component=T71_Cal.AIN2.raw_uv (0x589431ff3eb51cfa)
+  field[4] offset=20 len=1 type=U8 shape=[] component=T71_Cal.AIN2.cal_status (0x5fad2d18339afee1)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
+  data: 03 00 00 00 00 00 00 00 9c 7c 2a d8 2c 67 e1 5b 00 00 00 00 00 00 00 00 67 bb 4e 3f ed d7 77 0c 09 00 00 00 00 00 00 00 de a9 6c 1d d8 de 58 6b 06 00 00 00 00 00 00 00 fa 1c b5 3e ff 31 94 58 00 00 00 00 00 00 00 00 e1 fe 9a 33 18 2d ad 5f
+  raw: b3 00 00 00 00 47 b7 00 26 12 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 9c 7c 2a d8 2c 67 e1 5b 00 00 00 00 00 00 00 00 67 bb 4e 3f ed d7 77 0c 09 00 00 00 00 00 00 00 de a9 6c 1d d8 de 58 6b 06 00 00 00 00 00 00 00 fa 1c b5 3e ff 31 94 58 00 00 00 00 00 00 00 00 e1 fe 9a 33 18 2d ad 5f
+#351 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN2.timestamp_ns" id=0x5be1672cd82a7c9c metadata=0 asset=0
+  raw: 29 00 00 00 00 b7 ca 00 9c f9 a9 c1 cd e5 d9 f0 5b 19 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#352 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN2.channel_id" id=0x0c77d7ed3f4ebb67 metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 e7 f6 ba fa d3 fd f5 bb 0c 17 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
+#353 len=42 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN2.temperature_c" id=0x6b58ded81d6ca9de metadata=0 asset=0
+  raw: 2a 00 00 00 00 b7 ca 00 de d3 b2 eb 81 db b7 ac 6b 1a 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 74 65 6d 70 65 72 61 74 75 72 65 5f 63 00 00
+#354 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN2.raw_uv" id=0x589431ff3eb51cfa metadata=0 asset=0
+  raw: 23 00 00 00 00 b7 ca 00 fa b9 d4 f5 f3 bf 8c ca 58 13 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 72 61 77 5f 75 76 00 00
+#355 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN2.cal_status" id=0x5fad2d18339afee1 metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 e1 fd eb 9c 83 a3 cb d6 5f 17 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 63 61 6c 5f 73 74 61 74 75 73 00 00
+#356 len=20 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "T71_Cal.AIN2" id=0x0000000000002612 metadata=0
+  raw: 14 00 00 00 00 b2 36 00 92 4c 0c 54 37 31 5f 43 61 6c 2e 41 49 4e 32 00
+#357 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x26,0x13] ops=25 fields=5 data_len=80 consumed=175/175
+  field[0] offset=0 len=8 type=U64 shape=[] component=T71_Cal.AIN3.timestamp_ns (0x0c34899ee0b215ed)
+  field[1] offset=8 len=1 type=U8 shape=[] component=T71_Cal.AIN3.channel_id (0x298792a339236612)
+  field[2] offset=12 len=4 type=F32 shape=[] component=T71_Cal.AIN3.temperature_c (0x275fd4a873f06f19)
+  field[3] offset=16 len=4 type=I32 shape=[] component=T71_Cal.AIN3.raw_uv (0x08ac1e41e727f8af)
+  field[4] offset=20 len=1 type=U8 shape=[] component=T71_Cal.AIN3.cal_status (0x7e01cffb9b7b2768)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
+  data: 03 00 00 00 00 00 00 00 ed 15 b2 e0 9e 89 34 0c 00 00 00 00 00 00 00 00 12 66 23 39 a3 92 87 29 09 00 00 00 00 00 00 00 19 6f f0 73 a8 d4 5f 27 06 00 00 00 00 00 00 00 af f8 27 e7 41 1e ac 08 00 00 00 00 00 00 00 00 68 27 7b 9b fb cf 01 7e
+  raw: b3 00 00 00 00 47 b7 00 26 13 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 ed 15 b2 e0 9e 89 34 0c 00 00 00 00 00 00 00 00 12 66 23 39 a3 92 87 29 09 00 00 00 00 00 00 00 19 6f f0 73 a8 d4 5f 27 06 00 00 00 00 00 00 00 af f8 27 e7 41 1e ac 08 00 00 00 00 00 00 00 00 68 27 7b 9b fb cf 01 7e
+#358 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN3.timestamp_ns" id=0x0c34899ee0b215ed metadata=0 asset=0
+  raw: 29 00 00 00 00 b7 ca 00 ed ab c8 85 ee b3 a2 9a 0c 19 54 37 31 5f 43 61 6c 2e 41 49 4e 33 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#359 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN3.channel_id" id=0x298792a339236612 metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 92 cc 8d c9 b3 d4 e4 c3 29 17 54 37 31 5f 43 61 6c 2e 41 49 4e 33 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
+#360 len=42 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN3.temperature_c" id=0x275fd4a873f06f19 metadata=0 asset=0
+  raw: 2a 00 00 00 00 b7 ca 00 99 de c1 9f 87 95 f5 af 27 1a 54 37 31 5f 43 61 6c 2e 41 49 4e 33 2e 74 65 6d 70 65 72 61 74 75 72 65 5f 63 00 00
+#361 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN3.raw_uv" id=0x08ac1e41e727f8af metadata=0 asset=0
+  raw: 23 00 00 00 00 b7 ca 00 af f1 9f b9 9e c8 87 d6 08 13 54 37 31 5f 43 61 6c 2e 41 49 4e 33 2e 72 61 77 5f 75 76 00 00
+#362 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN3.cal_status" id=0x7e01cffb9b7b2768 metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 e8 ce ec db b9 ff f3 80 7e 17 54 37 31 5f 43 61 6c 2e 41 49 4e 33 2e 63 61 6c 5f 73 74 61 74 75 73 00 00
+#363 len=20 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "T71_Cal.AIN3" id=0x0000000000002613 metadata=0
+  raw: 14 00 00 00 00 b2 36 00 93 4c 0c 54 37 31 5f 43 61 6c 2e 41 49 4e 33 00
+#364 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x26,0x14] ops=25 fields=5 data_len=80 consumed=175/175
+  field[0] offset=0 len=8 type=U64 shape=[] component=T71_Cal.AIN4.timestamp_ns (0x124d65e5922537e6)
+  field[1] offset=8 len=1 type=U8 shape=[] component=T71_Cal.AIN4.channel_id (0x66a58f4c1a8eb0b9)
+  field[2] offset=12 len=4 type=F32 shape=[] component=T71_Cal.AIN4.force_kg (0x3a9c365127d2c6e6)
+  field[3] offset=16 len=4 type=I32 shape=[] component=T71_Cal.AIN4.raw_uv (0x7b9e45ae6338602c)
+  field[4] offset=20 len=1 type=U8 shape=[] component=T71_Cal.AIN4.cal_status (0x561ad844ab198b33)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
+  data: 03 00 00 00 00 00 00 00 e6 37 25 92 e5 65 4d 12 00 00 00 00 00 00 00 00 b9 b0 8e 1a 4c 8f a5 66 09 00 00 00 00 00 00 00 e6 c6 d2 27 51 36 9c 3a 06 00 00 00 00 00 00 00 2c 60 38 63 ae 45 9e 7b 00 00 00 00 00 00 00 00 33 8b 19 ab 44 d8 1a 56
+  raw: b3 00 00 00 00 47 b7 00 26 14 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 e6 37 25 92 e5 65 4d 12 00 00 00 00 00 00 00 00 b9 b0 8e 1a 4c 8f a5 66 09 00 00 00 00 00 00 00 e6 c6 d2 27 51 36 9c 3a 06 00 00 00 00 00 00 00 2c 60 38 63 ae 45 9e 7b 00 00 00 00 00 00 00 00 33 8b 19 ab 44 d8 1a 56
+#365 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN4.timestamp_ns" id=0x124d65e5922537e6 metadata=0 asset=0
+  raw: 29 00 00 00 00 b7 ca 00 e6 ef 94 91 d9 bc d9 a6 12 19 54 37 31 5f 43 61 6c 2e 41 49 4e 34 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#366 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN4.channel_id" id=0x66a58f4c1a8eb0b9 metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 b9 e1 ba d4 c1 e9 e3 d2 66 17 54 37 31 5f 43 61 6c 2e 41 49 4e 34 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
+#367 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN4.force_kg" id=0x3a9c365127d2c6e6 metadata=0 asset=0
+  raw: 25 00 00 00 00 b7 ca 00 e6 8d cb be 92 ca 8d ce 3a 15 54 37 31 5f 43 61 6c 2e 41 49 4e 34 2e 66 6f 72 63 65 5f 6b 67 00 00
+#368 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN4.raw_uv" id=0x7b9e45ae6338602c metadata=0 asset=0
+  raw: 23 00 00 00 00 b7 ca 00 ac c0 e1 99 e6 b5 91 cf 7b 13 54 37 31 5f 43 61 6c 2e 41 49 4e 34 2e 72 61 77 5f 75 76 00 00
+#369 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71_Cal.AIN4.cal_status" id=0x561ad844ab198b33 metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 b3 96 e6 d8 ca 88 b6 8d 56 17 54 37 31 5f 43 61 6c 2e 41 49 4e 34 2e 63 61 6c 5f 73 74 61 74 75 73 00 00
+#370 len=20 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "T71_Cal.AIN4" id=0x0000000000002614 metadata=0
+  raw: 14 00 00 00 00 b2 36 00 94 4c 0c 54 37 31 5f 43 61 6c 2e 41 49 4e 34 00
+#371 len=6 ty=0 id=[0x11,0x0d] req=1 VTableStream
+  subscribe table=[0x20,0x01]
+  raw: 06 00 00 00 00 11 0d 01 20 01
+#372 len=6 ty=0 id=[0x11,0x0d] req=2 VTableStream
+  subscribe table=[0x20,0x02]
+  raw: 06 00 00 00 00 11 0d 02 20 02
+#373 len=6 ty=0 id=[0x11,0x0d] req=3 VTableStream
+  subscribe table=[0x20,0x03]
+  raw: 06 00 00 00 00 11 0d 03 20 03
+#374 len=6 ty=0 id=[0x11,0x0d] req=4 VTableStream
+  subscribe table=[0x20,0x04]
+  raw: 06 00 00 00 00 11 0d 04 20 04
+#375 len=6 ty=0 id=[0x11,0x0d] req=5 VTableStream
+  subscribe table=[0x20,0x05]
+  raw: 06 00 00 00 00 11 0d 05 20 05
+#376 len=6 ty=0 id=[0x11,0x0d] req=6 VTableStream
+  subscribe table=[0x20,0x06]
+  raw: 06 00 00 00 00 11 0d 06 20 06
+#377 len=6 ty=0 id=[0x11,0x0d] req=7 VTableStream
+  subscribe table=[0x20,0x07]
+  raw: 06 00 00 00 00 11 0d 07 20 07
+#378 len=6 ty=0 id=[0x11,0x0d] req=8 VTableStream
+  subscribe table=[0x20,0x08]
+  raw: 06 00 00 00 00 11 0d 08 20 08
+#379 len=6 ty=0 id=[0x11,0x0d] req=9 VTableStream
+  subscribe table=[0x20,0x09]
+  raw: 06 00 00 00 00 11 0d 09 20 09
+#380 len=6 ty=0 id=[0x11,0x0d] req=10 VTableStream
+  subscribe table=[0x20,0x0a]
+  raw: 06 00 00 00 00 11 0d 0a 20 0a
+#381 len=6 ty=0 id=[0x11,0x0d] req=11 VTableStream
+  subscribe table=[0x20,0x21]
+  raw: 06 00 00 00 00 11 0d 0b 20 21
+#382 len=6 ty=0 id=[0x11,0x0d] req=12 VTableStream
+  subscribe table=[0x20,0x22]
+  raw: 06 00 00 00 00 11 0d 0c 20 22
+#383 len=6 ty=0 id=[0x11,0x0d] req=13 VTableStream
+  subscribe table=[0x20,0x23]
+  raw: 06 00 00 00 00 11 0d 0d 20 23
+#384 len=6 ty=0 id=[0x11,0x0d] req=14 VTableStream
+  subscribe table=[0x20,0x24]
+  raw: 06 00 00 00 00 11 0d 0e 20 24
+#385 len=6 ty=0 id=[0x11,0x0d] req=15 VTableStream
+  subscribe table=[0x30,0x21]
+  raw: 06 00 00 00 00 11 0d 0f 30 21
+#386 len=6 ty=0 id=[0x11,0x0d] req=16 VTableStream
+  subscribe table=[0x30,0x22]
+  raw: 06 00 00 00 00 11 0d 10 30 22
+#387 len=6 ty=0 id=[0x11,0x0d] req=17 VTableStream
+  subscribe table=[0x30,0x23]
+  raw: 06 00 00 00 00 11 0d 11 30 23
+#388 len=6 ty=0 id=[0x11,0x0d] req=18 VTableStream
+  subscribe table=[0x30,0x24]
+  raw: 06 00 00 00 00 11 0d 12 30 24
+#389 len=6 ty=0 id=[0x11,0x0d] req=19 VTableStream
+  subscribe table=[0x30,0x25]
+  raw: 06 00 00 00 00 11 0d 13 30 25
+#390 len=6 ty=0 id=[0x11,0x0d] req=20 VTableStream
+  subscribe table=[0x30,0x26]
+  raw: 06 00 00 00 00 11 0d 14 30 26
+#391 len=6 ty=0 id=[0x11,0x0d] req=21 VTableStream
+  subscribe table=[0x30,0x27]
+  raw: 06 00 00 00 00 11 0d 15 30 27
+#392 len=6 ty=0 id=[0x11,0x0d] req=22 VTableStream
+  subscribe table=[0x30,0x28]
+  raw: 06 00 00 00 00 11 0d 16 30 28
+#393 len=6 ty=0 id=[0x11,0x0d] req=23 VTableStream
+  subscribe table=[0x30,0x29]
+  raw: 06 00 00 00 00 11 0d 17 30 29
+#394 len=6 ty=0 id=[0x11,0x0d] req=24 VTableStream
+  subscribe table=[0x30,0x2a]
+  raw: 06 00 00 00 00 11 0d 18 30 2a
+#395 len=6 ty=0 id=[0x11,0x0d] req=25 VTableStream
+  subscribe table=[0x30,0x61]
+  raw: 06 00 00 00 00 11 0d 19 30 61
+#396 len=6 ty=0 id=[0x11,0x0d] req=26 VTableStream
+  subscribe table=[0x30,0x62]
+  raw: 06 00 00 00 00 11 0d 1a 30 62
+#397 len=6 ty=0 id=[0x11,0x0d] req=27 VTableStream
+  subscribe table=[0x30,0x63]
+  raw: 06 00 00 00 00 11 0d 1b 30 63
+#398 len=6 ty=0 id=[0x11,0x0d] req=28 VTableStream
+  subscribe table=[0x30,0x64]
+  raw: 06 00 00 00 00 11 0d 1c 30 64
+#399 len=6 ty=0 id=[0x11,0x0d] req=29 VTableStream
+  subscribe table=[0x30,0x65]
+  raw: 06 00 00 00 00 11 0d 1d 30 65
+#400 len=6 ty=0 id=[0x11,0x0d] req=30 VTableStream
+  subscribe table=[0x30,0x66]
+  raw: 06 00 00 00 00 11 0d 1e 30 66
+#401 len=6 ty=0 id=[0x11,0x0d] req=31 VTableStream
+  subscribe table=[0x30,0x67]
+  raw: 06 00 00 00 00 11 0d 1f 30 67
+#402 len=6 ty=0 id=[0x11,0x0d] req=32 VTableStream
+  subscribe table=[0x30,0x68]
+  raw: 06 00 00 00 00 11 0d 20 30 68
+#403 len=6 ty=0 id=[0x11,0x0d] req=33 VTableStream
+  subscribe table=[0x30,0x69]
+  raw: 06 00 00 00 00 11 0d 21 30 69
+#404 len=6 ty=0 id=[0x11,0x0d] req=34 VTableStream
+  subscribe table=[0x30,0x6a]
+  raw: 06 00 00 00 00 11 0d 22 30 6a
+#405 len=6 ty=0 id=[0x11,0x0d] req=35 VTableStream
+  subscribe table=[0x21,0x02]
+  raw: 06 00 00 00 00 11 0d 23 21 02
+#406 len=6 ty=0 id=[0x11,0x0d] req=36 VTableStream
+  subscribe table=[0x21,0x03]
+  raw: 06 00 00 00 00 11 0d 24 21 03
+#407 len=6 ty=0 id=[0x11,0x0d] req=37 VTableStream
+  subscribe table=[0x21,0x04]
+  raw: 06 00 00 00 00 11 0d 25 21 04
+#408 len=6 ty=0 id=[0x11,0x0d] req=38 VTableStream
+  subscribe table=[0x21,0x05]
+  raw: 06 00 00 00 00 11 0d 26 21 05
+#409 len=6 ty=0 id=[0x11,0x0d] req=39 VTableStream
+  subscribe table=[0x22,0x01]
+  raw: 06 00 00 00 00 11 0d 27 22 01
+#410 len=6 ty=0 id=[0x11,0x0d] req=40 VTableStream
+  subscribe table=[0x22,0x02]
+  raw: 06 00 00 00 00 11 0d 28 22 02
+#411 len=6 ty=0 id=[0x11,0x0d] req=41 VTableStream
+  subscribe table=[0x22,0x03]
+  raw: 06 00 00 00 00 11 0d 29 22 03
+#412 len=6 ty=0 id=[0x11,0x0d] req=42 VTableStream
+  subscribe table=[0x22,0x04]
+  raw: 06 00 00 00 00 11 0d 2a 22 04
+#413 len=6 ty=0 id=[0x11,0x0d] req=43 VTableStream
+  subscribe table=[0x23,0x21]
+  raw: 06 00 00 00 00 11 0d 2b 23 21
+#414 len=6 ty=0 id=[0x11,0x0d] req=44 VTableStream
+  subscribe table=[0x23,0x22]
+  raw: 06 00 00 00 00 11 0d 2c 23 22
+#415 len=6 ty=0 id=[0x11,0x0d] req=45 VTableStream
+  subscribe table=[0x23,0x26]
+  raw: 06 00 00 00 00 11 0d 2d 23 26
+#416 len=6 ty=0 id=[0x11,0x0d] req=46 VTableStream
+  subscribe table=[0x24,0x01]
+  raw: 06 00 00 00 00 11 0d 2e 24 01
+#417 len=6 ty=0 id=[0x11,0x0d] req=47 VTableStream
+  subscribe table=[0x24,0x02]
+  raw: 06 00 00 00 00 11 0d 2f 24 02
+#418 len=6 ty=0 id=[0x11,0x0d] req=48 VTableStream
+  subscribe table=[0x33,0x01]
+  raw: 06 00 00 00 00 11 0d 30 33 01
+#419 len=6 ty=0 id=[0x11,0x0d] req=49 VTableStream
+  subscribe table=[0x33,0x02]
+  raw: 06 00 00 00 00 11 0d 31 33 02
+#420 len=6 ty=0 id=[0x11,0x0d] req=50 VTableStream
+  subscribe table=[0x26,0x01]
+  raw: 06 00 00 00 00 11 0d 32 26 01
+#421 len=6 ty=0 id=[0x11,0x0d] req=51 VTableStream
+  subscribe table=[0x26,0x02]
+  raw: 06 00 00 00 00 11 0d 33 26 02
+#422 len=6 ty=0 id=[0x11,0x0d] req=52 VTableStream
+  subscribe table=[0x26,0x03]
+  raw: 06 00 00 00 00 11 0d 34 26 03
+#423 len=6 ty=0 id=[0x11,0x0d] req=53 VTableStream
+  subscribe table=[0x26,0x04]
+  raw: 06 00 00 00 00 11 0d 35 26 04
+#424 len=6 ty=0 id=[0x11,0x0d] req=54 VTableStream
+  subscribe table=[0x26,0x0f]
+  raw: 06 00 00 00 00 11 0d 36 26 0f
+#425 len=6 ty=0 id=[0x11,0x0d] req=55 VTableStream
+  subscribe table=[0x46,0x00]
+  raw: 06 00 00 00 00 11 0d 37 46 00
 
-# sequencer returns: register_non_sensor_tables=1 register_ball_valve_cmd_tables=1
 ## sequencer: 128 packets, 7318 bytes
+  connections: 1 (MSG packets only; TABLE rows are data)
+  TABLE rows also sent for: 0x32/0x21 0x32/0x22 0x32/0x23 0x32/0x25 0x32/0x26 0x32/0x27 0x32/0x28 0x32/0x61 0x32/0x62 0x32/0x63 0x32/0x64 0x32/0x65 0x32/0x66 0x32/0x67 0x32/0x68 0x32/0x6a 0x50/0x00
 #0 len=145 ty=0 id=[0x47,0xb7] req=0 VTableMsg
   table=[0x50,0x00] ops=20 fields=4 data_len=64 consumed=141/141
   field[0] offset=0 len=8 type=U64 shape=[] component=SEQUENCER.state.timestamp_ns (0x077646648906367b)
@@ -8141,37 +8408,488 @@ ball_valve raw/cal/cmd tables: 0x33/0x01 0x33/0x02 0x34/0x11 0x34/0x12 0x35/0x01
   entity "BV_CMD.B1.CH2" id=0x0000000000003502 metadata=0
   raw: 15 00 00 00 00 b2 36 00 82 6a 0d 42 56 5f 43 4d 44 2e 42 31 2e 43 48 32 00
 
-# t7 (fixed arguments) returns: register_t7_raw_tables=1 register_t7_calibrated_tables=1
-## t7 (fixed arguments): 56 packets, 3230 bytes
+## controller_service: 144 packets, 3996 bytes
+  connections: 2 (MSG packets only; TABLE rows are data)
+#0 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x11]
+  raw: 06 00 00 00 00 11 0d 00 20 11
+#1 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x12]
+  raw: 06 00 00 00 00 11 0d 00 20 12
+#2 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x13]
+  raw: 06 00 00 00 00 11 0d 00 20 13
+#3 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x14]
+  raw: 06 00 00 00 00 11 0d 00 20 14
+#4 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x15]
+  raw: 06 00 00 00 00 11 0d 00 20 15
+#5 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x16]
+  raw: 06 00 00 00 00 11 0d 00 20 16
+#6 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x17]
+  raw: 06 00 00 00 00 11 0d 00 20 17
+#7 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x18]
+  raw: 06 00 00 00 00 11 0d 00 20 18
+#8 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x19]
+  raw: 06 00 00 00 00 11 0d 00 20 19
+#9 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x1a]
+  raw: 06 00 00 00 00 11 0d 00 20 1a
+#10 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x31]
+  raw: 06 00 00 00 00 11 0d 00 20 31
+#11 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x32]
+  raw: 06 00 00 00 00 11 0d 00 20 32
+#12 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x33]
+  raw: 06 00 00 00 00 11 0d 00 20 33
+#13 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x34]
+  raw: 06 00 00 00 00 11 0d 00 20 34
+#14 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x35]
+  raw: 06 00 00 00 00 11 0d 00 20 35
+#15 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x36]
+  raw: 06 00 00 00 00 11 0d 00 20 36
+#16 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x37]
+  raw: 06 00 00 00 00 11 0d 00 20 37
+#17 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x38]
+  raw: 06 00 00 00 00 11 0d 00 20 38
+#18 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x39]
+  raw: 06 00 00 00 00 11 0d 00 20 39
+#19 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x3a]
+  raw: 06 00 00 00 00 11 0d 00 20 3a
+#20 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x51]
+  raw: 06 00 00 00 00 11 0d 00 20 51
+#21 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x52]
+  raw: 06 00 00 00 00 11 0d 00 20 52
+#22 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x53]
+  raw: 06 00 00 00 00 11 0d 00 20 53
+#23 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x54]
+  raw: 06 00 00 00 00 11 0d 00 20 54
+#24 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x55]
+  raw: 06 00 00 00 00 11 0d 00 20 55
+#25 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x56]
+  raw: 06 00 00 00 00 11 0d 00 20 56
+#26 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x57]
+  raw: 06 00 00 00 00 11 0d 00 20 57
+#27 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x58]
+  raw: 06 00 00 00 00 11 0d 00 20 58
+#28 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x59]
+  raw: 06 00 00 00 00 11 0d 00 20 59
+#29 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x5a]
+  raw: 06 00 00 00 00 11 0d 00 20 5a
+#30 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x71]
+  raw: 06 00 00 00 00 11 0d 00 20 71
+#31 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x72]
+  raw: 06 00 00 00 00 11 0d 00 20 72
+#32 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x73]
+  raw: 06 00 00 00 00 11 0d 00 20 73
+#33 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x74]
+  raw: 06 00 00 00 00 11 0d 00 20 74
+#34 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x75]
+  raw: 06 00 00 00 00 11 0d 00 20 75
+#35 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x76]
+  raw: 06 00 00 00 00 11 0d 00 20 76
+#36 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x77]
+  raw: 06 00 00 00 00 11 0d 00 20 77
+#37 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x78]
+  raw: 06 00 00 00 00 11 0d 00 20 78
+#38 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x79]
+  raw: 06 00 00 00 00 11 0d 00 20 79
+#39 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x7a]
+  raw: 06 00 00 00 00 11 0d 00 20 7a
+#40 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x91]
+  raw: 06 00 00 00 00 11 0d 00 20 91
+#41 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x92]
+  raw: 06 00 00 00 00 11 0d 00 20 92
+#42 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x93]
+  raw: 06 00 00 00 00 11 0d 00 20 93
+#43 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x94]
+  raw: 06 00 00 00 00 11 0d 00 20 94
+#44 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x95]
+  raw: 06 00 00 00 00 11 0d 00 20 95
+#45 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x96]
+  raw: 06 00 00 00 00 11 0d 00 20 96
+#46 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x97]
+  raw: 06 00 00 00 00 11 0d 00 20 97
+#47 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x98]
+  raw: 06 00 00 00 00 11 0d 00 20 98
+#48 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x99]
+  raw: 06 00 00 00 00 11 0d 00 20 99
+#49 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x9a]
+  raw: 06 00 00 00 00 11 0d 00 20 9a
+#50 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb1]
+  raw: 06 00 00 00 00 11 0d 00 20 b1
+#51 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb2]
+  raw: 06 00 00 00 00 11 0d 00 20 b2
+#52 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb3]
+  raw: 06 00 00 00 00 11 0d 00 20 b3
+#53 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb4]
+  raw: 06 00 00 00 00 11 0d 00 20 b4
+#54 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb5]
+  raw: 06 00 00 00 00 11 0d 00 20 b5
+#55 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb6]
+  raw: 06 00 00 00 00 11 0d 00 20 b6
+#56 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb7]
+  raw: 06 00 00 00 00 11 0d 00 20 b7
+#57 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb8]
+  raw: 06 00 00 00 00 11 0d 00 20 b8
+#58 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xb9]
+  raw: 06 00 00 00 00 11 0d 00 20 b9
+#59 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xba]
+  raw: 06 00 00 00 00 11 0d 00 20 ba
+#60 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd1]
+  raw: 06 00 00 00 00 11 0d 00 20 d1
+#61 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd2]
+  raw: 06 00 00 00 00 11 0d 00 20 d2
+#62 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd3]
+  raw: 06 00 00 00 00 11 0d 00 20 d3
+#63 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd4]
+  raw: 06 00 00 00 00 11 0d 00 20 d4
+#64 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd5]
+  raw: 06 00 00 00 00 11 0d 00 20 d5
+#65 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd6]
+  raw: 06 00 00 00 00 11 0d 00 20 d6
+#66 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd7]
+  raw: 06 00 00 00 00 11 0d 00 20 d7
+#67 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd8]
+  raw: 06 00 00 00 00 11 0d 00 20 d8
+#68 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xd9]
+  raw: 06 00 00 00 00 11 0d 00 20 d9
+#69 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xda]
+  raw: 06 00 00 00 00 11 0d 00 20 da
+#70 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf1]
+  raw: 06 00 00 00 00 11 0d 00 20 f1
+#71 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf2]
+  raw: 06 00 00 00 00 11 0d 00 20 f2
+#72 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf3]
+  raw: 06 00 00 00 00 11 0d 00 20 f3
+#73 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf4]
+  raw: 06 00 00 00 00 11 0d 00 20 f4
+#74 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf5]
+  raw: 06 00 00 00 00 11 0d 00 20 f5
+#75 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf6]
+  raw: 06 00 00 00 00 11 0d 00 20 f6
+#76 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf7]
+  raw: 06 00 00 00 00 11 0d 00 20 f7
+#77 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf8]
+  raw: 06 00 00 00 00 11 0d 00 20 f8
+#78 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xf9]
+  raw: 06 00 00 00 00 11 0d 00 20 f9
+#79 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0xfa]
+  raw: 06 00 00 00 00 11 0d 00 20 fa
+#80 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x11]
+  raw: 06 00 00 00 00 11 0d 00 20 11
+#81 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x12]
+  raw: 06 00 00 00 00 11 0d 00 20 12
+#82 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x13]
+  raw: 06 00 00 00 00 11 0d 00 20 13
+#83 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x14]
+  raw: 06 00 00 00 00 11 0d 00 20 14
+#84 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x15]
+  raw: 06 00 00 00 00 11 0d 00 20 15
+#85 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x16]
+  raw: 06 00 00 00 00 11 0d 00 20 16
+#86 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x17]
+  raw: 06 00 00 00 00 11 0d 00 20 17
+#87 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x18]
+  raw: 06 00 00 00 00 11 0d 00 20 18
+#88 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x19]
+  raw: 06 00 00 00 00 11 0d 00 20 19
+#89 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x1a]
+  raw: 06 00 00 00 00 11 0d 00 20 1a
+#90 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x31]
+  raw: 06 00 00 00 00 11 0d 00 20 31
+#91 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x32]
+  raw: 06 00 00 00 00 11 0d 00 20 32
+#92 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x33]
+  raw: 06 00 00 00 00 11 0d 00 20 33
+#93 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x34]
+  raw: 06 00 00 00 00 11 0d 00 20 34
+#94 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x35]
+  raw: 06 00 00 00 00 11 0d 00 20 35
+#95 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x36]
+  raw: 06 00 00 00 00 11 0d 00 20 36
+#96 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x37]
+  raw: 06 00 00 00 00 11 0d 00 20 37
+#97 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x38]
+  raw: 06 00 00 00 00 11 0d 00 20 38
+#98 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x39]
+  raw: 06 00 00 00 00 11 0d 00 20 39
+#99 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x20,0x3a]
+  raw: 06 00 00 00 00 11 0d 00 20 3a
+#100 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x50,0x00]
+  raw: 06 00 00 00 00 11 0d 00 50 00
+#101 len=213 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x40,0x00] ops=30 fields=6 data_len=96 consumed=209/209
+  field[0] offset=0 len=8 type=U64 shape=[] component=CONTROLLER.actuation.timestamp_ns (0x50e909f6b17a9f09)
+  field[1] offset=8 len=4 type=F32 shape=[] component=CONTROLLER.actuation.duty_F (0x7fb7879e474a707e)
+  field[2] offset=12 len=4 type=F32 shape=[] component=CONTROLLER.actuation.duty_O (0x7fb7809e474a6499)
+  field[3] offset=16 len=1 type=U8 shape=[] component=CONTROLLER.actuation.u_F_on (0x7f6c38b0b172e851)
+  field[4] offset=17 len=1 type=U8 shape=[] component=CONTROLLER.actuation.u_O_on (0x72ed7664dac088a4)
+  field[5] offset=18 len=1 type=U8 shape=[] component=CONTROLLER.actuation.valid (0x192c92e84a9f3c13)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23) 25=Data(off=80,len=8) 26=Data(off=88,len=0) 27=Data(off=88,len=8) 28=Component(op=27) 29=Schema(ty=op25,dim=op26,arg=op28)
+  data: 03 00 00 00 00 00 00 00 09 9f 7a b1 f6 09 e9 50 09 00 00 00 00 00 00 00 7e 70 4a 47 9e 87 b7 7f 09 00 00 00 00 00 00 00 99 64 4a 47 9e 80 b7 7f 00 00 00 00 00 00 00 00 51 e8 72 b1 b0 38 6c 7f 00 00 00 00 00 00 00 00 a4 88 c0 da 64 76 ed 72 00 00 00 00 00 00 00 00 13 3c 9f 4a e8 92 2c 19
+  raw: d5 00 00 00 00 47 b7 00 40 00 1e 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 00 50 08 00 58 00 00 58 08 03 1b 04 19 1a 1c 06 00 08 04 08 04 09 0c 04 0e 10 01 13 11 01 18 12 01 1d 60 03 00 00 00 00 00 00 00 09 9f 7a b1 f6 09 e9 50 09 00 00 00 00 00 00 00 7e 70 4a 47 9e 87 b7 7f 09 00 00 00 00 00 00 00 99 64 4a 47 9e 80 b7 7f 00 00 00 00 00 00 00 00 51 e8 72 b1 b0 38 6c 7f 00 00 00 00 00 00 00 00 a4 88 c0 da 64 76 ed 72 00 00 00 00 00 00 00 00 13 3c 9f 4a e8 92 2c 19
+#102 len=356 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x41,0x00] ops=50 fields=10 data_len=160 consumed=352/352
+  field[0] offset=0 len=8 type=U64 shape=[] component=CONTROLLER.diagnostics.timestamp_ns (0x790ae6dd93a068bd)
+  field[1] offset=8 len=8 type=F64 shape=[] component=CONTROLLER.diagnostics.F_ref (0x58d9855cfe42f4fd)
+  field[2] offset=16 len=8 type=F64 shape=[] component=CONTROLLER.diagnostics.MR_ref (0x7b1e863800653cf2)
+  field[3] offset=24 len=8 type=F64 shape=[] component=CONTROLLER.diagnostics.F_estimated (0x35afa6775540efb6)
+  field[4] offset=32 len=8 type=F64 shape=[] component=CONTROLLER.diagnostics.MR_estimated (0x5986534e7a3928d9)
+  field[5] offset=40 len=8 type=F64 shape=[] component=CONTROLLER.diagnostics.P_ch (0x387264ec0f79d621)
+  field[6] offset=48 len=8 type=F64 shape=[] component=CONTROLLER.diagnostics.cost (0x5420ef57dcdbccda)
+  field[7] offset=56 len=4 type=I32 shape=[] component=CONTROLLER.diagnostics.solver_iters (0x6ae6230825457f50)
+  field[8] offset=60 len=1 type=U8 shape=[] component=CONTROLLER.diagnostics.safety_filtered (0x460dacceaa902b99)
+  field[9] offset=61 len=1 type=U8 shape=[] component=CONTROLLER.diagnostics.cutoff_active (0x136a96e91c372955)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23) 25=Data(off=80,len=8) 26=Data(off=88,len=0) 27=Data(off=88,len=8) 28=Component(op=27) 29=Schema(ty=op25,dim=op26,arg=op28) 30=Data(off=96,len=8) 31=Data(off=104,len=0) 32=Data(off=104,len=8) 33=Component(op=32) 34=Schema(ty=op30,dim=op31,arg=op33) 35=Data(off=112,len=8) 36=Data(off=120,len=0) 37=Data(off=120,len=8) 38=Component(op=37) 39=Schema(ty=op35,dim=op36,arg=op38) 40=Data(off=128,len=8) 41=Data(off=136,len=0) 42=Data(off=136,len=8) 43=Component(op=42) 44=Schema(ty=op40,dim=op41,arg=op43) 45=Data(off=144,len=8) 46=Data(off=152,len=0) 47=Data(off=152,len=8) 48=Component(op=47) 49=Schema(ty=op45,dim=op46,arg=op48)
+  data: 03 00 00 00 00 00 00 00 bd 68 a0 93 dd e6 0a 79 0a 00 00 00 00 00 00 00 fd f4 42 fe 5c 85 d9 58 0a 00 00 00 00 00 00 00 f2 3c 65 00 38 86 1e 7b 0a 00 00 00 00 00 00 00 b6 ef 40 55 77 a6 af 35 0a 00 00 00 00 00 00 00 d9 28 39 7a 4e 53 86 59 0a 00 00 00 00 00 00 00 21 d6 79 0f ec 64 72 38 0a 00 00 00 00 00 00 00 da cc db dc 57 ef 20 54 06 00 00 00 00 00 00 00 50 7f 45 25 08 23 e6 6a 00 00 00 00 00 00 00 00 99 2b 90 aa ce ac 0d 46 00 00 00 00 00 00 00 00 55 29 37 1c e9 96 6a 13
+  raw: 64 01 00 00 00 47 b7 00 41 00 32 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 00 50 08 00 58 00 00 58 08 03 1b 04 19 1a 1c 00 60 08 00 68 00 00 68 08 03 20 04 1e 1f 21 00 70 08 00 78 00 00 78 08 03 25 04 23 24 26 00 80 01 08 00 88 01 00 00 88 01 08 03 2a 04 28 29 2b 00 90 01 08 00 98 01 00 00 98 01 08 03 2f 04 2d 2e 30 0a 00 08 04 08 08 09 10 08 0e 18 08 13 20 08 18 28 08 1d 30 08 22 38 04 27 3c 01 2c 3d 01 31 a0 01 03 00 00 00 00 00 00 00 bd 68 a0 93 dd e6 0a 79 0a 00 00 00 00 00 00 00 fd f4 42 fe 5c 85 d9 58 0a 00 00 00 00 00 00 00 f2 3c 65 00 38 86 1e 7b 0a 00 00 00 00 00 00 00 b6 ef 40 55 77 a6 af 35 0a 00 00 00 00 00 00 00 d9 28 39 7a 4e 53 86 59 0a 00 00 00 00 00 00 00 21 d6 79 0f ec 64 72 38 0a 00 00 00 00 00 00 00 da cc db dc 57 ef 20 54 06 00 00 00 00 00 00 00 50 7f 45 25 08 23 e6 6a 00 00 00 00 00 00 00 00 99 2b 90 aa ce ac 0d 46 00 00 00 00 00 00 00 00 55 29 37 1c e9 96 6a 13
+#103 len=319 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x42,0x00] ops=45 fields=9 data_len=144 consumed=315/315
+  field[0] offset=0 len=8 type=U64 shape=[] component=CONTROLLER.measurement.timestamp_ns (0x2e5caeab6ecf2d31)
+  field[1] offset=8 len=8 type=F64 shape=[] component=CONTROLLER.measurement.P_copv (0x5fed14133f902d32)
+  field[2] offset=16 len=8 type=F64 shape=[] component=CONTROLLER.measurement.P_reg (0x5203c6acbca21704)
+  field[3] offset=24 len=8 type=F64 shape=[] component=CONTROLLER.measurement.P_u_fuel (0x03c77569b5f79912)
+  field[4] offset=32 len=8 type=F64 shape=[] component=CONTROLLER.measurement.P_u_ox (0x1482d37a0bd459ad)
+  field[5] offset=40 len=8 type=F64 shape=[] component=CONTROLLER.measurement.P_d_fuel (0x58ba0b4c8c67482f)
+  field[6] offset=48 len=8 type=F64 shape=[] component=CONTROLLER.measurement.P_d_ox (0x2715cdf7357ec61c)
+  field[7] offset=56 len=8 type=F64 shape=[] component=CONTROLLER.measurement.P_ch_mp1 (0x27ed1af03f7d9dee)
+  field[8] offset=64 len=8 type=F64 shape=[] component=CONTROLLER.measurement.P_ch_mp2 (0x27ed19f03f7d9c3b)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23) 25=Data(off=80,len=8) 26=Data(off=88,len=0) 27=Data(off=88,len=8) 28=Component(op=27) 29=Schema(ty=op25,dim=op26,arg=op28) 30=Data(off=96,len=8) 31=Data(off=104,len=0) 32=Data(off=104,len=8) 33=Component(op=32) 34=Schema(ty=op30,dim=op31,arg=op33) 35=Data(off=112,len=8) 36=Data(off=120,len=0) 37=Data(off=120,len=8) 38=Component(op=37) 39=Schema(ty=op35,dim=op36,arg=op38) 40=Data(off=128,len=8) 41=Data(off=136,len=0) 42=Data(off=136,len=8) 43=Component(op=42) 44=Schema(ty=op40,dim=op41,arg=op43)
+  data: 03 00 00 00 00 00 00 00 31 2d cf 6e ab ae 5c 2e 0a 00 00 00 00 00 00 00 32 2d 90 3f 13 14 ed 5f 0a 00 00 00 00 00 00 00 04 17 a2 bc ac c6 03 52 0a 00 00 00 00 00 00 00 12 99 f7 b5 69 75 c7 03 0a 00 00 00 00 00 00 00 ad 59 d4 0b 7a d3 82 14 0a 00 00 00 00 00 00 00 2f 48 67 8c 4c 0b ba 58 0a 00 00 00 00 00 00 00 1c c6 7e 35 f7 cd 15 27 0a 00 00 00 00 00 00 00 ee 9d 7d 3f f0 1a ed 27 0a 00 00 00 00 00 00 00 3b 9c 7d 3f f0 19 ed 27
+  raw: 3f 01 00 00 00 47 b7 00 42 00 2d 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 00 50 08 00 58 00 00 58 08 03 1b 04 19 1a 1c 00 60 08 00 68 00 00 68 08 03 20 04 1e 1f 21 00 70 08 00 78 00 00 78 08 03 25 04 23 24 26 00 80 01 08 00 88 01 00 00 88 01 08 03 2a 04 28 29 2b 09 00 08 04 08 08 09 10 08 0e 18 08 13 20 08 18 28 08 1d 30 08 22 38 08 27 40 08 2c 90 01 03 00 00 00 00 00 00 00 31 2d cf 6e ab ae 5c 2e 0a 00 00 00 00 00 00 00 32 2d 90 3f 13 14 ed 5f 0a 00 00 00 00 00 00 00 04 17 a2 bc ac c6 03 52 0a 00 00 00 00 00 00 00 12 99 f7 b5 69 75 c7 03 0a 00 00 00 00 00 00 00 ad 59 d4 0b 7a d3 82 14 0a 00 00 00 00 00 00 00 2f 48 67 8c 4c 0b ba 58 0a 00 00 00 00 00 00 00 1c c6 7e 35 f7 cd 15 27 0a 00 00 00 00 00 00 00 ee 9d 7d 3f f0 1a ed 27 0a 00 00 00 00 00 00 00 3b 9c 7d 3f f0 19 ed 27
+#104 len=145 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x43,0x00] ops=20 fields=4 data_len=64 consumed=141/141
+  field[0] offset=0 len=8 type=U64 shape=[] component=CONTROLLER.state.timestamp_ns (0x038a6e9649aa205e)
+  field[1] offset=8 len=1 type=U8 shape=[] component=CONTROLLER.state.from_state (0x7df102522d9f452e)
+  field[2] offset=9 len=1 type=U8 shape=[] component=CONTROLLER.state.to_state (0x5eb13452a0cd6d17)
+  field[3] offset=10 len=1 type=U8 shape=[] component=CONTROLLER.state.reason (0x164e6df195208c4c)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18)
+  data: 03 00 00 00 00 00 00 00 5e 20 aa 49 96 6e 8a 03 00 00 00 00 00 00 00 00 2e 45 9f 2d 52 02 f1 7d 00 00 00 00 00 00 00 00 17 6d cd a0 52 34 b1 5e 00 00 00 00 00 00 00 00 4c 8c 20 95 f1 6d 4e 16
+  raw: 91 00 00 00 00 47 b7 00 43 00 14 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 04 00 08 04 08 01 09 09 01 0e 0a 01 13 40 03 00 00 00 00 00 00 00 5e 20 aa 49 96 6e 8a 03 00 00 00 00 00 00 00 00 2e 45 9f 2d 52 02 f1 7d 00 00 00 00 00 00 00 00 17 6d cd a0 52 34 b1 5e 00 00 00 00 00 00 00 00 4c 8c 20 95 f1 6d 4e 16
+#105 len=145 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x44,0x00] ops=20 fields=4 data_len=64 consumed=141/141
+  field[0] offset=0 len=8 type=U64 shape=[] component=CONTROLLER.fire.timestamp_ns (0x4f98c0de3498a62f)
+  field[1] offset=8 len=1 type=U8 shape=[] component=CONTROLLER.fire.fire_active (0x44f8f570db42fe8c)
+  field[2] offset=9 len=4 type=F32 shape=[] component=CONTROLLER.fire.duty_F (0x536a0bf7a781fd1c)
+  field[3] offset=13 len=4 type=F32 shape=[] component=CONTROLLER.fire.duty_O (0x536a14f7a7820c67)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18)
+  data: 03 00 00 00 00 00 00 00 2f a6 98 34 de c0 98 4f 00 00 00 00 00 00 00 00 8c fe 42 db 70 f5 f8 44 09 00 00 00 00 00 00 00 1c fd 81 a7 f7 0b 6a 53 09 00 00 00 00 00 00 00 67 0c 82 a7 f7 14 6a 53
+  raw: 91 00 00 00 00 47 b7 00 44 00 14 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 04 00 08 04 08 01 09 09 04 0e 0d 04 13 40 03 00 00 00 00 00 00 00 2f a6 98 34 de c0 98 4f 00 00 00 00 00 00 00 00 8c fe 42 db 70 f5 f8 44 09 00 00 00 00 00 00 00 1c fd 81 a7 f7 0b 6a 53 09 00 00 00 00 00 00 00 67 0c 82 a7 f7 14 6a 53
+#106 len=49 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.actuation.timestamp_ns" id=0x50e909f6b17a9f09 metadata=0 asset=0
+  raw: 31 00 00 00 00 b7 ca 00 89 be ea 8b eb be c2 f4 50 21 43 4f 4e 54 52 4f 4c 4c 45 52 2e 61 63 74 75 61 74 69 6f 6e 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#107 len=43 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.actuation.duty_F" id=0x7fb7879e474a707e metadata=0 asset=0
+  raw: 2b 00 00 00 00 b7 ca 00 fe e0 a9 ba e4 f3 e1 db 7f 1b 43 4f 4e 54 52 4f 4c 4c 45 52 2e 61 63 74 75 61 74 69 6f 6e 2e 64 75 74 79 5f 46 00 00
+#108 len=43 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.actuation.duty_O" id=0x7fb7809e474a6499 metadata=0 asset=0
+  raw: 2b 00 00 00 00 b7 ca 00 99 c9 a9 ba e4 93 e0 db 7f 1b 43 4f 4e 54 52 4f 4c 4c 45 52 2e 61 63 74 75 61 74 69 6f 6e 2e 64 75 74 79 5f 4f 00 00
+#109 len=43 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.actuation.u_F_on" id=0x7f6c38b0b172e851 metadata=0 asset=0
+  raw: 2b 00 00 00 00 b7 ca 00 d1 d0 cb 8b 8b 96 8e b6 7f 1b 43 4f 4e 54 52 4f 4c 4c 45 52 2e 61 63 74 75 61 74 69 6f 6e 2e 75 5f 46 5f 6f 6e 00 00
+#110 len=43 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.actuation.u_O_on" id=0x72ed7664dac088a4 metadata=0 asset=0
+  raw: 2b 00 00 00 00 b7 ca 00 a4 91 82 d6 cd cc dd f6 72 1b 43 4f 4e 54 52 4f 4c 4c 45 52 2e 61 63 74 75 61 74 69 6f 6e 2e 75 5f 4f 5f 6f 6e 00 00
+#111 len=42 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.actuation.valid" id=0x192c92e84a9f3c13 metadata=0 asset=0
+  raw: 2a 00 00 00 00 b7 ca 00 93 f8 fc d4 84 dd a4 96 19 1a 43 4f 4e 54 52 4f 4c 4c 45 52 2e 61 63 74 75 61 74 69 6f 6e 2e 76 61 6c 69 64 00 00
+#112 len=51 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.timestamp_ns" id=0x790ae6dd93a068bd metadata=0 asset=0
+  raw: 33 00 00 00 00 b7 ca 00 bd d1 81 9d d9 db b9 85 79 23 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#113 len=44 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.F_ref" id=0x58d9855cfe42f4fd metadata=0 asset=0
+  raw: 2c 00 00 00 00 b7 ca 00 fd e9 8b f2 cf ab e1 ec 58 1c 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 46 5f 72 65 66 00 00
+#114 len=45 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.MR_ref" id=0x7b1e863800653cf2 metadata=0 asset=0
+  raw: 2d 00 00 00 00 b7 ca 00 f2 f9 94 83 80 c7 a1 8f 7b 1d 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 4d 52 5f 72 65 66 00 00
+#115 len=50 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.F_estimated" id=0x35afa6775540efb6 metadata=0 asset=0
+  raw: 32 00 00 00 00 b7 ca 00 b6 df 83 aa f5 ce e9 d7 35 22 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 46 5f 65 73 74 69 6d 61 74 65 64 00 00
+#116 len=51 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.MR_estimated" id=0x5986534e7a3928d9 metadata=0 asset=0
+  raw: 33 00 00 00 00 b7 ca 00 d9 d1 e4 d1 e7 e9 94 c3 59 23 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 4d 52 5f 65 73 74 69 6d 61 74 65 64 00 00
+#117 len=43 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.P_ch" id=0x387264ec0f79d621 metadata=0 asset=0
+  raw: 2b 00 00 00 00 b7 ca 00 a1 ac e7 fb c0 9d 99 b9 38 1b 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 50 5f 63 68 00 00
+#118 len=43 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.cost" id=0x5420ef57dcdbccda metadata=0 asset=0
+  raw: 2b 00 00 00 00 b7 ca 00 da 99 ef e6 fd ea bb 90 54 1b 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 63 6f 73 74 00 00
+#119 len=51 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.solver_iters" id=0x6ae6230825457f50 metadata=0 asset=0
+  raw: 33 00 00 00 00 b7 ca 00 d0 fe 95 aa 82 e1 88 f3 6a 23 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 73 6f 6c 76 65 72 5f 69 74 65 72 73 00 00
+#120 len=54 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.safety_filtered" id=0x460dacceaa902b99 metadata=0 asset=0
+  raw: 36 00 00 00 00 b7 ca 00 99 d7 c0 d4 ea 99 eb 86 46 26 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 73 61 66 65 74 79 5f 66 69 6c 74 65 72 65 64 00 00
+#121 len=52 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.diagnostics.cutoff_active" id=0x136a96e91c372955 metadata=0 asset=0
+  raw: 34 00 00 00 00 b7 ca 00 d5 d2 dc e1 91 dd a5 b5 13 24 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 2e 63 75 74 6f 66 66 5f 61 63 74 69 76 65 00 00
+#122 len=51 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.timestamp_ns" id=0x2e5caeab6ecf2d31 metadata=0 asset=0
+  raw: 33 00 00 00 00 b7 ca 00 b1 da bc f6 b6 d5 ab ae 2e 23 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#123 len=45 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.P_copv" id=0x5fed14133f902d32 metadata=0 asset=0
+  raw: 2d 00 00 00 00 b7 ca 00 b2 da c0 fc b3 82 c5 f6 5f 1d 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 50 5f 63 6f 70 76 00 00
+#124 len=44 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.P_reg" id=0x5203c6acbca21704 metadata=0 asset=0
+  raw: 2c 00 00 00 00 b7 ca 00 84 ae 88 e5 cb d5 f1 81 52 1c 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 50 5f 72 65 67 00 00
+#125 len=47 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.P_u_fuel" id=0x03c77569b5f79912 metadata=0 asset=0
+  raw: 2f 00 00 00 00 b7 ca 00 92 b2 de af 9b ad dd e3 03 1f 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 50 5f 75 5f 66 75 65 6c 00 00
+#126 len=45 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.P_u_ox" id=0x1482d37a0bd459ad metadata=0 asset=0
+  raw: 2d 00 00 00 00 b7 ca 00 ad b3 d1 de a0 ef b4 c1 14 1d 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 50 5f 75 5f 6f 78 00 00
+#127 len=47 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.P_d_fuel" id=0x58ba0b4c8c67482f metadata=0 asset=0
+  raw: 2f 00 00 00 00 b7 ca 00 af 90 9d e3 c8 e9 82 dd 58 1f 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 50 5f 64 5f 66 75 65 6c 00 00
+#128 len=45 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.P_d_ox" id=0x2715cdf7357ec61c metadata=0 asset=0
+  raw: 2d 00 00 00 00 b7 ca 00 9c 8c fb ab f3 be f3 8a 27 1d 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 50 5f 64 5f 6f 78 00 00
+#129 len=47 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.P_ch_mp1" id=0x27ed1af03f7d9dee metadata=0 asset=0
+  raw: 2f 00 00 00 00 b7 ca 00 ee bb f6 fb 83 de c6 f6 27 1f 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 50 5f 63 68 5f 6d 70 31 00 00
+#130 len=47 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.measurement.P_ch_mp2" id=0x27ed19f03f7d9c3b metadata=0 asset=0
+  raw: 2f 00 00 00 00 b7 ca 00 bb b8 f6 fb 83 be c6 f6 27 1f 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 2e 50 5f 63 68 5f 6d 70 32 00 00
+#131 len=45 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.state.timestamp_ns" id=0x038a6e9649aa205e metadata=0 asset=0
+  raw: 2d 00 00 00 00 b7 ca 00 de c0 a8 cd e4 d2 9b c5 03 1d 43 4f 4e 54 52 4f 4c 4c 45 52 2e 73 74 61 74 65 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#132 len=43 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.state.from_state" id=0x7df102522d9f452e metadata=0 asset=0
+  raw: 2b 00 00 00 00 b7 ca 00 ae 8a fd ec a2 ca c0 f8 7d 1b 43 4f 4e 54 52 4f 4c 4c 45 52 2e 73 74 61 74 65 2e 66 72 6f 6d 5f 73 74 61 74 65 00 00
+#133 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.state.to_state" id=0x5eb13452a0cd6d17 metadata=0 asset=0
+  raw: 29 00 00 00 00 b7 ca 00 97 da b5 86 aa 8a cd d8 5e 19 43 4f 4e 54 52 4f 4c 4c 45 52 2e 73 74 61 74 65 2e 74 6f 5f 73 74 61 74 65 00 00
+#134 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.state.reason" id=0x164e6df195208c4c metadata=0 asset=0
+  raw: 27 00 00 00 00 b7 ca 00 cc 98 82 a9 99 be 9b a7 16 17 43 4f 4e 54 52 4f 4c 4c 45 52 2e 73 74 61 74 65 2e 72 65 61 73 6f 6e 00 00
+#135 len=44 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.fire.timestamp_ns" id=0x4f98c0de3498a62f metadata=0 asset=0
+  raw: 2c 00 00 00 00 b7 ca 00 af cc e2 a4 e3 9b b0 cc 4f 1c 43 4f 4e 54 52 4f 4c 4c 45 52 2e 66 69 72 65 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#136 len=43 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.fire.fire_active" id=0x44f8f570db42fe8c metadata=0 asset=0
+  raw: 2b 00 00 00 00 b7 ca 00 8c fd 8b da 8d ae bd fc 44 1b 43 4f 4e 54 52 4f 4c 4c 45 52 2e 66 69 72 65 2e 66 69 72 65 5f 61 63 74 69 76 65 00 00
+#137 len=38 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.fire.duty_F" id=0x536a0bf7a781fd1c metadata=0 asset=0
+  raw: 26 00 00 00 00 b7 ca 00 9c fa 87 bc fa fe 82 b5 53 16 43 4f 4e 54 52 4f 4c 4c 45 52 2e 66 69 72 65 2e 64 75 74 79 5f 46 00 00
+#138 len=38 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "CONTROLLER.fire.duty_O" id=0x536a14f7a7820c67 metadata=0 asset=0
+  raw: 26 00 00 00 00 b7 ca 00 e7 98 88 bc fa 9e 85 b5 53 16 43 4f 4e 54 52 4f 4c 4c 45 52 2e 66 69 72 65 2e 64 75 74 79 5f 4f 00 00
+#139 len=29 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "CONTROLLER.actuation" id=0x0000000000004000 metadata=0
+  raw: 1d 00 00 00 00 b2 36 00 80 80 01 14 43 4f 4e 54 52 4f 4c 4c 45 52 2e 61 63 74 75 61 74 69 6f 6e 00
+#140 len=31 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "CONTROLLER.diagnostics" id=0x0000000000004100 metadata=0
+  raw: 1f 00 00 00 00 b2 36 00 80 82 01 16 43 4f 4e 54 52 4f 4c 4c 45 52 2e 64 69 61 67 6e 6f 73 74 69 63 73 00
+#141 len=31 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "CONTROLLER.measurement" id=0x0000000000004200 metadata=0
+  raw: 1f 00 00 00 00 b2 36 00 80 84 01 16 43 4f 4e 54 52 4f 4c 4c 45 52 2e 6d 65 61 73 75 72 65 6d 65 6e 74 00
+#142 len=25 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "CONTROLLER.state" id=0x0000000000004300 metadata=0
+  raw: 19 00 00 00 00 b2 36 00 80 86 01 10 43 4f 4e 54 52 4f 4c 4c 45 52 2e 73 74 61 74 65 00
+#143 len=24 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "CONTROLLER.fire" id=0x0000000000004400 metadata=0
+  raw: 18 00 00 00 00 b2 36 00 80 88 01 0f 43 4f 4e 54 52 4f 4c 4c 45 52 2e 66 69 72 65 00
+
+## t7_bridge --fake: 42 packets, 2366 bytes
+  connections: 1 (MSG packets only; TABLE rows are data)
+  TABLE rows also sent for: 0x26/0x01 0x26/0x02 0x26/0x03 0x26/0x04 0x26/0x0e 0x26/0x0f
 #0 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
-  table=[0x26,0x00] ops=25 fields=5 data_len=80 consumed=175/175
-  field[0] offset=0 len=8 type=U64 shape=[] component=T71.AIN0.timestamp_ns (0x7f7dc9141e32d0f9)
-  field[1] offset=8 len=1 type=U8 shape=[] component=T71.AIN0.channel_id (0x7ec5ebf642f73466)
-  field[2] offset=12 len=4 type=F32 shape=[] component=T71.AIN0.volts (0x6f0549d1ceddabb5)
-  field[3] offset=16 len=4 type=U32 shape=[] component=T71.AIN0.sample_ts_ms (0x0ca5f44c31594274)
-  field[4] offset=20 len=1 type=U8 shape=[] component=T71.AIN0.status (0x4524ba72bfb9e2f1)
-  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
-  data: 03 00 00 00 00 00 00 00 f9 d0 32 1e 14 c9 7d 7f 00 00 00 00 00 00 00 00 66 34 f7 42 f6 eb c5 7e 09 00 00 00 00 00 00 00 b5 ab dd ce d1 49 05 6f 02 00 00 00 00 00 00 00 74 42 59 31 4c f4 a5 0c 00 00 00 00 00 00 00 00 f1 e2 b9 bf 72 ba 24 45
-  raw: b3 00 00 00 00 47 b7 00 26 00 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 f9 d0 32 1e 14 c9 7d 7f 00 00 00 00 00 00 00 00 66 34 f7 42 f6 eb c5 7e 09 00 00 00 00 00 00 00 b5 ab dd ce d1 49 05 6f 02 00 00 00 00 00 00 00 74 42 59 31 4c f4 a5 0c 00 00 00 00 00 00 00 00 f1 e2 b9 bf 72 ba 24 45
-#1 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71.AIN0.timestamp_ns" id=0x7f7dc9141e32d0f9 metadata=0 asset=0
-  raw: 25 00 00 00 00 b7 ca 00 f9 a1 cb f1 c1 a2 f2 be 7f 15 54 37 31 2e 41 49 4e 30 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
-#2 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71.AIN0.channel_id" id=0x7ec5ebf642f73466 metadata=0 asset=0
-  raw: 23 00 00 00 00 b7 ca 00 e6 e8 dc 97 e4 fe fa e2 7e 13 54 37 31 2e 41 49 4e 30 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
-#3 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71.AIN0.volts" id=0x6f0549d1ceddabb5 metadata=0 asset=0
-  raw: 1e 00 00 00 00 b7 ca 00 b5 d7 f6 f6 9c ba d2 82 6f 0e 54 37 31 2e 41 49 4e 30 2e 76 6f 6c 74 73 00 00
-#4 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71.AIN0.sample_ts_ms" id=0x0ca5f44c31594274 metadata=0 asset=0
-  raw: 25 00 00 00 00 b7 ca 00 f4 84 e5 8a c3 89 fd d2 0c 15 54 37 31 2e 41 49 4e 30 2e 73 61 6d 70 6c 65 5f 74 73 5f 6d 73 00 00
-#5 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71.AIN0.status" id=0x4524ba72bfb9e2f1 metadata=0 asset=0
-  raw: 1f 00 00 00 00 b7 ca 00 f1 c5 e7 fd ab ce ae 92 45 0f 54 37 31 2e 41 49 4e 30 2e 73 74 61 74 75 73 00 00
-#6 len=16 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
-  entity "T71.AIN0" id=0x0000000000002600 metadata=0
-  raw: 10 00 00 00 00 b2 36 00 80 4c 08 54 37 31 2e 41 49 4e 30 00
-#7 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
   table=[0x26,0x01] ops=25 fields=5 data_len=80 consumed=175/175
   field[0] offset=0 len=8 type=U64 shape=[] component=T71.AIN1.timestamp_ns (0x3788e0742ff34ba8)
   field[1] offset=8 len=1 type=U8 shape=[] component=T71.AIN1.channel_id (0x5b3c0021aee5fcbb)
@@ -8181,25 +8899,25 @@ ball_valve raw/cal/cmd tables: 0x33/0x01 0x33/0x02 0x34/0x11 0x34/0x12 0x35/0x01
   ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
   data: 03 00 00 00 00 00 00 00 a8 4b f3 2f 74 e0 88 37 00 00 00 00 00 00 00 00 bb fc e5 ae 21 00 3c 5b 09 00 00 00 00 00 00 00 be 0b 72 71 3a 24 de 0c 02 00 00 00 00 00 00 00 b1 f6 ae 84 b5 4e a2 7b 00 00 00 00 00 00 00 00 f4 80 c0 81 d3 d9 a5 55
   raw: b3 00 00 00 00 47 b7 00 26 01 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 a8 4b f3 2f 74 e0 88 37 00 00 00 00 00 00 00 00 bb fc e5 ae 21 00 3c 5b 09 00 00 00 00 00 00 00 be 0b 72 71 3a 24 de 0c 02 00 00 00 00 00 00 00 b1 f6 ae 84 b5 4e a2 7b 00 00 00 00 00 00 00 00 f4 80 c0 81 d3 d9 a5 55
-#8 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#1 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN1.timestamp_ns" id=0x3788e0742ff34ba8 metadata=0 asset=0
   raw: 25 00 00 00 00 b7 ca 00 a8 97 cd ff c2 8e b8 c4 37 15 54 37 31 2e 41 49 4e 31 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
-#9 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#2 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN1.channel_id" id=0x5b3c0021aee5fcbb metadata=0 asset=0
   raw: 23 00 00 00 00 b7 ca 00 bb f9 97 f7 9a 84 80 9e 5b 13 54 37 31 2e 41 49 4e 31 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
-#10 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#3 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN1.volts" id=0x0cde243a71720bbe metadata=0 asset=0
   raw: 1e 00 00 00 00 b7 ca 00 be 97 c8 8b a7 87 89 ef 0c 0e 54 37 31 2e 41 49 4e 31 2e 76 6f 6c 74 73 00 00
-#11 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#4 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN1.sample_ts_ms" id=0x7ba24eb584aef6b1 metadata=0 asset=0
   raw: 25 00 00 00 00 b7 ca 00 b1 ed bb a5 d8 d6 93 d1 7b 15 54 37 31 2e 41 49 4e 31 2e 73 61 6d 70 6c 65 5f 74 73 5f 6d 73 00 00
-#12 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#5 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN1.status" id=0x55a5d9d381c080f4 metadata=0 asset=0
   raw: 1f 00 00 00 00 b7 ca 00 f4 81 82 8e b8 ba f6 d2 55 0f 54 37 31 2e 41 49 4e 31 2e 73 74 61 74 75 73 00 00
-#13 len=16 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+#6 len=16 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
   entity "T71.AIN1" id=0x0000000000002601 metadata=0
   raw: 10 00 00 00 00 b2 36 00 81 4c 08 54 37 31 2e 41 49 4e 31 00
-#14 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+#7 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
   table=[0x26,0x02] ops=25 fields=5 data_len=80 consumed=175/175
   field[0] offset=0 len=8 type=U64 shape=[] component=T71.AIN2.timestamp_ns (0x7d3a8047e8b9d817)
   field[1] offset=8 len=1 type=U8 shape=[] component=T71.AIN2.channel_id (0x5aeb1552fdeb8ee4)
@@ -8209,25 +8927,25 @@ ball_valve raw/cal/cmd tables: 0x33/0x01 0x33/0x02 0x34/0x11 0x34/0x12 0x35/0x01
   ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
   data: 03 00 00 00 00 00 00 00 17 d8 b9 e8 47 80 3a 7d 00 00 00 00 00 00 00 00 e4 8e eb fd 52 15 eb 5a 09 00 00 00 00 00 00 00 6b 84 93 c1 c9 f0 19 35 02 00 00 00 00 00 00 00 8e 04 2c 5e 5b 57 1e 30 00 00 00 00 00 00 00 00 ff 8b d9 25 05 0c f2 64
   raw: b3 00 00 00 00 47 b7 00 26 02 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 17 d8 b9 e8 47 80 3a 7d 00 00 00 00 00 00 00 00 e4 8e eb fd 52 15 eb 5a 09 00 00 00 00 00 00 00 6b 84 93 c1 c9 f0 19 35 02 00 00 00 00 00 00 00 8e 04 2c 5e 5b 57 1e 30 00 00 00 00 00 00 00 00 ff 8b d9 25 05 0c f2 64
-#15 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#8 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN2.timestamp_ns" id=0x7d3a8047e8b9d817 metadata=0 asset=0
   raw: 25 00 00 00 00 b7 ca 00 97 b0 e7 c5 fe 88 a0 9d 7d 15 54 37 31 2e 41 49 4e 32 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
-#16 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#9 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN2.channel_id" id=0x5aeb1552fdeb8ee4 metadata=0 asset=0
   raw: 23 00 00 00 00 b7 ca 00 e4 9d ae ef af aa c5 f5 5a 13 54 37 31 2e 41 49 4e 32 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
-#17 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#10 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN2.volts" id=0x3519f0c9c193846b metadata=0 asset=0
   raw: 1e 00 00 00 00 b7 ca 00 eb 88 ce 8c 9c 99 fc 8c 35 0e 54 37 31 2e 41 49 4e 32 2e 76 6f 6c 74 73 00 00
-#18 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#11 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN2.sample_ts_ms" id=0x301e575b5e2c048e metadata=0 asset=0
   raw: 25 00 00 00 00 b7 ca 00 8e 89 b0 f1 b5 eb 95 8f 30 15 54 37 31 2e 41 49 4e 32 2e 73 61 6d 70 6c 65 5f 74 73 5f 6d 73 00 00
-#19 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#12 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN2.status" id=0x64f20c0525d98bff metadata=0 asset=0
   raw: 1f 00 00 00 00 b7 ca 00 ff 97 e6 ae d2 80 83 f9 64 0f 54 37 31 2e 41 49 4e 32 2e 73 74 61 74 75 73 00 00
-#20 len=16 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+#13 len=16 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
   entity "T71.AIN2" id=0x0000000000002602 metadata=0
   raw: 10 00 00 00 00 b2 36 00 82 4c 08 54 37 31 2e 41 49 4e 32 00
-#21 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+#14 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
   table=[0x26,0x03] ops=25 fields=5 data_len=80 consumed=175/175
   field[0] offset=0 len=8 type=U64 shape=[] component=T71.AIN3.timestamp_ns (0x6f5366965f2f73f6)
   field[1] offset=8 len=1 type=U8 shape=[] component=T71.AIN3.channel_id (0x4ab8325455702729)
@@ -8237,25 +8955,81 @@ ball_valve raw/cal/cmd tables: 0x33/0x01 0x33/0x02 0x34/0x11 0x34/0x12 0x35/0x01
   ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
   data: 03 00 00 00 00 00 00 00 f6 73 2f 5f 96 66 53 6f 00 00 00 00 00 00 00 00 29 27 70 55 54 32 b8 4a 09 00 00 00 00 00 00 00 1c 22 91 a8 14 c8 4a 30 02 00 00 00 00 00 00 00 a3 b6 f0 98 d9 44 68 6f 00 00 00 00 00 00 00 00 da bb 4b 30 68 a6 bd 26
   raw: b3 00 00 00 00 47 b7 00 26 03 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 f6 73 2f 5f 96 66 53 6f 00 00 00 00 00 00 00 00 29 27 70 55 54 32 b8 4a 09 00 00 00 00 00 00 00 1c 22 91 a8 14 c8 4a 30 02 00 00 00 00 00 00 00 a3 b6 f0 98 d9 44 68 6f 00 00 00 00 00 00 00 00 da bb 4b 30 68 a6 bd 26
-#22 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#15 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN3.timestamp_ns" id=0x6f5366965f2f73f6 metadata=0 asset=0
   raw: 25 00 00 00 00 b7 ca 00 f6 e7 bd f9 e5 d2 d9 a9 6f 15 54 37 31 2e 41 49 4e 33 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
-#23 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#16 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN3.channel_id" id=0x4ab8325455702729 metadata=0 asset=0
   raw: 23 00 00 00 00 b7 ca 00 a9 ce c0 ab c5 ca 8c dc 4a 13 54 37 31 2e 41 49 4e 33 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
-#24 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#17 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN3.volts" id=0x304ac814a891221c metadata=0 asset=0
   raw: 1e 00 00 00 00 b7 ca 00 9c c4 c4 c4 ca 82 b2 a5 30 0e 54 37 31 2e 41 49 4e 33 2e 76 6f 6c 74 73 00 00
-#25 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#18 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN3.sample_ts_ms" id=0x6f6844d998f0b6a3 metadata=0 asset=0
   raw: 25 00 00 00 00 b7 ca 00 a3 ed c2 c7 99 9b 91 b4 6f 15 54 37 31 2e 41 49 4e 33 2e 73 61 6d 70 6c 65 5f 74 73 5f 6d 73 00 00
-#26 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#19 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.AIN3.status" id=0x26bda668304bbbda metadata=0 asset=0
   raw: 1f 00 00 00 00 b7 ca 00 da f7 ae 82 83 cd e9 de 26 0f 54 37 31 2e 41 49 4e 33 2e 73 74 61 74 75 73 00 00
-#27 len=16 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+#20 len=16 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
   entity "T71.AIN3" id=0x0000000000002603 metadata=0
   raw: 10 00 00 00 00 b2 36 00 83 4c 08 54 37 31 2e 41 49 4e 33 00
+#21 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x26,0x04] ops=25 fields=5 data_len=80 consumed=175/175
+  field[0] offset=0 len=8 type=U64 shape=[] component=T71.AIN4.timestamp_ns (0x5aafcfbd1c7f3dbd)
+  field[1] offset=8 len=1 type=U8 shape=[] component=T71.AIN4.channel_id (0x031d9e253433e642)
+  field[2] offset=12 len=4 type=F32 shape=[] component=T71.AIN4.volts (0x7d6724a333e65c99)
+  field[3] offset=16 len=4 type=U32 shape=[] component=T71.AIN4.sample_ts_ms (0x73588f1a32decfc8)
+  field[4] offset=20 len=1 type=U8 shape=[] component=T71.AIN4.status (0x0d83b94bd1e915d5)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
+  data: 03 00 00 00 00 00 00 00 bd 3d 7f 1c bd cf af 5a 00 00 00 00 00 00 00 00 42 e6 33 34 25 9e 1d 03 09 00 00 00 00 00 00 00 99 5c e6 33 a3 24 67 7d 02 00 00 00 00 00 00 00 c8 cf de 32 1a 8f 58 73 00 00 00 00 00 00 00 00 d5 15 e9 d1 4b b9 83 0d
+  raw: b3 00 00 00 00 47 b7 00 26 04 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 bd 3d 7f 1c bd cf af 5a 00 00 00 00 00 00 00 00 42 e6 33 34 25 9e 1d 03 09 00 00 00 00 00 00 00 99 5c e6 33 a3 24 67 7d 02 00 00 00 00 00 00 00 c8 cf de 32 1a 8f 58 73 00 00 00 00 00 00 00 00 d5 15 e9 d1 4b b9 83 0d
+#22 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN4.timestamp_ns" id=0x5aafcfbd1c7f3dbd metadata=0 asset=0
+  raw: 25 00 00 00 00 b7 ca 00 bd fb fc e3 d1 f7 f3 d7 5a 15 54 37 31 2e 41 49 4e 34 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#23 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN4.channel_id" id=0x031d9e253433e642 metadata=0 asset=0
+  raw: 23 00 00 00 00 b7 ca 00 c2 cc cf a1 d3 c4 e7 8e 03 13 54 37 31 2e 41 49 4e 34 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
+#24 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN4.volts" id=0x7d6724a333e65c99 metadata=0 asset=0
+  raw: 1e 00 00 00 00 b7 ca 00 99 b9 99 9f b3 94 c9 b3 7d 0e 54 37 31 2e 41 49 4e 34 2e 76 6f 6c 74 73 00 00
+#25 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN4.sample_ts_ms" id=0x73588f1a32decfc8 metadata=0 asset=0
+  raw: 25 00 00 00 00 b7 ca 00 c8 9f fb 96 a3 e3 a3 ac 73 15 54 37 31 2e 41 49 4e 34 2e 73 61 6d 70 6c 65 5f 74 73 5f 6d 73 00 00
+#26 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN4.status" id=0x0d83b94bd1e915d5 metadata=0 asset=0
+  raw: 1f 00 00 00 00 b7 ca 00 d5 ab a4 8f bd a9 ee c1 0d 0f 54 37 31 2e 41 49 4e 34 2e 73 74 61 74 75 73 00 00
+#27 len=16 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "T71.AIN4" id=0x0000000000002604 metadata=0
+  raw: 10 00 00 00 00 b2 36 00 84 4c 08 54 37 31 2e 41 49 4e 34 00
 #28 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
+  table=[0x26,0x0e] ops=25 fields=5 data_len=80 consumed=175/175
+  field[0] offset=0 len=8 type=U64 shape=[] component=T71.AIN14.timestamp_ns (0x1c75bcac763f429c)
+  field[1] offset=8 len=1 type=U8 shape=[] component=T71.AIN14.channel_id (0x2d4730a53c8c1167)
+  field[2] offset=12 len=4 type=F32 shape=[] component=T71.AIN14.volts (0x2fcc2adf4600f0d2)
+  field[3] offset=16 len=4 type=U32 shape=[] component=T71.AIN14.sample_ts_ms (0x568196723c4461c5)
+  field[4] offset=20 len=1 type=U8 shape=[] component=T71.AIN14.status (0x6818dbcfc485a1d8)
+  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
+  data: 03 00 00 00 00 00 00 00 9c 42 3f 76 ac bc 75 1c 00 00 00 00 00 00 00 00 67 11 8c 3c a5 30 47 2d 09 00 00 00 00 00 00 00 d2 f0 00 46 df 2a cc 2f 02 00 00 00 00 00 00 00 c5 61 44 3c 72 96 81 56 00 00 00 00 00 00 00 00 d8 a1 85 c4 cf db 18 68
+  raw: b3 00 00 00 00 47 b7 00 26 0e 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 9c 42 3f 76 ac bc 75 1c 00 00 00 00 00 00 00 00 67 11 8c 3c a5 30 47 2d 09 00 00 00 00 00 00 00 d2 f0 00 46 df 2a cc 2f 02 00 00 00 00 00 00 00 c5 61 44 3c 72 96 81 56 00 00 00 00 00 00 00 00 d8 a1 85 c4 cf db 18 68
+#29 len=38 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN14.timestamp_ns" id=0x1c75bcac763f429c metadata=0 asset=0
+  raw: 26 00 00 00 00 b7 ca 00 9c 85 fd b1 c7 95 ef ba 1c 16 54 37 31 2e 41 49 4e 31 34 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
+#30 len=36 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN14.channel_id" id=0x2d4730a53c8c1167 metadata=0 asset=0
+  raw: 24 00 00 00 00 b7 ca 00 e7 a2 b0 e4 d3 94 cc a3 2d 14 54 37 31 2e 41 49 4e 31 34 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
+#31 len=31 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN14.volts" id=0x2fcc2adf4600f0d2 metadata=0 asset=0
+  raw: 1f 00 00 00 00 b7 ca 00 d2 e1 83 b0 f4 db 8a e6 2f 0f 54 37 31 2e 41 49 4e 31 34 2e 76 6f 6c 74 73 00 00
+#32 len=38 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN14.sample_ts_ms" id=0x568196723c4461c5 metadata=0 asset=0
+  raw: 26 00 00 00 00 b7 ca 00 c5 c3 91 e2 a3 ce e5 c0 56 16 54 37 31 2e 41 49 4e 31 34 2e 73 61 6d 70 6c 65 5f 74 73 5f 6d 73 00 00
+#33 len=32 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+  component "T71.AIN14.status" id=0x6818dbcfc485a1d8 metadata=0 asset=0
+  raw: 20 00 00 00 00 b7 ca 00 d8 c3 96 a4 fc f9 b6 8c 68 10 54 37 31 2e 41 49 4e 31 34 2e 73 74 61 74 75 73 00 00
+#34 len=17 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+  entity "T71.AIN14" id=0x000000000000260e metadata=0
+  raw: 11 00 00 00 00 b2 36 00 8e 4c 09 54 37 31 2e 41 49 4e 31 34 00
+#35 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
   table=[0x26,0x0f] ops=25 fields=5 data_len=80 consumed=175/175
   field[0] offset=0 len=8 type=U64 shape=[] component=T71.CJC.timestamp_ns (0x17389e0cb796749d)
   field[1] offset=8 len=1 type=U8 shape=[] component=T71.CJC.channel_id (0x49c39570fcf838a2)
@@ -8265,120 +9039,33 @@ ball_valve raw/cal/cmd tables: 0x33/0x01 0x33/0x02 0x34/0x11 0x34/0x12 0x35/0x01
   ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
   data: 03 00 00 00 00 00 00 00 9d 74 96 b7 0c 9e 38 17 00 00 00 00 00 00 00 00 a2 38 f8 fc 70 95 c3 49 09 00 00 00 00 00 00 00 49 f3 bd c8 8b 2d 56 18 02 00 00 00 00 00 00 00 e8 80 6b a8 b0 5e 07 07 00 00 00 00 00 00 00 00 f5 34 3e e6 22 db 99 38
   raw: b3 00 00 00 00 47 b7 00 26 0f 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 9d 74 96 b7 0c 9e 38 17 00 00 00 00 00 00 00 00 a2 38 f8 fc 70 95 c3 49 09 00 00 00 00 00 00 00 49 f3 bd c8 8b 2d 56 18 02 00 00 00 00 00 00 00 e8 80 6b a8 b0 5e 07 07 00 00 00 00 00 00 00 00 f5 34 3e e6 22 db 99 38
-#29 len=36 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#36 len=36 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.CJC.timestamp_ns" id=0x17389e0cb796749d metadata=0 asset=0
   raw: 24 00 00 00 00 b7 ca 00 9d e9 d9 bc cb c1 a7 9c 17 14 54 37 31 2e 43 4a 43 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
-#30 len=34 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#37 len=34 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.CJC.channel_id" id=0x49c39570fcf838a2 metadata=0 asset=0
   raw: 22 00 00 00 00 b7 ca 00 a2 f1 e0 e7 8f ae e5 e1 49 12 54 37 31 2e 43 4a 43 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
-#31 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#38 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.CJC.temperature_c" id=0x18562d8bc8bdf349 metadata=0 asset=0
   raw: 25 00 00 00 00 b7 ca 00 c9 e6 f7 c5 bc b1 8b ab 18 15 54 37 31 2e 43 4a 43 2e 74 65 6d 70 65 72 61 74 75 72 65 5f 63 00 00
-#32 len=36 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#39 len=36 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.CJC.sample_ts_ms" id=0x07075eb0a86b80e8 metadata=0 asset=0
   raw: 24 00 00 00 00 b7 ca 00 e8 81 ae c3 8a d6 d7 83 07 14 54 37 31 2e 43 4a 43 2e 73 61 6d 70 6c 65 5f 74 73 5f 6d 73 00 00
-#33 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
+#40 len=30 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
   component "T71.CJC.status" id=0x3899db22e63e34f5 metadata=0 asset=0
   raw: 1e 00 00 00 00 b7 ca 00 f5 e9 f8 b1 ae e4 f6 cc 38 0e 54 37 31 2e 43 4a 43 2e 73 74 61 74 75 73 00 00
-#34 len=15 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
+#41 len=15 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
   entity "T71.CJC" id=0x000000000000260f metadata=0
   raw: 0f 00 00 00 00 b2 36 00 8f 4c 07 54 37 31 2e 43 4a 43 00
-#35 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
-  table=[0x26,0x10] ops=25 fields=5 data_len=80 consumed=175/175
-  field[0] offset=0 len=8 type=U64 shape=[] component=T71_Cal.AIN0.timestamp_ns (0x371bb9913b4f980a)
-  field[1] offset=8 len=1 type=U8 shape=[] component=T71_Cal.AIN0.channel_id (0x0bee9c1b24940c65)
-  field[2] offset=12 len=4 type=F32 shape=[] component=T71_Cal.AIN0.pressure_psi (0x6b01b9c488faa148)
-  field[3] offset=16 len=4 type=I32 shape=[] component=T71_Cal.AIN0.raw_uv (0x5148332ac6857ce8)
-  field[4] offset=20 len=1 type=U8 shape=[] component=T71_Cal.AIN0.cal_status (0x605460956c960c97)
-  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
-  data: 03 00 00 00 00 00 00 00 0a 98 4f 3b 91 b9 1b 37 00 00 00 00 00 00 00 00 65 0c 94 24 1b 9c ee 0b 09 00 00 00 00 00 00 00 48 a1 fa 88 c4 b9 01 6b 06 00 00 00 00 00 00 00 e8 7c 85 c6 2a 33 48 51 00 00 00 00 00 00 00 00 97 0c 96 6c 95 60 54 60
-  raw: b3 00 00 00 00 47 b7 00 26 10 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 0a 98 4f 3b 91 b9 1b 37 00 00 00 00 00 00 00 00 65 0c 94 24 1b 9c ee 0b 09 00 00 00 00 00 00 00 48 a1 fa 88 c4 b9 01 6b 06 00 00 00 00 00 00 00 e8 7c 85 c6 2a 33 48 51 00 00 00 00 00 00 00 00 97 0c 96 6c 95 60 54 60
-#36 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN0.timestamp_ns" id=0x371bb9913b4f980a metadata=0 asset=0
-  raw: 29 00 00 00 00 b7 ca 00 8a b0 be da 93 b2 ee 8d 37 19 54 37 31 5f 43 61 6c 2e 41 49 4e 30 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
-#37 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN0.channel_id" id=0x0bee9c1b24940c65 metadata=0 asset=0
-  raw: 27 00 00 00 00 b7 ca 00 e5 98 d0 a4 b2 83 a7 f7 0b 17 54 37 31 5f 43 61 6c 2e 41 49 4e 30 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
-#38 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN0.pressure_psi" id=0x6b01b9c488faa148 metadata=0 asset=0
-  raw: 29 00 00 00 00 b7 ca 00 c8 c2 ea c7 c8 b8 ee 80 6b 19 54 37 31 5f 43 61 6c 2e 41 49 4e 30 2e 70 72 65 73 73 75 72 65 5f 70 73 69 00 00
-#39 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN0.raw_uv" id=0x5148332ac6857ce8 metadata=0 asset=0
-  raw: 23 00 00 00 00 b7 ca 00 e8 f9 95 b4 ac e5 8c a4 51 13 54 37 31 5f 43 61 6c 2e 41 49 4e 30 2e 72 61 77 5f 75 76 00 00
-#40 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN0.cal_status" id=0x605460956c960c97 metadata=0 asset=0
-  raw: 27 00 00 00 00 b7 ca 00 97 99 d8 e4 d6 92 98 aa 60 17 54 37 31 5f 43 61 6c 2e 41 49 4e 30 2e 63 61 6c 5f 73 74 61 74 75 73 00 00
-#41 len=20 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
-  entity "T71_Cal.AIN0" id=0x0000000000002610 metadata=0
-  raw: 14 00 00 00 00 b2 36 00 90 4c 0c 54 37 31 5f 43 61 6c 2e 41 49 4e 30 00
-#42 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
-  table=[0x26,0x11] ops=25 fields=5 data_len=80 consumed=175/175
-  field[0] offset=0 len=8 type=U64 shape=[] component=T71_Cal.AIN1.timestamp_ns (0x58f588816eff1abb)
-  field[1] offset=8 len=1 type=U8 shape=[] component=T71_Cal.AIN1.channel_id (0x253447b3cb872470)
-  field[2] offset=12 len=4 type=F32 shape=[] component=T71_Cal.AIN1.temperature_c (0x4a9f7ca805b4679b)
-  field[3] offset=16 len=4 type=I32 shape=[] component=T71_Cal.AIN1.raw_uv (0x11dd899c05525c8d)
-  field[4] offset=20 len=1 type=U8 shape=[] component=T71_Cal.AIN1.cal_status (0x10e6ea21c97b6fa6)
-  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
-  data: 03 00 00 00 00 00 00 00 bb 1a ff 6e 81 88 f5 58 00 00 00 00 00 00 00 00 70 24 87 cb b3 47 34 25 09 00 00 00 00 00 00 00 9b 67 b4 05 a8 7c 9f 4a 06 00 00 00 00 00 00 00 8d 5c 52 05 9c 89 dd 11 00 00 00 00 00 00 00 00 a6 6f 7b c9 21 ea e6 10
-  raw: b3 00 00 00 00 47 b7 00 26 11 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 bb 1a ff 6e 81 88 f5 58 00 00 00 00 00 00 00 00 70 24 87 cb b3 47 34 25 09 00 00 00 00 00 00 00 9b 67 b4 05 a8 7c 9f 4a 06 00 00 00 00 00 00 00 8d 5c 52 05 9c 89 dd 11 00 00 00 00 00 00 00 00 a6 6f 7b c9 21 ea e6 10
-#43 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN1.timestamp_ns" id=0x58f588816eff1abb metadata=0 asset=0
-  raw: 29 00 00 00 00 b7 ca 00 bb b5 fc f7 96 90 e2 fa 58 19 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
-#44 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN1.channel_id" id=0x253447b3cb872470 metadata=0 asset=0
-  raw: 27 00 00 00 00 b7 ca 00 f0 c8 9c dc bc f6 91 9a 25 17 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
-#45 len=42 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN1.temperature_c" id=0x4a9f7ca805b4679b metadata=0 asset=0
-  raw: 2a 00 00 00 00 b7 ca 00 9b cf d1 ad 80 95 df cf 4a 1a 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 74 65 6d 70 65 72 61 74 75 72 65 5f 63 00 00
-#46 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN1.raw_uv" id=0x11dd899c05525c8d metadata=0 asset=0
-  raw: 23 00 00 00 00 b7 ca 00 8d b9 c9 aa c0 b3 e2 ee 11 13 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 72 61 77 5f 75 76 00 00
-#47 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN1.cal_status" id=0x10e6ea21c97b6fa6 metadata=0 asset=0
-  raw: 27 00 00 00 00 b7 ca 00 a6 df ed cb 9c c4 ba f3 10 17 54 37 31 5f 43 61 6c 2e 41 49 4e 31 2e 63 61 6c 5f 73 74 61 74 75 73 00 00
-#48 len=20 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
-  entity "T71_Cal.AIN1" id=0x0000000000002611 metadata=0
-  raw: 14 00 00 00 00 b2 36 00 91 4c 0c 54 37 31 5f 43 61 6c 2e 41 49 4e 31 00
-#49 len=179 ty=0 id=[0x47,0xb7] req=0 VTableMsg
-  table=[0x26,0x12] ops=25 fields=5 data_len=80 consumed=175/175
-  field[0] offset=0 len=8 type=U64 shape=[] component=T71_Cal.AIN2.timestamp_ns (0x5be1672cd82a7c9c)
-  field[1] offset=8 len=1 type=U8 shape=[] component=T71_Cal.AIN2.channel_id (0x0c77d7ed3f4ebb67)
-  field[2] offset=12 len=4 type=F32 shape=[] component=T71_Cal.AIN2.force_kg (0x04da39c00c353030)
-  field[3] offset=16 len=4 type=I32 shape=[] component=T71_Cal.AIN2.raw_uv (0x589431ff3eb51cfa)
-  field[4] offset=20 len=1 type=U8 shape=[] component=T71_Cal.AIN2.cal_status (0x5fad2d18339afee1)
-  ops: 0=Data(off=0,len=8) 1=Data(off=8,len=0) 2=Data(off=8,len=8) 3=Component(op=2) 4=Schema(ty=op0,dim=op1,arg=op3) 5=Data(off=16,len=8) 6=Data(off=24,len=0) 7=Data(off=24,len=8) 8=Component(op=7) 9=Schema(ty=op5,dim=op6,arg=op8) 10=Data(off=32,len=8) 11=Data(off=40,len=0) 12=Data(off=40,len=8) 13=Component(op=12) 14=Schema(ty=op10,dim=op11,arg=op13) 15=Data(off=48,len=8) 16=Data(off=56,len=0) 17=Data(off=56,len=8) 18=Component(op=17) 19=Schema(ty=op15,dim=op16,arg=op18) 20=Data(off=64,len=8) 21=Data(off=72,len=0) 22=Data(off=72,len=8) 23=Component(op=22) 24=Schema(ty=op20,dim=op21,arg=op23)
-  data: 03 00 00 00 00 00 00 00 9c 7c 2a d8 2c 67 e1 5b 00 00 00 00 00 00 00 00 67 bb 4e 3f ed d7 77 0c 09 00 00 00 00 00 00 00 30 30 35 0c c0 39 da 04 06 00 00 00 00 00 00 00 fa 1c b5 3e ff 31 94 58 00 00 00 00 00 00 00 00 e1 fe 9a 33 18 2d ad 5f
-  raw: b3 00 00 00 00 47 b7 00 26 12 19 00 00 08 00 08 00 00 08 08 03 02 04 00 01 03 00 10 08 00 18 00 00 18 08 03 07 04 05 06 08 00 20 08 00 28 00 00 28 08 03 0c 04 0a 0b 0d 00 30 08 00 38 00 00 38 08 03 11 04 0f 10 12 00 40 08 00 48 00 00 48 08 03 16 04 14 15 17 05 00 08 04 08 01 09 0c 04 0e 10 04 13 14 01 18 50 03 00 00 00 00 00 00 00 9c 7c 2a d8 2c 67 e1 5b 00 00 00 00 00 00 00 00 67 bb 4e 3f ed d7 77 0c 09 00 00 00 00 00 00 00 30 30 35 0c c0 39 da 04 06 00 00 00 00 00 00 00 fa 1c b5 3e ff 31 94 58 00 00 00 00 00 00 00 00 e1 fe 9a 33 18 2d ad 5f
-#50 len=41 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN2.timestamp_ns" id=0x5be1672cd82a7c9c metadata=0 asset=0
-  raw: 29 00 00 00 00 b7 ca 00 9c f9 a9 c1 cd e5 d9 f0 5b 19 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 74 69 6d 65 73 74 61 6d 70 5f 6e 73 00 00
-#51 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN2.channel_id" id=0x0c77d7ed3f4ebb67 metadata=0 asset=0
-  raw: 27 00 00 00 00 b7 ca 00 e7 f6 ba fa d3 fd f5 bb 0c 17 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 63 68 61 6e 6e 65 6c 5f 69 64 00 00
-#52 len=37 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN2.force_kg" id=0x04da39c00c353030 metadata=0 asset=0
-  raw: 25 00 00 00 00 b7 ca 00 b0 e0 d4 e1 80 b8 8e ed 04 15 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 66 6f 72 63 65 5f 6b 67 00 00
-#53 len=35 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN2.raw_uv" id=0x589431ff3eb51cfa metadata=0 asset=0
-  raw: 23 00 00 00 00 b7 ca 00 fa b9 d4 f5 f3 bf 8c ca 58 13 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 72 61 77 5f 75 76 00 00
-#54 len=39 ty=0 id=[0xb7,0xca] req=0 SetComponentMetadata
-  component "T71_Cal.AIN2.cal_status" id=0x5fad2d18339afee1 metadata=0 asset=0
-  raw: 27 00 00 00 00 b7 ca 00 e1 fd eb 9c 83 a3 cb d6 5f 17 54 37 31 5f 43 61 6c 2e 41 49 4e 32 2e 63 61 6c 5f 73 74 61 74 75 73 00 00
-#55 len=20 ty=0 id=[0xb2,0x36] req=0 SetEntityMetadata
-  entity "T71_Cal.AIN2" id=0x0000000000002612 metadata=0
-  raw: 14 00 00 00 00 b2 36 00 92 4c 0c 54 37 31 5f 43 61 6c 2e 41 49 4e 32 00
 
-# subscribe framing returns: subscribe_table(0x50,0x00,7)=1 subscribe_tables({50/00,46/00,20/01})=1
-## subscribe framing: 4 packets, 40 bytes
-#0 len=6 ty=0 id=[0x11,0x0d] req=7 VTableStream
-  subscribe table=[0x50,0x00]
-  raw: 06 00 00 00 00 11 0d 07 50 00
-#1 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+## heartbeat_service: 1 packets, 10 bytes
+  connections: 1 (MSG packets only; TABLE rows are data)
+#0 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
   subscribe table=[0x50,0x00]
   raw: 06 00 00 00 00 11 0d 00 50 00
-#2 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
-  subscribe table=[0x46,0x00]
-  raw: 06 00 00 00 00 11 0d 00 46 00
-#3 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
-  subscribe table=[0x20,0x01]
-  raw: 06 00 00 00 00 11 0d 00 20 01
+
+## stacklight_service: 1 packets, 10 bytes
+  connections: 1 (MSG packets only; TABLE rows are data)
+#0 len=6 ty=0 id=[0x11,0x0d] req=0 VTableStream
+  subscribe table=[0x50,0x00]
+  raw: 06 00 00 00 00 11 0d 00 50 00
