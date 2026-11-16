@@ -1,0 +1,462 @@
+# parse_* on malformed input; outputs start as sentinels (0xAB header, 0xEE fields,
+# one sentinel element in each output vector) and are printed whatever ret is.
+## board_heartbeat (valid len=41)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 14: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 15: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 16: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 17: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 18: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 19: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 20: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 21: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 22: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 23: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 24: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 25: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 26: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 27: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 28: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 29: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 30: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 31: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 32: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 33: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 34: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 35: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 36: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 37: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 38: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 39: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  trunc 40: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  type=2: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+  version=7: ret=1 hdr{type=1 ver=7 ts=0x12345678} hash=a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf board_id=21 engine_state=3 board_state=2
+  trailing+3: ret=1 hdr{type=1 ver=0 ts=0x12345678} hash=a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf board_id=21 engine_state=3 board_state=2
+  oversize(600): ret=1 hdr{type=1 ver=0 ts=0x12345678} hash=a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf board_id=21 engine_state=3 board_state=2
+## server_heartbeat (valid len=7)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  type=3: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+  version=7: ret=1 hdr{type=2 ver=7 ts=0x12345678} engine_state=3
+  trailing+3: ret=1 hdr{type=2 ver=0 ts=0x12345678} engine_state=3
+  oversize(600): ret=1 hdr{type=2 ver=0 ts=0x12345678} engine_state=3
+## sensor_data (valid len=46)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 14: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 15: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 16: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 17: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 18: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 19: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 20: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 21: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 22: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 23: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 24: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 25: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 26: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 27: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 28: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 29: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 30: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 31: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 32: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 33: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 34: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 35: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 36: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 37: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 38: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 39: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 40: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 41: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 42: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 43: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 44: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  trunc 45: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  type=4: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  version=7: ret=1 hdr{type=3 ver=7 ts=0x12345678} chunks=2 [ {ts=0x01020304 num_sensors=3 dps=1:0xa0b0c001,2:0xa0b0c002,3:0xa0b0c003,} {ts=0x01020314 num_sensors=3 dps=5:0xa0b0c101,6:0xa0b0c102,7:0xa0b0c103,} ]
+  trailing+3: ret=1 hdr{type=3 ver=0 ts=0x12345678} chunks=2 [ {ts=0x01020304 num_sensors=3 dps=1:0xa0b0c001,2:0xa0b0c002,3:0xa0b0c003,} {ts=0x01020314 num_sensors=3 dps=5:0xa0b0c101,6:0xa0b0c102,7:0xa0b0c103,} ]
+  oversize(600): ret=1 hdr{type=3 ver=0 ts=0x12345678} chunks=2 [ {ts=0x01020304 num_sensors=3 dps=1:0xa0b0c001,2:0xa0b0c002,3:0xa0b0c003,} {ts=0x01020314 num_sensors=3 dps=5:0xa0b0c101,6:0xa0b0c102,7:0xa0b0c103,} ]
+  count@6-1: ret=1 hdr{type=3 ver=0 ts=0x12345678} chunks=1 [ {ts=0x01020304 num_sensors=3 dps=1:0xa0b0c001,2:0xa0b0c002,3:0xa0b0c003,} ]
+  count@6+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  count@6=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  count@6=0: ret=1 hdr{type=3 ver=0 ts=0x12345678} chunks=0 [ ]
+  count@7-1: ret=1 hdr{type=3 ver=0 ts=0x12345678} chunks=2 [ {ts=0x01020304 num_sensors=2 dps=1:0xa0b0c001,2:0xa0b0c002,} {ts=0xb0c00303 num_sensors=2 dps=160:0x01020314,5:0xa0b0c101,} ]
+  count@7+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  count@7=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+  count@7=0: ret=1 hdr{type=3 ver=0 ts=0x12345678} chunks=2 [ {ts=0x01020304 num_sensors=0 dps=} {ts=0xb0c00101 num_sensors=0 dps=} ]
+## abort_done (valid len=6)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  type=9: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+  version=7: ret=1 hdr{type=8 ver=7 ts=0x12345678}
+  trailing+3: ret=1 hdr{type=8 ver=1 ts=0x12345678}
+  oversize(600): ret=1 hdr{type=8 ver=1 ts=0x12345678}
+## actuator_command (valid len=13)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  type=5: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  version=7: ret=1 hdr{type=4 ver=7 ts=0x12345678} cmds=3 [ 1:1 5:0 10:1 ]
+  trailing+3: ret=1 hdr{type=4 ver=0 ts=0x12345678} cmds=3 [ 1:1 5:0 10:1 ]
+  oversize(600): ret=1 hdr{type=4 ver=0 ts=0x12345678} cmds=3 [ 1:1 5:0 10:1 ]
+  count@6-1: ret=1 hdr{type=4 ver=0 ts=0x12345678} cmds=2 [ 1:1 5:0 ]
+  count@6+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  count@6=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+  count@6=0: ret=1 hdr{type=4 ver=0 ts=0x12345678} cmds=0 [ ]
+## self_test (valid len=14)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  type=13: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  version=7: ret=1 hdr{type=12 ver=7 ts=0x12345678} adc_good=1 results=3 [ 1:1 2:0 7:1 ]
+  trailing+3: ret=1 hdr{type=12 ver=0 ts=0x12345678} adc_good=1 results=3 [ 1:1 2:0 7:1 ]
+  oversize(600): ret=1 hdr{type=12 ver=0 ts=0x12345678} adc_good=1 results=3 [ 1:1 2:0 7:1 ]
+  count@7-1: ret=1 hdr{type=12 ver=0 ts=0x12345678} adc_good=1 results=2 [ 1:1 2:0 ]
+  count@7+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  count@7=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+  count@7=0: ret=1 hdr{type=12 ver=0 ts=0x12345678} adc_good=1 results=0 [ ]
+## environmental (valid len=18)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 14: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 15: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 16: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  trunc 17: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  type=14: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+  version=7: ret=1 hdr{type=13 ver=7 ts=0x12345678} temperature_c=21.5 (bits 41ac0000) pressure_pa=101325 humidity_rh=45.25 (bits 42350000)
+  trailing+3: ret=1 hdr{type=13 ver=0 ts=0x12345678} temperature_c=21.5 (bits 41ac0000) pressure_pa=101325 humidity_rh=45.25 (bits 42350000)
+  oversize(600): ret=1 hdr{type=13 ver=0 ts=0x12345678} temperature_c=21.5 (bits 41ac0000) pressure_pa=101325 humidity_rh=45.25 (bits 42350000)
+## stacklight (valid len=10)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  type=15: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+  version=7: ret=1 hdr{type=14 ver=7 ts=0x12345678} red=1 yellow=0 green=1 buzzer=0
+  trailing+3: ret=1 hdr{type=14 ver=0 ts=0x12345678} red=1 yellow=0 green=1 buzzer=0
+  oversize(600): ret=1 hdr{type=14 ver=0 ts=0x12345678} red=1 yellow=0 green=1 buzzer=0
+## sensor_config(abort=false) (valid len=15)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 14: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  type=6: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  version=7: ret=1 hdr{type=5 ver=7 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=0 controller_ip=0x00000000 enable_serial_printing=3
+  trailing+3: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=0 controller_ip=0x00000000 enable_serial_printing=3
+  oversize(600): ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=0 controller_ip=0x00000000 enable_serial_printing=3
+  count@6-1: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07] reference_voltage=10 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  count@6+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  count@6=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  count@6=0: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[] reference_voltage=1 necessary_for_abort=1 controller_ip=0x010a0703 enable_serial_printing=0
+  count@13-1: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  count@13+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  count@13=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  count@13=0: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=0 controller_ip=0x00000000 enable_serial_printing=3
+## sensor_config(abort=true) (valid len=19)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 14: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 15: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 16: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 17: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  trunc 18: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  type=6: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  version=7: ret=1 hdr{type=5 ver=7 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xc0a8020b enable_serial_printing=3
+  trailing+3: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xc0a8020b enable_serial_printing=3
+  oversize(600): ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xc0a8020b enable_serial_printing=3
+  count@6-1: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07] reference_voltage=10 necessary_for_abort=1 controller_ip=0xa8020b01 enable_serial_printing=192
+  count@6+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a 01] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  count@6=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  count@6=0: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[] reference_voltage=1 necessary_for_abort=1 controller_ip=0x010a0703 enable_serial_printing=1
+  count@13-1: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=0 controller_ip=0x00000000 enable_serial_printing=11
+  count@13+1: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xc0a8020b enable_serial_printing=3
+  count@13=255: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xc0a8020b enable_serial_printing=3
+  count@13=0: ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=0 controller_ip=0x00000000 enable_serial_printing=11
+## pwm_actuator (valid len=33)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 14: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 15: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 16: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 17: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 18: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 19: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 20: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 21: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 22: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 23: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 24: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 25: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 26: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 27: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 28: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 29: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 30: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 31: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  trunc 32: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  type=11: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  version=7: ret=1 hdr{type=10 ver=7 ts=0x12345678} cmds=2 [ {id=3 duration=500 duty=0.25 (bits 3e800000) freq=10 (bits 41200000)} {id=8 duration=1000 duty=0.75 (bits 3f400000) freq=20 (bits 41a00000)} ]
+  trailing+3: ret=1 hdr{type=10 ver=0 ts=0x12345678} cmds=2 [ {id=3 duration=500 duty=0.25 (bits 3e800000) freq=10 (bits 41200000)} {id=8 duration=1000 duty=0.75 (bits 3f400000) freq=20 (bits 41a00000)} ]
+  oversize(600): ret=1 hdr{type=10 ver=0 ts=0x12345678} cmds=2 [ {id=3 duration=500 duty=0.25 (bits 3e800000) freq=10 (bits 41200000)} {id=8 duration=1000 duty=0.75 (bits 3f400000) freq=20 (bits 41a00000)} ]
+  count@6-1: ret=1 hdr{type=10 ver=0 ts=0x12345678} cmds=1 [ {id=3 duration=500 duty=0.25 (bits 3e800000) freq=10 (bits 41200000)} ]
+  count@6+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  count@6=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+  count@6=0: ret=1 hdr{type=10 ver=0 ts=0x12345678} cmds=0 [ ]
+## actuator_config (valid len=42)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 14: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 15: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 16: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 17: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 18: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 19: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 20: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 21: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 22: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 23: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 24: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 25: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 26: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 27: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 28: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 29: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 30: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 31: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 32: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 33: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 34: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 35: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 36: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 37: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 38: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 39: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 40: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  trunc 41: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  type=7: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  version=7: ret=1 hdr{type=6 ver=7 ts=0x12345678} is_abort_controller=1 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=2 [ {ip=0xc0a80215 id=2 adc=0x4ccccccd} {ip=0x1502a8c0 id=9 adc=0x10000000} ] enable_serial_printing=2
+  trailing+3: ret=1 hdr{type=6 ver=0 ts=0x12345678} is_abort_controller=1 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=2 [ {ip=0xc0a80215 id=2 adc=0x4ccccccd} {ip=0x1502a8c0 id=9 adc=0x10000000} ] enable_serial_printing=2
+  oversize(600): ret=1 hdr{type=6 ver=0 ts=0x12345678} is_abort_controller=1 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=2 [ {ip=0xc0a80215 id=2 adc=0x4ccccccd} {ip=0x1502a8c0 id=9 adc=0x10000000} ] enable_serial_printing=2
+  count@7-1: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xc0a8020b id=3 vent=1 abort=0} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  count@7+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=3 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} {ip=0xa8021502 id=192 vent=2 abort=205} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  count@7=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  count@7=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=0 [ ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  count@22-1: ret=1 hdr{type=6 ver=0 ts=0x12345678} is_abort_controller=1 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xc0a80215 id=2 adc=0x4ccccccd} ] enable_serial_printing=192
+  count@22+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  count@22=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+  count@22=0: ret=1 hdr{type=6 ver=0 ts=0x12345678} is_abort_controller=1 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=0 [ ] enable_serial_printing=21
+## log (valid len=27)
+  null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 1: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 2: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 3: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 4: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 5: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 6: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 7: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 8: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 9: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 10: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 11: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 12: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 13: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 14: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 15: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 16: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 17: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 18: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 19: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 20: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 21: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 22: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 23: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 24: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 25: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  trunc 26: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  type=0: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  type=16: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  version=7: ret=1 hdr{type=15 ver=7 ts=0x12345678} flags=1 text_len=18 text_ptr=buf+9 text=6c 69 6e 65 20 6f 6e 65 0a 6c 69 6e 65 20 74 77 6f 0a
+  trailing+3: ret=1 hdr{type=15 ver=0 ts=0x12345678} flags=1 text_len=18 text_ptr=buf+9 text=6c 69 6e 65 20 6f 6e 65 0a 6c 69 6e 65 20 74 77 6f 0a
+  oversize(600): ret=1 hdr{type=15 ver=0 ts=0x12345678} flags=1 text_len=18 text_ptr=buf+9 text=6c 69 6e 65 20 6f 6e 65 0a 6c 69 6e 65 20 74 77 6f 0a
+  count@7-1: ret=1 hdr{type=15 ver=0 ts=0x12345678} flags=1 text_len=17 text_ptr=buf+9 text=6c 69 6e 65 20 6f 6e 65 0a 6c 69 6e 65 20 74 77 6f
+  count@7+1: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  count@7=255: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
+  count@7=0: ret=1 hdr{type=15 ver=0 ts=0x12345678} flags=1 text_len=0 text_ptr=buf+9 text=
+## specific
+  sensor_config abort_flag=2 without ip: ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+  log text_len=0 with text present: ret=1 hdr{type=15 ver=0 ts=0x12345678} flags=1 text_len=0 text_ptr=buf+9 text=
+  zero-length non-null every family:
+    board_heartbeat: ret=0 hdr{type=171 ver=171 ts=0xabababab} hash=ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee ee board_id=238 engine_state=238 board_state=238
+    server_heartbeat: ret=0 hdr{type=171 ver=171 ts=0xabababab} engine_state=238
+    sensor_data: ret=0 hdr{type=171 ver=171 ts=0xabababab} chunks=1 [ {ts=0xeeeeeeee num_sensors=1 dps=238:0xeeeeeeee,} ]
+    abort_done: ret=0 hdr{type=171 ver=171 ts=0xabababab}
+    actuator_command: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
+    self_test: ret=0 hdr{type=171 ver=171 ts=0xabababab} adc_good=238 results=1 [ 238:238 ]
+    environmental: ret=0 hdr{type=171 ver=171 ts=0xabababab} temperature_c=-3.69731403e+28 (bits eeeeeeee) pressure_pa=4008636142 humidity_rh=-3.69731403e+28 (bits eeeeeeee)
+    stacklight: ret=0 hdr{type=171 ver=171 ts=0xabababab} red=238 yellow=238 green=238 buzzer=238
+    sensor_config(abort=false): ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+    sensor_config(abort=true): ret=0 hdr{type=171 ver=171 ts=0xabababab} ids=[ee] reference_voltage=238 necessary_for_abort=1 controller_ip=0xeeeeeeee enable_serial_printing=238
+    pwm_actuator: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ {id=238 duration=4008636142 duty=-1 (bits bf800000) freq=-1 (bits bf800000)} ]
+    actuator_config: ret=0 hdr{type=171 ver=171 ts=0xabababab} is_abort_controller=238 actuators=1 [ {ip=0xeeeeeeee id=238 vent=238 abort=238} ] pts=1 [ {ip=0xeeeeeeee id=238 adc=0xeeeeeeee} ] enable_serial_printing=238
+    log: ret=0 hdr{type=171 ver=171 ts=0xabababab} flags=238 text_len=61166 text_ptr=null
