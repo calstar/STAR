@@ -1,0 +1,20 @@
+
+=== script fixtures/bad/scripts/transition_not_allowed.script (parse only)
+parse.ok = true
+parse.diag.count = 0
+top = [0, 3) empty=false max_depth=0
+stmt[0] Delay @1:1 var=-1 expr=0 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[1] TransitionTo @2:1 var=-1 expr=-1 slug=0 body=[-1, -1) else=[-1, -1)
+stmt[2] TransitionTo @3:1 var=-1 expr=-1 slug=1 body=[-1, -1) else=[-1, -1)
+expr[0] Number @1:7 number=1 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+block_items = [0, 1, 2]
+slug[0] FIRE ns=state @2:15 len=4
+slug[1] PRESS_STANDBY ns=state @3:15 len=13
+canonical:
+(seq (delay 1) (goto FIRE) (goto PRESS_STANDBY))
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

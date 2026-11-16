@@ -1,0 +1,121 @@
+{
+  "carets": [
+    "0: command \"\" 0-0 => 0-0 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "1: command \"d\" 0-1 => 0-1 delay(",
+    "2: command \"de\" 0-2 => 0-2 delay(",
+    "3: command \"del\" 0-3 => 0-3 delay(",
+    "4: command \"dela\" 0-4 => 0-4 delay(",
+    "5: command \"delay\" 0-5 => 0-5 delay(",
+    "6: expr \"\" 6-6 => 6-6 pressure(+ | elapsed() | not ",
+    "7: null => null",
+    "8: null => null",
+    "9: command \"\" 9-9 => 9-9 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "10: command \"t\" 9-10 => 9-10 transition_to(+",
+    "11: command \"tr\" 9-11 => 9-11 transition_to(+",
+    "12: command \"tra\" 9-12 => 9-12 transition_to(+",
+    "13: command \"tran\" 9-13 => 9-13 transition_to(+",
+    "14: command \"trans\" 9-14 => 9-14 transition_to(+",
+    "15: command \"transi\" 9-15 => 9-15 transition_to(+",
+    "16: command \"transit\" 9-16 => 9-16 transition_to(+",
+    "17: command \"transiti\" 9-17 => 9-17 transition_to(+",
+    "18: command \"transitio\" 9-18 => 9-18 transition_to(+",
+    "19: command \"transition\" 9-19 => 9-19 transition_to(+",
+    "20: command \"transition_\" 9-20 => 9-20 transition_to(+",
+    "21: command \"transition_t\" 9-21 => 9-21 transition_to(+",
+    "22: command \"transition_to\" 9-22 => 9-22 transition_to(+",
+    "23: state \"\" 23-23 => 23-23 DYNAMIC_TEST)[DYNAMIC_TEST] | PRESS_STANDBY)[PRESS_STANDBY]",
+    "24: state \"F\" 23-24 => null",
+    "25: state \"FI\" 23-25 => null",
+    "26: state \"FIR\" 23-26 => null",
+    "27: state \"FIRE\" 23-27 => null",
+    "28: null => null",
+    "29: command \"\" 29-29 => 29-29 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "30: command \"t\" 29-30 => 29-30 transition_to(+",
+    "31: command \"tr\" 29-31 => 29-31 transition_to(+",
+    "32: command \"tra\" 29-32 => 29-32 transition_to(+",
+    "33: command \"tran\" 29-33 => 29-33 transition_to(+",
+    "34: command \"trans\" 29-34 => 29-34 transition_to(+",
+    "35: command \"transi\" 29-35 => 29-35 transition_to(+",
+    "36: command \"transit\" 29-36 => 29-36 transition_to(+",
+    "37: command \"transiti\" 29-37 => 29-37 transition_to(+",
+    "38: command \"transitio\" 29-38 => 29-38 transition_to(+",
+    "39: command \"transition\" 29-39 => 29-39 transition_to(+",
+    "40: command \"transition_\" 29-40 => 29-40 transition_to(+",
+    "41: command \"transition_t\" 29-41 => 29-41 transition_to(+",
+    "42: command \"transition_to\" 29-42 => 29-42 transition_to(+",
+    "43: state \"\" 43-43 => 43-43 DYNAMIC_TEST)[DYNAMIC_TEST] | PRESS_STANDBY)[PRESS_STANDBY]",
+    "44: state \"P\" 43-44 => 43-44 PRESS_STANDBY)[PRESS_STANDBY]",
+    "45: state \"PR\" 43-45 => 43-45 PRESS_STANDBY)[PRESS_STANDBY]",
+    "46: state \"PRE\" 43-46 => 43-46 PRESS_STANDBY)[PRESS_STANDBY]",
+    "47: state \"PRES\" 43-47 => 43-47 PRESS_STANDBY)[PRESS_STANDBY]",
+    "48: state \"PRESS\" 43-48 => 43-48 PRESS_STANDBY)[PRESS_STANDBY]",
+    "49: state \"PRESS_\" 43-49 => 43-49 PRESS_STANDBY)[PRESS_STANDBY]",
+    "50: state \"PRESS_S\" 43-50 => 43-50 PRESS_STANDBY)[PRESS_STANDBY]",
+    "51: state \"PRESS_ST\" 43-51 => 43-51 PRESS_STANDBY)[PRESS_STANDBY]",
+    "52: state \"PRESS_STA\" 43-52 => 43-52 PRESS_STANDBY)[PRESS_STANDBY]",
+    "53: state \"PRESS_STAN\" 43-53 => 43-53 PRESS_STANDBY)[PRESS_STANDBY]",
+    "54: state \"PRESS_STAND\" 43-54 => 43-54 PRESS_STANDBY)[PRESS_STANDBY]",
+    "55: state \"PRESS_STANDB\" 43-55 => 43-55 PRESS_STANDBY)[PRESS_STANDBY]",
+    "56: state \"PRESS_STANDBY\" 43-56 => 43-56 PRESS_STANDBY",
+    "57: null => null",
+    "58: command \"\" 58-58 => 58-58 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while "
+  ],
+  "checkScriptNames_DynamicTest": [
+    {
+      "line": 2,
+      "message": "this state is not allowed to transition to FIRE — the Transitions table does not permit it"
+    }
+  ],
+  "checkScriptNames_Idle": [
+    {
+      "line": 2,
+      "message": "this state is not allowed to transition to FIRE — the Transitions table does not permit it"
+    },
+    {
+      "line": 3,
+      "message": "this state is not allowed to transition to PRESS_STANDBY — the Transitions table does not permit it"
+    }
+  ],
+  "renameActuator": "delay(1)\ntransition_to(FIRE)\ntransition_to(PRESS_STANDBY)\n",
+  "renameState": "delay(1)\ntransition_to(FIRE)\ntransition_to(STANDBY)\n",
+  "scanScriptNames": [
+    {
+      "line": 2,
+      "ns": "state",
+      "slug": "FIRE"
+    },
+    {
+      "line": 3,
+      "ns": "state",
+      "slug": "PRESS_STANDBY"
+    }
+  ],
+  "tokenize": [
+    "0-5 command \"delay\"",
+    "5-6 op \"(\"",
+    "6-7 number \"1\"",
+    "7-8 op \")\"",
+    "9-22 command \"transition_to\"",
+    "22-23 op \"(\"",
+    "23-27 state known \"FIRE\"",
+    "27-28 op \")\"",
+    "29-42 command \"transition_to\"",
+    "42-43 op \"(\"",
+    "43-56 state known \"PRESS_STANDBY\"",
+    "56-57 op \")\""
+  ],
+  "tokenizeNoTables": [
+    "0-5 command \"delay\"",
+    "5-6 op \"(\"",
+    "6-7 number \"1\"",
+    "7-8 op \")\"",
+    "9-22 command \"transition_to\"",
+    "22-23 op \"(\"",
+    "23-27 state \"FIRE\"",
+    "27-28 op \")\"",
+    "29-42 command \"transition_to\"",
+    "42-43 op \"(\"",
+    "43-56 state \"PRESS_STANDBY\"",
+    "56-57 op \")\""
+  ]
+}

@@ -1,0 +1,162 @@
+{
+  "isValidScriptFilename": [
+    [
+      "dynamic_test.script",
+      true
+    ],
+    [
+      "../x.script",
+      false
+    ],
+    [
+      "a b.script",
+      false
+    ],
+    [
+      "x.txt",
+      false
+    ],
+    [
+      ".script",
+      false
+    ],
+    [
+      "A-1_b.script",
+      true
+    ]
+  ],
+  "names": {
+    "  spaced  out ": {
+      "isValidSlug": true,
+      "slugify": "SPACED_OUT"
+    },
+    "1st Valve": {
+      "isValidSlug": false,
+      "slugify": "1ST_VALVE"
+    },
+    "???": {
+      "isValidSlug": false,
+      "slugify": "???"
+    },
+    "Armed": {
+      "isValidSlug": true,
+      "slugify": "ARMED"
+    },
+    "COPV Fill": {
+      "isValidSlug": true,
+      "slugify": "COPV_FILL"
+    },
+    "Dome CTRL": {
+      "isValidSlug": true,
+      "slugify": "DOME_CTRL"
+    },
+    "Dome CTRL Vent": {
+      "isValidSlug": true,
+      "slugify": "DOME_CTRL_VENT"
+    },
+    "Dome Press": {
+      "isValidSlug": true,
+      "slugify": "DOME_PRESS"
+    },
+    "Dome Vent": {
+      "isValidSlug": true,
+      "slugify": "DOME_VENT"
+    },
+    "Dynamic Test": {
+      "isValidSlug": true,
+      "slugify": "DYNAMIC_TEST"
+    },
+    "Fire": {
+      "isValidSlug": true,
+      "slugify": "FIRE"
+    },
+    "Flow Test": {
+      "isValidSlug": true,
+      "slugify": "FLOW_TEST"
+    },
+    "Fuel Fill Press": {
+      "isValidSlug": true,
+      "slugify": "FUEL_FILL_PRESS"
+    },
+    "Fuel Fill Vent": {
+      "isValidSlug": true,
+      "slugify": "FUEL_FILL_VENT"
+    },
+    "Fuel Main": {
+      "isValidSlug": true,
+      "slugify": "FUEL_MAIN"
+    },
+    "Fuel Press": {
+      "isValidSlug": true,
+      "slugify": "FUEL_PRESS"
+    },
+    "Fuel Tank Vent": {
+      "isValidSlug": true,
+      "slugify": "FUEL_TANK_VENT"
+    },
+    "Fuel Upstream": {
+      "isValidSlug": true,
+      "slugify": "FUEL_UPSTREAM"
+    },
+    "High Press CTRL": {
+      "isValidSlug": true,
+      "slugify": "HIGH_PRESS_CTRL"
+    },
+    "High Press Vent": {
+      "isValidSlug": true,
+      "slugify": "HIGH_PRESS_VENT"
+    },
+    "Idle": {
+      "isValidSlug": true,
+      "slugify": "IDLE"
+    },
+    "LOX Press": {
+      "isValidSlug": true,
+      "slugify": "LOX_PRESS"
+    },
+    "Low Press Vent": {
+      "isValidSlug": true,
+      "slugify": "LOW_PRESS_VENT"
+    },
+    "Ox Main": {
+      "isValidSlug": true,
+      "slugify": "OX_MAIN"
+    },
+    "Ox Upstream": {
+      "isValidSlug": true,
+      "slugify": "OX_UPSTREAM"
+    },
+    "Press Standby": {
+      "isValidSlug": true,
+      "slugify": "PRESS_STANDBY"
+    },
+    "Ready": {
+      "isValidSlug": true,
+      "slugify": "READY"
+    },
+    "Vent": {
+      "isValidSlug": true,
+      "slugify": "VENT"
+    },
+    "a__b": {
+      "isValidSlug": true,
+      "slugify": "A__B"
+    },
+    "fuel vent": {
+      "isValidSlug": true,
+      "slugify": "FUEL_VENT"
+    },
+    "fuel-main": {
+      "isValidSlug": false,
+      "slugify": "FUEL-MAIN"
+    },
+    "lox vent": {
+      "isValidSlug": true,
+      "slugify": "LOX_VENT"
+    },
+    "ÄÖÜ": {
+      "isValidSlug": false,
+      "slugify": "ÄÖÜ"
+    }
+  }
+}

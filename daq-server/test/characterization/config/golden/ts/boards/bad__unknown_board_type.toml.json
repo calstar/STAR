@@ -1,0 +1,118 @@
+{
+  "ballValveBoardIds": {
+    "logs": [],
+    "value": []
+  },
+  "perBoard": {
+    "lowercase_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "pt Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "untyped_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "untyped_board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "widget_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "WIDGET Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    }
+  },
+  "t7Channels": {
+    "logs": [],
+    "value": []
+  },
+  "t7RoleClashes": {
+    "logs": [],
+    "value": []
+  }
+}

@@ -1,0 +1,34 @@
+[boards.pt_a]
+type = "PT"
+ip = "192.168.2.21"
+board_id = 21
+active_connectors = [ 1, 2 ]
+
+[boards.pt_b]
+type = "PT"
+ip = "192.168.2.31"
+board_id = 31
+active_connectors = [ 1, 2 ]
+
+[boards.pt_c]
+type = "PT"
+ip = "192.168.2.29"
+board_id = 29
+active_connectors = [ 1 ]
+
+[boards.tc_d]
+type = "TC"
+ip = "192.168.2.20"
+board_id = 20
+active_connectors = [ 3 ]
+
+[boards.pt_disabled]
+type = "PT"
+ip = "192.168.2.41"
+board_id = 41
+enabled = false
+active_connectors = [ 1 ]
+
+[controller]
+duty_sweep_steps = [ [ 0.1, 0.1 ], [ 0.3, 0.2 ], [ 0.5, 0.4 ], [ 0.3, 0.3 ], [ 0.1, 0.1 ] ]
+duty_sweep_step_duration_sec = 2

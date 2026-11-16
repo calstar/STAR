@@ -1,0 +1,241 @@
+{
+  "logs": [],
+  "value": {
+    "calibration": {
+      "calibration_file": "calibration/data/flight_calibration.json",
+      "enabled": true
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    },
+    "database": {
+      "auto_flush_interval_ms": 100,
+      "connection_retry_attempts": 3,
+      "connection_retry_delay_ms": 1000,
+      "db_host": "127.0.0.1",
+      "db_port": 2240,
+      "max_buffer_size": 2048
+    },
+    "discovery": {
+      "announcement_port": 2245,
+      "auto_update_config": true,
+      "config_update_interval_seconds": 60,
+      "discovery_timeout_seconds": 30,
+      "enabled": true,
+      "mode": "hybrid",
+      "network_interface": "eth0"
+    },
+    "sensor_data": {
+      "enable_all_sensors": true,
+      "update_rate_hz": 10
+    },
+    "sensors": {
+      "flight": {
+        "actuator": {
+          "ACTUATOR_FUEL_MAIN": {
+            "board_id": 6,
+            "channel": 1,
+            "location": "fuel_line",
+            "message_id": 20577,
+            "purpose": "Fuel main valve"
+          },
+          "ACTUATOR_FUEL_PRESS": {
+            "board_id": 6,
+            "channel": 5,
+            "location": "fuel_line",
+            "message_id": 20581,
+            "purpose": "Fuel pressurant valve"
+          },
+          "ACTUATOR_FUEL_VENT": {
+            "board_id": 6,
+            "channel": 3,
+            "location": "fuel_line",
+            "message_id": 20579,
+            "purpose": "Fuel vent valve"
+          },
+          "ACTUATOR_LOX_MAIN": {
+            "board_id": 6,
+            "channel": 0,
+            "location": "lox_line",
+            "message_id": 20576,
+            "purpose": "LOX main valve"
+          },
+          "ACTUATOR_LOX_PRESS": {
+            "board_id": 6,
+            "channel": 4,
+            "location": "lox_line",
+            "message_id": 20580,
+            "purpose": "LOX pressurant valve"
+          },
+          "ACTUATOR_LOX_VENT": {
+            "board_id": 6,
+            "channel": 2,
+            "location": "lox_line",
+            "message_id": 20578,
+            "purpose": "LOX vent valve"
+          }
+        },
+        "lc": {
+          "LC_CHAMBER_1": {
+            "board_id": 5,
+            "channel": 0,
+            "location": "chamber",
+            "message_id": 9040,
+            "purpose": "Chamber load cell 1"
+          },
+          "LC_CHAMBER_2": {
+            "board_id": 5,
+            "channel": 1,
+            "location": "chamber",
+            "message_id": 9041,
+            "purpose": "Chamber load cell 2"
+          },
+          "LC_CHAMBER_3": {
+            "board_id": 5,
+            "channel": 2,
+            "location": "chamber",
+            "message_id": 9042,
+            "purpose": "Chamber load cell 3"
+          }
+        },
+        "pt": {
+          "PT_FDP": {
+            "board_id": 1,
+            "channel": 1,
+            "max_psi": 1000,
+            "message_id": 8209,
+            "purpose": "Fuel downstream"
+          },
+          "PT_FUP": {
+            "board_id": 1,
+            "channel": 0,
+            "max_psi": 1000,
+            "message_id": 8208,
+            "purpose": "Fuel upstream"
+          },
+          "PT_HP": {
+            "board_id": 0,
+            "channel": 0,
+            "max_psi": 5000,
+            "message_id": 8192,
+            "purpose": "High pressure"
+          },
+          "PT_LP": {
+            "board_id": 0,
+            "channel": 1,
+            "max_psi": 1000,
+            "message_id": 8193,
+            "purpose": "COPV post regulator"
+          },
+          "PT_ODP": {
+            "board_id": 2,
+            "channel": 1,
+            "max_psi": 1000,
+            "message_id": 8225,
+            "purpose": "Oxidizer downstream"
+          },
+          "PT_OUP": {
+            "board_id": 2,
+            "channel": 0,
+            "max_psi": 1000,
+            "message_id": 8224,
+            "purpose": "Oxidizer upstream"
+          }
+        },
+        "rtd": {
+          "RTD_COPV": {
+            "board_id": 3,
+            "channel": 0,
+            "location": "COPV",
+            "message_id": 8752,
+            "purpose": "COPV temperature"
+          },
+          "RTD_LOX_1": {
+            "board_id": 3,
+            "channel": 1,
+            "location": "LOX_tank",
+            "message_id": 8753,
+            "purpose": "LOX tank temperature top"
+          },
+          "RTD_LOX_2": {
+            "board_id": 3,
+            "channel": 2,
+            "location": "LOX_tank",
+            "message_id": 8754,
+            "purpose": "LOX tank temperature middle"
+          },
+          "RTD_LOX_3": {
+            "board_id": 3,
+            "channel": 3,
+            "location": "LOX_tank",
+            "message_id": 8755,
+            "purpose": "LOX tank temperature bottom"
+          }
+        },
+        "tc": {
+          "TC_CHAMBER_1": {
+            "board_id": 4,
+            "channel": 0,
+            "location": "chamber",
+            "message_id": 8512,
+            "purpose": "Chamber temperature front"
+          },
+          "TC_CHAMBER_2": {
+            "board_id": 4,
+            "channel": 1,
+            "location": "chamber",
+            "message_id": 8513,
+            "purpose": "Chamber temperature middle"
+          },
+          "TC_CHAMBER_3": {
+            "board_id": 4,
+            "channel": 2,
+            "location": "chamber",
+            "message_id": 8514,
+            "purpose": "Chamber temperature rear"
+          },
+          "TC_CHAMBER_4": {
+            "board_id": 4,
+            "channel": 3,
+            "location": "chamber",
+            "message_id": 8515,
+            "purpose": "Chamber temperature side"
+          }
+        }
+      }
+    },
+    "system": {
+      "mode": "FLIGHT",
+      "network": {
+        "base_ip": "192.168.3.0",
+        "bind_address": "0.0.0.0",
+        "bind_port": 5005,
+        "ip_range_end": 150,
+        "ip_range_start": 100
+      },
+      "state": "FLIGHT"
+    }
+  }
+}

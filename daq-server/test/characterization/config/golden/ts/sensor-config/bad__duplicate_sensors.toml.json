@@ -1,0 +1,53 @@
+{
+  "hpBoardNumbers": {
+    "logs": [],
+    "value": []
+  },
+  "loadActuatorChannelToEntityMap": {
+    "logs": [],
+    "value": {
+      "1": "ACT.Ox_Main",
+      "11": "ACT.Ox_Main"
+    }
+  },
+  "loadLcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadRtdBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadSensorRoleMap": {
+    "logs": [
+      "log: 📋 Loaded sensor role map from config.toml (4 channels): {\"1\":\"PT_Cal.Fuel_Downstream\",\"2\":\"PT_Cal.COPV\",\"11\":\"PT_Cal.COPV\",\"12\":\"PT_Cal.Ox_Upstream\"}",
+      "log: 📋 Loaded sensor role map for board pt_board (192.168.2.21): {\"1\":\"PT_Cal.Fuel_Downstream\",\"2\":\"PT_Cal.COPV\"}",
+      "log: 📋 Loaded sensor role map for board pt_board_2 (192.168.2.21): {\"1\":\"PT_Cal.COPV\",\"2\":\"PT_Cal.Ox_Upstream\"}"
+    ],
+    "value": {
+      "boardChannelToEntityMaps": [
+        [
+          "192.168.2.21",
+          {
+            "1": "PT_Cal.COPV",
+            "2": "PT_Cal.Ox_Upstream"
+          }
+        ]
+      ],
+      "channelToEntityMap": {
+        "1": "PT_Cal.Fuel_Downstream",
+        "2": "PT_Cal.COPV",
+        "11": "PT_Cal.COPV",
+        "12": "PT_Cal.Ox_Upstream"
+      }
+    }
+  },
+  "loadTcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "t7CalFields": {
+    "logs": [],
+    "value": []
+  }
+}

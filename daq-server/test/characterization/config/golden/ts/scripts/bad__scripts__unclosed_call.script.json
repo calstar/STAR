@@ -1,0 +1,35 @@
+{
+  "carets": [
+    "0: command \"\" 0-0 => 0-0 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "1: command \"x\" 0-1 => null",
+    "2: null => null",
+    "3: expr \"\" 3-3 => 3-3 x | pressure(+ | elapsed() | not ",
+    "4: expr \"\" 4-4 => 4-4 x | pressure(+ | elapsed() | not ",
+    "5: expr \"e\" 4-5 => 4-5 elapsed() | pressure(+",
+    "6: expr \"el\" 4-6 => 4-6 elapsed()",
+    "7: expr \"ela\" 4-7 => 4-7 elapsed()",
+    "8: expr \"elap\" 4-8 => 4-8 elapsed()",
+    "9: expr \"elaps\" 4-9 => 4-9 elapsed()",
+    "10: expr \"elapse\" 4-10 => 4-10 elapsed()",
+    "11: expr \"elapsed\" 4-11 => 4-11 elapsed()",
+    "12: expr \"\" 12-12 => 12-12 x | pressure(+ | elapsed() | not ",
+    "13: command \"\" 13-13 => 13-13 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while "
+  ],
+  "checkScriptNames_DynamicTest": [],
+  "checkScriptNames_Idle": [],
+  "renameActuator": "x = elapsed(\n",
+  "renameState": "x = elapsed(\n",
+  "scanScriptNames": [],
+  "tokenize": [
+    "0-1 variable \"x\"",
+    "2-3 op \"=\"",
+    "4-11 command \"elapsed\"",
+    "11-12 op \"(\""
+  ],
+  "tokenizeNoTables": [
+    "0-1 variable \"x\"",
+    "2-3 op \"=\"",
+    "4-11 command \"elapsed\"",
+    "11-12 op \"(\""
+  ]
+}
