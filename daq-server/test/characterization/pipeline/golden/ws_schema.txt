@@ -129,6 +129,8 @@
 
 ## state_transitions
 .payload.transitions: []
+.payload.transitions[].from: number
+.payload.transitions[].to: number
 .timestamp: number
 .type: string
 

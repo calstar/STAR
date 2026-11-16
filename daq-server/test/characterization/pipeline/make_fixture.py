@@ -6,13 +6,16 @@
 Everything a service writes lands under <fixture_dir>; nothing in the checkout is moved or
 touched (the integration harness parks the live calibration store instead — this does not).
 
-Layout (the C++ services run with cwd = <fixture_dir>/root; every path they hard-code is relative):
+Layout (the C++ services run with cwd = <fixture_dir>; every path they hard-code is relative):
 
-  root/config/config.toml              services config (also the backend's CONFIG_PATH)
-  root/config/*.csv                    state-machine CSVs, absolute paths in config.toml
-  root/config/profiles/default/        the active profile (identical to config.toml)
-  root/config/.active_profile
-  root/scripts/calibration/calibrations/  copy of the committed store, minus the operator files
+  config/config.toml                   services config (also the backend's CONFIG_PATH)
+  config/*.csv                         state-machine CSVs (config.toml's relative paths)
+  char/backend/                        the backend's cwd: its CSV loaders look in cwd/../../config,
+                                       and its OTA root search walks up from cwd (6 levels) to the
+                                       repo's firmware/, both as from diablo_server/backend
+  config/profiles/default/             the active profile (identical to config.toml)
+  config/.active_profile
+  scripts/calibration/calibrations/    copy of the committed store, minus the operator files
   sim_config.toml                      the simulator's view: only pt_board enabled
   home/                                HOME for the backend (~/.local/share/elodin run dirs)
 
@@ -47,7 +50,7 @@ def sub_line(text, pattern, repl, count=0, section=None):
 def main():
     daq_root, fx, ports_path = sys.argv[1:4]
     ports = json.load(open(ports_path))
-    root = os.path.join(fx, "root")
+    root = fx
     cfg_dir = os.path.join(root, "config")
     prof_dir = os.path.join(cfg_dir, "profiles", "default")
     cal_dir = os.path.join(root, "scripts", "calibration", "calibrations")
@@ -107,18 +110,11 @@ def main():
     text = sub_line(
         text, r"^enabled = true$", "enabled = false", 1, "heartbeat_service"
     )
-    for key, name in (
-        ("actuator_csv", "state_machine_actuators.csv"),
-        ("actuator_delay_csv", "state_machine_actuator_delays.csv"),
-        ("transitions_csv", "state_transitions.csv"),
-    ):
-        text = sub_line(
-            text,
-            rf"^{key} = .*$",
-            f'{key} = "{os.path.join(cfg_dir, name)}"',
-            1,
-            "state_machine",
-        )
+    # [state_machine] keeps production's relative "config/<name>.csv" paths. The C++ services
+    # resolve them against cwd (the fixture); the backend against its cwd's ../.. (run.sh starts
+    # it in char/backend). An absolute path is NOT equivalent: the backend's legacy loaders join
+    # the configured path onto other directories, so an absolute one is never found.
+    os.makedirs(os.path.join(root, "char", "backend"), exist_ok=True)
     assert "192.168.2." not in text
 
     for name in os.listdir(os.path.join(daq_root, "config", "profiles", "default")):
