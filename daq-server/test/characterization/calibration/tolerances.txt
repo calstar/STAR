@@ -1,27 +1,66 @@
-# Families of ill-conditioned values that may differ by more than 4 ULP between builds
-# (golden_compare.py; first matching rule wins; everything not named here is 4 ULP, integers and
-# text exact). Each limit was measured -O0 vs -O2 (arm64 clang) and is proven to still catch a
-# meaningful change: see README.md in this directory.
+# Families of values that may differ by more than 4 ULP between builds and platforms
+# (golden_compare.py; the first rule that matches a value wins; everything not named here is
+# 4 ULP, integers and text exact). Each limit is the smallest round number that passes on macOS
+# arm64 clang -O0 and Release, and Linux arm64 gcc-12 Release, gcc-12 -O0 and clang-18 Release,
+# against goldens generated from macOS Release; the measured worst case is in each comment and in
+# README.md, with the mutation that proves the limit still bites.
 
-# Callendar-Van Dusen inverse (rtd::resistance_to_temp_cvd[_full], rtd_board_adc_to_temp_c,
-# t7::rtd_c): T = (-A + sqrt(A^2 - 4B(1 - R/R0))) / 2B cancels catastrophically, leaving an
-# absolute error of ~4e-13..8e-13 C anywhere on the curve. Near R0 (|T| < 1 C) that is up to
-# 2.2e5 ULP; elsewhere up to 106 ULP (rel 2e-14).
-family=rtd-cvd-near-R0 line="^(T\(|board(?: edge)?\(|rtd(?: pt100)?[( ])" below=1 abs=1e-11
-family=rtd-cvd line="^(T\(|board(?: edge)?\(|rtd(?: pt100)?[( ])" rel=1e-13
+# ── not portable by construction ─────────────────────────────────────────────────────────────
+# LcTareStore::fingerprint hashes the curve's float outputs bit for bit, so any last-bit
+# difference changes the integer. Its behaviour (stale / not stale) is frozen by the
+# `stale=` counts beside it, which stay exact.
+family=curve-fp-hash section="LcTareStore" line=" fp=" fields=3 ignore=1
+family=curve-fp-hash section="LcTareStore::fingerprint" ignore=1
+family=curve-fp-hash section="LcTareStore" line='"curve_fp":' ignore=1
+family=curve-fp-hash block=scripts/calibration/calibrations/lc_tare.json line='"curve_fp":' ignore=1
 
-# Robust learner (RobustCalibrationFramework / Manager): seed_from_factory_cubic is a ridge
-# least-squares solve on a 9-term basis; its parameters, covariance and RLS P differ by up to
-# 6.8e-10 relative. Predictions that should be 0 psi are cancellation residue (|v| ~ 1e-15, up to
-# 2.3e-11 psi apart).
+# ── least-squares fits: coefficients loose, behaviour tight ──────────────────────────────────
+# CubicCalibrationStore::compute_fit (colPivHouseholderQr): coefficients that should be ~0 are
+# solver residue, and the raw A/B/C (psi per adc^3/^2/^1) are tiny numbers whose last bits move
+# by up to rel 0.3 between compilers (abs 1.4e-11 psi on the normalised poly / D, 3e-13 on rmse).
+# Coefficients pass at rel 1e-12 or abs 1e-11 - which leaves the raw A/B/C checked only through
+# the `eval:` lines below and, in the stack golden, through every published PT / LC value.
+family=cubic-fit-eval section="CubicCalibrationStore::compute_fit" line="eval:" abs=1e-9
+family=cubic-fit-eval section="CubicCalibrationStore live" line="eval:" abs=1e-9
+family=cubic-fit-eval section="CubicCalibrationStore fixtures" line="eval:" abs=1e-9
+family=cubic-fit section="CubicCalibrationStore::compute_fit" line="valid=" rel=1e-12 abs=1e-11
+family=cubic-fit section="CubicCalibrationStore live" line='valid=|"(A|B|C|D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' rel=1e-12 abs=1e-11
+family=cubic-fit section="CubicCalibrationStore fixtures" line='valid=|"(A|B|C|D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' rel=1e-12 abs=1e-11
+family=cubic-fit block=scripts/calibration/calibrations/cubic_calibration.json line='"(A|B|C|D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' rel=1e-12 abs=1e-11
+
+# Robust learner: seed_from_factory_cubic is a ridge solve on a 9-term basis whose parameters are
+# barely identifiable (theta_1 moves 1.4e-5 rel between compilers; 2e-3 rel in the service's
+# adj.json after learning). Its predictions are what is frozen tightly: abs 1e-9 psi (measured
+# 2.3e-11). The parameters only have to stay the same order of magnitude.
 family=robust-prediction section="RobustCalibrationFramework" line="pred" abs=1e-9
 family=robust-prediction section="RobustCalibrationManager" line="pred" abs=1e-9
-family=robust-parameters section="RobustCalibrationFramework" rel=1e-7
-family=robust-parameters section="RobustCalibrationManager" rel=1e-7
-# The same learner's state as calibration_service writes it (stack golden, adj.json snapshots):
-# measured up to 3.7e-10 relative.
-family=robust-parameters block=adj.json rel=1e-7
+family=robust-parameters section="RobustCalibrationFramework" rel=1e-2
+family=robust-parameters section="RobustCalibrationManager" rel=1e-2
+family=robust-parameters block=adj.json rel=1e-2
 
-# Allan-variance noise fit (fit_noise_coefficients): a 4-column least-squares solve; K and
-# tau_min (fields 2 and 4 of the `fit` line) move by 5 ULP.
-family=allan-fit section="AllanVariance" line="^fit Q=" fields=2,4 ulps=8
+# Allan-variance noise fit (a 4-column least-squares solve) and the variance it is fitted to,
+# whose sums gcc -O0 accumulates differently: up to 25 ULP.
+family=allan section="AllanVariance" line="^fit Q=|^tau=" ulps=32
+
+# ── cancellation in a closed form ────────────────────────────────────────────────────────────
+# Callendar-Van Dusen inverse (rtd::resistance_to_temp_cvd[_full], rtd_board_adc_to_temp_c,
+# t7::rtd_c): (-A + sqrt(A^2 - 4B(1 - R/R0))) / 2B leaves ~4e-13..8e-13 C absolute error anywhere
+# on the curve: up to 2.2e5 ULP near R0 (|T| < 1 C), up to 106 ULP (rel 2e-14) elsewhere.
+family=rtd-cvd-near-R0 line="^(T\(|board(?: edge)?\(|rtd(?: pt100)?[( ])" below=1 abs=1e-11
+family=rtd-cvd line="^(T\(|board(?: edge)?\(|rtd(?: pt100)?[( ])" rel=1e-13
+# The forward CVD R(T): 5 ULP on gcc -O0.
+family=rtd-cvd-forward section="rtd CVD" line="^R\(" ulps=8
+
+# Polynomial evaluations whose terms cancel near the result's zero (gcc -O0 rounds each term
+# separately): type K both ways (abs 7.4e-13), the PT cubics read from the factory CSV (abs
+# 2.8e-14 psi), the sensor polynomials (abs 1.4e-16), the T7 cold-junction offset (abs 5.7e-14 K).
+family=poly-eval section="TypeK" abs=1e-12
+family=poly-eval section="PTCalibrationManager" line="p\(" abs=1e-12
+family=poly-eval section="SensorCalibrationManager" line="calc\(" abs=1e-12
+family=poly-eval section="T7Convert" line="^cjc " abs=1e-12
+
+# ── calibration_service (stack golden) ───────────────────────────────────────────────────────
+# Published float32 values that sit at zero are the residue of a fit evaluated at its own zero
+# point (|v| ~ 1e-13); they differ by up to 1.7e-13. A tare offset at zero, likewise (2.4e-14).
+family=published-near-zero line="^  \[[0-9a-f]{2},[0-9a-f]{2}\] ts=" abs=1e-12
+family=tare-near-zero block=scripts/calibration/calibrations/lc_tare.json line='"offset_kg":' abs=1e-12

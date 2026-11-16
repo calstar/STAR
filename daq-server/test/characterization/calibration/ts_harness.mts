@@ -305,7 +305,13 @@ p('parseEndpointsFile', bv.parseEndpointsFile(JSON.stringify({ valves: {
   'PT1_Cal.CH1': { closed_counts: 1 },
   'BV2_Cal.CH10': { closed_counts: 480.5, closed_at_ms: 'n' },
 } })));
-tryCall('parseEndpointsFile(garbage)', () => bv.parseEndpointsFile('{'));
+// The message text is V8's and differs between Node versions; the error class is what matters.
+try {
+  bv.parseEndpointsFile('{');
+  p('parseEndpointsFile(garbage) returned');
+} catch (e) {
+  p('parseEndpointsFile(garbage) THREW', (e as Error).name);
+}
 p('parseEndpointsFile(empty obj)', bv.parseEndpointsFile('{}'));
 bv._resetValveCalForTest();
 const bvRows = (entity: string, raw: number, status: number, value: number) => [

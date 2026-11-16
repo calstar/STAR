@@ -457,6 +457,21 @@ void print_fit(const char* label, const CubicFit& f) {
     for (double p : f.poly)
         std::printf("%s ", d(p).c_str());
     std::printf("\n");
+    // What the fit DOES: psi at five codes across the fitted span, through both representations.
+    // The coefficients themselves are an ill-conditioned least-squares solve (they differ between
+    // compilers and platforms well past 4 ULP); these values are what a reader evaluates.
+    if (!f.valid)
+        return;
+    std::printf("%s eval:", label);
+    for (double u : {-0.5, -0.25, 0.0, 0.25, 0.5}) {
+        const double adc = f.norm_min + u * f.norm_scale;
+        const double raw = ((f.A * adc + f.B) * adc + f.C) * adc + f.D;
+        double norm = 0.0;
+        for (size_t i = f.poly.size(); i-- > 0;)
+            norm = norm * u + f.poly[i];
+        std::printf(" raw=%s norm=%s", d(raw).c_str(), d(norm).c_str());
+    }
+    std::printf("\n");
 }
 
 void print_channel(const CubicCalibrationStore& s, uint16_t uid) {
