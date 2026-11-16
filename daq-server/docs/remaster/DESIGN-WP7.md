@@ -12,6 +12,30 @@ seam between the two is `createAPIHandler(opts)`.
 `diablo_server/backend/` added to `gate.sh` as a merge-gate step (orchestrator). WP5 merged (WP7
 appends to WP5's `sensor-config.ts`).
 
+**Amendments (design/ts2, 2026-11-16).** The deeper pass (alternatives, interface stubs,
+walkthroughs — sections at the end), the research notes merged at 963e81b9 (LEDGER D42) and
+STYLE.md (55d140ef, LEDGER D43) changed the following; each changed place is marked with its tag.
+Rules are cited as `STYLE-S<n>`, `WP7-S1`, `WP6-R1`.
+
+- **[B1]** WP7-S2's evaluation-order argument was textual. tsc/tsx/vitest elide an import whose
+  specifiers are unused as values (`research/node-realtime-backend.md` §1; today `api-server.ts`
+  already loses `elodin-query.ts` and `http` at runtime). When step 1 moves the last value user of
+  `sessionManager`, `routes/config-profiles`, `ota-*`, … out of `api-server.ts`, those modules
+  start evaluating from inside the first `api/*` file that uses them. WP7-S2 now adds the bare-import
+  rule and the esbuild module-order diff (WP6-R1a/R1b, DESIGN-WP6 §6.3 item 6); never
+  `verbatimModuleSyntax`.
+- **[B2]** Walkthrough (d) found two owners of "where the live cubic store is":
+  `routes/calibration-profiles.livePath()` (honours `DAQ_CALIBRATIONS_DIR`) and the four
+  `__dirname`/`cwd` candidates of `GET /api/cubic_calibration` (ignore it — C5-5). Unifying them is
+  the C5-5 fix, a behaviour change: **kept**, labelled at the site in cleanup (STYLE-S37), Parked.
+- **[B3]** Research §5's route-dispatch vitest is adopted as gap **H9** (should, before step 1); its
+  ESLint `no-restricted-syntax` guard for `sendJson` is not (STYLE-S40: no linter is tracked; a
+  ~20-line grep check in the package's scripts encodes the same eligibility rule instead).
+- **[B4]** STYLE conformance (D43): `SRC_DIR` from `import.meta.url` is allowed at module top level
+  (STYLE-S30); in the move-only review, lines that only re-indent a moved body (`} else if (COND) {`
+  → `if (COND) {` one level shallower) are expected non-dimmed lines (D43(6)); size targets are per
+  WP (STYLE-S33). `api/*` and `server/*` never import each other (STYLE-S31).
+
 **Orchestrator decisions (design review, 2026-11-16), recorded here:**
 
 - D-a: route handlers live in `src/api/`, not `src/routes/` (accepted).
@@ -272,6 +296,18 @@ Rules:
 
   (`api/*`'s `../../../shared/*` imports are compared the same way against `api-server.ts`'s
   `../../shared/*` list; `api/http.ts`, imported only by `api/*` and `api-server.ts`, is effect-free.)
+
+  **[B1] Necessary, not sufficient.** The closure grep reads source text; the runtime evaluates only
+  imports with a specifier used as a value. So, per commit: (a) an import in `api-server.ts` that
+  the commit leaves with no value use becomes a bare `import './x.js';` **at the same position** — a
+  move-only edit — but only for a module the order list below shows evaluating first at that line
+  before the commit (never for `./elodin-query.js` or `http`, which are already elided today:
+  a bare import would *add* them); (b) the esbuild module-order diff of DESIGN-WP6 §6.3 item 6
+  (entry `src/server.ts`, which imports `api-server.ts`) must print nothing once `src/api/` entries
+  are filtered out; (c) no `verbatimModuleSyntax`. Today's order through the router, from research
+  §1: `api-server → routes/config-profiles → routes/script-check → session-manager → … → ota-build →
+  ota-service-cmd → board-logs → video/*` — after step 1 the same list, with `api/*` entries
+  interleaved.
 - **S3 (`__dirname`).** The only `__dirname` user is `/api/cubic_calibration` (941-946). In
   `api/calibration.ts` define `const SRC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');`
   and replace the two `path.join(__dirname, …)` candidates with `path.join(SRC_DIR, …)`, same
@@ -390,7 +426,9 @@ two candidate lines. A ~40-line Python script; WP7 commits it with the package's
 4. **Prune `api-server.ts`'s imports** to what the router uses. **Never drop a module with
    import-time effects** (`session-manager.ts`, `legacy/state-actuators.ts` / `state-csv/`, anything
    that reads config, logs or constructs a singleton at import) unless another import still
-   evaluates it at the same point. The check: diff the first 60 lines of `backend.log` (a 5 s
+   evaluates it at the same point. **[B1]** Pruning a specifier is free (an unused specifier is
+   already absent at runtime); deleting a bare import made in step 1 is not — keep them, and gate
+   on the module-order diff as well as the log diff below. The check: diff the first 60 lines of `backend.log` (a 5 s
    backend-only start under the stack lock, as DESIGN-WP6 §6.3 item 5) before and after; any
    difference beyond timestamps and PIDs fails the commit.
 Step 2 is its own queue item, gated in full like step 1.
@@ -408,7 +446,9 @@ Step 2 is its own queue item, gated in full like step 1.
   `onCalibrationReload`; the response is written before the callback runs.
 - `GET /api/config/profiles` calling `ensureSeeded()`; `GET /api/states` reading the **active
   profile** while `/api/pressure-limits` and `/api/gui-config` read the **deployed** config.
-- `cubic_calibration` candidate order (S3) and its "partial/corrupt → `{"cubic_state":{}}`" fallback.
+- `cubic_calibration` candidate order (S3) and its "partial/corrupt → `{"cubic_state":{}}`" fallback;
+  that it ignores `DAQ_CALIBRATIONS_DIR` while `routes/calibration-profiles.livePath()` honours it
+  (C5-5, two owners of one path — [B2], Parked).
 - SSE framing of `flash-all` (`event: …\ndata: …\n\n`), the sequential per-board flash, the OTA
   temp-dir lifecycle and 4 MB cap, the "port must be 3232" rule.
 - The absent operator gate on `/api/ota-flash*` (a defect, reported below, not fixed).
@@ -444,6 +484,7 @@ characterization (D20 allows white-box for pure functions with a stable signatur
 | H3 | should, only if `sendJson` survives review | step 2.1 |
 | H5 | nice-to-have | — |
 | H6, H7 | accepted as documented | — |
+| H9 [B3] | should | step 1 |
 
 - **H1 Success paths of the writes and their callbacks.** Only error shapes are frozen for
   `POST /api/config`, `/api/config/import`, `/api/state-csv`, `/api/state-script`,
@@ -478,6 +519,15 @@ characterization (D20 allows white-box for pure functions with a stable signatur
   one the route answers 409 before it reaches the gate.
 - **H6 `cubic_calibration` candidate order** cannot be observed (§6.1 S3); prescribed rather than
   tested.
+- **H9 Every route is dispatched** [B3] (`research/node-realtime-backend.md` §5). A backend vitest
+  that drives `createAPIHandler` with a temp-dir `CONFIG_PATH` (no enabled boards), a viewer
+  `X-Auth-Email` and an empty or invalid body, for every `(method, path)` of a checked-in list
+  generated from the route-table check, and asserts the answer is **not** the router's
+  `404 {"error":"Not found"}` (and, for `/api/video/*`, that the video branch answered). Viewer
+  identity makes every gated write a 403 with no side effect; the ungated OTA routes answer 400
+  (missing ip) and, for `flash-all`, `200 {"success":false,"message":"No enabled boards in config"}`
+  — the same safe cases as H2. It closes "a group is never dispatched" before the moves instead of
+  by the static dispatch check alone, and it imports `api-server.ts` with no stack (no port).
 - **H7 SSE headers and framing** of `flash-all` — covered by H2's no-boards case only for the JSON
   branch; the SSE branch stays unguarded (cannot be exercised safely on a shared machine without a
   fake `ota_service`; lifecycle's fake board could host it later).
@@ -543,3 +593,179 @@ gap priority table in §7; Q4 by the decision that step 2.3 waits until both WP6
   that moves each group?
 - **Q4** Step 2.3 (one identity rule in `operators.ts`) touches both WP6's and WP7's files; which
   package does it, after both have merged?
+
+---
+
+## Alternatives considered (design/ts2, 2026-11-16)
+
+### A. Per-group handler files, one `handle<Group>Request` each (§2 — chosen)
+
+Eleven `api/*.ts` modules plus `api/http.ts`; the router calls each group in a fixed order inside
+its one try; a group answers `true` or `false`. Precedent: `video/routes.ts` `handleVideoRequest`.
+
+### B. A declarative route table
+
+`api-server.ts` holds `const ROUTES: Route[] = [{ method: 'GET', path: '/api/config', handler:
+getConfig }, …]` (≈60 entries) and dispatches on the first match; each branch body becomes a named
+handler `(req, res, url, opts) => Promise<void>`; the 404 is "no row matched".
+
+### C. Keep one file; extract only the helpers
+
+`buildSensorConfig` and its helpers to `sensor-config.ts`, the types and request helpers to
+`api/http.ts`, the OTA block (160 lines) to `api/ota.ts`; the ladder stays in `api-server.ts`
+(≈800 lines).
+
+### Comparison
+
+| | A (chosen) | B route table | C helpers only |
+|---|---|---|---|
+| clarity | a resource's routes are one file named for it; the router is ~90 lines and reads as the dispatch order | the table is the best route index (one line per route, method and path side by side); the bodies scatter into ≈60 named functions whose names add nothing over their paths | the 700-line ladder stays the place to read; above STYLE-S33's god-file line |
+| lines (net, steps 1+2) | step 1 ≈ +120 (per-group imports, signatures, `return true`); step 2 ≈ −90 (`sendJson` on 50 sites, `denyUnlessOperator` on 14) | ≈ +60 over A (table rows, a `Route` type, per-handler signatures) | ≈ 0 (moves only) |
+| move-only feasibility (WP7-S1) | exact: each `else if (COND) { BODY }` becomes `if (COND) { BODY return true; }`, COND and BODY byte-identical, checked by the scripted move-only check | **no**: COND does not map to `{method, path}` for three branches (the method-agnostic `/api/feed-char/results`, the prefix `/api/sensors/`, the `video &&` guard), and every body changes its exit (`return true` inside nested callbacks becomes `return`) | exact, but only for the few moved blocks |
+| testability | each group importable without effects (STYLE-S30); H9 drives the whole router | the table is data a test can enumerate — its one real gain; research §5 notes the same gain is had by H9 without a runtime abstraction | as today |
+| fit with characterization boundaries | goldens are black-box HTTP (`pipeline/golden/http.txt`, `boards/`, `nocal/`, `lifecycle/golden/ota.txt`); the path-coupled tests are `t7.test.ts` and `config-profile-create-calibration.test.ts`, which import `./api-server.js` — kept by re-exports; `routes/*.ts` (imported by `config/ts_dump.ts`, `calibration/ts_harness.mts`) untouched | same goldens; the same re-exports | same |
+| risk to the frozen contract | low: first-match order is irrelevant because the predicates are pairwise disjoint (WP7-S1), CORS and the single try stay in the router (§4.2), the 404-not-405 rule is the fall-through | medium: a table matcher must reproduce 404-not-405, the method-agnostic 405 of feed-char, and that `/api/video/*` is skipped when `video` is unset; each is a new line of matcher logic that no golden reads directly | none, but the WP's goal (router only) is not met |
+
+**Why A.** It is the only shape that is move-only for every branch and still ends with a router
+small enough to read. **B lost** on WP7-S1 (three branches have no `{method, path}` form, and every
+body's exit changes) and adds a `Route` type with one user (STYLE-S34); its one gain — a
+machine-readable route list — is obtained by H9 and the route-table check without a runtime
+abstraction (`research/node-realtime-backend.md` §5 reaches the same verdict, and notes that
+Fastify-style routers would also keep 404-not-405, which is reassurance, not a reason to adopt a
+framework). **C lost** on the WP's goal and on STYLE-S33.
+
+**Module list unchanged.** The deeper pass amends the reviewed design in places — [B1]-[B4] at
+the top (elided imports and bare imports, the kept two-owner cubic-store path, gap H9 and a grep
+check instead of ESLint, STYLE conformance); each is marked where it lands.
+
+---
+
+## Walkthroughs (design/ts2, 2026-11-16)
+
+WP7's modules are on the HTTP side only. The WS command path (fire, abort) never enters them; the
+walkthroughs below trace what the HTTP side does around each flow and where it hands over to the
+WS side, which is only ever through an `APIHandlerOptions` callback built by `server.ts`
+(STYLE-S31).
+
+### (a) Around a fire command
+
+1. Before the operator can press Fire, the GUI loads the state panel: `GET /api/states` →
+   `server.ts` HTTP handler → **`api-server`** (prefix, CORS, URL) → **`api/states.handleStatesRequest`**
+   reads the **active profile**'s `[[states]]` (and `[flow]`) and answers. One owner.
+2. The GUI may poll `GET /api/engine_state` → **`api/debug`** → `opts.getEngineState()` →
+   `engine-state.currentState` (WP6). The option is the seam; `engine-state` owns the value.
+3. The fire command itself is WS (DESIGN-WP6 walkthrough (a)); WP7 is not on it.
+4. Editing a dynamic state's script before a run: `POST /api/state-script/check` (no gate, no
+   write) and `POST /api/state-script` (operator gate, `checkStateScript` then save) →
+   **`api/states`**; the sequencer reads scripts at the next session start. One owner.
+
+Finding (observation, frozen): `/api/states` serves the **active profile** while
+`engine-state` resolves ids against the **deployed** config (§6.3 already lists it). During a
+session with an unsaved-to-deploy draft the panel and the sequencer can disagree on a state's name;
+the sequencer refuses unknown names and the backend rejects undeclared ids, so the failure is a
+refusal, not a wrong state. Not two owners of one step: two documents by design.
+
+### (b) Around an abort
+
+1. The abort buttons come from the same `GET /api/states` (`isAbort` from the config); step (a) 1.
+2. Abort thresholds live in the config document: edited through `POST /api/config` (walkthrough
+   (c) below) and regenerated by `calibration_service` into `abort_thresholds.txt` (not WP7's).
+3. The operator gate. HTTP writes check `X-Auth-Email` in **`api/http.isConfigWriteAuthorized`**;
+   the WS control path checks the same header in **`ws-connection`** (WP6). *Two owners of one
+   identity rule* — already scheduled: step 2.3 moves it to `operators.isOperatorRequest(headers)`
+   after both WP6 and WP7 have merged. The abort itself needs the WS arming, not the HTTP rule.
+
+### (c) A board-status change through HTTP
+
+1. The operator enables a board in the config editor: `POST /api/config` → **`api-server`** →
+   **`api/config.handleConfigRequest`**: operator gate (403 before the body), body collected in
+   `req.on('end')`, PWM check (400), `writeActiveProfile`, and — only when no session is active —
+   `deployActiveProfile()` and `setImmediate(onConfigUpdated)`. The response is written before the
+   callback runs (STYLE-S29).
+2. `onConfigUpdated` is `server.ts`'s `applyDeployedConfigChange()` (WP6): GUI stream, calibration
+   entity map, hot-path caches, state-actuator map, then **`board-status.loadBoardsFromConfig()`**
+   and `broadcastBoardStatus()`, then `config_updated` to every browser. Owners: `api/config` for
+   the write and the deferral; `server.ts` for the reload sequence; `board-status` for the list.
+3. During a session the same request is a draft: saved to the profile, not deployed, no callback;
+   the board appears at the next session start, when `sessionManager.start` deploys and calls the
+   same `applyDeployedConfigChange` (the C5-1 flash). One deploy function
+   (`routes/config-profiles.deployActiveProfile`), two triggers.
+4. A board's log verbosity: `POST /api/board-log-mode` → **`api/board-logs`** → `patchBoardField`
+   writes `config.toml` and the profile directly, even during a session, and fires **no** callback
+   (`config_broadcast_service` re-reads the file). `GET /api/board-logs` reads the ring
+   `board-logs.ts` fills from daq_bridge's UDP forwarder. One owner each.
+
+No step with zero or two owners.
+
+### (d) A calibration save via HTTP
+
+1. `POST /api/calibration_profiles/save` → **`api-server`** → **`api/calibration.handleCalibrationRequest`**.
+2. Operator gate: `denyUnlessOperator(req, res)` (**`api/http`**, step 2.1) writes the literal 403.
+3. Body: `readJsonBody(req)` (**`api/http`**). Malformed JSON rejects into the router's catch → 500
+   `{"error":"Invalid JSON body"}` (frozen; H3).
+4. `saveCalibrationProfile(name)` — **`routes/calibration-profiles`** owns the store: it copies
+   `livePath()` (`cubic_calibration.json` under `getCalibrationsDir()`, which is `DAQ_CALIBRATIONS_DIR`
+   when set)
+   into `profiles/<name>.json`. A throw (bad name) → router catch → 500 `{"error": message}`.
+5. 200 with `listCalibrationProfiles()` — a function call in the body, so **not** `sendJson`
+   eligible (§6.2 item 1): the raw `writeHead`/`end` pair stays.
+6. `…/load` and `…/new_blank` swap the live store and then call `opts.onCalibrationReload()`
+   **synchronously, before** the response (STYLE-S29) → `server.ts` → `publishCalibrationReload`
+   → Elodin cmd 7 (DESIGN-WP6 walkthrough (d)). `calibration_service` re-reads the store.
+7. `GET /api/cubic_calibration` shows the result: **`api/calibration`** reads the live store from
+   its own four candidates (WP7-S3's `SRC_DIR`).
+
+Finding **[B2]**: steps 4 and 7 have **two owners of "where the live cubic store is"** —
+`livePath()` honours `DAQ_CALIBRATIONS_DIR`, the GET's candidates do not (C5-5: with the variable
+set, the panel shows a different file from the one a save copies). Moving the GET onto `livePath()`
+is the C5-5 fix and changes what the GET returns under that variable: not done in WP7 (STYLE-S8);
+labelled `// Kept: C5-5 (D17)` at the candidates in step 2 (STYLE-S12, S37) and Parked for the team.
+
+### Summary of ownership findings
+
+| step | owners | disposition |
+|---|---|---|
+| (b) 3 operator identity rule | `api/http` + `ws-connection` | step 2.3 (after WP6 and WP7) |
+| (d) 4/7 live cubic store path | `routes/calibration-profiles.livePath` + `api/calibration` | **kept** (C5-5), labelled, Parked [B2] |
+| (a) 1 states list vs id resolution | active profile vs deployed config | by design, frozen; observation |
+
+---
+
+## Interfaces (design/ts2, 2026-11-16)
+
+Stubs in `docs/remaster/design-stubs/ts/src/` (how they are type-checked, and that nothing imports
+them: DESIGN-WP6 "Interfaces"). Each opens with the STYLE-S36 header: what it owns, what it must not
+know about, contract surfaces with their goldens, import-time effects; each group's handler doc
+lists its routes with their gates, error paths and callbacks.
+
+| stub | public surface |
+|---|---|
+| `api/http.ts` | `BoardScanRateHz`, `DebugInfo`, `APIHandlerOptions` (verbatim, with which options are never passed), `isConfigWriteAuthorized`, `readJsonBody`; step 2.1: `sendJson` (restricted to the 50 listed sites), `denyUnlessOperator` |
+| `api/config.ts` … `api/ota.ts` (10 groups) | one `handle<Group>Request(req, res, url, opts): Promise<boolean>` each |
+| `api-server.ts` | `createAPIHandler(opts?)`; re-exports `buildSensorConfig`, `SensorConfigEntry` (from `sensor-config.ts`), `APIHandlerOptions`, `BoardScanRateHz`, `DebugInfo` (from `api/http.ts`) |
+| `sensor-config.ts` (delta) | `SensorConfigEntry`, `buildSensorConfig(config?)` (WP7 1.2), beside WP5's `boardSlot` |
+
+What writing them confirmed or changed:
+
+- The route-group signature stays documentation only (WP7 §2): eleven modules share it, but a
+  declared `RouteHandler` type would be a callback type no code consumes generically (STYLE-S34).
+- `sendJson`'s body is fixed as `video/routes.ts:38`'s (`writeHead` before `JSON.stringify`), so even
+  inside the eligible list a `stringify` throw lands after the header exactly as today
+  (research `node-realtime-backend.md` §5); the restriction, not the helper, carries the safety.
+- `api/history.ts` keeps `ElodinQueryClient` type-only: it is elided at runtime today and must
+  stay elided ([B1]).
+- `api/calibration.ts` owns `SRC_DIR` from `import.meta.url` (STYLE-S30, D43(7)).
+
+### STYLE.md conformance (55d140ef; LEDGER D43)
+
+Applied: STYLE-S5 (`api/` = HTTP route handlers, `routes/` = domain libraries the harnesses import
+by path, untouched); S6 (`handle<Group>Request`); S7 (every URL, header, text and filename kept,
+including the mixed `snake_case`/`kebab-case` paths); S8/S10 (every frozen failure mode listed in
+the handlers' docs: the 500-vs-400 malformed-JSON split, the hang paths, the ungated OTA routes,
+the 503 stubs); S12/S37 (`// Kept: C5-5 (D17)` at the cubic store candidates in step 2, [B2]); S28
+(every group call awaited inside the one try); S29 (`setImmediate` deferral vs synchronous
+`onCalibrationReload`); S30, S31, S34, S36, S40 as for WP6.
+
+**Choices that need the orchestrator's check against STYLE:** none beyond DESIGN-WP6's list; the
+`sendJson` eligibility is enforced by a grep script rather than ESLint (STYLE-S40: no linter) —
+confirm that a ~20-line check script in the package (outside `src/`) is acceptable.

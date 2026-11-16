@@ -1,0 +1,20 @@
+{
+  "//": "Type-checks the WP5-WP7 interface stubs against the product's real types. Design only: not under diablo_server/, imported by nothing, never emitted. Run: npx --prefix ../../../../diablo_server/backend tsc --noEmit -p .",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "typeRoots": ["../../../../diablo_server/backend/node_modules/@types"],
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "ws": ["../../../../diablo_server/backend/node_modules/@types/ws"]
+    }
+  },
+  "include": ["src/**/*"]
+}
