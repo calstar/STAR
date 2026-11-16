@@ -186,11 +186,30 @@ class Run:
                 shutil.rmtree(self.work, ignore_errors=True)
 
 
+def host_ipv4_text() -> str:
+    """This host's IPv4 addresses as text, from whatever the platform has: `ip -4 -o addr`
+    (Linux with iproute2), `ifconfig` (macOS, net-tools), else the kernel's own table
+    /proc/net/fib_trie (any Linux, including a bare ubuntu image). None of them -> refuse: the
+    board-LAN check must fail closed, never pass because it could not look."""
+    for cmd in (["ip", "-4", "-o", "addr"], ["ifconfig"]):
+        if shutil.which(cmd[0]):
+            out = subprocess.run(cmd, capture_output=True, text=True).stdout
+            if out.strip():
+                return out
+    try:
+        return open("/proc/net/fib_trie").read()
+    except OSError:
+        raise SystemExit(
+            "lifecycle: cannot list this host's addresses (no ip, ifconfig or "
+            "/proc/net/fib_trie); refusing to run without the board-LAN check"
+        )
+
+
 def preflight():
     if socket.gethostname().split(".")[0] == "star-rfs":
         raise SystemExit("lifecycle: this is the stand (star-rfs); refusing to run")
-    ifc = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
-    if re.search(r"inet 192\.168\.2\.", ifc):
+    ifc = host_ipv4_text()
+    if re.search(r"(?<![\d.])192\.168\.2\.\d", ifc):
         raise SystemExit(
             "lifecycle: host has a 192.168.2.x address (board LAN); refusing to run"
         )
