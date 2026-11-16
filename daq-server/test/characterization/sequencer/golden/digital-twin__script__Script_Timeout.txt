@@ -18,7 +18,7 @@
               raw 0400........0703000600010002000a0007010901
     +600ms x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=6: ch10=0[Dome CTRL Vent] ch2=0[Fuel Fill Press] ch5=0[Fuel Fill Vent] ch3=0[High Press Vent] ch6=0[Low Press Vent] ch7=0[Ox Main]
               raw 0400........060a0002000500030006000700
-  republish [Script Landing]: first ~1s into the state, every ~1s
+  republish [Script Landing]: first after 1 s within [0.8, 1.5]x, every 1 s within [0.8, 1.5]x
               to board 12: ACTUATOR_COMMAND v0 n=7: ch3=0[Dome CTRL] ch6=0[Fuel Main] ch1=0[Fuel Upstream] ch2=0[High Press CTRL] ch10=0[Ox Upstream] ch7=1[fuel vent] ch9=1[lox vent]
               raw 0400........0703000600010002000a0007010901
               to board 14: ACTUATOR_COMMAND v0 n=6: ch10=0[Dome CTRL Vent] ch2=0[Fuel Fill Press] ch5=0[Fuel Fill Vent] ch3=0[High Press Vent] ch6=0[Low Press Vent] ch7=0[Ox Main]

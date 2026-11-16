@@ -12,15 +12,15 @@
   < OK
   state Calibrate -> Vent
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=3: ch7=1[Fuel Main] ch5=0[GSE Low Press Vent] ch1=0[LOX Main]
+       +0s x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=3: ch7=1[Fuel Main] ch5=0[GSE Low Press Vent] ch1=0[LOX Main]
               raw 0400........03070105000100
-      +0ms x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=8: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
+       +0s x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=8: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
               raw 0400........0802000100030005000a00040008000700
-    +200ms x3 to board 12: ACTUATOR_COMMAND v0 n=4: ch3=1[Fuel Press] ch2=1[Fuel Vent] ch8=0[LOX Press] ch6=1[LOX Vent]
+     +0.2s x3 to board 12: ACTUATOR_COMMAND v0 n=4: ch3=1[Fuel Press] ch2=1[Fuel Vent] ch8=0[LOX Press] ch6=1[LOX Vent]
               raw 0400........040301020108000601
-    +200ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch6=1[GN2 Vent]
+     +0.2s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch6=1[GN2 Vent]
               raw 0400........010601
-  republish [Vent]: first ~1s into the state, every ~1s
+  republish [Vent]: first after 1 s within [0.8, 1.5]x, every 1 s within [0.8, 1.5]x
               to board 12: ACTUATOR_COMMAND v0 n=7: ch7=1[Fuel Main] ch3=1[Fuel Press] ch2=1[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=0[LOX Press] ch6=1[LOX Vent]
               raw 0400........070701030102010500010008000601
               to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=1[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
