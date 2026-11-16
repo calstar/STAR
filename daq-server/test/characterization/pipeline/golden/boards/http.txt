@@ -1,0 +1,151 @@
+## http_boards
+GET /stats
+  status 200
+  content-type: application/json
+  body: schema {".ingestEntityUpdatesReceived": ["number"], ".rawPrimarySamplesByGroup.act": ["number"], ".rawPrimarySamplesByGroup.bv": ["number"], ".rawPrimarySamplesByGroup.enc": ["number"], ".rawPrimarySamplesByGroup.env25": ["number"], ".rawPrimarySamplesByGroup.lc": ["number"], ".rawPrimarySamplesByGroup.pt1": ["number"], ".rawPrimarySamplesByGroup.pt2": ["number"], ".rawPrimarySamplesByGroup.rtd": ["number"], ".rawPrimarySamplesByGroup.tc": ["number"], ".rawPrimarySamplesIngested": ["number"], ".sensorUpdatesBroadcast": ["number"], ".sequencerStatesReceived": ["number"], ".startTimeMs": ["number"], ".uptimeMs": ["number"]}
+GET /api/debug
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: schema {".boardScanRateHz.act": ["number"], ".boardScanRateHz.bv": ["number"], ".boardScanRateHz.enc": ["number"], ".boardScanRateHz.env25": ["number"], ".boardScanRateHz.lc": ["number"], ".boardScanRateHz.pt1": ["number"], ".boardScanRateHz.pt2": ["number"], ".boardScanRateHz.rtd": ["number"], ".boardScanRateHz.tc": ["number"], ".heapUsedMb": ["number"], ".ingestConnected": ["bool"], ".ingestPacketsReceived": ["number"], ".outboxWindowsHeld": ["number"], ".sensorCacheSize": ["number"], ".useRelay": ["bool"], ".wsBufferedBytes": ["number"], ".wsClients": ["number"]}
+GET /api/sensor-config
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"sensors": [{"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH1", "entity": "PT1.CH1", "id": 1, "inCalibrationSequence": true, "isHpPt": false, "role": "Fuel Upstream", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH2", "entity": "PT1.CH2", "id": 2, "inCalibrationSequence": true, "isHpPt": false, "role": "GSE Low", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH3", "entity": "PT1.CH3", "id": 3, "inCalibrationSequence": true, "isHpPt": false, "role": "Fuel Downstream", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH4", "entity": "PT1.CH4", "id": 4, "inCalibrationSequence": true, "isHpPt": false, "role": "Chamber Mid PT 1", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH5", "entity": "PT1.CH5", "id": 5, "inCalibrationSequence": true, "isHpPt": false, "role": "Ox Upstream", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH6", "entity": "PT1.CH6", "id": 6, "inCalibrationSequence": true, "isHpPt": false, "role": "GN2 Regulated", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH7", "entity": "PT1.CH7", "id": 7, "inCalibrationSequence": true, "isHpPt": false, "role": "Ox Downstream", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH8", "entity": "PT1.CH8", "id": 8, "inCalibrationSequence": true, "isHpPt": false, "role": "Chamber Mid PT 2", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH9", "entity": "PT1.CH9", "id": 9, "inCalibrationSequence": true, "isHpPt": false, "role": "Chamber Throat PT 1", "type": "PT"}, {"boardId": 21, "boardIp": "127.0.0.21", "calEntity": "PT1_Cal.CH10", "entity": "PT1.CH10", "id": 10, "inCalibrationSequence": true, "isHpPt": false, "role": "Chamber Throat PT 2", "type": "PT"}, {"boardId": 22, "boardIp": "127.0.0.22", "calEntity": "PT2_Cal.CH1", "entity": "PT2.CH1", "id": 1, "inCalibrationSequence": true, "isHpPt": true, "role": "GSE High", "type": "PT"}, {"boardId": 22, "boardIp": "127.0.0.22", "calEntity": "PT2_Cal.CH2", "entity": "PT2.CH2", "id": 2, "inCalibrationSequence": true, "isHpPt": true, "role": "Excitation V", "type": "PT"}, {"boardId": 22, "boardIp": "127.0.0.22", "calEntity": "PT2_Cal.CH3", "entity": "PT2.CH3", "id": 3, "inCalibrationSequence": true, "isHpPt": true, "role": "GSE Mid", "type": "PT"}, {"boardId": 22, "boardIp": "127.0.0.22", "calEntity": "PT2_Cal.CH4", "entity": "PT2.CH4", "id": 4, "inCalibrationSequence": true, "isHpPt": true, "role": "GN2 High", "type": "PT"}, {"boardId": 31, "boardIp": "127.0.0.31", "calEntity": "RTD1_Cal.CH1", "entity": "RTD1.CH1", "id": 1, "inCalibrationSequence": false, "isHpPt": false, "role": "COPV RTD", "type": "RTD"}, {"boardId": 31, "boardIp": "127.0.0.31", "calEntity": "RTD1_Cal.CH2", "entity": "RTD1.CH2", "id": 2, "inCalibrationSequence": false, "isHpPt": false, "role": "LOX Upper", "type": "RTD"}, {"boardId": 31, "boardIp": "127.0.0.31", "calEntity": "RTD1_Cal.CH3", "entity": "RTD1.CH3", "id": 3, "inCalibrationSequence": false, "isHpPt": false, "role": "LOX Mid", "type": "RTD"}, {"boardId": 31, "boardIp": "127.0.0.31", "calEntity": "RTD1_Cal.CH4", "entity": "RTD1.CH4", "id": 4, "inCalibrationSequence": false, "isHpPt": false, "role": "LOX Lower", "type": "RTD"}, {"boardId": 42, "boardIp": "127.0.0.42", "calEntity": "LC2_Cal.CH1", "entity": "LC2.CH1", "id": 1, "inCalibrationSequence": true, "isHpPt": false, "role": "LC Ch1", "type": "LC"}, {"boardId": 42, "boardIp": "127.0.0.42", "calEntity": "LC2_Cal.CH2", "entity": "LC2.CH2", "id": 2, "inCalibrationSequence": true, "isHpPt": false, "role": "LC Ch2", "type": "LC"}, {"boardId": 42, "boardIp": "127.0.0.42", "calEntity": "LC2_Cal.CH6", "entity": "LC2.CH6", "id": 6, "inCalibrationSequence": true, "isHpPt": false, "role": "LC Ch6", "type": "LC"}, {"boardId": 51, "boardIp": "127.0.0.51", "calEntity": "TC1_Cal.CH2", "entity": "TC1.CH2", "id": 2, "inCalibrationSequence": false, "isHpPt": false, "role": "Chamber Mid TC 1", "type": "TC"}, {"boardId": 51, "boardIp": "127.0.0.51", "calEntity": "TC1_Cal.CH3", "entity": "TC1.CH3", "id": 3, "inCalibrationSequence": false, "isHpPt": false, "role": "Chamber Mid TC 2", "type": "TC"}, {"boardId": 51, "boardIp": "127.0.0.51", "calEntity": "TC1_Cal.CH4", "entity": "TC1.CH4", "id": 4, "inCalibrationSequence": false, "isHpPt": false, "role": "Chamber Throat TC 1", "type": "TC"}, {"boardId": 51, "boardIp": "127.0.0.51", "calEntity": "TC1_Cal.CH5", "entity": "TC1.CH5", "id": 5, "inCalibrationSequence": false, "isHpPt": false, "role": "Chamber Throat TC 2", "type": "TC"}, {"boardId": 81, "boardIp": "127.0.0.81", "calEntity": "T71_Cal.AIN1", "entity": "T71.AIN1", "id": 1, "inCalibrationSequence": true, "isHpPt": false, "role": "T7 Tank PT", "source": "T7", "type": "PT"}, {"boardId": 81, "boardIp": "127.0.0.81", "calEntity": "T71_Cal.AIN2", "entity": "T71.AIN2", "id": 2, "inCalibrationSequence": false, "isHpPt": false, "role": "T7 Nozzle TC", "source": "T7", "type": "TC"}, {"boardId": 81, "boardIp": "127.0.0.81", "calEntity": "T71_Cal.AIN3", "entity": "T71.AIN3", "id": 3, "inCalibrationSequence": false, "isHpPt": false, "role": "T7 LOX RTD", "source": "T7", "type": "RTD"}, {"boardId": 81, "boardIp": "127.0.0.81", "calEntity": "T71_Cal.AIN4", "entity": "T71.AIN4", "id": 4, "inCalibrationSequence": true, "isHpPt": false, "role": "T7 Thrust LC", "source": "T7", "type": "LC"}]}
+GET /api/config/validate
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"errors": 1, "issues": [{"level": "error", "message": "PT Board #3 (integration_startup): Board ID 60 maps to slot 10, but packet IDs only encode slots 1-8.", "page": "boards"}], "profile": "default", "warnings": 0}
+GET /api/gui-config
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"groups": {"Chamber": ["Chamber Mid PT 1", "Chamber Mid PT 2", "Chamber Throat PT 1", "Chamber Throat PT 2"], "Fuel": ["Fuel Upstream", "Fuel Downstream"], "LOX": ["Ox Upstream", "Ox Downstream", "LOX Upper", "LOX Mid", "LOX Lower", "COPV RTD"]}, "pressure_bars": [{"color": "#ADFF2F", "label": "GN2 HI", "limits": "GN2_High", "role": "GN2 High"}, {"color": "#228B22", "label": "GN2 REG", "limits": "GN2_Regulated", "role": "GN2 Regulated"}, {"color": "#FF4500", "label": "FUEL UP", "limits": "Fuel_Upstream", "role": "Fuel Upstream"}, {"color": "#CC0000", "label": "FUEL DN", "limits": "Fuel_Downstream", "role": "Fuel Downstream"}, {"color": "#38BDF8", "label": "LOX UP", "limits": "Ox_Upstream", "role": "Ox Upstream"}, {"color": "#4169E1", "label": "LOX DN", "limits": "Ox_Downstream", "role": "Ox Downstream"}, {"color": "#D8B4FE", "label": "GSE LO", "limits": "GSE_Low", "role": "GSE Low"}, {"color": "#C026D3", "label": "GSE MID", "limits": "GSE_Mid", "role": "GSE Mid"}, {"color": "#7B2FBE", "label": "GSE HI", "limits": "GSE_High", "role": "GSE High"}, {"avg_roles": ["Chamber Mid PT 1", "Chamber Mid PT 2"], "color": "#F97316", "label": "CHAMBER", "limits": "Chamber", "role": "Chamber Mid PT 1"}], "tabs": ["unified", "lcs-tcs-rtd", "boards", "self-tests", "session", "video", "config"]}
+GET /api/pressure-limits
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"pressure_limits": {"Chamber": {"MEOP": 650, "NOP": 500, "POP": 800, "show_in_top_bar": true}, "Fuel_Downstream": {"MEOP": 650, "NOP": 540, "POP": 750, "show_in_top_bar": true}, "Fuel_Upstream": {"MEOP": 650, "NOP": 540, "POP": 750, "show_in_top_bar": true}, "GN2_High": {"MEOP": 5000, "NOP": 4000, "POP": 1000, "show_in_top_bar": true}, "GN2_Regulated": {"MEOP": 1250, "NOP": 900, "POP": 9000, "show_in_top_bar": true}, "GSE_High": {"MEOP": 5000, "NOP": 4000, "POP": 800, "show_in_top_bar": true}, "GSE_Low": {"MEOP": 155, "NOP": 130, "POP": 800, "show_in_top_bar": true}, "GSE_Mid": {"MEOP": 2000, "NOP": 1500, "POP": 5000, "show_in_top_bar": true}, "Ox_Downstream": {"MEOP": 650, "NOP": 505, "POP": 750, "show_in_top_bar": true}, "Ox_Upstream": {"MEOP": 650, "NOP": 505, "POP": 750, "show_in_top_bar": true}}}
+GET /api/ball_valve_cal
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"valves": [{"endpoints": null, "entity": "BV1_Cal.CH1", "liveCounts": 496, "noSignal": false}, {"endpoints": null, "entity": "BV1_Cal.CH2", "liveCounts": 496, "noSignal": false}]}
+GET /api/lc_tare
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"tares": []}
+GET /api/board-logs
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: schema {".lines": ["[]"], ".lines[].boardId": ["number"], ".lines[].line": ["string"], ".lines[].ts": ["number"], ".truncated": ["bool"]}
+GET /api/board-logs/stats
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: schema {".stats.12.received": ["number"], ".stats.12.truncated": ["number"], ".stats.14.received": ["number"], ".stats.14.truncated": ["number"], ".stats.31.received": ["number"], ".stats.31.truncated": ["number"], ".stats.42.received": ["number"], ".stats.42.truncated": ["number"], ".stats.51.received": ["number"], ".stats.51.truncated": ["number"], ".stats.61.received": ["number"], ".stats.61.truncated": ["number"], ".stats.71.received": ["number"], ".stats.71.truncated": ["number"]}
+GET /api/engine_state
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"engineState": 1}
+
+## http_after_startup
+GET /stats
+  status 200
+  content-type: application/json
+  body: same as the earlier identical request
+GET /api/debug
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/sensor-config
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/config/validate
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/gui-config
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/pressure-limits
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/ball_valve_cal
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/lc_tare
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/board-logs
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/board-logs/stats
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/engine_state
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request

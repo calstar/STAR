@@ -16,7 +16,6 @@ Writes, into out_dir:
 Generic normalisation is normalize.py's (README N1..N8). The rules here are per message type /
 per route and are listed in README "Per-type rules" (P1..P9); a new one goes in both places.
 """
-import hashlib
 import json
 import math
 import os
@@ -50,22 +49,79 @@ def is_board_health(msg):
     )
 
 
+# P1b. A status reset (session start/stop reloads every board from config) can make a board that
+# never stopped heartbeating read "connection lost" for one 1 Hz sweep: lost, then cleared and
+# "connected" on the next sweep. Whether the sweep beats the next heartbeat is a race, so such a
+# flap is not recorded at all. A board that really goes silent stays lost (or clears only after
+# FLAP_MS) and is recorded.
+FLAP_MS = 2500
+
+
+def flap_ids(frames):
+    """ids of the board-health frames that make up a reset flap, in one client's frame order."""
+    out, open_lost = set(), {}
+    for m in frames:
+        if not is_board_health(m):
+            continue
+        p = m.get("payload") or {}
+        key, t = str(p.get("key", "")), p.get("timestampMs", 0)
+        if key.startswith("board_lost_") and p.get("ongoing") is True:
+            open_lost[key] = m
+        elif (
+            key.startswith("board_lost_")
+            and p.get("ongoing") is False
+            and key in open_lost
+        ):
+            start = open_lost.pop(key)
+            if t - start["payload"].get("timestampMs", 0) <= FLAP_MS:
+                out.update({id(start), id(m)})
+                board = key[len("board_lost_") :]
+                for c in frames:  # the "connected" the same sweep raised
+                    cp = c.get("payload") or {}
+                    if (
+                        is_board_health(c)
+                        and "key" not in cp
+                        and cp.get("timestampMs") == t
+                        and f"Board {board} " in str(cp.get("message", ""))
+                    ):
+                        out.add(id(c))
+    return out
+
+
 def dumps(v):
     return json.dumps(v, sort_keys=True, ensure_ascii=False)
 
 
-def bucket_rate(n, seconds):
-    """P2. Rates in three wide classes. Event streams (self-test, controller state) sit well under
-    0.25/s; everything the GUI streams (1 Hz periodics, the 2-windows/s envelope after the outbox
-    has had its say, 10 Hz raw) sits in 0.25-5/s; only an unthrottled stream would exceed 5/s.
-    """
-    if n == 0:
-        return "none"
-    r = n / max(seconds, 1e-3)
+def envelope_check(steps, pps):
+    """T1. The GUI envelope (gui-stream.ts) opens a window at a sample and closes it at the first
+    sample >= windowMs later, emitting one point per window for a constant stream at the window's
+    first sample time. So consecutive history points of a constant 10 Hz stream are spaced by at
+    least W = 2000 / points_per_second and, with samples every 100 ms, about W..W+100 ms. Checked on
+    sample timestamps (not delivery), so machine load cannot move it: median spacing within
+    [0.9 W, 2 W]. Halving the window (doubling the rate) lands at ~W/2 and fails."""
+    w = 2000.0 / pps
+    # The reply to a narrowed query arrives as several time slices (history-backfill.ts): join
+    # every single-series slice of the history step.
+    t = set()
+    for st, frames in steps:
+        if st["name"] != "history":
+            continue
+        for m in frames.get("A", []):
+            if m["type"] != "historical_data" or len(m["payload"]) != 1:
+                continue
+            series = m["payload"].get("PT1.CH1.raw_adc_counts")
+            if series:
+                t.update(series["time"])
+    t = sorted(t)
+    gaps = sorted(b - a for a, b in zip(t, t[1:]))
+    if len(gaps) < 5:
+        return f"envelope spacing: fewer than 5 gaps in the history reply ({len(t)} points)"
+    med = gaps[len(gaps) // 2]
+    ok = 0.9 * w <= med <= 2 * w
     return (
-        "event(<0.25/s)"
-        if r < 0.25
-        else ("stream(0.25-5/s)" if r <= 5 else "fast(>5/s)")
+        f"envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/{pps:g} pts/s"
+        f" = {w:g} ms): median within [0.9 W, 2 W]: {'yes' if ok else 'NO'}"
+        f"{'' if ok else f' (median {med} ms)'}; at least 5 gaps: yes"
     )
 
 
@@ -186,6 +242,199 @@ def handshake_frames(frames):
     return out
 
 
+def replay_by_board(frames):
+    """P10. The self-test replay (server.ts selfTestLatest) is a Map in the order results arrived
+    from Elodin, which across boards is a race. The run of SELF_TEST frames is regrouped by board id
+    (stable: each board's own frames keep their order); every other frame keeps its place.
+    """
+    out, run = [], []
+
+    def flush():
+        board = lambda m: int(re.sub(r"\D", "", m["payload"]["entity"]) or 0)
+        out.extend(sorted(run, key=board))  # sorted() is stable
+        run.clear()
+
+    for m in frames:
+        if handshake_phase(m) == HANDSHAKE_PHASES.index("selftest"):
+            run.append(m)
+        else:
+            flush()
+            out.append(m)
+    flush()
+    return out
+
+
+# P11. A command's TCP reply (an `error` from server.ts sendToActuatorService) and the
+# sequencer's own Elodin publish (a `state_update`) reach the client by two independent paths
+# (sequencer → TCP → backend, sequencer → elodin-db → backend), so their relative order is a race
+# (seen swapped under 1x load). Within a run of consecutive error/state_update frames the two
+# kinds are recorded errors first; every other order is kept as it arrived.
+CROSS_PATH = ("error", "state_update")
+
+
+def order_cross_path(lines):
+    out, run = [], []
+    for kind, text in lines + [(None, None)]:
+        if kind in CROSS_PATH:
+            run.append((CROSS_PATH.index(kind), len(run), text))
+            continue
+        out.extend(t for _, _, t in sorted(run))
+        run = []
+        if text is not None:
+            out.append(text)
+    return out
+
+
+# A1. One named alternative: the Fuel Main commanded series may also carry the sequencer's
+# boot-time de-energized 1 (ActuatorCommander publishInitialState) -- elodin-db hands a late
+# subscriber that row on a loaded Linux box (defect). Exactly {0} or {0, 1}; anything else prints
+# as observed and fails.
+CH7_KEY = "ACT_CMD.B2.CH7.actuator_state_commanded"
+CH7_ALT = (
+    "{0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, "
+    "replayed by elodin-db on subscribe (defect)"
+)
+
+
+def ch7_render(key, vals):
+    """vals: sorted JSON-encoded values. Returns the alternative text, or None."""
+    if key == CH7_KEY and vals in (["0"], ["0", "1"]):
+        return CH7_ALT
+    return None
+
+
+def selftest_paths(steps):
+    """Every path a self-test result reaches a client by, as {path: {board: {sensor: value}}}.
+
+    - "handshake <client>": the connect replay (server.ts selfTestLatest);
+    - "history <step> <client>": a full history reply (more than 10 series, i.e. a connect
+      backfill or an unnarrowed query; narrowed queries name one key and carry no self-test);
+    - "live": self-test sensor_updates outside a handshake.
+    Client C (late_client) is left out of the history paths: it connects past the backend's 60 s
+    connect-backfill horizon, so its backfill no longer reaches back to the one-shot self-test.
+    """
+    paths = defaultdict(lambda: defaultdict(dict))
+    first = {}
+    for st, frames in steps:
+        for client, fs in frames.items():
+            hs = set()
+            if client not in first:
+                first[client] = st["name"]
+                hs = {id(m) for m in handshake_frames(fs)}
+            full = (
+                sum(len(m["payload"]) for m in fs if m["type"] == "historical_data")
+                > 10
+                and client != "C"
+            )
+            for m in fs:
+                if m["type"] == "sensor_update":
+                    e, c = m["payload"]["entity"], m["payload"]["component"]
+                    if e.startswith("SELF_TEST.BOARD_"):
+                        key = f"handshake {client}" if id(m) in hs else "live"
+                        paths[key][e[len("SELF_TEST.BOARD_") :]][c] = m["payload"][
+                            "value"
+                        ]
+                elif m["type"] == "historical_data" and full:
+                    for k, series in m["payload"].items():
+                        if k.startswith("SELF_TEST.BOARD_"):
+                            ent, comp = k.rsplit(".", 1)
+                            for v in series.get("values", []):
+                                paths[f"history {st['name']} {client}"][
+                                    ent[len("SELF_TEST.BOARD_") :]
+                                ][comp] = v
+            if full:
+                paths.setdefault(f"history {st['name']} {client}", defaultdict(dict))
+    for client in first:
+        paths.setdefault(f"handshake {client}", defaultdict(dict))
+    return paths
+
+
+def selftest_section(steps, ctx):
+    """P12. Self-test results, one line per board the simulators self-test.
+
+    Each board's line is written as its exact expected result OR not-received: the result is a
+    one-shot UDP packet (the simulator's skip-startup burst), and on a loaded Linux box some never
+    reach the backend (defect). The golden is the same either way; the rule line below fails when
+      (a) any result received by any path differs from the expected one (sensor set, or a value
+          other than 1), or comes from a board not expected;
+      (b) more than half the boards are not-received (by any path);
+      (c) the run is quiet (unloaded) and ANY board is not-received;
+      (d) the run is quiet and any handshake replay or full history reply lacks any board: every
+          path that carried the self-test in the old golden must carry all of it exactly.
+    `under_load` comes from run.sh (CHAR_UNDER_LOAD, set by whoever starts the synthetic load).
+    """
+    expected = ctx.get("selftest_expected", {})
+    want = {b: sorted(f"sensor_{i}" for i in e["sensors"]) for b, e in expected.items()}
+    paths = selftest_paths(steps)
+    union = defaultdict(dict)
+    problems = []
+    for path, boards in sorted(paths.items()):
+        for board, got in sorted(boards.items()):
+            union[board].update(got)
+            if board not in want:
+                problems.append(f"{path}: board {board} (not expected) {dumps(got)}")
+            elif sorted(got) != want[board] or any(v != 1 for v in got.values()):
+                problems.append(f"{path}: board {board} received {dumps(got)}")
+    out = [
+        "## self-test (P12): per board, the exact expected result | not-received (one-shot UDP"
+        " self-test, defect)"
+    ]
+    missing = []
+    for board in sorted(expected, key=int):
+        out.append(
+            f"board {board} ({expected[board]['type']}): {', '.join(want[board])} all 1"
+            " | not-received (one-shot UDP self-test, defect)"
+        )
+        if board not in union:
+            missing.append(board)
+    under_load = bool(ctx.get("under_load"))
+    if not under_load and missing:
+        problems.append(f"quiet run, not-received: {', '.join(missing)}")
+    if 2 * len(missing) > len(expected):
+        problems.append(f"more than half not-received: {', '.join(missing)}")
+    order = [st["name"] for st, _ in steps]
+    startup_step = (
+        order.index("startup_board") if "startup_board" in order else len(order)
+    )
+    first_step = {}
+    for i, (st, frames) in enumerate(steps):
+        for client in frames:
+            first_step.setdefault(client, i)
+    path_step = {}
+    for path in paths:
+        parts = path.split()
+        if parts[0] == "handshake":
+            path_step[path] = first_step.get(parts[1], 0)
+        elif parts[0] == "history":
+            path_step[path] = order.index(parts[1])
+    if not under_load:
+        for path, boards in sorted(paths.items()):
+            if path == "live":
+                continue
+            # The startup board (60) self-tests during the startup_board step; a path that
+            # closed before it is not expected to carry it.
+            lack = [
+                b
+                for b in sorted(expected, key=int)
+                if b not in boards
+                and not (
+                    expected[b]["type"] == "PT (startup)"
+                    and path_step.get(path, 0) < startup_step
+                )
+            ]
+            if lack:
+                problems.append(f"quiet run, {path} lacks: {', '.join(lack)}")
+    checked = sorted(p for p in paths if p != "live")
+    out.append("paths checked: " + "; ".join(checked))
+    out.append(
+        "self-test rule (a) exact if received, (b) at most half not-received, (c) all"
+        " received when quiet, (d) every replay/full-history path complete when quiet: "
+        + ("ok" if not problems else "VIOLATED: " + "; ".join(problems))
+    )
+    out.append("")
+    return out
+
+
 def main():
     cap_path, ctx_path, out_dir = sys.argv[1:4]
     cap = json.load(open(cap_path))
@@ -210,11 +459,24 @@ def main():
             if client not in first_frames:
                 first_frames[client] = (st["name"], fs)
     health = set()
+    flaps = set()
+    for client in first_frames:
+        seq = [m for _, frames in steps for m in frames.get(client, [])]
+        flaps |= flap_ids(seq)
     for client, (sname, fs) in first_frames.items():
         hs.append(f"## client {client} (connected in step {sname})")
-        for m in handshake_frames(fs):
+        marked = False
+        for m in replay_by_board(handshake_frames(fs)):
+            if handshake_phase(m) == HANDSHAKE_PHASES.index("selftest"):
+                if not marked:
+                    hs.append(
+                        "<self-test replay: see ws_streams.txt self-test section (P12)>"
+                    )
+                    marked = True
+                continue
             if is_board_health(m):
-                health.add(dumps(n.value(m["payload"])))
+                if id(m) not in flaps:
+                    health.add(dumps(n.value(m["payload"])))
                 continue
             m = norm_event(n, m)
             if m["type"] == "board_status_update":
@@ -235,15 +497,20 @@ def main():
                 if first_frames.get(client, (None,))[0] == st["name"]
                 else set()
             )
+            lines = []
             for m in fs:
                 if id(m) in hs_ids or m["type"] in STREAM_TYPES:
                     continue
                 if is_board_health(m):
-                    health.add(dumps(n.value(m["payload"])))
+                    if id(m) not in flaps:
+                        health.add(dumps(n.value(m["payload"])))
                     continue
-                ev.append(f"< {client} {dumps(norm_event(n, m))}")
+                lines.append((m["type"], f"< {client} {dumps(norm_event(n, m))}"))
+            ev.extend(order_cross_path(lines))
         ev.append("")
-    ev.append("## board-health notifications seen (any step, any client; P1)")
+    ev.append(
+        "## board-health notifications seen (any step, any client; P1, reset flaps P1b)"
+    )
     ev.extend(sorted(health))
     ev.append("")
     open(os.path.join(out_dir, "ws_events.txt"), "w").write("\n".join(ev))
@@ -271,7 +538,8 @@ def main():
                     for k, series in m["payload"].items():
                         keys[k] = sorted({dumps(v) for v in series.get("values", [])})
                         assert set(series) == {"time", "values"}, series.keys()
-                    hist.append((st["name"], client, keys))
+                    if client != "C":  # late_client: see selftest_paths
+                        hist.append((st["name"], client, keys))
                 elif t in ("connection_status", "board_status_update", "board_log"):
                     p = n.value(m["payload"])
                     p = {
@@ -282,19 +550,25 @@ def main():
                     periodic[(client, t)].add(dumps(p))
                     if client == "A":
                         periodic_n[t] += 1
-    out = ["## sensor_update (client A, whole session; P2 rate per stream, P7 values)"]
+    out = ["## sensor_update (client A, whole session; P7 values)"]
     for (ent, comp), s in sorted(sens.items()):
+        if ent.startswith("SELF_TEST."):
+            continue  # P12
         vals = sorted(s["vals"])
+        alt = ch7_render(f"{ent}.{comp}", vals)
+        if alt:
+            out.append(f"{ent}.{comp}  value={alt}")
+            continue
         v = (
             vals[0]
             if len(vals) == 1
             else ("{" + ", ".join(vals) + "}" if len(vals) <= 4 else "<varies>")
         )
-        out.append(f"{ent}.{comp}  rate={bucket_rate(s['n'], total_s)}  value={v}")
+        out.append(f"{ent}.{comp}  value={v}")
     out.append("")
-    out.append("## periodic types (client A, whole session; P2)")
-    for t in sorted(periodic_n):
-        out.append(f"{t}  rate={bucket_rate(periodic_n[t], total_s)}")
+    out.extend(selftest_section(steps, ctx))
+    out.append("## timing bounds (from config, not observed; README T1)")
+    out.append(envelope_check(steps, ctx.get("gui_points_per_second", 4)))
     out.append("")
     for (client, t), ps in sorted(periodic.items()):
         out.append(f"## {t} distinct payloads, client {client}")
@@ -309,9 +583,17 @@ def main():
         for k, v in keys.items():
             acc.setdefault(k, set()).update(v)
     for (sname, client), keys in by_req.items():
-        out.append(f"# {sname} client {client}: {len(keys)} series")
+        keys = {k: v for k, v in keys.items() if not k.startswith("SELF_TEST.")}  # P12
+        out.append(f"# {sname} client {client}: {len(keys)} series (self-test: P12)")
         for k in sorted(keys):
-            out.append(f"  {k} {{{', '.join(sorted(keys[k]))}}}")
+            vals = sorted(keys[k])
+            alt = ch7_render(k, vals)
+            if alt:
+                out.append(f"  {k} {alt}")
+                continue
+            # P7 applied to history: a stream with more than four values is "<varies>".
+            shown = "{" + ", ".join(vals) + "}" if len(vals) <= 4 else "<varies>"
+            out.append(f"  {k} {shown}")
     out.append("")
     open(os.path.join(out_dir, "ws_streams.txt"), "w").write("\n".join(out))
 
@@ -382,12 +664,6 @@ def main():
                         rendered = "schema " + dumps(
                             {k: sorted(v) for k, v in sp.items()}
                         )
-                elif path == "/api/cubic_calibration":
-                    # The committed store, read via __dirname (it ignores DAQ_CALIBRATIONS_DIR).
-                    rendered = (
-                        f"sha256={hashlib.sha256(body.encode()).hexdigest()} keys="
-                        + dumps(sorted(obj))
-                    )
                 else:
                     rendered = dumps(n.value(obj))
             else:

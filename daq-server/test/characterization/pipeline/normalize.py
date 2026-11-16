@@ -45,6 +45,7 @@ TS_KEYS = {
     "mtimeMs",
 }
 DAY_MS = 86_400_000
+TS_SECONDS_KEYS = {"updatedAt", "generated_unix", "createdAt", "savedAt"}
 
 # N2. Elapsed times measured on the wall clock.
 DURATION_KEYS = {"remainingMs", "uptimeMs", "lifetimeMs", "durationMs_measured"}
@@ -118,6 +119,17 @@ class Normalizer:
             return "<ts>"
         if self.is_now(v):
             return "<ts>"
+        # N1 (seconds). Epoch SECONDS within a day of the run's clock under a seconds-stamp key,
+        # or with a fractional part (calibration_service's cubic store: updatedAt,
+        # generated_unix). Whole-number values elsewhere stay: an ADC count can be ~1.8e9 too.
+        if (
+            self.now_ms is not None
+            and isinstance(v, (int, float))
+            and not isinstance(v, bool)
+            and (key in TS_SECONDS_KEYS or (isinstance(v, float) and v != int(v)))
+            and abs(v * 1000 - self.now_ms) < DAY_MS
+        ):
+            return "<ts-s>"
         if key is not None and "port" in key.lower() and v in self.ports:
             return f"<port:{self.ports[v]}>"
         return v
