@@ -22,6 +22,7 @@ if [ "$1" = "--status" ]; then
   if [ -d "$LOCK_DIR" ]; then
     age=$(($(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR")))
     echo "held ${age}s by pid $(cat "$LOCK_DIR/pid" 2>/dev/null || echo '?'): $(cat "$LOCK_DIR/what" 2>/dev/null || echo '?')"
+    [ "$age" -lt 600 ] || echo "!! held over 10 min — iterate with a subset (LEDGER D23)"
   else
     echo "free"
   fi

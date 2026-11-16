@@ -1,0 +1,6 @@
+[ConfigBroadcast] No packets from config yet (no designated_survivor?); retrying each cycle
+[ConfigBroadcast] board traffic pinned to <iface> 127.0.0.1 (auto)
+[ConfigBroadcast] Started — interval=60000ms (C++ standalone, live config reload)
+[ConfigBroadcast] 0 packet types
+=== stopped
+=== port 5005: 0 datagram(s)
