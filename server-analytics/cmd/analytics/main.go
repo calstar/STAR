@@ -148,6 +148,7 @@ func runAgent(ctx context.Context) {
 		JournalPrefix:  list(env("JOURNAL_UNIT_PREFIXES", "sensor-")),
 		SampleInterval: duration("SAMPLE_INTERVAL", 15*time.Second),
 		PushInterval:   duration("PUSH_INTERVAL", 30*time.Second),
+		PeakInterval:   duration("PEAK_INTERVAL", time.Second),
 	}
 	if err := agent.New(cfg).Run(ctx); err != nil {
 		log.Fatal(err)

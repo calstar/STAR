@@ -133,6 +133,31 @@ type HostReader struct {
 	prevRx  uint64
 	prevTx  uint64
 	prevAt  time.Time
+
+	// Peek's own CPU baseline and the maxima it has seen since the last Sample.
+	peekCPU     cpuTimes
+	peekAt      time.Time
+	peakCPU     float64
+	peakMemUsed uint64
+}
+
+// Peek reads CPU and memory between samples and keeps the highest of each, so a
+// spike that starts and ends inside one SAMPLE_INTERVAL still reaches the panel.
+// Two small /proc reads; the agent calls it about once a second.
+func (h *HostReader) Peek(now time.Time) {
+	if stat, err := h.read("stat"); err == nil {
+		if cpu, _, err := parseProcStat(stat); err == nil {
+			if !h.peekAt.IsZero() {
+				h.peakCPU = max(h.peakCPU, cpuPercent(h.peekCPU, cpu))
+			}
+			h.peekCPU, h.peekAt = cpu, now
+		}
+	}
+	if mi, err := h.read("meminfo"); err == nil {
+		if mem, err := parseMeminfo(mi); err == nil {
+			h.peakMemUsed = max(h.peakMemUsed, mem.total-min(mem.avail, mem.total))
+		}
+	}
 }
 
 func (h *HostReader) read(name string) (string, error) {
@@ -201,6 +226,9 @@ func (h *HostReader) Sample(now time.Time) (*wire.HostSample, error) {
 		}
 	}
 	h.prevCPU, h.prevRx, h.prevTx, h.prevAt = cpu, rx, tx, now
+	// The interval's peaks are at least what this sample itself read.
+	s.CPUMax, s.MemMax = max(h.peakCPU, s.CPU), max(h.peakMemUsed, s.MemUsed)
+	h.peakCPU, h.peakMemUsed = 0, 0
 	if first {
 		return nil, nil
 	}

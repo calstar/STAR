@@ -14,6 +14,22 @@
 
 import type { FaceRef, MotorSelection, PartOverride } from '../types'
 
+export const DRAG_MODELS = ['buildup', 'openrocket-24.12', 'stub'] as const
+export type DragModel = (typeof DRAG_MODELS)[number]
+/** OpenRocket's ExternalComponent.Finish names, roughest first, with its roughness. */
+export const FINISHES = [
+  ['rough', 'Rough (500 µm)'],
+  ['roughunfinished', 'Rough unfinished (250 µm)'],
+  ['unfinished', 'Unfinished (150 µm)'],
+  ['normal', 'Regular paint (60 µm)'],
+  ['smooth', 'Smooth paint (20 µm)'],
+  ['optimum', 'Optimum paint (5 µm)'],
+  ['polished', 'Polished (2 µm)'],
+  ['finishpolished', 'Finished polished (0.5 µm)'],
+  ['mirror', 'Mirror (0 µm)'],
+] as const
+export type Finish = (typeof FINISHES)[number][0]
+
 export interface FlightParams {
   /** Rail angle from horizontal (deg); 90 = vertical. */
   inclination: number
@@ -21,6 +37,11 @@ export interface FlightParams {
   heading: number
   /** Which CP model the stability overlay shows. */
   cpModel: 'ours' | 'rocketpy' | 'both'
+  /** The drag model the 6-DOF flies (backend/onshape/aero/drag.py DRAG_MODELS). */
+  dragModel: DragModel
+  /** The CAD's surface finish, an OpenRocket finish name (drag_geometry.FINISHES).
+   *  An imported .ork brings its own per piece and ignores this. */
+  finish: Finish
   // Which series are ticked on the compare plots used to live here. They are a
   // viewing preference, not physics, so they now sit in localStorage per
   // browser -- see lib/uiPrefs.ts. On the design they travelled in the save
@@ -53,7 +74,7 @@ export interface ViewerConfig {
 
 export function defaultFlightParams(): FlightParams {
   return {
-    inclination: 85, heading: 0, cpModel: 'both',
+    inclination: 85, heading: 0, cpModel: 'both', dragModel: 'buildup', finish: 'smooth',
   }
 }
 

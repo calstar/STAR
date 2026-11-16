@@ -12,7 +12,7 @@
  */
 
 import type { FlightParams, ViewerConfig } from '../types/config'
-import { defaultFlightParams, defaultViewerConfig } from '../types/config'
+import { DRAG_MODELS, FINISHES, defaultFlightParams, defaultViewerConfig } from '../types/config'
 
 /** Versioned key, so a future shape change is ignored rather than crashed on. */
 export const STORAGE_KEY = 'star-openrocket.config.v1'
@@ -79,6 +79,8 @@ function revivedFlight(saved: unknown): FlightParams {
     cpModel: f.cpModel === 'ours' || f.cpModel === 'rocketpy' || f.cpModel === 'both'
       ? f.cpModel
       : base.cpModel,
+    dragModel: (DRAG_MODELS as readonly string[]).includes(f.dragModel as string) ? f.dragModel! : base.dragModel,
+    finish: FINISHES.some(([k]) => k === f.finish) ? f.finish! : base.finish,
   }
 }
 

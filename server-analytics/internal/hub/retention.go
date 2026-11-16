@@ -28,14 +28,16 @@ func (s *Store) Maintain(now time.Time) error {
 	end := now.UnixMilli() / bucket * bucket
 	start := now.Add(-rollupWindow).UnixMilli() / bucket * bucket
 	if _, err := s.db.Exec(`INSERT OR REPLACE INTO host_rollups
-		SELECT host, ts / ?1 * ?1, AVG(cpu), MAX(cpu), AVG(mem_used), MAX(mem_used), MAX(mem_total),
+		SELECT host, ts / ?1 * ?1, AVG(cpu), MAX(COALESCE(cpu_max, cpu)), AVG(mem_used),
+			MAX(COALESCE(mem_max, mem_used)), MAX(mem_total),
 			AVG(swap_used), AVG(load1), AVG(load5), AVG(load15), MAX(disk_used), MAX(disk_total),
 			AVG(net_rx), AVG(net_tx)
 		FROM host_samples WHERE ts >= ?2 AND ts < ?3 GROUP BY host, ts / ?1`, bucket, start, end); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`INSERT OR REPLACE INTO container_rollups
-		SELECT host, name, ts / ?1 * ?1, AVG(cpu), MAX(cpu), AVG(mem_used), MAX(mem_used)
+		SELECT host, name, ts / ?1 * ?1, AVG(cpu), MAX(COALESCE(cpu_max, cpu)), AVG(mem_used),
+			MAX(COALESCE(mem_max, mem_used))
 		FROM container_samples WHERE ts >= ?2 AND ts < ?3 GROUP BY host, name, ts / ?1`, bucket, start, end); err != nil {
 		return err
 	}

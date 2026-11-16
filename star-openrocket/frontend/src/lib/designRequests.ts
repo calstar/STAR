@@ -16,6 +16,7 @@
 
 import type { FaceRef, FlightDynamicsRequest, MotorSelection, OrkExportRequest, Part, PartOverride } from '../types'
 import type { FlightParams, OrkConfig } from '../types/config'
+import { defaultFlightParams } from '../types/config'
 import type { Config, UiConfig } from '../recovery/types/schema'
 import { toWireConfig } from '../recovery/lib/serialise'
 import { MATERIALS_BY_KEY } from './materials'
@@ -49,7 +50,7 @@ export interface AscentInputs {
   finCount: number
   motor: MotorSelection | null
   railLength: number
-  flight: Pick<FlightParams, 'inclination' | 'heading'>
+  flight: Pick<FlightParams, 'inclination' | 'heading' | 'dragModel' | 'finish'>
 }
 
 /** The 6-DOF body: the ascent plus the shared site and wind the descent uses. */
@@ -70,6 +71,10 @@ export function flightDynamicsRequest(
     railLength: cad.railLength,
     inclination: cad.flight.inclination,
     heading: cad.flight.heading,
+    // A design saved before these existed has neither: the defaults, as
+    // design_requests.py's FLIGHT_CHOICES (and reviveViewerConfig) fill them.
+    dragModel: cad.flight.dragModel ?? defaultFlightParams().dragModel,
+    finish: cad.flight.finish ?? defaultFlightParams().finish,
     site: wire.site,
     wind: wire.wind,
   }

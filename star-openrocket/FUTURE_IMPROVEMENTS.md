@@ -6,39 +6,56 @@ path to a better version.
 
 ---
 
-## 1. Rocket inertia is a rod/cylinder approximation
+## 1. ~~The 6-DOF uses a rod/cylinder inertia estimate~~ (done)
 
-**Today.** The Onshape CAD pipeline extracts per-part mass and centroid, but **not
-the inertia tensor**, so the RocketPy flight (`backend/onshape/aero/rocketpy_flight.py`)
-approximates the dry rocket's moments of inertia from mass + length + radius:
-longitudinal `I11 = I22 ≈ (1/12)·m·L²` (slender rod), roll `I33 ≈ (1/2)·m·r²`
-(thin cylinder).
+**Was.** `rocketpy_flight.py` gave RocketPy `I = m L^2 / 12` for the dry rocket: a
+uniform rod. On LE4 SD that is 160 kg m^2 against a real 74 -- a ballasted rocket has
+its mass near the middle -- so the 6-DOF's pitch frequency was ~30 % low.
 
-**Why it's a simplification.** Real mass is not uniformly distributed (dense motor
-aft, avionics/payload concentrated), so the true longitudinal inertia differs from a
-uniform rod — often substantially. Inertia does **not** affect the trajectory,
-apogee, max-Q, or static/stability margin (those are force/CP/CG quantities). It
-**does** drive the *rotational dynamics*: pitch/yaw angular rates, the oscillation
-frequency and damping (`attitude_frequency_response`), and how fast the rocket
-weathercocks / settles after a gust. So the AoA-vs-time and angular-rate panels are
-qualitatively right but quantitatively approximate.
+**Now.** The build stores every part's inertia per kg (`inertiaPerKgWorld`, from
+Onshape where the part has a material, from the closed mesh otherwise), and
+`stability.rigid_body_inertia` sums them with the parallel-axis term -- reproducing
+Onshape's own assembly inertia on LE4 SD to the fourth digit. The rod survives only as
+the fallback for a model whose parts carry no tensors, and the result says so.
 
-**Path to better.**
-- Onshape's mass-properties API returns the inertia tensor per part; extend the
-  build (`backend/onshape/mass.py` / `build.py`) to fetch and store it in the
-  manifest, then sum part tensors (parallel-axis) about the rocket axis — same
-  CAD-derived philosophy as the mass/CG and CP work.
-- Interim without new API calls: integrate inertia from the tessellated geometry +
-  per-part mass already in the manifest (mesh moment integrals), which needs no
-  extra Onshape quota.
-- Validate against a known CAD assembly whose inertia Onshape reports directly.
+The same change made the 6-DOF fly the stability panel's Barrowman components (body
+split at its radius changes, plus the fins) instead of RocketPy's own nose and fins --
+which had no boattail -- and placed the motor by its nozzle so jet damping has its real
+arm. See the module docstring.
 
 ---
 
-## 2. Airframe drag is a stub Cd(Mach) curve
+## 2. ~~Airframe drag is a stub Cd(Mach) curve~~ (subsonic buildup done)
 
-**Today.** RocketPy is a trajectory solver, not a drag predictor — it requires a
-supplied `power_off_drag` / `power_on_drag` as Cd(Mach). We currently feed a **stub
+**Was.** A fixed curve (Cd 0.45 subsonic, a transonic bump) for every rocket.
+
+**Now.** Named drag models built from the CAD airframe (README "Drag"): a component
+buildup by default -- OpenRocket's with its long-rocket shortcuts replaced by
+Hoerner / Schlichting correlations -- and OpenRocket 24.12's own model beside it,
+tabulated over Mach and Reynolds number, with a power-on curve. The stub stays
+selectable.
+
+**Left.**
+- **Calibration against flight.** Fit Cd from the coast-phase deceleration on an
+  altimeter trace (the recovery calculator's flight data, atmosphere and wind are
+  in). No flight data yet; this is what would make either model accurate rather
+  than plausible -- buildups disagree with real rockets by 10-20 %, from what none
+  of them model (surface defects, joints, fin misalignment, flying off the wind).
+- **Transonic and supersonic** terms are OpenRocket's (nose and fin wave drag,
+  base above Mach 1); fine for LE4 SD (Mach 0.47), approximate for a fast rocket.
+- **Angle-of-attack drag** is not modelled: zero-AoA Cd throughout.
+- **Nozzle exit** for the power-on base is taken as the motor case diameter; the
+  motor files carry no exit size.
+- **Handbook page numbers.** The correlations cite Hoerner's and Schlichting's
+  chapters; the exact pages have not been checked against the books.
+- **CAD protuberances** are read off the outer surface by a geometric rule
+  (`drag_geometry.detect_protuberances`); a design with many small features may
+  need a per-feature review in the UI.
+
+### Original notes
+
+**Today (was).** RocketPy is a trajectory solver, not a drag predictor — it requires a
+supplied `power_off_drag` / `power_on_drag` as Cd(Mach). We fed a **stub
 curve** (subsonic Cd0 ≈ 0.45 with a transonic bump), not a CAD-derived value.
 
 **Why it's a simplification.** Drag dominates apogee and max-Q, so those performance
@@ -64,22 +81,24 @@ are approximate. The UI should say so.)
 
 ---
 
-## 3. CP injection driving the flight (vs. margin overlay)
+## 3. ~~CP injection driving the flight (vs. margin overlay)~~ (done)
 
-**Today.** The RocketPy flight is integrated with **native** parametric fins (correct
-6-DOF). The ours-vs-RocketPy CP comparison is a **margin overlay** on the same flight:
-our `cp_axial_at_mach` over Mach(t) vs RocketPy's `stability_margin(t)`.
+**Was.** RocketPy flew its own parametric nose and fins, and our CP was only a margin
+overlay -- so the 6-DOF had no boattail and the two margins disagreed by ~1 calibre on
+LE4 SD.
 
-**Why not the full injection yet.** Feeding our Mach-dependent CP through a
-`LinearGenericSurface` (via `rocketpy_adapter`) so it *drives* the trajectory needs
-its coordinate/moment convention validated against a live run — RocketPy's reported
-`stability_margin` reads a surface's geometric `cp`, not the cm-encoded CP, so the
-injected flight needs care to trust. The overlay gives the comparison the user wanted
-without that risk.
+**Now.** Each of our Barrowman components is a subclass of RocketPy's own
+`AeroSurface` (`rocketpy_flight._barrowman_surface`), not a `LinearGenericSurface`:
+RocketPy then computes its lift from the local airflow at the surface, rotation
+included, exactly as for its native nose and fins -- which sidesteps the cm-encoding
+question that kept the injection back. The validation asked for here is
+`test_injected_surfaces_fly_exactly_like_rocketpys_own`: a native-surface rocket and
+the same rocket rebuilt from our surfaces with the native CNa(M)/CP fly the same
+trajectory and pitch response. RocketPy's margin and ours now agree to 0.02 cal along
+a flight (`test_imported_rocket_6dof_margin_tracks_the_stability_panel`).
 
-**Path to better.** Validate the injection by building a native-fin rocket and an
-injected-surface rocket with the *same* CP(M) and asserting their trajectories/margins
-agree; then offer an "our CP drives the flight" mode.
+**Left.** The fin CP is held at its Mach 0.3 position in the 6-DOF (RocketPy fixes a
+surface's CP); its CNa follows Mach. That matters only transonic and up.
 
 ---
 

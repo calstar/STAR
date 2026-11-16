@@ -16,7 +16,7 @@
       "finCount": 3,
       "motor": null,
       "railLength": 1.0,
-      "flight": {"inclination": 85, "heading": 0, "cpModel": "ours"},
+      "flight": {"inclination": 85, "heading": 0, "cpModel": "ours", "dragModel": "openrocket-24.12", "finish": "normal"},
       "hiddenKeys": []
     },
     "recovery": {
@@ -43,6 +43,8 @@
       "railLength": 1.0,
       "inclination": 85,
       "heading": 0,
+      "dragModel": "openrocket-24.12",
+      "finish": "normal",
       "site": {"T_pad": 305.2, "p_pad": 88000, "lapse": 0.008},
       "wind": null
     },

@@ -29,6 +29,9 @@ type Config struct {
 	JournalPrefix  []string
 	SampleInterval time.Duration
 	PushInterval   time.Duration
+	// How often to peek between samples for CPU/memory peaks; 0 turns it off
+	// and a sample's peak is just its own reading.
+	PeakInterval time.Duration
 }
 
 // How much an unreachable hub may cost the agent's memory. Past these the oldest
@@ -43,6 +46,7 @@ type Agent struct {
 	host   *HostReader
 	cts    *Containers
 	dlogs  *DockerLogs
+	events *DockerEvents
 	jlogs  *JournalLogs
 	client *http.Client
 
@@ -57,6 +61,7 @@ func New(cfg Config) *Agent {
 		host:   &HostReader{Proc: cfg.Proc, Root: cfg.Root},
 		cts:    &Containers{docker: dc, cgroup: cfg.Cgroup},
 		dlogs:  &DockerLogs{docker: dc, started: now},
+		events: &DockerEvents{docker: dc, since: now},
 		jlogs:  &JournalLogs{Dir: cfg.JournalDir, Prefixes: cfg.JournalPrefix, started: now},
 		client: &http.Client{Timeout: 20 * time.Second},
 	}
@@ -77,6 +82,11 @@ func (a *Agent) sample(ctx context.Context, now time.Time) {
 
 func (a *Agent) collectLogs(ctx context.Context, now time.Time) {
 	a.pending.Logs = append(a.pending.Logs, a.dlogs.Collect(ctx, a.cts)...)
+	ev, err := a.events.Collect(ctx, now)
+	if err != nil {
+		log.Printf("docker events: %v", err)
+	}
+	a.pending.Logs = append(a.pending.Logs, ev...)
 	a.pending.Logs = append(a.pending.Logs, a.jlogs.Collect(ctx, now)...)
 	a.pending.Deploy = readDeploy(a.cfg.DeployState)
 }
@@ -136,12 +146,22 @@ func (a *Agent) Run(ctx context.Context) error {
 	pushT := time.NewTicker(a.cfg.PushInterval)
 	defer sampleT.Stop()
 	defer pushT.Stop()
+	// A nil channel never fires: with peeking off the case below is inert.
+	var peekC <-chan time.Time
+	if a.cfg.PeakInterval > 0 {
+		peekT := time.NewTicker(a.cfg.PeakInterval)
+		defer peekT.Stop()
+		peekC = peekT.C
+	}
 	a.sample(ctx, time.Now())
 	failing := false
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case now := <-peekC:
+			a.host.Peek(now)
+			a.cts.Peek(now)
 		case now := <-sampleT.C:
 			a.sample(ctx, now)
 		case now := <-pushT.C:

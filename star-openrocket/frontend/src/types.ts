@@ -1,6 +1,7 @@
 /** Shape of manifest.json, emitted by backend/onshape/build.py. */
 
 import type { Device } from './recovery/types/schema'
+import type { Kind } from './lib/units/quantities'
 
 export interface Material {
   name: string
@@ -24,6 +25,9 @@ export interface Part {
   material: Material | null
   /** True when Onshape had no material for this part, so it carries no mass. */
   materialDefaulted: boolean
+  /** The mass was typed into the part's "Mass" property in Onshape (an override), not
+   * computed from a material. Absent on manifests built before it was read. */
+  massOverridden?: boolean
   /** kg, straight from Onshape. Zero whenever `materialDefaulted` is true. */
   mass: number
   volume: number
@@ -57,17 +61,83 @@ export interface Manifest {
     resolvedFrom: string
     assemblyName: string
     builtAt: string
-    apiVersion: string
+    apiVersion?: string
+    /** "ork" for an imported OpenRocket file; absent (Onshape) for a CAD build. */
+    kind?: 'onshape' | 'ork'
+    fileName?: string
   }
   upAxisHandling: string
   totals: Totals
   parts: Part[]
   build: Record<string, number>
   warnings: string[]
+  /** Present on an imported .ork: what only the .ork knows. */
+  ork?: OrkInfo
 }
+
+/** One motor configuration of an imported .ork, matched to the motor catalogue. */
+export interface OrkMotorInfo {
+  configId: string
+  default: boolean
+  manufacturer: string
+  designation: string
+  digest: string | null
+  diameter: number
+  length: number
+  mount: string
+  aftFromNose: number
+  /** The MotorSelection aftOffset that reproduces the .ork's placement. */
+  aftOffset: number
+  motorId: string | null
+  simfileId: string | null
+  /** "digest" (the .ork's exact thrust data) or "designation" (name only). */
+  matchedBy: 'digest' | 'designation' | null
+}
+
+export interface OrkInfo {
+  rocketName: string
+  length: number
+  referenceDiameter: number
+  mass: number
+  cgFromNose: number
+  motors: OrkMotorInfo[]
+  /** OpenRocket's stored results. `status` is "uptodate" only when they belong to the
+   *  design in the file (anything else: some earlier version of it). */
+  simulations: { name: string; status: string | null; configId: string | null; summary: Record<string, number> }[]
+}
+
+export interface OrkImportResult {
+  modelId: string
+  rocketName: string
+  warnings: string[]
+  motors: OrkMotorInfo[]
+}
+
+/** One line of a model-vs-model comparison. Values are SI; `kind` is the unit kind
+ * to show them in ("count" and "margin" -- calibres -- convert to nothing). */
+export interface CompareRow {
+  key: string
+  label: string
+  kind: Kind | 'count' | 'margin'
+  a: number | null
+  b: number | null
+  delta: number | null
+  relative: number | null
+  /** Beyond the backend's tolerance for this unit. */
+  differs: boolean
+}
+
+export interface CompareResult {
+  rows: CompareRow[]
+}
+
+/** One side of a comparison: a model and (optionally) its stability selection.
+ * Anything left out is auto-detected, as the backend's StabilityRequest defaults. */
+export type CompareSide = Partial<StabilityRequest> & { modelId: string }
 
 export interface ModelSummary {
   id: string
+  kind?: 'onshape' | 'ork'
   documentName: string | null
   assemblyName: string | null
   builtAt: string | null
@@ -261,6 +331,24 @@ export interface FinGuess {
 }
 
 /** CG, CP and static margin from POST .../stability. All backend-computed. */
+/** Static margin against angle of attack with the body's crossflow lift (aero/high_aoa.py). */
+export interface HighAoaResult {
+  /** Where the CP reaches the CG, deg. 0 = unstable at zero angle; null = stable to 90°. */
+  criticalAoaDeg: number | null
+  cgFromNose: number
+  /** Side-view area of the body (m²), its ratio to the reference area, and its centroid. */
+  sideArea: number
+  sideAreaRatio: number
+  sideCentroidFromNose: number
+  /** The small-angle balance (m): fins + body restoring per rad, crossflow overturning per rad². */
+  restoringPerRad: number
+  overturningPerRad2: number
+  curve: { aoa: number; cpFromNose: number; margin: number }[]
+  /** V·tan(critical angle) at a few rail-exit speeds, m/s. */
+  maxCrosswind: { railSpeed: number; maxCrosswind: number }[]
+  model: string
+}
+
 export interface StabilityResult {
   cg: { world: [number, number, number]; fromNose: number }
   cp: { world: [number, number, number]; fromNose: number }
@@ -275,6 +363,8 @@ export interface StabilityResult {
   fins: FinData
   /** Present only when a motor was included in the request. */
   motor?: MotorResult | null
+  /** Margin against angle of attack at this CG; null without a mass. */
+  highAoa?: HighAoaResult | null
 }
 
 /** One time step of the ascent sim. Masses kg, lengths m, times s, margin cal. */
@@ -353,7 +443,13 @@ export interface FlightDynamicsResult {
   minStabilityMargin: number
   minStabilityMarginTime: number
   minStabilityMarginOurs: number | null
+  /** deg, after rail exit while airspeed is at least 25 % of the maximum. */
   maxAngleOfAttack: number
+  /** deg, the moment the rocket leaves the rail. */
+  outOfRailAngleOfAttack: number | null
+  /** Dry pitch inertia the flight used, kg m², and where it came from. */
+  inertiaTransverse: number | null
+  inertiaSource: string | null
   maxBendingMoment: number
   driftDistance: number
   driftBearing: number
@@ -366,12 +462,33 @@ export interface FlightDynamicsResult {
   burnoutDrag: number | null
   launchStable: boolean
   approximations: string[]
+  /** The drag model flown, its Cd(Mach) at the pad's air, and its terms at max speed
+   *  and at Mach 0.3 on the pad (null for the stub). */
+  dragModel: string
+  cdCurve: { mach: number[]; powerOff: number[]; powerOn: number[] } | null
+  cdBreakdown: Record<string, { mach: number; altitude: number; cd: number; terms: Record<string, number> }> | null
+  /** The rail exit against the critical angle of attack at that instant's CG and Mach. */
+  railExit: {
+    time: number | null
+    velocity: number
+    /** The angle the flown wind gave as the rail let go, deg. */
+    angleOfAttack: number | null
+    criticalAoaDeg: number | null
+    /** The crosswind that puts the rocket at its critical angle at this exit speed, m/s. */
+    maxCrosswind: number | null
+    pastCritical: boolean | null
+    highAoa: HighAoaResult
+  } | null
 }
 
 /** Launch conditions for the 6-DOF flight, on top of the geometry/motor request. */
 export interface FlightDynamicsRequest extends StabilityRequest {
   inclination?: number
   heading?: number
+  /** backend/onshape/aero/drag.py DRAG_MODELS; the backend defaults to 'buildup'. */
+  dragModel?: 'buildup' | 'openrocket-24.12' | 'stub'
+  /** The CAD's surface finish (OpenRocket finish name); an .ork brings its own. */
+  finish?: string
   /** The shared environment (set on the Environment tab): the site atmosphere the
    *  ascent flies in and the wind it climbs through — the same objects the recovery
    *  descent integrates, so both halves of the flight agree. Mirrors the recovery

@@ -19,6 +19,7 @@ exposed to a network without authentication in front of it.
 
 from __future__ import annotations
 
+import math
 import json
 import threading
 import uuid
@@ -26,7 +27,7 @@ import sys as _sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 # physics/ (the recovery calculator's pure library) sits at the app root next to
 # backend/. Put the app root on sys.path so `import physics` resolves regardless
@@ -35,10 +36,12 @@ _APP_ROOT = str(Path(__file__).resolve().parent.parent)
 if _APP_ROOT not in _sys.path:
     _sys.path.insert(0, _APP_ROOT)
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from .deadline import ComputeBudgetMiddleware
+from .reqlog import RequestLogMiddleware, log_fin_planform, log_startup
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
@@ -49,12 +52,16 @@ from physics.schema import Device, Site, WindInput  # noqa: E402
 from physics.site import FAR_ELEV_M  # noqa: E402
 
 from .onshape.aero.axis import Axis
+from .onshape.aero import drag as drag_models
+from .onshape.aero.drag import DEFAULT_MODEL as DEFAULT_DRAG_MODEL
+from .onshape.aero.drag_geometry import DEFAULT_FINISH, FINISHES, apply_ork_hints, from_core
 from .onshape.aero.fins import (
     count_fins,
     detect_fin_faces,
     extract_fin_planform,
     planform_outline_3d,
 )
+from .onshape.aero.high_aoa import to_json as high_aoa_json
 from .onshape.aero.outer_surface import detect_outer_surface
 from .onshape.aero.profile import build_profile
 from .onshape.aero.flight import simulate_flight
@@ -66,6 +73,9 @@ from .onshape.browse import BrowseCache
 from .onshape.build import build as run_build
 from .onshape.client import MissingCredentials, OnshapeClient, OnshapeError
 from .onshape.geometry_store import GeometryStore
+from .ork import compare as ork_compare
+from .ork.document import MAX_FILE_BYTES as ORK_MAX_BYTES, OrkError
+from .ork.importer import import_ork
 from .motors.db import MotorDB
 
 CACHE_ROOT = Path(__file__).resolve().parent.parent / "cache"
@@ -80,6 +90,7 @@ _motor_db = MotorDB(CACHE_ROOT / "motors")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    log_startup()
     # Recovery calculator: load the parachute catalogue once at startup (121 rows
     # of committed CSV) so a malformed table fails loudly at boot, not per request.
     try:
@@ -100,6 +111,8 @@ app = FastAPI(title="STAR OpenRocket API", version="1.0.0", lifespan=lifespan)
 # stay outermost or a 422 would reach the browser as an opaque network error
 # rather than the message naming the field.
 app.add_middleware(ComputeBudgetMiddleware)
+# Outside the budget so a request killed by it still logs its done line.
+app.add_middleware(RequestLogMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -184,6 +197,7 @@ async def list_models():
                 "documentName": source.get("documentName"),
                 "assemblyName": source.get("assemblyName"),
                 "builtAt": source.get("builtAt"),
+                "kind": source.get("kind", "onshape"),
                 "partCount": manifest.get("totals", {}).get("partCount"),
                 "partsWithoutMaterial": manifest.get("totals", {}).get(
                     "partsWithoutMaterial"
@@ -256,6 +270,10 @@ class MotorSelection(BaseModel):
     state: str = "launch"
 
 
+DragModelName = Literal[drag_models.DRAG_MODELS]  # type: ignore[valid-type]
+FinishName = Literal[tuple(FINISHES)]  # type: ignore[valid-type]
+
+
 class StabilityRequest(BaseModel):
     #: Approved outer airframe faces. Empty means "auto-detect them for me".
     outerFaces: list[FaceRef] = []
@@ -286,6 +304,16 @@ class FlightDynamicsRequest(StabilityRequest):
     #: Both optional -- absent wind is calm; absent site is the standard column at FAR.
     wind: WindInput | None = Field(default=None, discriminator="kind")
     site: Site | None = None
+    #: The drag model flown (``drag.DRAG_MODELS``) and, for a CAD model, its surface
+    #: finish (an OpenRocket finish name; an imported .ork brings its own).
+    dragModel: DragModelName = DEFAULT_DRAG_MODEL
+    finish: FinishName = DEFAULT_FINISH
+
+
+class DragRequest(StabilityRequest):
+    """The airframe selection plus the CAD's surface finish, for ``/drag``."""
+
+    finish: FinishName = DEFAULT_FINISH
 
 
 class OrkExportRequest(FlightDynamicsRequest):
@@ -371,6 +399,11 @@ def fins(model_id: str):
             pf = extract_fin_planform(fin_geo, axis, profile.r_max)
             count = pf.n_fins
             planforms = [planform_outline_3d(pf, axis, az) for az in pf.azimuths]
+            log_fin_planform(
+                f"fins {model_id}", n=pf.n_fins, root=pf.root_chord, tip=pf.tip_chord,
+                sweep=pf.sweep, span=pf.span, body_length=abs(profile.x_aft - profile.x_fore),
+                body_radius=profile.r_max, azimuths=pf.azimuths,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
@@ -432,6 +465,14 @@ def stability(model_id: str, request: StabilityRequest):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    if result.n_fins:
+        log_fin_planform(
+            f"stability {model_id} ({'picked' if fin_faces is not None else 'auto'} faces)",
+            n=result.n_fins, root=result.fin_root_chord, tip=result.fin_tip_chord,
+            sweep=result.fin_sweep, span=result.fin_span, body_length=result.body_length,
+            body_radius=result.r_max, symmetric=result.fin_symmetric,
+        )
+
     if motor_block is not None:
         motor_block["cgFromNose"] = result.motor_cg_from_nose
         motor_block["aftFromBase"] = result.motor_aft_from_base
@@ -462,6 +503,7 @@ def stability(model_id: str, request: StabilityRequest):
             "symmetric": result.fin_symmetric,
         },
         "motor": motor_block,
+        "highAoa": high_aoa_json(result.high_aoa),
     }
 
 
@@ -737,6 +779,9 @@ def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
             heading=request.heading,
             wind_profile=wind_profile,
             atmosphere=atmosphere,
+            drag_model=request.dragModel,
+            finish=request.finish,
+            ork_drag=(manifest.get("ork") or {}).get("drag"),
         )
     except ModuleNotFoundError as exc:
         raise HTTPException(
@@ -784,6 +829,9 @@ def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
         "minStabilityMarginTime": result.min_stability_margin_time,
         "minStabilityMarginOurs": result.min_stability_margin_ours,
         "maxAngleOfAttack": result.max_angle_of_attack,
+        "outOfRailAngleOfAttack": result.out_of_rail_angle_of_attack,
+        "inertiaTransverse": result.inertia_transverse,
+        "inertiaSource": result.inertia_source,
         "maxBendingMoment": result.max_bending_moment,
         "driftDistance": result.drift_distance,
         "driftBearing": result.drift_bearing,
@@ -793,6 +841,82 @@ def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
         "burnoutDrag": result.burnout_drag,
         "launchStable": result.launch_stable,
         "approximations": result.approximations,
+        "dragModel": result.drag_model,
+        "cdCurve": result.cd_curve,
+        "cdBreakdown": result.cd_breakdown,
+        "railExit": _rail_exit_block(result),
+    }
+
+
+def _rail_exit_block(result) -> dict | None:
+    """The rail-exit check: the angle the flown wind gave as the rail let go, against the
+    critical angle at that instant's CG, and the largest crosswind this exit speed takes."""
+    h = result.rail_exit_high_aoa
+    if h is None:
+        return None
+    crit = h.critical_aoa_deg
+    v = result.out_of_rail_velocity
+    aoa = result.out_of_rail_angle_of_attack
+    return {
+        "time": result.out_of_rail_time,
+        "velocity": v,
+        "angleOfAttack": aoa,
+        "criticalAoaDeg": crit,
+        # V tan(a_crit): the crosswind that puts the rocket at its critical angle as it
+        # leaves the rail. None when it stays stable to 90 deg.
+        "maxCrosswind": None if crit is None else v * math.tan(math.radians(crit)),
+        "pastCritical": None if (crit is None or aoa is None) else aoa >= crit,
+        "highAoa": high_aoa_json(h),
+    }
+
+
+@app.post("/api/models/{model_id}/drag")
+def drag(model_id: str, request: DragRequest):
+    """Every drag model's Cd(Mach) and term breakdown for the airframe, side by side.
+
+    Evaluated in the standard atmosphere at the FAR pad -- no flight is run, so this is
+    the drag as a function of Mach at the pad's air, for comparing the models.
+    """
+    import math
+
+    from .onshape.aero.stability import aero_core
+
+    model_dir = _model_dir(model_id)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+    faces = [(f.key, f.faceId) for f in request.outerFaces] or detect_outer_surface(store).faces
+    fin_faces = [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
+    try:
+        core = aero_core(store, faces, None, fin_faces, request.nFins)
+        geom = apply_ork_hints(from_core(store, faces, core, finish=request.finish, fin_faces=fin_faces),
+                               (manifest.get("ork") or {}).get("drag"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    atm = Atmosphere(FAR_ELEV_M)
+    T, rho = float(atm.T(0.0)), float(atm.rho(0.0))
+    a = math.sqrt(1.4 * 287.05287 * T)
+    nu = 1.458e-6 * T**1.5 / (T + 110.4) / rho  # Sutherland
+    machs = [round(0.05 * i, 2) for i in range(0, 41)]
+    models = {}
+    for name in drag_models.DRAG_MODELS:
+        rows = [drag_models.breakdown(geom, name, m, max(m, 1e-3) * a / nu) for m in machs]
+        models[name] = {
+            "mach": machs,
+            "cd": [r.cd for r in rows],
+            "terms": {k: [r.terms.get(k, 0.0) for r in rows] for k in dict.fromkeys(t for r in rows for t in r.terms)},
+        }
+    return {
+        "default": drag_models.DEFAULT_MODEL,
+        "refArea": geom.ref_area,
+        "length": geom.length,
+        "notes": list(geom.notes),
+        "segments": [{"kind": sg.kind, "xFore": sg.x_fore, "xAft": sg.x_aft, "rFore": sg.r_fore,
+                      "rAft": sg.r_aft, "wetArea": sg.wet_area, "roughness": sg.roughness} for sg in geom.segments],
+        "fins": [{"name": f.name, "count": f.count, "area": f.area, "span": f.span, "mac": f.mac,
+                  "thickness": f.thickness, "section": f.section} for f in geom.fins],
+        "protuberances": [{"name": p.name, "kind": p.kind, "count": p.count, "height": p.height,
+                           "width": p.width, "length": p.length, "x": p.x} for p in geom.protuberances],
+        "models": models,
     }
 
 
@@ -1117,6 +1241,70 @@ async def start_build(request: BuildRequest):
 
     threading.Thread(target=_run_job, args=(job_id, url), daemon=True).start()
     return {"jobId": job_id, "status": "queued"}
+
+
+# -- OpenRocket .ork import -----------------------------------------------------
+#
+# An .ork becomes a model like any build: same three artifacts in cache/, so the
+# viewer and every analysis endpoint run on it unchanged (backend/ork/).
+
+
+@app.post("/api/import/ork")
+async def import_ork_file(request: Request, filename: str = Query("rocket.ork", max_length=200)):
+    """Import an OpenRocket .ork sent as the raw request body. Returns the new model."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > ORK_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"an .ork is at most {ORK_MAX_BYTES // 2**20} MB")
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="send the .ork file as the request body")
+    name = Path(filename).name or "rocket.ork"
+    try:
+        # CPU-bound (meshing, GLB); off the event loop, like the sync routes.
+        manifest = await run_in_threadpool(import_ork, data, name, CACHE_ROOT, _motor_db)
+    except OrkError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "modelId": manifest["source"]["modelId"],
+        "rocketName": manifest["source"]["documentName"],
+        "warnings": manifest.get("warnings", []),
+        "motors": manifest["ork"]["motors"],
+    }
+
+
+class CompareSide(StabilityRequest):
+    modelId: str
+
+
+class CompareRequest(BaseModel):
+    a: CompareSide
+    b: CompareSide
+
+
+def _compare_side(side: CompareSide) -> ork_compare.Side:
+    model_dir = _model_dir(side.modelId)
+    store = _load_store(model_dir)
+    manifest = json.loads((model_dir / "manifest.json").read_text())
+    faces = [(f.key, f.faceId) for f in side.outerFaces] or detect_outer_surface(store).faces
+    fin_faces = [(f.key, f.faceId) for f in side.finFaces] if side.finFaces is not None else None
+    launch = burnout = None
+    if side.motor is not None:
+        launch, _ = _resolve_motor(side.motor.model_copy(update={"state": "launch"}))
+        burnout, _ = _resolve_motor(side.motor.model_copy(update={"state": "burnout"}))
+    return ork_compare.Side(
+        store=store, parts=manifest.get("parts", []), outer_faces=faces, fin_faces=fin_faces,
+        n_fins=side.nFins, overrides=side.overrides, launch=launch, burnout=burnout,
+    )
+
+
+@app.post("/api/compare")
+# Sync: CPU-bound, see the note on /stability.
+def compare_models(request: CompareRequest):
+    """Two models side by side -- typically a CAD build against an imported .ork."""
+    try:
+        return ork_compare.compare(_compare_side(request.a), _compare_side(request.b))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/build/{job_id}")

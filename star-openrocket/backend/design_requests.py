@@ -41,6 +41,17 @@ CAD_DEFAULTS: dict[str, Any] = {
     "hiddenKeys": [],
 }
 FLIGHT_DEFAULTS: dict[str, Any] = {"inclination": 85.0, "heading": 0.0}
+#: The flight's named choices: (allowed values, default). frontend/src/types/config.ts
+#: FlightParams; the drag models are backend/onshape/aero/drag.py's and the finishes
+#: drag_geometry.FINISHES.
+FLIGHT_CHOICES: dict[str, tuple[tuple[str, ...], str]] = {
+    "dragModel": (("buildup", "openrocket-24.12", "stub"), "buildup"),
+    "finish": (
+        ("rough", "roughunfinished", "unfinished", "normal", "smooth", "optimum", "polished",
+         "finishpolished", "mirror"),
+        "smooth",
+    ),
+}
 
 RECOVERY_REQUIRED = ("vehicle", "site", "devices", "sweep", "study")
 
@@ -69,6 +80,8 @@ def _cad(config: dict[str, Any]) -> dict[str, Any]:
         k: flight[k] if isinstance(flight.get(k), (int, float)) and not isinstance(flight.get(k), bool) else v
         for k, v in FLIGHT_DEFAULTS.items()
     }
+    for k, (allowed, default) in FLIGHT_CHOICES.items():
+        cad["flight"][k] = flight[k] if flight.get(k) in allowed else default
     return cad
 
 
@@ -188,6 +201,8 @@ def flight_dynamics_request(config: dict[str, Any], manifest_parts: list[dict[st
         **_ascent(config, manifest_parts),
         "inclination": cad["flight"]["inclination"],
         "heading": cad["flight"]["heading"],
+        "dragModel": cad["flight"]["dragModel"],
+        "finish": cad["flight"]["finish"],
         "site": wire["site"],
         "wind": wire["wind"],
     }

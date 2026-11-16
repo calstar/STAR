@@ -53,6 +53,8 @@
       "railLength": 2.5,
       "inclination": 88,
       "heading": 10,
+      "dragModel": "buildup",
+      "finish": "smooth",
       "site": {"T_pad": null, "p_pad": null, "lapse": null},
       "wind": {"kind": "constant", "speed": 5, "direction": 270}
     },

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -305,5 +306,61 @@ func TestCapLogs(t *testing.T) {
 	}
 	if oldest != int64(1000-n) {
 		t.Errorf("oldest kept ts = %d: the cap should drop the oldest rows first", oldest)
+	}
+}
+
+// A container's between-sample peak reaches the series even when every sample
+// itself was low; an old database gains the columns on open.
+func TestPeaksStoredAndServed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Exec(`CREATE TABLE container_samples (host TEXT NOT NULL, name TEXT NOT NULL, ts INTEGER NOT NULL,
+		cpu REAL, mem_used INTEGER, PRIMARY KEY (host, name, ts)) WITHOUT ROWID;
+		INSERT INTO container_samples VALUES ('apps', 'api', 1, 5, 100)`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open a pre-peak database: %v", err)
+	}
+	now := time.Now()
+	b := wire.Batch{Host: "apps", Containers: []wire.ContainerSample{
+		{TS: now.Add(-30 * time.Second).UnixMilli(), Name: "api", State: "running", CPU: 2, MemUsed: 300, MemMax: 1900, CPUMax: 98},
+		{TS: now.UnixMilli(), Name: "api", State: "running", CPU: 3, MemUsed: 310},
+	}}
+	if err := st.Ingest(&b, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	var memMax, cpuMax float64
+	if err := st.db.QueryRow(`SELECT MAX(COALESCE(mem_max, mem_used)), MAX(COALESCE(cpu_max, cpu))
+		FROM container_samples WHERE ts > 1`).Scan(&memMax, &cpuMax); err != nil {
+		t.Fatal(err)
+	}
+	if memMax != 1900 || cpuMax != 98 {
+		t.Errorf("peaks = %v / %v, want 1900 / 98", memMax, cpuMax)
+	}
+	st.Close()
+
+	s, _ := newTestServer(t, nil)
+	h := s.Handler()
+	if c := push(t, h, appsToken, b); c != http.StatusNoContent {
+		t.Fatalf("push: %d", c)
+	}
+	var series struct {
+		Series map[string][]any `json:"series"`
+	}
+	json.Unmarshal(get(t, h, "/api/hosts/apps/containers/api/series?range=1h", "boss@berkeley.edu").Body.Bytes(), &series)
+	found := false
+	for _, v := range series.Series["mem_max"] {
+		if f, ok := v.(float64); ok && f == 1900 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("container series mem_max = %v, want the 1900 peak", series.Series["mem_max"])
 	}
 }

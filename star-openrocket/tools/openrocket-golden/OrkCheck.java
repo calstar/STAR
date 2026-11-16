@@ -1,3 +1,4 @@
+import info.openrocket.core.aerodynamics.AerodynamicForces;
 import info.openrocket.core.aerodynamics.BarrowmanCalculator;
 import info.openrocket.core.aerodynamics.FlightConditions;
 import info.openrocket.core.document.OpenRocketDocument;
@@ -37,6 +38,11 @@ import java.io.InputStream;
  *
  * Given a .eng or .rse instead, prints the digest OpenRocket's own motor loader
  * computes for each motor in it, one JSON line each.
+ *
+ * With "--drag" after the .ork and then Mach numbers, prints one JSON line per Mach:
+ * BarrowmanCalculator's friction, pressure and base CD at AoA 0, and the velocity and
+ * kinematic viscosity it rated them at (OpenRocket's default ISA, sea level), for
+ * tests/test_ork_openrocket.py to hold backend/onshape/aero/drag_openrocket.py to.
  */
 public class OrkCheck {
     public static void main(String[] args) throws Exception {
@@ -56,6 +62,21 @@ public class OrkCheck {
         double mach = args.length > 1 ? Double.parseDouble(args[1]) : 0.3;
 
         FlightConfiguration cfg = doc.getRocket().getSelectedConfiguration();
+        if (args.length > 1 && args[1].equals("--drag")) {
+            for (int i = 2; i < args.length; i++) {
+                FlightConditions dc = new FlightConditions(cfg);
+                dc.setMach(Double.parseDouble(args[i]));
+                dc.setAOA(0);
+                dc.setTheta(0);
+                dc.setRollRate(0);
+                AerodynamicForces f = new BarrowmanCalculator().getAerodynamicForces(cfg, dc, new WarningSet());
+                System.out.printf("{\"mach\": %.12g, \"velocity\": %.12g, \"nu\": %.12g, \"refArea\": %.12g, "
+                        + "\"cd\": %.12g, \"friction\": %.12g, \"pressure\": %.12g, \"base\": %.12g}%n",
+                    dc.getMach(), dc.getVelocity(), dc.getAtmosphericConditions().getKinematicViscosity(),
+                    dc.getRefArea(), f.getCD(), f.getFrictionCD(), f.getPressureCD(), f.getBaseCD());
+            }
+            System.exit(0);
+        }
         FlightConditions fc = new FlightConditions(cfg);
         fc.setMach(mach);
         fc.setAOA(0);

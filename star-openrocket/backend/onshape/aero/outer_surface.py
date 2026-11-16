@@ -21,7 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..geometry_store import FaceGeometry, GeometryStore
+from ..geometry_store import FaceGeometry, GeometryStore, face_areas, face_chunks, face_extents
 from .axis import Axis, detect_axis
 
 #: Axes within this of parallel (|cos|) count as the same direction.
@@ -36,11 +36,6 @@ AXIS_OFFSET_FRACTION = 0.25
 class OuterSurfaceGuess:
     faces: list[tuple[str, str]]  # (occurrence_key, face_id)
     axis: Axis
-
-
-def _tri_area(tris: np.ndarray) -> float:
-    a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
-    return float(0.5 * np.linalg.norm(np.cross(b - a, c - a), axis=1).sum())
 
 
 def _line_distance(point: np.ndarray, origin: np.ndarray, direction: np.ndarray) -> float:
@@ -61,7 +56,7 @@ def detect_axis_from_cylinders(faces: list[FaceGeometry]) -> Axis | None:
 
     dirs = np.array([fg.axis_dir for fg in cyls])
     origins = np.array([fg.axis_origin for fg in cyls])
-    areas = np.array([_tri_area(fg.triangles) for fg in cyls])
+    areas = face_areas(cyls)
 
     # Sign-align every axis to a common hemisphere so opposite-pointing but
     # collinear axes cluster together, using the highest-area axis as reference.
@@ -137,14 +132,22 @@ def _outer_skin(
     (is within eps of the max radius at) most of the stations it occupies -- which
     holds regardless of wall thickness.
     """
-    verts = np.concatenate([fg.triangles.reshape(-1, 3) for fg in candidates])
-    s_all, _ = axis.axial_radial(verts)
-    s_min, s_max = float(s_all.min()), float(s_all.max())
+    s_lo, s_hi, _ = face_extents(candidates, axis)
+    s_min, s_max = float(np.nanmin(s_lo)), float(np.nanmax(s_hi))
     if s_max - s_min < 1e-9:
         return [(fg.occurrence_key, fg.face_id) for fg in candidates]
     edges = np.linspace(s_min, s_max, n_bins + 1)
 
-    def face_coverage(fg: FaceGeometry) -> np.ndarray:
+    # Per-face, per-bin maximum radius, a batch of candidates at a time.
+    raw = np.full((len(candidates), n_bins), -np.inf)
+    for lo, hi, tris, starts in face_chunks(candidates):
+        s, rho = axis.axial_radial(tris.reshape(-1, 3))
+        counts = np.diff(np.append(starts, len(tris)))
+        face_of_vertex = np.repeat(np.arange(lo, hi), 3 * counts)
+        idx = np.clip(np.digitize(s, edges) - 1, 0, n_bins - 1)
+        np.maximum.at(raw, (face_of_vertex, idx), rho)
+
+    def face_coverage(bm: np.ndarray) -> np.ndarray:
         """Per-bin radius across the face's whole axial extent.
 
         A tessellated cylinder/cone has vertices only at its two end rings, so a
@@ -154,10 +157,6 @@ def _outer_skin(
         linear for a cone), so an enclosing tube correctly dominates an inner one
         along its full length.
         """
-        s, rho = axis.axial_radial(fg.triangles.reshape(-1, 3))
-        idx = np.clip(np.digitize(s, edges) - 1, 0, n_bins - 1)
-        bm = np.full(n_bins, -np.inf)
-        np.maximum.at(bm, idx, rho)
         occ = np.flatnonzero(np.isfinite(bm))
         if len(occ) == 0:
             return bm
@@ -166,7 +165,7 @@ def _outer_skin(
         out[span] = np.interp(span, occ, bm[occ])
         return out
 
-    face_bm = [face_coverage(fg) for fg in candidates]
+    face_bm = [face_coverage(bm) for bm in raw]
     global_bm = np.maximum.reduce(face_bm)
     r_max = float(global_bm[np.isfinite(global_bm)].max())
     # Tolerance below the outermost radius that still counts as "on the skin".

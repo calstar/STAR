@@ -68,40 +68,48 @@ def test_microversion_url_is_used_directly(fake_client: FakeClient):
     assert resolved.resolved_from == "microversion"
 
 
-def test_workspace_falls_back_when_every_version_is_empty(empty_version_assembly):
-    """The reference document's only version was cut before any modelling.
-
-    Selecting it would build a valid, empty, useless model, so the resolver must
-    pin the workspace's current microversion instead.
-    """
+def test_workspace_builds_the_current_microversion_not_the_last_version():
+    """A /w/ link is the live model. It used to resolve to the newest named version,
+    which built LE4 SD's week-old "V61" while the team had been editing all day."""
     client = FakeClient()
-    original = client.get_json
-
-    def get_json(path, params=None):
-        # Version reads return the empty assembly; workspace reads return the real one.
-        if path.startswith("/assemblies/") and "/v/" in path:
-            client.requests.append((path, params or {}))
-            return empty_version_assembly
-        return original(path, params)
-
-    client.get_json = get_json  # type: ignore[method-assign]
-
     resolved = resolve(client, parse_document_url(WORKSPACE_URL))
-
     assert resolved.wvm == "m"
     assert resolved.resolved_from == "workspace-microversion"
-    assert resolved.microversion_id == "53ff9eb118e83e8db40bcc4f"
-    assert any("no geometry" in warning for warning in resolved.warnings)
-    assert any("cut a version" in warning for warning in resolved.warnings)
+    assert resolved.microversion_id == FakeClient.current_microversion
+    assert not any("versions" in path for path, _ in client.requests), "versions are not consulted"
 
 
-def test_workspace_prefers_a_populated_version():
-    """When a version does have geometry, it wins -- it is the more meaningful key."""
+def test_workspace_follows_edits_between_builds():
+    """The current-microversion read bypasses the disk cache, so a second build after
+    an edit pins the new state instead of replaying the first answer."""
     client = FakeClient()
-    resolved = resolve(client, parse_document_url(WORKSPACE_URL))
-    assert resolved.wvm == "v"
-    assert resolved.resolved_from == "version"
-    assert resolved.version_id == "514cf9af0c739845880c4a5f"
+    first = resolve(client, parse_document_url(WORKSPACE_URL))
+    client.current_microversion = "f" * 24
+    second = resolve(client, parse_document_url(WORKSPACE_URL))
+    assert first.wvm_id != second.wvm_id == "f" * 24
+    assert client.uncached == [
+        "/documents/d/dbf4d35d8e9fe37819466f72/w/1df1c851058d46a5e5f08114/currentmicroversion"
+    ] * 2
+
+
+def test_uncached_read_never_touches_the_disk_cache(tmp_path, monkeypatch):
+    from backend.onshape.client import OnshapeClient
+
+    client = OnshapeClient(cache_dir=tmp_path)
+    answers = iter([{"microversion": "a" * 24}, {"microversion": "b" * 24}])
+    monkeypatch.setattr(client, "_get_with_retry", lambda path, params: next(answers))
+    path = "/documents/d/x/w/y/currentmicroversion"
+    assert client.get_json(path, cache=False)["microversion"] == "a" * 24
+    assert client.get_json(path, cache=False)["microversion"] == "b" * 24
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_uncached_read_refuses_offline(tmp_path):
+    from backend.onshape.client import OnshapeClient
+
+    client = OnshapeClient(cache_dir=tmp_path, offline=True)
+    with pytest.raises(OnshapeError, match="asked live"):
+        client.get_json("/documents/d/x/w/y/currentmicroversion", cache=False)
 
 
 def test_element_path_includes_the_element(fake_client: FakeClient):

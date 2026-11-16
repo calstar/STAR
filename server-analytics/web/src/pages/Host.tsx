@@ -36,8 +36,20 @@ const nums = (c: (number | null)[] | undefined) => (c ?? []) as (number | null)[
 function ContainerChart({ host, name, range }: { host: string; name: string; range: Range }) {
   const { data } = usePoll<Series>(`/api/hosts/${encodeURIComponent(host)}/containers/${encodeURIComponent(name)}/series?range=${range}`);
   const ts = (data?.series.ts ?? []) as number[];
-  const cpu = useMemo<Line[]>(() => [{ label: "CPU", values: nums(data?.series.cpu), slot: 1 }], [data]);
-  const mem = useMemo<Line[]>(() => [{ label: "Memory", values: nums(data?.series.mem_used), slot: 1 }], [data]);
+  const cpu = useMemo<Line[]>(
+    () => [
+      { label: "Average", values: nums(data?.series.cpu), slot: 1 },
+      { label: "Peak", values: nums(data?.series.cpu_max), slot: 2 },
+    ],
+    [data],
+  );
+  const mem = useMemo<Line[]>(
+    () => [
+      { label: "Average", values: nums(data?.series.mem_used), slot: 1 },
+      { label: "Peak", values: nums(data?.series.mem_max), slot: 2 },
+    ],
+    [data],
+  );
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <Chart title={`${name} · CPU (100% = one core)`} ts={ts} lines={cpu} fmt={pctFmt} span={RANGE_MS[range]} height={150} />
@@ -67,6 +79,7 @@ export function Host({ host }: { host: string }) {
       ] as Line[],
       mem: [
         { label: "Used", values: nums(c?.mem_used), slot: 1 },
+        { label: "Peak", values: nums(c?.mem_max), slot: 3 },
         { label: "Swap", values: nums(c?.swap_used), slot: 2 },
       ] as Line[],
       load: [
@@ -101,7 +114,8 @@ export function Host({ host }: { host: string }) {
       {s && (
         <p className={`mt-1 text-xs ${MUTED}`}>
           Each point is a {s.bucket_ms >= 60000 ? `${s.bucket_ms / 60000}-minute` : `${s.bucket_ms / 1000}-second`} average
-          {range === "1h" || range === "6h" || range === "24h" ? "" : " of 5-minute rollups"}.
+          {range === "1h" || range === "6h" || range === "24h" ? "" : " of 5-minute rollups"}; peaks are the
+          highest one-second reading in it.
         </p>
       )}
 
@@ -114,7 +128,7 @@ export function Host({ host }: { host: string }) {
       </div>
 
       <h2 className="mt-8 text-lg font-semibold">Containers</h2>
-      <p className={`text-xs ${MUTED}`}>CPU is percent of one core, as docker stats reports it. Sparklines cover the last hour. Click a row for its history.</p>
+      <p className={`text-xs ${MUTED}`}>CPU is percent of one core, as docker stats reports it. Sparklines are each minute's peak over the last hour. Click a row for its history.</p>
       <div className={`${TABLE_WRAP} mt-3`}>
         <table className="w-full text-sm">
           <thead>
@@ -149,14 +163,14 @@ export function Host({ host }: { host: string }) {
                 <td className={`${TD} text-right tabular-nums`}>{c.restarts}</td>
                 <td className={`${TD} text-right tabular-nums`}>{c.state === "running" ? pct(c.cpu, 1) : "—"}</td>
                 <td className={TD}>
-                  <Sparkline values={nums(c.spark.cpu)} floor={10} />
+                  <Sparkline values={nums(c.spark.cpu_max ?? c.spark.cpu)} floor={10} />
                 </td>
                 <td className={`${TD} text-right tabular-nums`}>
                   {c.state === "running" ? bytes(c.mem_used) : "—"}
                   {c.mem_limit > 0 && <span className={MUTED}> / {bytes(c.mem_limit)}</span>}
                 </td>
                 <td className={TD}>
-                  <Sparkline values={nums(c.spark.mem_used)} max={c.mem_limit || undefined} />
+                  <Sparkline values={nums(c.spark.mem_max ?? c.spark.mem_used)} max={c.mem_limit || undefined} />
                 </td>
               </tr>
             ))}

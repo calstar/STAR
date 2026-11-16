@@ -68,11 +68,6 @@ def assembly() -> dict:
 
 
 @pytest.fixture
-def empty_version_assembly() -> dict:
-    return load("assembly_empty_version.json")
-
-
-@pytest.fixture
 def assembly_massproperties() -> dict:
     return load("assembly_massproperties.json")
 
@@ -102,6 +97,8 @@ class FakeClient:
 
     def __init__(self, **overrides: object) -> None:
         self.requests: list[tuple[str, dict]] = []
+        #: Paths read with cache=False -- the ones that must never be served stale.
+        self.uncached: list[str] = []
         self._overrides = overrides
 
     @staticmethod
@@ -118,8 +115,13 @@ class FakeClient:
         candidate = FIXTURES / f"source_{element}_{kind}.json"
         return load(candidate.name) if candidate.exists() else None
 
-    def get_json(self, path: str, params: dict | None = None) -> object:
+    #: What the workspace's current microversion is, as Onshape would answer live.
+    current_microversion = "53ff9eb118e83e8db40bcc4f"
+
+    def get_json(self, path: str, params: dict | None = None, *, cache: bool = True) -> object:
         self.requests.append((path, params or {}))
+        if not cache:
+            self.uncached.append(path)
 
         for key, payload in self._overrides.items():
             if key in path:
@@ -141,6 +143,8 @@ class FakeClient:
             return self._source_fixture(path, "parts") or load("parts_materials.json")
         if path.startswith("/assemblies/"):
             return load("assembly.json")
+        if path.endswith("/currentmicroversion"):
+            return {"microversion": self.current_microversion}
         if "versions" in path:
             return [{"id": "514cf9af0c739845880c4a5f", "name": "Start"}]
         if path.startswith("/documents/"):

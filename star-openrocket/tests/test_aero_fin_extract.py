@@ -118,3 +118,38 @@ def test_extracted_cna_matches_openrocket():
     # the root fillet gap + strip resampling cost a little accuracy.
     assert abs(aero.cna - 24.146933) < 24.146933 * 0.03, aero.cna
     assert abs(aero.cp - 0.0193484) < 1e-3, aero.cp
+
+
+def test_flat_plate_with_tab_reads_root_at_tube():
+    """A planar fin through the wall is meshed with corner vertices only.
+
+    With the tab clipped off, the only exposed vertices are the two tip corners; a
+    hair of tessellation noise between their radii once made the root-extrapolation
+    slope ~chord/1e-7 and put the fin hundreds of kilometres down the axis.
+    """
+    r, span, root, tip, sweep, tab = 0.075, 0.15, 0.30, 0.10, 0.20, 0.01
+    z = np.array([0.0, 0.0, 1.0])
+
+    def plate(phi_deg: float) -> FaceGeometry:
+        phi = np.radians(phi_deg)
+        u = np.array([np.cos(phi), np.sin(phi), 0.0])
+        a, b = r - tab, r + span
+        c0, c1 = 0.0 * z + a * u, root * z + a * u
+        t0, t1 = sweep * z + b * u, (sweep + tip) * z + (b - 1e-7) * u
+        return _quad_face(f"occ:plate{phi_deg:.0f}", (c0, c1, t0, t1))
+
+    pf = extract_fin_planform([plate(a) for a in (0, 120, 240)], AXIS, r)
+    # Leading edge runs (0, r-tab) -> (sweep, r+span); at the tube it is at:
+    lead_at_tube = sweep * tab / (span + tab)
+    assert abs(pf.chord_lead[0] - lead_at_tube) < 1e-3, pf.chord_lead[0]
+    assert abs(pf.root_chord - (root - lead_at_tube)) < 1e-3, pf.root_chord
+    assert abs(pf.tip_chord - tip) < 2e-3, pf.tip_chord
+    assert abs(pf.span - span) < 1e-6
+
+
+def test_fin_straddling_zero_azimuth_is_one_fin():
+    """A fin at 0 deg whose two sides sit at ~359 and ~1 deg is one fin, not two."""
+    fins = [make_fin(a) for a in (-1, 1, 89, 91, 179, 181, 269, 271)]
+    pf = extract_fin_planform(fins, AXIS, BODY_R)
+    assert len(pf.azimuths) == 4, pf.azimuths
+    assert min(abs(((a + 180) % 360) - 180) for a in pf.azimuths) < 1.0, pf.azimuths
