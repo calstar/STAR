@@ -700,3 +700,142 @@ config_broadcast, and `config/run.sh` (bin half, under the lock) once per such c
 2. (Decided: gaps 1, 2, 3, 5, 6, 7 close before pass 1; 4 and 8 before pass 2; 9 optional.)
 3. daq_bridge's `std::stoi(argv[3])` abort on junk and t7_bridge's usage-on-unknown-flag are
    untested and stay per service; confirm nobody wants them in a shared parser later.
+
+---
+
+# Amendments (design/cpp2, 2026-11-16) — alternatives, interfaces, walkthroughs
+
+Added after the review (D39), with the research of D42 (`docs/remaster/research/cpp-service-plumbing.md`,
+`teststand-architecture.md`, `abort-statemachines.md`) and STYLE.md (D43, cited `STYLE-S<n>`).
+Nothing above is deleted. Where this section changes the reviewed text it says **AMENDMENT**.
+
+## A. Alternatives considered
+
+Three genuinely different designs were scored; a fourth family (event-loop frameworks) is listed
+because the debate will raise it, but it is outside the remaster by construction.
+
+| | **A. Free functions + per-service settings (§0–§2, chosen)** | B. Small RAII types | C. Status quo + shared signal plumbing only |
+|---|---|---|---|
+| shape | `installStopHandlers`/`running()`; `openUdpSocket`, `ipv4Destination`; `openTcpListener` returning `TcpListener{fd, failed, err}`; `serveTcpClients`; `follow_sequencer_state`; cleanup `find_config_file`/`read_file_text` | `UniqueFd` (move-only owner, Android `unique_fd` model, research §5); `UdpSocket` owning an fd + destination; `TcpCommandServer` object owning listener, `Conn`s and the accept thread; `SequencerStateFollower` object owning its thread | one `StopSignals` TU (§2.1); every socket, accept loop and follower stays in its main |
+| clarity | each main still reads top to bottom in today's order; the shared code is "what POSIX does", named | the strongest single-site clarity (ownership in the type), but the order of `close()`, `join()` and `shutdown()` moves into destructors a reader must know | clearest diff; nine mains keep ~250 lines of near-identical socket and loop code |
+| lines deleted (est.) | ~330: 9 handlers + flags (~55), 4 socket blocks (~40), 2 accept loops (~120), 2 followers (~90), 4 config fallbacks (cleanup, ~40), minus ~200 shared | similar to A plus ~20 `close()` calls, minus ~60 more in class boilerplate | ~55 (handlers + flags) |
+| testability | unchanged black-box (§7); the shared pieces have no new seam a golden needs | an object could be unit-tested, but D20 keeps goldens black-box, so nothing gains | unchanged |
+| fit with characterization | no harness edit (§7.3 rules); every golden reached as today | `char_config_services.cpp` `#include`s stacklight/config_broadcast/daq_bridge mains and captures **everything printed** during `dump()`: an RAII member whose destructor runs at a different point, or a type with a static, moves output; heartbeat's `close(sock)` **before** `elodin_thread.join()` (`heartbeat_service_main.cpp:295-296`) must become an explicit `reset()`, i.e. RAII in name only (research §5 table) | no harness edit |
+| EINTR / signal semantics (D42 binding 2) | `::signal` = `sigaction` with `SA_RESTART` (research §0.1); every `select`/`usleep`/`SO_SNDTIMEO` EINTR site (research §0.2 table) unchanged | unchanged if it keeps `::signal`; but a `jthread`-based follower/server (research §3) turns the detached controller/ota threads into joined ones on destruction, the "trap for the debate" | unchanged |
+| thread/lock risk | no new mutex (§3); `serveTcpClients` keeps reap-before-and-after-accept, shutdown-all-then-join-all | `TcpCommandServer`'s destructor would join; the controller's control thread is **detached** today (`controller_main.cpp:500-501`, C4-5 >3 s exit) and ota's clients are detached — an owning object changes exit timing unless it, too, detaches (then it owns nothing) | none |
+| float path (D22) | none | none | none |
+
+**Out of bounds — event loop / signal-as-event** (asio `signal_set`, libuv, sd-event; self-pipe,
+`sigwait` thread, `signalfd`; research §2, §5): each replaces the handler's printing, the EINTR
+model and the wake latency of every loop. Self-pipe is the research's recommended **PROPOSAL** for
+the team; sd-event and `signalfd` do not run on the macOS dev loop. None is a remaster design (D42
+binding 2: the chosen design preserves EINTR behaviour).
+
+**Why B lost.** RAII is identical only where `close()` is already at scope end: AbortBroadcaster's
+and ActuatorCommander's per-send sockets (research §5). Those are two users of a one-line saving.
+Everywhere else the explicit close position is observable (heartbeat's close-before-join; the
+listener that `lifecycle/stack.py:358-362` must see released; the controller's listener leaked on
+`kListen`) or the lifetime is detached by design (STYLE-S21, S22). A type that must be bypassed at
+its first three users is not the abstraction (STYLE-S34).
+
+**Why C lost.** It is the zero-risk floor, and the right fallback if any pass-1 gap (§7.2) cannot
+be closed. But the two accept loops are statement-for-statement copies (the controller's comment
+says "mirrors sequencer_main.cpp's accept loop") and the two followers differ only in three
+literals and a timeout; leaving them doubles every future fix to the cap/busy reply or the
+subscribe retry. A keeps exactly the shared code whose users agree observably (STYLE-S34, D43(3)).
+
+**Decision: A, as reviewed.** No divergence in structure. Amendments to names and comments only:
+
+- **AMENDMENT (D43(2), STYLE-S1):** `followSequencerState` → `follow_sequencer_state`
+  (`lib/include/elodin` is snake_case), `findConfigFile` → `find_config_file`, `readFileText` →
+  `read_file_text` (`lib/include/config`). `SequencerStateFollowerText` stays (a type, STYLE-S3).
+  The `fsw::net` names and the new `fsw::service` names keep camelCase (`lib/include/net` is
+  camelCase; `fsw::service` is new and picks camelCase with `installStopHandlers`).
+- **AMENDMENT (D43(4), STYLE-S12):** cleanup pass 2 makes the controller's `kListen` fall-through
+  an explicit branch `// Kept: D-CTL (D17)` and marks heartbeat's and config_broadcast's ignored
+  `bindToDaqInterface` result `// Kept: D-BIND (D17)`. Pass 1 adds no such line.
+- **AMENDMENT (D42 binding 1):** `serveTcpClients`'s `on_client` reaches a service only through
+  its public, enqueueing API (`SequencerService::transitionTo`, `setDebugMode`, `manualActuator`,
+  `extendFire`, `scriptStatusReport`; `ControllerService::setFireActive`), never a `do*` body. Today
+  `handleClient` → `handleCommandLine` already does exactly this; the stub says it so a later
+  "simplification" cannot bypass `enqueueAndWait` (research abort-statemachines, structural
+  choice 3).
+- **AMENDMENT (research §0.2):** §6.3's "must not change" gains the EINTR exposure of the
+  `SO_SNDTIMEO` sends: AbortBroadcaster's `sendto` can fail a repeat with EINTR when the signal
+  lands on the sending thread. WP8 changes only the socket-creation lines of `sendPacket`, so the
+  `setsockopt(SO_SNDTIMEO)` stays after the bind and the repeat loop is untouched.
+
+New defect candidates found while writing this section (report, never fix; for LEDGER Defects):
+
+- **D-FD (candidate)** `sequencer_main.cpp:345-349` (and the controller's copy at 210-214):
+  after the accept loop, `shutdown(c->fd, SHUT_RDWR)` runs on every tracked connection, including
+  ones whose `handleClient` already `close()`d its fd (`:222`) but were not yet reaped. That fd
+  number may have been reused, so shutdown can cut an unrelated socket during the last
+  milliseconds of a stop. A reused fd that is an unconnected UDP socket just gets `ENOTCONN`; the
+  realistic victim is a connected TCP socket opened meanwhile on another thread (the Elodin client
+  of the sequencer's retry thread, or a controller notify in flight). `serveTcpClients`
+  keeps the statement sequence, and with it this race.
+- From research §0.2-§0.4, already in D42: EINTR can drop an ABORT repeat; handlers do not save
+  `errno`; ota allocates between `fork` and `exec`.
+
+## B. Interfaces
+
+Declaration-only stubs, STYLE-S36 doc comments (owns / threads and locks / must not know /
+contract surfaces and their goldens), in `docs/remaster/design-stubs/cpp/` — not under
+`diablo_server/`, in no CMake target:
+
+| stub | target path | §, pass |
+|---|---|---|
+| `lib/include/service/StopSignals.hpp` | `diablo_server/lib/include/service/StopSignals.hpp` | §2.1, pass 1 |
+| `lib/include/net/UdpSocket.hpp` | `diablo_server/lib/include/net/UdpSocket.hpp` | §2.2, pass 1 |
+| `lib/include/net/TcpCommandServer.hpp` | `diablo_server/lib/include/net/TcpCommandServer.hpp` | §2.3, pass 1 |
+| `lib/include/elodin/SequencerStateFollower.hpp` | `diablo_server/lib/include/elodin/SequencerStateFollower.hpp` | §2.4, pass 1 (name amended) |
+| `lib/include/config/ConfigFile.hpp` | `diablo_server/lib/include/config/ConfigFile.hpp` | §2.5, pass 2 (names amended) |
+
+Signatures are §2's, with the amended names. Each stub restates the rules of §7.3 that keep the
+config harness byte-identical: no identifier `main`, nothing at static initialisation (STYLE-S26).
+
+## C. Walkthroughs (the WP8-owned steps)
+
+The full traces are in DESIGN-WP10 "Walkthroughs" (fire, abort, daq_bridge reconnect) and
+DESIGN-WP9 "Walkthroughs" (calibration save). These are the steps that run through WP8 code, with
+the one owner of each. "Owner" = the module whose code performs the step and whose state or output
+it produces; a caller that only triggers it is named as the trigger.
+
+**C.1 A command arrives on :9998 (every fire/abort starts here).**
+
+| # | step | owner (file after WP8) | thread | notes |
+|---|---|---|---|---|
+| 1 | listener exists, `SO_REUSEADDR`, backlog 10 | `openTcpListener` (`net/TcpCommandServer.cpp`); fd owned by `sequencer_main` | main | failure ladder text and `exit 1` stay in `sequencer_main` (§2.3) |
+| 2 | `select` 10 ms, `accept`, reap, cap 64, busy reply | `serveTcpClients` | main | |
+| 3 | per-client thread created and tracked | `serveTcpClients` (owns the `Conn` vector) | main → conn | |
+| 4 | read lines (`SO_RCVTIMEO` 5 s, 512-byte chunks, oversize close) | `handleClient` in `sequencer_main.cpp` (stays: one of three read disciplines, §1.6) | conn | `on_client` |
+| 5 | parse verb, call the public API | `handleCommandLine` in `sequencer_main.cpp` | conn | AMENDMENT: only public enqueueing methods (§A) |
+| 6 | queue the command, wait ≤ 10 s | `SequencerService::enqueueAndWait` (WP10 core TU) | conn waits; worker runs | the single entry point (D42 binding 1) |
+| 7 | reply `OK…`/`ERR:<reason>` with `MSG_NOSIGNAL`, close | `handleCommandLine` / `handleClient` | conn | |
+
+**C.2 FIRE_START/FIRE_STOP arrives on the controller's port.** Steps 1-3 as C.1 with backlog 4,
+`serveTcpClients` on the **detached** control thread; step 4 is `handleControlClient`
+(`controller_main.cpp`, first line only, 64 bytes); step 5 calls `ControllerService::setFireActive`
+directly — that *is* the controller's public API (it has no queue); the reply is `OK\n`/`ERR…`.
+A failed bind leaves the controller running without its port (D-CTL, `// Kept:` in pass 2).
+
+**C.3 Heartbeat/stacklight follow the sequencer state.** Owner of the subscription and of reading
+`current_state` (payload byte 8): `follow_sequencer_state` on the thread the main creates (heartbeat
+271, stacklight 295). Owner of what the state *means*: the main's `on_state` (heartbeat maps it to
+an engine state for SERVER_HEARTBEAT; stacklight stores it for its light pattern). Owner of sending
+SERVER_HEARTBEAT / STACKLIGHT_COMMAND: the main's loop on the main thread, through
+`openUdpSocket`/`ipv4Destination`-made sockets it owns and closes.
+
+**C.4 SIGTERM to the sequencer during a fire.** Owner of the flag: `StopSignals` (handler prints
+`\n[Sequencer] Shutting down...`, then clears `running()`). Owner of noticing it: `serveTcpClients`
+(its `select` returns, EINTR or timeout, within 10 ms). Owner of tearing the connections down:
+`serveTcpClients` (shutdown all, join all — D-FD candidate above). Owner of closing the listener and
+printing `[Sequencer] Stopped.`: `sequencer_main`. Owner of stopping the worker, the hold timer
+(which sends FIRE_STOP through `notifyControllerFire` if the hold was active) and the republish
+loop: `SequencerService`'s destructor at the end of `main` (WP10, unchanged order: worker, Elodin
+retry, continuous loop, hold timer). If C4-1 has wedged the worker, the join never returns and the
+process does not exit (frozen; systemd's stop timeout ends it).
+
+No WP8 step has two owners. One step has a frozen double trigger (none in WP8's own code): the
+controller's fire gate, see DESIGN-WP10 walkthrough (a).
