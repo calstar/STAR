@@ -59,14 +59,20 @@ def name_of(p):
 
 def csv_dir_for(p):
     prof = os.path.join(CFG, "profiles") + os.sep
-    return os.path.dirname(p) if p.startswith(prof) else os.path.join(CFG, "profiles", "default")
+    return (
+        os.path.dirname(p)
+        if p.startswith(prof)
+        else os.path.join(CFG, "profiles", "default")
+    )
 
 
 def normalize(line):
     # The loopback interface is lo0 on macOS and lo on Linux.
     line = re.sub(r"pinned to \S+ (127\.\d+\.\d+\.\d+)", r"pinned to <iface> \1", line)
     # An uncaught exception is reported by the C++ runtime, differently per platform.
-    m = re.match(r"libc\+\+abi: terminating due to uncaught exception of type ([^:]+): (.*)", line)
+    m = re.match(
+        r"libc\+\+abi: terminating due to uncaught exception of type (\S+): (.*)", line
+    )
     if m:
         return f"UNCAUGHT {m.group(1)}: {m.group(2)}"
     return line
@@ -125,8 +131,16 @@ class Run:
         lines = []
         for ln in self.lines:
             n = normalize(ln)
-            if n.startswith("UNCAUGHT ") and lines and lines[-1].startswith("terminate called"):
-                lines.pop()
+            # libstdc++ spells an uncaught exception over two lines; fold it like libc++'s.
+            m = re.match(r"\s*what\(\):\s+(.*)", n)
+            t = None
+            if lines:
+                t = re.match(
+                    r"terminate called after throwing an instance of '(.*)'", lines[-1]
+                )
+            if m and t:
+                lines[-1] = f"UNCAUGHT {t.group(1)}: {m.group(1)}"
+                continue
             lines.append(n)
         return "\n".join(lines) + "\n" + closing + "\n"
 
@@ -183,7 +197,11 @@ def config_broadcast(src, work):
         s.bind(("127.0.0.1", port))
         socks[port] = s
     got = {port: [] for port in socks}
-    argv = [os.path.join(BIN, "config_broadcast_service"), "--config", "config/config.toml"]
+    argv = [
+        os.path.join(BIN, "config_broadcast_service"),
+        "--config",
+        "config/config.toml",
+    ]
     argv += ["--interval-ms", "60000"]
     try:
         r = Run(argv, work)
@@ -207,7 +225,9 @@ def config_broadcast(src, work):
         for i, data in enumerate(got[port]):
             body += f"packet[{i}] type={data[0] if data else -1} len={len(data)}\n"
             for off in range(0, len(data), 16):
-                body += f"  {off:04x}:" + "".join(f" {b:02x}" for b in data[off : off + 16])
+                body += f"  {off:04x}:" + "".join(
+                    f" {b:02x}" for b in data[off : off + 16]
+                )
                 body += "\n"
     return body
 
