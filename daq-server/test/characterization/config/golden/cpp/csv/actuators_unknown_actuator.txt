@@ -1,0 +1,93 @@
+=== ActuatorCommander
+load = true isLoaded=true
+bind_addr_ = "0.0.0.0" explicit=false actuator_port_ = 5005
+role "Fuel Fill Press" = {channel=2 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Fuel Fill Vent" = {channel=1 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Fuel Main" = {channel=7 board_id=12 board_ip="192.168.2.12" is_no=true is_pwm=false cmd_table_hi=0x32}
+role "Fuel Press" = {channel=3 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=true cmd_table_hi=0x32}
+role "Fuel Vent" = {channel=2 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GN2 Vent" = {channel=6 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE High Press Control" = {channel=3 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE High Press Vent" = {channel=5 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE LOX Fill Vent" = {channel=10 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE Low Press Vent" = {channel=5 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE Med Press Control" = {channel=4 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "LOX Dump" = {channel=8 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "LOX Fill" = {channel=7 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "LOX Main" = {channel=1 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "LOX Press" = {channel=8 board_id=12 board_ip="192.168.2.12" is_no=true is_pwm=true cmd_table_hi=0x32}
+role "LOX Vent" = {channel=6 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+positions "Armed" (3)
+  "Fuel Main" = 0
+  "Fuel Vent" = 0
+  "Warp Coil" = 1
+positions "Fire" (3)
+  "Fuel Main" = 1
+  "Fuel Vent" = 1
+  "Warp Coil" = 1
+positions "Idle" (3)
+  "Fuel Main" = 0
+  "Ox Main" = 0
+  "Warp Coil" = 1
+positions "No Such State" (2)
+  "Fuel Main" = 1
+  "Warp Coil" = 1
+delay "Emergency Abort" "Fuel Main" = 0.2
+delay "Emergency Abort" "Fuel Press" = 0.2
+delay "Emergency Abort" "Fuel Vent" = 0.2
+delay "Emergency Abort" "GN2 Vent" = 0.2
+delay "Emergency Abort" "GSE High Press Vent" = 0.2
+delay "Emergency Abort" "LOX Dump" = 0.2
+delay "Emergency Abort" "LOX Main" = 0.2
+delay "Emergency Abort" "LOX Press" = 0.2
+delay "Emergency Abort" "LOX Vent" = 0.2
+delay "Engine Abort" "Fuel Main" = 0.2
+delay "Engine Abort" "Fuel Press" = 0.2
+delay "Engine Abort" "Fuel Vent" = 0.2
+delay "Engine Abort" "GN2 Vent" = 0.2
+delay "Engine Abort" "LOX Dump" = 0.2
+delay "Engine Abort" "LOX Main" = 0.2
+delay "Engine Abort" "LOX Press" = 0.2
+delay "Engine Abort" "LOX Vent" = 0.2
+delay "Fire" "Fuel Main" = 0.08
+delay "Fire" "LOX Main" = 0.001
+delay "Fuel Fill" "Fuel Fill Press" = 0.2
+delay "Fuel Press" "Fuel Press" = 0.2
+delay "Fuel Vent" "Fuel Vent" = 0.2
+delay "GN2 High Press" "GSE High Press Control" = 0.2
+delay "GN2 High Vent" "GN2 Vent" = 0.2
+delay "GN2 Low Vent" "GN2 Vent" = 0.2
+delay "GSE Abort" "GSE High Press Vent" = 0.2
+delay "Ox Fill" "GN2 Vent" = 0.2
+delay "Ox Fill" "LOX Fill" = 0.2
+delay "Ox Press" "LOX Press" = 0.2
+delay "Ox Vent" "LOX Vent" = 0.2
+delay "Press Standby" "GSE Med Press Control" = 0.2
+delay "Vent" "Fuel Press" = 0.2
+delay "Vent" "Fuel Vent" = 0.2
+delay "Vent" "GN2 Vent" = 0.2
+delay "Vent" "LOX Press" = 0.2
+delay "Vent" "LOX Vent" = 0.2
+positionsForState("idle").size = 3
+positionsForState("armed").size = 3
+positionsForState("fuel fill").size = 0
+positionsForState("ox fill").size = 0
+positionsForState("gn2 low press").size = 0
+positionsForState("gn2 low vent").size = 0
+positionsForState("fuel press").size = 0
+positionsForState("fuel vent").size = 0
+positionsForState("ox press").size = 0
+positionsForState("ox vent").size = 0
+positionsForState("gn2 high press").size = 0
+positionsForState("gn2 high vent").size = 0
+positionsForState("vent").size = 0
+positionsForState("calibrate").size = 0
+positionsForState("ready").size = 0
+positionsForState("fire").size = 3
+positionsForState("engine abort").size = 0
+positionsForState("gse abort").size = 0
+positionsForState("emergency abort").size = 0
+positionsForState("press standby").size = 0
+positionsForState("No Such State").size = 2
+
+=== load_dynamic_states

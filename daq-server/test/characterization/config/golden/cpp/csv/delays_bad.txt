@@ -1,0 +1,390 @@
+=== ActuatorCommander
+load = true isLoaded=true
+bind_addr_ = "0.0.0.0" explicit=false actuator_port_ = 5005
+role "Fuel Fill Press" = {channel=2 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Fuel Fill Vent" = {channel=1 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Fuel Main" = {channel=7 board_id=12 board_ip="192.168.2.12" is_no=true is_pwm=false cmd_table_hi=0x32}
+role "Fuel Press" = {channel=3 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=true cmd_table_hi=0x32}
+role "Fuel Vent" = {channel=2 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GN2 Vent" = {channel=6 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE High Press Control" = {channel=3 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE High Press Vent" = {channel=5 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE LOX Fill Vent" = {channel=10 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE Low Press Vent" = {channel=5 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "GSE Med Press Control" = {channel=4 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "LOX Dump" = {channel=8 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "LOX Fill" = {channel=7 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "LOX Main" = {channel=1 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "LOX Press" = {channel=8 board_id=12 board_ip="192.168.2.12" is_no=true is_pwm=true cmd_table_hi=0x32}
+role "LOX Vent" = {channel=6 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+positions "Armed" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Calibrate" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Emergency Abort" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 1
+  "Fuel Press" = 1
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 1
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 1
+  "LOX Fill" = 0
+  "LOX Main" = 1
+  "LOX Press" = 1
+  "LOX Vent" = 1
+positions "Engine Abort" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 1
+  "Fuel Press" = 1
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 1
+  "LOX Fill" = 0
+  "LOX Main" = 1
+  "LOX Press" = 1
+  "LOX Vent" = 1
+positions "Fire" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 1
+  "Fuel Press" = 1
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 1
+  "LOX Press" = 1
+  "LOX Vent" = 0
+positions "Fuel Fill" (16)
+  "Fuel Fill Press" = 1
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 1
+positions "Fuel Press" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 1
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Fuel Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 1
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GN2 High Press" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 1
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GN2 High Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GN2 Low Press" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 1
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GN2 Low Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "GSE Abort" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 1
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Idle" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 1
+  "LOX Vent" = 0
+positions "Ox Fill" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 1
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 1
+positions "Ox Press" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 1
+  "LOX Vent" = 0
+positions "Ox Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 1
+positions "Press Standby" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Ready" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 0
+  "Fuel Vent" = 0
+  "GN2 Vent" = 0
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 0
+  "LOX Vent" = 0
+positions "Vent" (16)
+  "Fuel Fill Press" = 0
+  "Fuel Fill Vent" = 0
+  "Fuel Main" = 0
+  "Fuel Press" = 1
+  "Fuel Vent" = 1
+  "GN2 Vent" = 1
+  "GSE High Press Control" = 0
+  "GSE High Press Vent" = 0
+  "GSE LOX Fill Vent" = 0
+  "GSE Low Press Vent" = 0
+  "GSE Med Press Control" = 0
+  "LOX Dump" = 0
+  "LOX Fill" = 0
+  "LOX Main" = 0
+  "LOX Press" = 1
+  "LOX Vent" = 1
+delay "Armed" "Fuel Vent" = 0.1
+delay "Armed" "Ox Main" = 16
+delay "Armed" "Warp Coil" = 2
+delay "Fire" "Fuel Main" = 0.5
+delay "Fire" "Ox Main" = inf
+delay "Fire" "Warp Coil" = 2
+delay "Idle" "Ox Main" = 0.25
+delay "Idle" "Warp Coil" = 2
+positionsForState("idle").size = 16
+positionsForState("armed").size = 16
+positionsForState("fuel fill").size = 16
+positionsForState("ox fill").size = 16
+positionsForState("gn2 low press").size = 16
+positionsForState("gn2 low vent").size = 16
+positionsForState("fuel press").size = 16
+positionsForState("fuel vent").size = 16
+positionsForState("ox press").size = 16
+positionsForState("ox vent").size = 16
+positionsForState("gn2 high press").size = 16
+positionsForState("gn2 high vent").size = 16
+positionsForState("vent").size = 16
+positionsForState("calibrate").size = 16
+positionsForState("ready").size = 16
+positionsForState("fire").size = 16
+positionsForState("engine abort").size = 16
+positionsForState("gse abort").size = 16
+positionsForState("emergency abort").size = 16
+positionsForState("press standby").size = 16
+positionsForState("No Such State").size = 0
+
+=== load_dynamic_states

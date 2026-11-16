@@ -1,0 +1,205 @@
+[system]
+mode = "GROUND"
+state = "GSE"
+
+[system.network]
+base_ip = "192.168.2.0"
+ip_range_start = 100
+ip_range_end = 150
+bind_address = "0.0.0.0"
+bind_port = 5005
+
+[database]
+db_host = "127.0.0.1"
+db_port = 2240
+auto_flush_interval_ms = 100
+max_buffer_size = 2048
+connection_retry_attempts = 3
+connection_retry_delay_ms = 1000
+
+[sensors.gse.pt.PT_OF]
+board_id = 10
+channel = 0
+packet_id = [ 32, 160 ]
+max_psi = 1000
+purpose = "LOX fill pressure"
+component = "lox_fill"
+
+[sensors.gse.pt.PT_FF]
+board_id = 11
+channel = 0
+packet_id = [ 32, 176 ]
+max_psi = 1000
+purpose = "Fuel fill pressure"
+component = "fuel_fill"
+
+[sensors.gse.pt.PT_HPF]
+board_id = 12
+channel = 0
+packet_id = [ 32, 192 ]
+max_psi = 5000
+purpose = "High pressure fill"
+component = "pressurant_fill"
+
+[sensors.gse.pt.PT_MPF]
+board_id = 12
+channel = 1
+packet_id = [ 32, 193 ]
+max_psi = 2000
+purpose = "Medium pressure fill"
+component = "pressurant_fill"
+
+[sensors.gse.pt.PT_LPF]
+board_id = 12
+channel = 2
+packet_id = [ 32, 194 ]
+max_psi = 1000
+purpose = "Low pressure fill"
+component = "pressurant_fill"
+
+[sensors.gse.rtd]
+[sensors.gse.tc]
+[sensors.gse.lc]
+[sensors.hotfire.flight_pt.PT_HP]
+board_id = 0
+channel = 0
+packet_id = [ 32, 0 ]
+max_psi = 5000
+purpose = "High pressure"
+
+[sensors.hotfire.flight_pt.PT_LP]
+board_id = 0
+channel = 1
+packet_id = [ 32, 1 ]
+max_psi = 1000
+purpose = "COPV post regulator"
+
+[sensors.hotfire.flight_pt.PT_FUP]
+board_id = 1
+channel = 0
+packet_id = [ 32, 16 ]
+max_psi = 1000
+purpose = "Fuel upstream"
+
+[sensors.hotfire.flight_pt.PT_FDP]
+board_id = 1
+channel = 1
+packet_id = [ 32, 17 ]
+max_psi = 1000
+purpose = "Fuel downstream"
+
+[sensors.hotfire.flight_pt.PT_OUP]
+board_id = 2
+channel = 0
+packet_id = [ 32, 32 ]
+max_psi = 1000
+purpose = "Oxidizer upstream"
+
+[sensors.hotfire.flight_pt.PT_ODP]
+board_id = 2
+channel = 1
+packet_id = [ 32, 33 ]
+max_psi = 1000
+purpose = "Oxidizer downstream"
+
+[sensors.hotfire.flight_rtd.RTD_COPV]
+board_id = 3
+channel = 0
+packet_id = [ 34, 48 ]
+purpose = "COPV temperature"
+location = "COPV"
+
+[sensors.hotfire.flight_rtd.RTD_LOX_1]
+board_id = 3
+channel = 1
+packet_id = [ 34, 49 ]
+purpose = "LOX tank temperature top"
+location = "LOX_tank"
+
+[sensors.hotfire.flight_rtd.RTD_LOX_2]
+board_id = 3
+channel = 2
+packet_id = [ 34, 50 ]
+purpose = "LOX tank temperature middle"
+location = "LOX_tank"
+
+[sensors.hotfire.flight_rtd.RTD_LOX_3]
+board_id = 3
+channel = 3
+packet_id = [ 34, 51 ]
+purpose = "LOX tank temperature bottom"
+location = "LOX_tank"
+
+[sensors.hotfire.flight_tc.TC_CHAMBER_1]
+board_id = 4
+channel = 0
+packet_id = [ 33, 64 ]
+purpose = "Chamber temperature front"
+location = "chamber"
+
+[sensors.hotfire.flight_tc.TC_CHAMBER_2]
+board_id = 4
+channel = 1
+packet_id = [ 33, 65 ]
+purpose = "Chamber temperature middle"
+location = "chamber"
+
+[sensors.hotfire.flight_tc.TC_CHAMBER_3]
+board_id = 4
+channel = 2
+packet_id = [ 33, 66 ]
+purpose = "Chamber temperature rear"
+location = "chamber"
+
+[sensors.hotfire.flight_tc.TC_CHAMBER_4]
+board_id = 4
+channel = 3
+packet_id = [ 33, 67 ]
+purpose = "Chamber temperature side"
+location = "chamber"
+
+[sensors.hotfire.flight_lc.LC_CHAMBER_1]
+board_id = 5
+channel = 0
+packet_id = [ 35, 80 ]
+purpose = "Chamber load cell 1"
+location = "chamber"
+
+[sensors.hotfire.flight_lc.LC_CHAMBER_2]
+board_id = 5
+channel = 1
+packet_id = [ 35, 81 ]
+purpose = "Chamber load cell 2"
+location = "chamber"
+
+[sensors.hotfire.flight_lc.LC_CHAMBER_3]
+board_id = 5
+channel = 2
+packet_id = [ 35, 82 ]
+purpose = "Chamber load cell 3"
+location = "chamber"
+
+[hotfire]
+enabled = false
+include_flight_sensors = true
+
+[discovery]
+enabled = true
+network_interface = "eth0"
+mode = "hybrid"
+announcement_port = 2245
+discovery_timeout_seconds = 30
+auto_update_config = true
+config_update_interval_seconds = 60
+
+[sensor_data]
+update_rate_hz = 10
+enable_all_sensors = true
+
+[calibration]
+enabled = true
+calibration_file = "calibration/data/ground_calibration.json"
+
+[controller]
+duty_sweep_steps = [ [ 0.1, 0.1 ], [ 0.3, 0.2 ], [ 0.5, 0.4 ], [ 0.3, 0.3 ], [ 0.1, 0.1 ] ]
+duty_sweep_step_duration_sec = 2

@@ -1,0 +1,84 @@
+{
+  "ballValveBoardIds": {
+    "logs": [],
+    "value": []
+  },
+  "perBoard": {
+    "env_a": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Environmental Board #1"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": "Environmental board ID 90 is also claimed by env_b — their readings would merge."
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "env_b": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Environmental Board #2"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": "Environmental board ID 90 is also claimed by env_a — their readings would merge."
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    }
+  },
+  "t7Channels": {
+    "logs": [],
+    "value": []
+  },
+  "t7RoleClashes": {
+    "logs": [],
+    "value": []
+  }
+}

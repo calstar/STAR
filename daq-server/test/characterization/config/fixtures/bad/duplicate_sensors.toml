@@ -1,0 +1,37 @@
+# Two roles on one connector, the same role name on two boards, two boards on one IP,
+# and two actuators on one channel.
+[boards.pt_board]
+type = "PT"
+ip = "192.168.2.21"
+board_id = 21
+enabled = true
+active_connectors = [1, 2, 3]
+pt_type = "0-5V ratiometric"
+
+[boards.pt_board_2]
+type = "PT"
+ip = "192.168.2.21"
+board_id = 22
+enabled = true
+active_connectors = [1, 2]
+pt_type = "0-5V ratiometric"
+
+[boards.actuator_board]
+type = "ACTUATOR"
+ip = "192.168.2.12"
+board_id = 12
+enabled = true
+designated_survivor = true
+
+[sensor_roles_pt_board]
+"Fuel Upstream" = 1
+"Fuel Downstream" = 1
+"COPV" = 2
+
+[sensor_roles_pt_board_2]
+"COPV" = 1
+"Ox Upstream" = 2
+
+[actuator_roles]
+"Fuel Main" = ["NC", 1, 12]
+"Ox Main" = ["NC", 1, 12]

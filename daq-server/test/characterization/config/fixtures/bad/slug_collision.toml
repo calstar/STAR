@@ -1,0 +1,23 @@
+# Two actuators that slug to the same name, and one with no usable slug.
+[actuator_roles]
+"Fuel Main" = ["NC", 1, 12]
+"fuel-main" = ["NC", 2, 12]
+"???" = ["NC", 3, 12]
+
+[boards.actuator_board]
+type = "ACTUATOR"
+ip = "192.168.2.12"
+board_id = 12
+
+[[states]]
+id = 1
+name = "Idle"
+is_boot = true
+
+[[states]]
+id = 2
+name = "Armed"
+script_file = "fine.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"

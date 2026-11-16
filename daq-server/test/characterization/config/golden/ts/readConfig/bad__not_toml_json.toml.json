@@ -1,0 +1,6 @@
+{
+  "error": "Error: Invalid TOML document: incomplete key-value: cannot find end of key\n\n1:  { \"network\": { \"sensor_port\": 5006 } }\n    ^\n",
+  "logs": [
+    "error: Failed to read config: \"Error: Invalid TOML document: incomplete key-value: cannot find end of key\\n\\n1:  { \\\"network\\\": { \\\"sensor_port\\\": 5006 } }\\n    ^\\n\""
+  ]
+}

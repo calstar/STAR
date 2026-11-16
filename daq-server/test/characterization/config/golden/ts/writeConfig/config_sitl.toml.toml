@@ -1,0 +1,56 @@
+[sitl]
+elodin_host = "127.0.0.1"
+elodin_port = 2240
+simulation_rate_hz = 100
+physics_dt = 0.01
+realtime = true
+engine_config_path = "engine_sim/configs/default.yaml"
+controller_config_path = "engine_sim/configs/controller_default.yaml"
+engine_bridge_port = 5555
+engine_bridge_host = "127.0.0.1"
+
+[sensors]
+copv_pt_channel = 0
+reg_pt_channel = 1
+fuel_upstream_pt_channel = 2
+ox_upstream_pt_channel = 3
+fuel_downstream_pt_channel = 4
+ox_downstream_pt_channel = 5
+
+[initial_conditions]
+altitude = 0
+velocity = 0
+tank_pressure_fuel = 974
+tank_pressure_ox = 1305
+
+[ekf]
+position_process_noise = 0.1
+velocity_process_noise = 0.1
+attitude_process_noise = 0.01
+bias_process_noise = 0.001
+scale_process_noise = 0.0001
+engine_process_noise = 100
+imu_accel_noise = 0.1
+imu_gyro_noise = 0.01
+gps_position_noise = 1
+gps_velocity_noise = 0.1
+barometer_noise = 100
+engine_noise = 10
+initial_position_uncertainty = 1
+initial_velocity_uncertainty = 0.1
+initial_attitude_uncertainty = 0.1
+initial_bias_uncertainty = 0.01
+enable_adaptive_filtering = true
+enable_outlier_rejection = true
+outlier_threshold = 3
+innovation_threshold = 5
+enable_robust_estimation = true
+
+[actuation]
+fuel_solenoid_id = 0
+ox_solenoid_id = 1
+pwm_frequency_hz = 100
+
+[controller]
+duty_sweep_steps = [ [ 0.1, 0.1 ], [ 0.3, 0.2 ], [ 0.5, 0.4 ], [ 0.3, 0.3 ], [ 0.1, 0.1 ] ]
+duty_sweep_step_duration_sec = 2

@@ -1,0 +1,77 @@
+{
+  "getActiveProfileName": {
+    "logs": [],
+    "value": "default"
+  },
+  "getConfigPath": {
+    "logs": [
+      "log: 🌱 Generated config.toml from <WORK>/config/profiles/default/config.toml"
+    ],
+    "value": "<WORK>/config/config.toml"
+  },
+  "isStateCsvName": [
+    [
+      "actuators",
+      true
+    ],
+    [
+      "delays",
+      true
+    ],
+    [
+      "transitions",
+      true
+    ],
+    [
+      "positions",
+      false
+    ],
+    [
+      "",
+      false
+    ]
+  ],
+  "listProfiles": {
+    "logs": [],
+    "value": [
+      {
+        "active": true,
+        "name": "default"
+      },
+      {
+        "active": false,
+        "name": "digital-twin"
+      },
+      {
+        "active": false,
+        "name": "server"
+      }
+    ]
+  },
+  "profileDirRefusals": [
+    [
+      "../etc",
+      "Error: Invalid profile name \"../etc\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "",
+      "Error: Invalid profile name \"\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "a b",
+      "Error: Invalid profile name \"a b\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "Error: Invalid profile name \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "-lead",
+      "Error: Invalid profile name \"-lead\" (use letters, digits, _ or -, max 64 chars)"
+    ],
+    [
+      "ok_name-1",
+      "accepted"
+    ]
+  ]
+}
