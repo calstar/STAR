@@ -1,0 +1,24 @@
+# Families of ill-conditioned values that may differ by more than 4 ULP between builds
+# (golden_compare.py; first matching rule wins; everything not named here is 4 ULP, integers and
+# text exact). Each limit was measured -O0 vs -O2 (arm64 clang) and is proven to still catch a
+# meaningful change: see README.md in this directory.
+
+# Callendar-Van Dusen inverse (rtd::resistance_to_temp_cvd[_full], rtd_board_adc_to_temp_c,
+# t7::rtd_c): T = (-A + sqrt(A^2 - 4B(1 - R/R0))) / 2B cancels catastrophically, leaving an
+# absolute error of ~4e-13..8e-13 C anywhere on the curve. Near R0 (|T| < 1 C) that is up to
+# 2.2e5 ULP; elsewhere up to 106 ULP (rel 2e-14).
+family=rtd-cvd-near-R0 line="^(T\(|board(?: edge)?\(|rtd(?: pt100)?[( ])" below=1 abs=1e-11
+family=rtd-cvd line="^(T\(|board(?: edge)?\(|rtd(?: pt100)?[( ])" rel=1e-13
+
+# Robust learner (RobustCalibrationFramework / Manager): seed_from_factory_cubic is a ridge
+# least-squares solve on a 9-term basis; its parameters, covariance and RLS P differ by up to
+# 6.8e-10 relative. Predictions that should be 0 psi are cancellation residue (|v| ~ 1e-15, up to
+# 2.3e-11 psi apart).
+family=robust-prediction section="RobustCalibrationFramework" line="pred" abs=1e-9
+family=robust-prediction section="RobustCalibrationManager" line="pred" abs=1e-9
+family=robust-parameters section="RobustCalibrationFramework" rel=1e-7
+family=robust-parameters section="RobustCalibrationManager" rel=1e-7
+
+# Allan-variance noise fit (fit_noise_coefficients): a 4-column least-squares solve; K and
+# tau_min (fields 2 and 4 of the `fit` line) move by 5 ULP.
+family=allan-fit section="AllanVariance" line="^fit Q=" fields=2,4 ulps=8

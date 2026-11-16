@@ -24,15 +24,21 @@
 
 namespace charcal {
 
+/** NaN prints as "nan" whatever its sign bit (glibc prints a negative NaN as "-nan"). */
 inline std::string d(double v) {
+    if (std::isnan(v))
+        return "nan";
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%.17g", v);
     return buf;
 }
 
+/** A float32, suffixed `f` so golden_compare measures it in float32 ULPs. */
 inline std::string f32(float v) {
+    if (std::isnan(v))
+        return "nan";
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "%.9g", static_cast<double>(v));
+    std::snprintf(buf, sizeof(buf), "%.9gf", static_cast<double>(v));
     return buf;
 }
 

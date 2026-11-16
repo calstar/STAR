@@ -3,7 +3,7 @@
 #   ts     backend calibration TypeScript (calibration.ts, calibration-handler.ts, lc-tare.ts,
 #          ball-valve-cal.ts, routes/calibration-profiles.ts) via npx tsx -> golden/ts.txt
 #   stack  build/bin/calibration_service against a stand-in Elodin on 127.0.0.1, fed a scripted
-#          raw-sample and command stream -> golden/stack.<os>-<arch>-<build type>.txt
+#          raw-sample and command stream -> golden/stack.txt
 # The C++ library / service-function goldens are ctest's (CMakeLists.txt here).
 #
 # CHAR_UPDATE=1 rewrites the goldens (only ever on main's behaviour). Off the stand only; the
@@ -18,11 +18,6 @@ fi
 [ -n "$BUILD" ] && [ -x "$BUILD/bin/calibration_service" ] ||
   { echo "calibration/run.sh: no built calibration_service (run scripts/build.sh)" >&2; exit 2; }
 
-# The variant naming must match CMakeLists.txt's CHAR_CAL_VARIANT.
-bt="$(sed -n 's/^CMAKE_BUILD_TYPE:STRING=//p' "$BUILD/CMakeCache.txt" | tr '[:upper:]' '[:lower:]')"
-{ [ -z "$bt" ] || [ "$bt" = debug ]; } && bt=noopt
-variant="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | tr '[:upper:]' '[:lower:]')-$bt"
-
 fail=0
 run() {
   local name="$1"; shift
@@ -31,7 +26,6 @@ run() {
   rc=$?
   case "$rc" in
     0) echo "   calibration/$name: ok ($((SECONDS - t0))s)" ;;
-    77) echo "   calibration/$name: SKIPPED (no golden for this variant)" ;;
     *) echo "   calibration/$name: FAILED"; fail=1 ;;
   esac
 }
@@ -43,7 +37,7 @@ ts_half() {
   local log rc
   log="$(mktemp "${TMPDIR:-/tmp}/char_cal_ts.XXXXXX")"
   (cd "$ROOT/diablo_server/backend" &&
-    bash "$HERE/check_golden.sh" "$HERE/golden/ts" - \
+    bash "$HERE/check_golden.sh" "$HERE/golden/ts.txt" \
       npx --no-install tsx "$HERE/ts_harness.mts" "$HERE/fixtures") 2> "$log"
   rc=$?
   [ "$rc" = 0 ] || tail -n 150 "$log" >&2
@@ -53,7 +47,7 @@ ts_half() {
 
 stack_half() {
   bash "$ROOT/test/characterization/with_stack_lock.sh" \
-    bash "$HERE/check_golden.sh" "$HERE/golden/stack" "$variant" \
+    bash "$HERE/check_golden.sh" "$HERE/golden/stack.txt" \
       python3 "$HERE/service_run.py" --cal "$BUILD/bin/calibration_service" --fixtures "$HERE/fixtures"
 }
 
