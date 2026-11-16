@@ -1,0 +1,117 @@
+{
+  "counts": {
+    "errors": 8,
+    "warnings": 2
+  },
+  "grouped": [
+    {
+      "issues": [
+        {
+          "level": "error",
+          "message": "A state has no id (or one outside 1-254), so the sequencer cannot load it — use \"Fix the ids\" on the State Machine tab.",
+          "page": "state"
+        },
+        {
+          "level": "error",
+          "message": "The Actuators table has column(s) that are not states: Armed, Fuel Fill, Ox Fill, Press Standby, GN2 Low Press, GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent, GN2 High Press, GN2 High Vent, Calibrate, Ready, Fire, Vent, Engine Abort, GSE Abort, Emergency Abort.",
+          "page": "state"
+        },
+        {
+          "level": "error",
+          "message": "The Actuators table is missing column(s) for state(s): 42 — entering them commands nothing.",
+          "page": "state"
+        },
+        {
+          "level": "error",
+          "message": "The Delays table has column(s) that are not states: Armed, Fuel Fill, Ox Fill, Press Standby, GN2 Low Press, GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent, GN2 High Press, GN2 High Vent, Calibrate, Ready, Fire, Vent, Engine Abort, GSE Abort, Emergency Abort.",
+          "page": "state"
+        },
+        {
+          "level": "error",
+          "message": "The Delays table is missing column(s) for state(s): 42 — entering them commands nothing.",
+          "page": "state"
+        },
+        {
+          "level": "error",
+          "message": "The Transitions table has column(s) that are not states: Armed, Fuel Fill, Ox Fill, Press Standby, GN2 Low Press, GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent, GN2 High Press, GN2 High Vent, Calibrate, Ready, Fire, Vent, Engine Abort, GSE Abort, Emergency Abort.",
+          "page": "state"
+        },
+        {
+          "level": "error",
+          "message": "The Transitions table is missing column(s) for state(s): 42 — entering them commands nothing.",
+          "page": "state"
+        },
+        {
+          "level": "error",
+          "message": "The Transitions table rows do not match the state list — every state must have a row.",
+          "page": "state"
+        },
+        {
+          "level": "warn",
+          "message": "No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer's abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards' own independent abort logic is unaffected.",
+          "page": "state"
+        },
+        {
+          "level": "warn",
+          "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Main, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+          "page": "state"
+        }
+      ],
+      "label": "State Machine",
+      "page": "state"
+    }
+  ],
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "A state has no id (or one outside 1-254), so the sequencer cannot load it — use \"Fix the ids\" on the State Machine tab.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "The Actuators table has column(s) that are not states: Armed, Fuel Fill, Ox Fill, Press Standby, GN2 Low Press, GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent, GN2 High Press, GN2 High Vent, Calibrate, Ready, Fire, Vent, Engine Abort, GSE Abort, Emergency Abort.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "The Actuators table is missing column(s) for state(s): 42 — entering them commands nothing.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "The Delays table has column(s) that are not states: Armed, Fuel Fill, Ox Fill, Press Standby, GN2 Low Press, GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent, GN2 High Press, GN2 High Vent, Calibrate, Ready, Fire, Vent, Engine Abort, GSE Abort, Emergency Abort.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "The Delays table is missing column(s) for state(s): 42 — entering them commands nothing.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "The Transitions table has column(s) that are not states: Armed, Fuel Fill, Ox Fill, Press Standby, GN2 Low Press, GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent, GN2 High Press, GN2 High Vent, Calibrate, Ready, Fire, Vent, Engine Abort, GSE Abort, Emergency Abort.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "The Transitions table is missing column(s) for state(s): 42 — entering them commands nothing.",
+      "page": "state"
+    },
+    {
+      "level": "error",
+      "message": "The Transitions table rows do not match the state list — every state must have a row.",
+      "page": "state"
+    },
+    {
+      "level": "warn",
+      "message": "No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer's abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards' own independent abort logic is unaffected.",
+      "page": "state"
+    },
+    {
+      "level": "warn",
+      "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Main, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+      "page": "state"
+    }
+  ]
+}

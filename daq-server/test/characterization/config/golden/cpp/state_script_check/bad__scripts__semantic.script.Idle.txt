@@ -1,0 +1,6 @@
+=== stdout
+1:5: E_VAR_USED_BEFORE_ASSIGN 'x' is read before it is ever assigned
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

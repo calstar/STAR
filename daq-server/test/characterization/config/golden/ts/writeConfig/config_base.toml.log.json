@@ -1,0 +1,9 @@
+{
+  "error": "<undefined>",
+  "logs": [
+    "log: 💾 Writing config to: <WORK>/write/config_base.toml",
+    "warn:    File may not exist yet, will create",
+    "log:    Generated TOML content: 12931 bytes",
+    "log: ✅ Config written successfully to <WORK>/write/config_base.toml"
+  ]
+}

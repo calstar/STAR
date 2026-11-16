@@ -1,0 +1,29 @@
+[boards.actuator_board]
+type = "ACTUATOR"
+ip = "192.168.2.12"
+board_id = 12
+enabled = true
+designated_survivor = true
+
+[boards.ball_valve_board]
+type = "BALL_VALVE"
+ip = "192.168.2.71"
+board_id = 71
+enabled = true
+
+[actuator_roles]
+"Too Short" = [ "NC", 1 ]
+"Lowercase no" = [ "no", 2, 12 ]
+"Ball NO" = [ "NO", 1, 71 ]
+"Channel Zero" = [ "NC", 0, 12 ]
+"Channel Eleven" = [ "NC", 11, 12 ]
+"Unknown Board" = [ "NC", 3, 99 ]
+"PWM One" = [ "NC", 4, 12, "pwm_fuel" ]
+"PWM Two" = [ "NC", 5, 12, "pwm_fuel" ]
+"PWM Bad" = [ "NC", 6, 12, "pwm_lox" ]
+"Wrong Types" = [ 1, "2", 12 ]
+"Not An Array" = "NC"
+
+[controller]
+duty_sweep_steps = [ [ 0.1, 0.1 ], [ 0.3, 0.2 ], [ 0.5, 0.4 ], [ 0.3, 0.3 ], [ 0.1, 0.1 ] ]
+duty_sweep_step_duration_sec = 2

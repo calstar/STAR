@@ -1,0 +1,6 @@
+=== stdout
+1:10: E_CHAINED_COMPARISON two comparisons in a row — write it as a and b, e.g. (x > 100) and (x < 200)
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

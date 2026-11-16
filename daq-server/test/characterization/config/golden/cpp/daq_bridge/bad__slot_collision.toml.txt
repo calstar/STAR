@@ -1,0 +1,33 @@
+db_host = "127.0.0.1"
+db_port = 2240
+sensor_port = 5006
+bind_ip = "0.0.0.0"
+log_port = 8092
+hb = {interval_ms=1000 broadcast_port=5005 broadcast_ip="255.255.255.255" send_from_daq_bridge=true}
+time_sync = {mode=BoardClock window_seconds=10 max_plausible_gap_s=60 max_batch_age_s=5 resync_threshold_ms=1000 log_interval_s=10}
+board_map["192.168.2.20"] = {type=TC ip="192.168.2.20" active_channels=1 enabled=true board_id=20 wire_u8=4}
+board_map["192.168.2.21"] = {type=PT ip="192.168.2.21" active_channels=2 enabled=true board_id=21 wire_u8=1}
+board_map["192.168.2.29"] = {type=PT ip="192.168.2.29" active_channels=1 enabled=true board_id=29 wire_u8=1}
+board_map["192.168.2.31"] = {type=PT ip="192.168.2.31" active_channels=2 enabled=true board_id=31 wire_u8=1}
+board_map["192.168.2.41"] = {type=PT ip="192.168.2.41" active_channels=1 enabled=false board_id=41 wire_u8=1}
+board_by_octet[20] = {type=TC ip="192.168.2.20" active_channels=1 enabled=true board_id=20 wire_u8=4}
+board_by_octet[21] = {type=PT ip="192.168.2.21" active_channels=2 enabled=true board_id=21 wire_u8=1}
+board_by_octet[29] = {type=PT ip="192.168.2.29" active_channels=1 enabled=true board_id=29 wire_u8=1}
+board_by_octet[31] = {type=PT ip="192.168.2.31" active_channels=2 enabled=true board_id=31 wire_u8=1}
+resolve("192.168.2.20") = {type=TC ip="192.168.2.20" active_channels=1 enabled=true board_id=20 wire_u8=4}
+resolve("127.0.0.20") = {type=TC ip="192.168.2.20" active_channels=1 enabled=true board_id=20 wire_u8=4}
+resolve("192.168.2.21") = {type=PT ip="192.168.2.21" active_channels=2 enabled=true board_id=21 wire_u8=1}
+resolve("127.0.0.21") = {type=PT ip="192.168.2.21" active_channels=2 enabled=true board_id=21 wire_u8=1}
+resolve("192.168.2.29") = {type=PT ip="192.168.2.29" active_channels=1 enabled=true board_id=29 wire_u8=1}
+resolve("127.0.0.29") = {type=PT ip="192.168.2.29" active_channels=1 enabled=true board_id=29 wire_u8=1}
+resolve("192.168.2.31") = {type=PT ip="192.168.2.31" active_channels=2 enabled=true board_id=31 wire_u8=1}
+resolve("127.0.0.31") = {type=PT ip="192.168.2.31" active_channels=2 enabled=true board_id=31 wire_u8=1}
+resolve("192.168.2.41") = null
+resolve("127.0.0.41") = null
+resolve("10.9.8.7") = null
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

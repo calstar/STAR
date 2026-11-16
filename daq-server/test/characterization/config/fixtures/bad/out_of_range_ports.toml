@@ -1,0 +1,25 @@
+[network]
+sensor_port = 70000
+actuator_cmd_port = -1
+
+[database]
+port = 65536
+
+[controller_service]
+port = 0
+
+[actuator_service]
+port = 99999
+
+[logs]
+backend_udp_port = -8092
+
+[boards.pt_board]
+type = "PT"
+ip = "192.168.2.21"
+board_id = 21
+listen_port = 65537
+send_port = -5
+active_connectors = [0, 256, -1, 300]
+voltage_reference = 7
+enable_serial_printing = 9

@@ -1,0 +1,6 @@
+=== stdout
+3:6: E_BAD_INDENT_UNIT indented 2 spaces; this script indents 3 at a time, so 6 was expected
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

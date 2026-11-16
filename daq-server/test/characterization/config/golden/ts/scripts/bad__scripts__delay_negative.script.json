@@ -1,0 +1,34 @@
+{
+  "carets": [
+    "0: command \"\" 0-0 => 0-0 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "1: command \"d\" 0-1 => 0-1 delay(",
+    "2: command \"de\" 0-2 => 0-2 delay(",
+    "3: command \"del\" 0-3 => 0-3 delay(",
+    "4: command \"dela\" 0-4 => 0-4 delay(",
+    "5: command \"delay\" 0-5 => 0-5 delay(",
+    "6: expr \"\" 6-6 => 6-6 pressure(+ | elapsed() | not ",
+    "7: expr \"\" 7-7 => 7-7 pressure(+ | elapsed() | not ",
+    "8: null => null",
+    "9: null => null",
+    "10: command \"\" 10-10 => 10-10 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while "
+  ],
+  "checkScriptNames_DynamicTest": [],
+  "checkScriptNames_Idle": [],
+  "renameActuator": "delay(-1)\n",
+  "renameState": "delay(-1)\n",
+  "scanScriptNames": [],
+  "tokenize": [
+    "0-5 command \"delay\"",
+    "5-6 op \"(\"",
+    "6-7 op \"-\"",
+    "7-8 number \"1\"",
+    "8-9 op \")\""
+  ],
+  "tokenizeNoTables": [
+    "0-5 command \"delay\"",
+    "5-6 op \"(\"",
+    "6-7 op \"-\"",
+    "7-8 number \"1\"",
+    "8-9 op \")\""
+  ]
+}

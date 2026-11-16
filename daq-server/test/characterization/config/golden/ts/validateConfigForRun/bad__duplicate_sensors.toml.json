@@ -1,0 +1,37 @@
+{
+  "counts": {
+    "errors": 0,
+    "warnings": 2
+  },
+  "grouped": [
+    {
+      "issues": [
+        {
+          "level": "warn",
+          "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+          "page": "state"
+        },
+        {
+          "level": "warn",
+          "message": "Configured but missing an Actuators row: Ox Main — the sequencer will never command these in any state.",
+          "page": "state"
+        }
+      ],
+      "label": "State Machine",
+      "page": "state"
+    }
+  ],
+  "logs": [],
+  "value": [
+    {
+      "level": "warn",
+      "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+      "page": "state"
+    },
+    {
+      "level": "warn",
+      "message": "Configured but missing an Actuators row: Ox Main — the sequencer will never command these in any state.",
+      "page": "state"
+    }
+  ]
+}
