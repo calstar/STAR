@@ -69,6 +69,13 @@ binary.
   subscribes to the self-test tables over several request-id-capped passes, and a result
   published before its pass is lost (Linux lost board 21's sensors 2-10). `run.sh` starts the
   simulator only after a subscription pass with nothing left queued.
+- **Sequencer boot transient.** At boot the sequencer publishes every valve de-energized
+  (`publishInitialState`: a normally-open Fuel Main reads 1) and then applies the boot state
+  (Fuel Main 0). Whether the backend's history caught the transient 1 was a race (macOS no, Linux
+  yes). `run.sh` starts the backend only after the sequencer logs its boot state applied.
+- **Connect backfill horizon.** The viewer client connects ~10 s after the first sample; at ~60 s
+  the one-shot self-test series fell outside the backend's 60 s connect backfill on the slower
+  machine.
 - `scripts/calibration/calibrations/` — the committed store minus `cubic_calibration.json`,
   `lc_tare.json` and `adjustments.json`. Every C++ service runs with `cwd` = the fixture (all their store
   paths are relative); the backend gets `DAQ_CALIBRATIONS_DIR`. The live JSONs are never parked.
@@ -118,11 +125,11 @@ On macOS it needs the 16 board_id loopback aliases (`11 12 13 14 21 22 25 31 32 
 
 ## The scripted session (`session.ts`)
 
-GET sweep → connect A → 3 s live → unknown `subscribe`, non-JSON, `get_state_transitions` →
+GET sweep → connect A → 3 s live → viewer client B (`X-Auth-Email`, not an operator) → unknown `subscribe`, non-JSON, `get_state_transitions` →
 four `query_historical` shapes → control commands while locked → `control_unlock` → locally
 rejected transitions (unknown id, bad hold) → a transition the sequencer refuses (Idle→Fire) →
 Idle→Armed → debug on → actuator open/close/unknown → debug off → `extend_fire` outside Fire →
-Armed→Idle → viewer client B (`X-Auth-Email`, not an operator) → countdown set/clear → a
+Armed→Idle → countdown set/clear → a
 calibration command → an unsupported command → `session_start` (blocked, forced, again) → GET
 sweep during the session + session POSTs → `session_extend` (good, bad) → `session_stop` (twice) →
 HTTP error shapes → disconnect.
@@ -130,7 +137,7 @@ HTTP error shapes → disconnect.
 **Timing.** A step that sends something lasts its nominal time and then until the event stream
 (everything but the streams and board-health notifications) has been quiet for `QUIET_MS` = 1.5 s,
 capped at 20 s, so a reply that a loaded machine delivers late still lands in its own step. The
-viewer client connects ~35 s after the first sample, well inside the backend's 60 s connect
+viewer client connects ~10 s after the first sample, well inside the backend's 60 s connect
 backfill horizon (`history-backfill.ts HISTORY_CONNECT_SPAN_MS`); at ~60 s, where it used to be,
 whether the one-shot self-test series made the cut depended on the machine's speed.
 
