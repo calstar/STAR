@@ -10,7 +10,7 @@
 //             (`elodin_connected && is_connected() && !self_tests.empty()`; `publishing`), then
 //             begin_batch → publish rows → flush_batch (→ ++elodin_publish_count, else
 //             ++elodin_drop_count) → for self-tests, the non-blocking drain. Board slot: board_id
-//             % 10, 0 → 10, as today (table_id_for adoption is optional, DESIGN-WP10 amendment).
+//             % 10, 0 → 10, as today (WP10 does not adopt table_id_for).
 // Errors:     a failed publish is counted, never logged per row; unknown board id for a self-test
 //             → the fallback ladder (config IP, discovery, 127.0.0.<octet>), else skipped.
 // Must not know: registration, reconnect, routing decisions (main resolves board type and config

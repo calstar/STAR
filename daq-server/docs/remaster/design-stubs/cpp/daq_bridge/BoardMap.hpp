@@ -14,7 +14,7 @@
 //             std::invalid_argument → main's "FATAL: …", exit 1 (C2-12's daq_bridge half). Unknown
 //             IPs resolve to nullptr; main treats them as discovered type or PT.
 // Must not know: Elodin, the pipeline, sockets, config pushes (daq_bridge pushes no board config;
-//             config_broadcast_service does — walkthrough (c1) step 9, C6-1, C6-6).
+//             config_broadcast_service does — C6-1, C6-6; history.md walkthrough (c1)).
 // Names:      global namespace kept (a namespace would need a second harness edit, §4.3; STYLE-S4
 //             records the exception); `BoardConfig`/`ServerHeartbeatConfig` coexist with
 //             fsw::config's types only because nothing here says `using namespace fsw::config`.
