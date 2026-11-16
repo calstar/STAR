@@ -314,6 +314,14 @@ async function main(): Promise<void> {
   command('A', 'session_extend', { addMs: 1000 });
   await settle(800);
 
+  step('late_client');
+  // A client that connects after the session: what the backend replays to it -- the notification
+  // buffer (session warnings cleared at start/extend/stop) and the self-test results.
+  await openClient('C');
+  await settle(1500);
+  await closeClient('C');
+  await settle(300);
+
   step('http_errors');
   await request('GET', '/nope');
   await request('GET', '/');
