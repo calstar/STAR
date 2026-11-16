@@ -298,14 +298,19 @@ class FakeOtaBoard:
             return
         self.connections += 1
         with conn:
-            conn.settimeout(20)
-            self.header = self._recv(conn, 4)
-            if len(self.header) == 4:
-                self.body = self._recv(conn, struct.unpack(">I", self.header)[0])
-            if self.behavior == "ok":
-                conn.sendall(b"OK\n")
-            elif self.behavior == "fail":
-                conn.sendall(b"FAIL\n")
+            # A real board waits for the size it was told; a wrong header strands it, which is
+            # what the report then shows (received != file). Short timeout keeps that case cheap.
+            conn.settimeout(5)
+            try:
+                self.header = self._recv(conn, 4)
+                if len(self.header) == 4:
+                    self.body = self._recv(conn, struct.unpack(">I", self.header)[0])
+                if self.behavior == "ok":
+                    conn.sendall(b"OK\n")
+                elif self.behavior == "fail":
+                    conn.sendall(b"FAIL\n")
+            except OSError:
+                pass
         self.srv.close()
 
     def report(self, expected: bytes) -> list[str]:
@@ -1328,7 +1333,8 @@ def shutdown(r: Run, cap, mon, sim, cb, sl, cal, ota, el, br, hb, be):
         status = [
             f
             for tt, f in mon.snapshot()
-            if tt >= t and f.get("type") == "connection_status"
+            # from +1 s: the 1 Hz status tick can land between the signal and the socket close
+            if tt >= t + 1.0 and f.get("type") == "connection_status"
         ]
         flags = sorted(
             {
