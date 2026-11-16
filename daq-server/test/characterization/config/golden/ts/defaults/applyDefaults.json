@@ -1,0 +1,52 @@
+{
+  "applyCalibrationModelDefaults": {
+    "boards": {
+      "pt": {
+        "pt_type": "4-20 mA absolute",
+        "type": "PT"
+      },
+      "pt2": {
+        "type": "PT"
+      }
+    },
+    "calibration_model_pt": {
+      "A": "physics"
+    },
+    "calibration_model_pt2": {
+      "B": "cubic"
+    },
+    "sensor_roles_pt": {
+      "A": 1
+    },
+    "sensor_roles_pt2": {
+      "B": 2
+    }
+  },
+  "applyControllerDefaults": {
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    }
+  }
+}

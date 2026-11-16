@@ -1,0 +1,27 @@
+{
+  "counts": {
+    "errors": 0,
+    "warnings": 1
+  },
+  "grouped": [
+    {
+      "issues": [
+        {
+          "level": "warn",
+          "message": "No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer's abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards' own independent abort logic is unaffected.",
+          "page": "state"
+        }
+      ],
+      "label": "State Machine",
+      "page": "state"
+    }
+  ],
+  "logs": [],
+  "value": [
+    {
+      "level": "warn",
+      "message": "No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer's abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards' own independent abort logic is unaffected.",
+      "page": "state"
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "logs": [],
+  "value": {
+    "actuator_roles": {
+      "Ball NO": [
+        "NO",
+        1,
+        71
+      ],
+      "Channel Eleven": [
+        "NC",
+        11,
+        12
+      ],
+      "Channel Zero": [
+        "NC",
+        0,
+        12
+      ],
+      "Lowercase no": [
+        "no",
+        2,
+        12
+      ],
+      "Not An Array": "NC",
+      "PWM Bad": [
+        "NC",
+        6,
+        12,
+        "pwm_lox"
+      ],
+      "PWM One": [
+        "NC",
+        4,
+        12,
+        "pwm_fuel"
+      ],
+      "PWM Two": [
+        "NC",
+        5,
+        12,
+        "pwm_fuel"
+      ],
+      "Too Short": [
+        "NC",
+        1
+      ],
+      "Unknown Board": [
+        "NC",
+        3,
+        99
+      ],
+      "Wrong Types": [
+        1,
+        "2",
+        12
+      ]
+    },
+    "boards": {
+      "actuator_board": {
+        "board_id": 12,
+        "designated_survivor": true,
+        "enabled": true,
+        "ip": "192.168.2.12",
+        "type": "ACTUATOR"
+      },
+      "ball_valve_board": {
+        "board_id": 71,
+        "enabled": true,
+        "ip": "192.168.2.71",
+        "type": "BALL_VALVE"
+      }
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    }
+  }
+}

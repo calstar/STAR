@@ -1,0 +1,6 @@
+=== stdout
+1:1: E_PROGRAM_TOO_LARGE script is 5400 bytes; the limit is 4096
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

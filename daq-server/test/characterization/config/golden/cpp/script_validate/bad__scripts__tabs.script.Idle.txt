@@ -1,0 +1,22 @@
+=== script fixtures/bad/scripts/tabs.script as state "Idle"
+parse.ok = false
+parse.diag.count = 1
+parse.diag 2:1 E_TAB_INDENT "tab in indentation — use spaces (a tab is invisible in the editor, and mixed indentation silently changes which branch a valve command is in)"
+top = [0, 0) empty=true max_depth=0
+block_items = []
+canonical:
+(seq)
+validate.diag.count = 0
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 13 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0

@@ -1,0 +1,15 @@
+
+=== script fixtures/bad/scripts/call_not_statement.script (parse only)
+parse.ok = false
+parse.diag.count = 1
+parse.diag 1:1 E_CALL_NOT_A_STATEMENT "'pressure' produces a value and cannot stand alone as a statement"
+top = [0, 0) empty=true max_depth=0
+block_items = []
+canonical:
+(seq)
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

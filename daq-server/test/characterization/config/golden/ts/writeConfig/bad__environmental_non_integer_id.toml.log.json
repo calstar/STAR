@@ -1,0 +1,9 @@
+{
+  "error": "<undefined>",
+  "logs": [
+    "log: 💾 Writing config to: <WORK>/write/environmental_non_integer_id.toml",
+    "warn:    File may not exist yet, will create",
+    "log:    Generated TOML content: 232 bytes",
+    "log: ✅ Config written successfully to <WORK>/write/environmental_non_integer_id.toml"
+  ]
+}

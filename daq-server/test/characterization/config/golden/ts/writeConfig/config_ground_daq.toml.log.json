@@ -1,0 +1,9 @@
+{
+  "error": "<undefined>",
+  "logs": [
+    "log: 💾 Writing config to: <WORK>/write/config_ground_daq.toml",
+    "warn:    File may not exist yet, will create",
+    "log:    Generated TOML content: 4026 bytes",
+    "log: ✅ Config written successfully to <WORK>/write/config_ground_daq.toml"
+  ]
+}

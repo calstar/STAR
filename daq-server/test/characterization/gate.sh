@@ -35,7 +35,8 @@ step() {
 # Warnings are compared without line numbers so a moved line is not a new warning.
 build_clean() {
   rm -rf "$ROOT/build-gate"
-  cmake -S "$ROOT" -B "$ROOT/build-gate" -Wno-dev -DCMAKE_BUILD_TYPE=Release &&
+  # Ninja buffers each command's output, so parallel diagnostics never interleave mid-line.
+  cmake -S "$ROOT" -B "$ROOT/build-gate" -G Ninja -Wno-dev -DCMAKE_BUILD_TYPE=Release &&
     cmake --build "$ROOT/build-gate" -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)" 2>&1 | tee "$LOG/build-output.txt"
   [ "${PIPESTATUS[0]}" = 0 ] || return 1
   grep -E 'warning:' "$LOG/build-output.txt" |
@@ -58,7 +59,24 @@ ctest_all() {
   [ -z "$new" ] || { echo "NEW CTEST FAILURES:"; echo "$new"; return 1; }
   echo "(only baseline-known failures: $(tr '\n' ' ' < "$CHAR/baseline_ctest_failures.txt"))"
 }
-backend_vitest() { (cd "$ROOT/diablo_server/backend" && npm test); }
+# Backend tests that fail on main on this machine are listed in baseline_vitest_failures.txt
+# ("file > describe > test", as vitest prints them); any other failure fails the gate.
+backend_vitest() {
+  (cd "$ROOT/diablo_server/backend" && npx vitest run --exclude 'dist/**' --reporter=json --outputFile="$LOG/backend-vitest.json") ||
+    true
+  node -e '
+    const r = require(process.argv[1]); const fs = require("fs");
+    const known = new Set(fs.readFileSync(process.argv[2], "utf8").split("\n").filter(Boolean));
+    const failed = [];
+    for (const f of r.testResults) for (const t of f.assertionResults)
+      if (t.status === "failed") failed.push([require("path").relative(process.argv[3], f.name), ...t.ancestorTitles, t.title].join(" > "));
+    const fresh = failed.filter((n) => !known.has(n));
+    console.log(`backend vitest: ${r.numPassedTests} passed, ${r.numFailedTests} failed, ${r.numPendingTests} skipped`);
+    if (!r.testResults.length) { console.log("no test results"); process.exit(1); }
+    if (fresh.length) { console.log("NEW VITEST FAILURES:\n" + fresh.join("\n")); process.exit(1); }
+    if (failed.length) console.log("(only baseline-known failures)");
+  ' "$LOG/backend-vitest.json" "$CHAR/baseline_vitest_failures.txt" "$ROOT/diablo_server/backend"
+}
 frontend_vitest() { (cd "$ROOT/diablo_server/frontend" && npm test); }
 frontend_lint() { (cd "$ROOT/diablo_server/frontend" && npm run lint); }
 frontend_build() { (cd "$ROOT/diablo_server/frontend" && npm run test:build); }
@@ -66,6 +84,9 @@ shared_types() {
   (cd "$ROOT/diablo_server/frontend" && npm run build:shared) &&
     git -C "$ROOT" diff --exit-code -- diablo_server/shared/
 }
+# The 9 tests vitest skips by default (CI's separate video-gateway job). Needs
+# `scripts/video-gateway.sh --fetch` and `npx playwright-core install chromium` once.
+video_gateway() { (cd "$ROOT/diablo_server/backend" && bash "$CHAR/with_stack_lock.sh" npm run test:video-gateway); }
 characterization() { CHAR_BUILD_DIR="$ROOT/build-gate" bash "$CHAR/with_stack_lock.sh" bash "$CHAR/run.sh"; }
 integration() { bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"; }
 # format.sh --check is red on main in firmware/ Python (out of scope), so the gate checks what this
@@ -86,6 +107,7 @@ format_check() {
 step build build_clean
 step ctest ctest_all
 step backend-vitest backend_vitest
+step video-gateway video_gateway
 step frontend-vitest frontend_vitest
 step frontend-lint frontend_lint
 step frontend-build frontend_build

@@ -1,0 +1,105 @@
+# One state per refusal load_dynamic_states has.
+[fire]
+state = "Fire"
+expiry_target = "Idle"
+
+[actuator_roles]
+"Fuel Main" = ["NC", 1, 12]
+
+[boards.actuator_board]
+type = "ACTUATOR"
+ip = "192.168.2.12"
+board_id = 12
+
+[[states]]
+id = 1
+name = "Idle"
+is_boot = true
+
+[[states]]
+id = 16
+name = "Fire"
+script_file = "fire.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[[states]]
+id = 17
+name = "Engine Abort"
+is_abort = true
+script_file = "abort.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[[states]]
+id = 2
+name = "Armed"
+script_file = "../escape.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[[states]]
+id = 3
+name = "Fuel Fill"
+script_file = "no_timeout.script"
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[[states]]
+id = 4
+name = "Ox Fill"
+script_file = "long.script"
+script_timeout_ms = 600001
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[[states]]
+id = 5
+name = "GN2 Low Press"
+script_file = "no_return.script"
+script_timeout_ms = 1000
+script_timeout_target = "Idle"
+
+[[states]]
+id = 6
+name = "GN2 Low Vent"
+script_file = "bad_target.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Nowhere"
+
+[[states]]
+id = 7
+name = "Fuel Press"
+is_flow = true
+script_file = "flow.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[[states]]
+id = 8
+name = "Fuel Vent"
+script_file = "does_not_exist.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[[states]]
+id = 9
+name = "Ox Press"
+script_file = "syntax.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[[states]]
+id = 10
+name = "Ox Vent"
+script_file = "unknown_names.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"

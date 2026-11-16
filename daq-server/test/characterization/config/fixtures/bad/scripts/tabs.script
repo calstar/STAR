@@ -1,0 +1,3 @@
+while elapsed() < 5:
+	open_valve(FUEL_MAIN)
+	delay(1)
