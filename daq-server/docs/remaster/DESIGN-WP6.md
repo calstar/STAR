@@ -56,7 +56,8 @@ changed the following; each changed place is marked with its tag.
 - **[A9]** Writing the interface stubs ("Interfaces" at the end): `raiseNotification` /
   `clearNotification` take the payload only; `activeNotificationKeys` becomes `ReadonlySet` after
   step 2.2 (tsc-enforced single owner); two missing downward edges (`calibration-state` →
-  `config-caches`, `mission-time` → `env`); step 2.8's functions return frame counts.
+  `config-caches`, `mission-time` → `env`); step 2.8's functions return frame counts;
+  `stats.startTimeMs` is set by `initStats()` at row 14 instead of at import (STYLE-S30).
 
 Research cited: `docs/remaster/research/node-realtime-backend.md` (§1 elided imports, §2 timers,
 §3 backpressure, §4 D-SUB, §5 functional core) and `research/subscription-robustness.md` (Ideas
@@ -1100,7 +1101,7 @@ step 1 (containers the moved bodies still mutate, WP6-R3) are marked `[step 1]`,
 | stub (`src/server/…`) | layer | public surface |
 |---|---|---|
 | `env.ts` | 0 | `WS_PORT`, `GUI_PORT`, `ELODIN_HOST`, `ELODIN_PORT`, three `THIN_*` flags |
-| `stats.ts` | 0 | `IngestStats`, `stats` |
+| `stats.ts` | 0 | `IngestStats`, `stats`, `initStats` [A9e] |
 | `ws-clients.ts` | 1 | `WsWithControl`, `ClientStream`, `wss`, `clientStreams`, `KEEPALIVE_MS`, `attachWebSocketServer`, `broadcast`, `send`, `clientStreamStatus`, `flushClientOutboxes`, `resetOutboxStats`, `reapUnresponsiveClients` |
 | `notifications.ts` | 2 | `activeNotificationKeys` (`ReadonlySet` after 2.2), `notificationBuffer` [step 1], `pruneNotificationBuffer`, `broadcastNotification`, `raiseNotification`, `clearNotification`, `sendNotificationReplay` |
 | `history.ts` | 2 | `history`, `pruneHistory`, `sendHistoricalData` |
@@ -1135,6 +1136,12 @@ Also in the stub tree: WP5's `sequencer-client.ts`, `sensor-config.ts` (delta), 
   `env` (`noteFirstSample`'s verbose log).
 - **[A9d]** The 2.8 functions return the number of frames sent, so `ws-connection` keeps its
   `conn_close` counters without knowing what each owner sent.
+- **[A9e]** `stats.startTimeMs = Date.now()` (§1.3 row 14) does not sit at `stats.ts`'s top level
+  as §6.1-R2 allowed: STYLE-S30's list of allowed top-level values has no clock read. Step 1.2
+  adds `initStats()` and `server.ts` calls it at row 14's position, which also keeps `uptimeMs`'s
+  origin exactly where it is today (a top-level read would move it to the import phase). The
+  startup-order script's `init[A-Za-z]*\(` pattern already matches it; `startup-order.expected`
+  gets the line at row 14.
 
 ### STYLE.md conformance (55d140ef; LEDGER D43)
 
@@ -1146,8 +1153,8 @@ Applied: STYLE-S5 (kebab-case, `server/` = WS-side modules, no new `*-manager`/`
 `server.ts` boundaries; the "log, drop, no reply" row is "today, kept"); S14 (the line client keeps
 `{ok, reply}`, never rejects); S15 (harness-read lines named in the headers); S28 (no `.catch` added
 to `registerVTables`); S29 (backfill and callback timing named as deliberate); S30 (no import-time
-effects; `elodin`'s constructor and `stats.startTimeMs` are the two pure top-level values WP6 §1.3
-already allows); S31 (no `server/*` ↔ `api/*` edge; injection only at `createAPIHandler`,
+effects; `elodin`'s constructor is the one pure top-level value besides constants, and
+`stats.startTimeMs` moved into `initStats()` [A9e]); S31 (no `server/*` ↔ `api/*` edge; injection only at `createAPIHandler`,
 `sessionManager.init`, `CalibrationHost`); S32 (live bindings, setters, [A9b]); S33 (sizes per WP);
 S34 (no new class, interface with one user, callback type or knob: the types declared are the
 existing ones plus `TransitionTarget`, a return type); S36 (every stub opens with the required
