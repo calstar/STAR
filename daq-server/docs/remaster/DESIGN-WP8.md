@@ -770,8 +770,10 @@ New defect candidates found while writing this section (report, never fix; for L
 - **D-FD (candidate)** `sequencer_main.cpp:345-349` (and the controller's copy at 210-214):
   after the accept loop, `shutdown(c->fd, SHUT_RDWR)` runs on every tracked connection, including
   ones whose `handleClient` already `close()`d its fd (`:222`) but were not yet reaped. That fd
-  number may have been reused (e.g. by an Elodin client reconnecting on another thread), so
-  shutdown can cut an unrelated socket during the last milliseconds of a stop. `serveTcpClients`
+  number may have been reused, so shutdown can cut an unrelated socket during the last
+  milliseconds of a stop. A reused fd that is an unconnected UDP socket just gets `ENOTCONN`; the
+  realistic victim is a connected TCP socket opened meanwhile on another thread (the Elodin client
+  of the sequencer's retry thread, or a controller notify in flight). `serveTcpClients`
   keeps the statement sequence, and with it this race.
 - From research §0.2-§0.4, already in D42: EINTR can drop an ABORT repeat; handlers do not save
   `errno`; ota allocates between `fork` and `exec`.
