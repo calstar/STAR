@@ -20,7 +20,9 @@ done
 TAG="daq-remaster-linux:${PLATFORM#linux/}"
 docker build -q --platform "$PLATFORM" -t "$TAG" "$HERE" >/dev/null
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
-git -C "$REPO" archive "$REV" daq-server lib/daq-protocol | tar -x -C "$WORK"
+# The whole tree, as CI checks it out: the backend reads repo-level paths (firmware/Hotfire_Code for
+# /api/firmware), so a partial export changes what it serves.
+git -C "$REPO" archive "$REV" | tar -x -C "$WORK"
 case "$CC_KIND" in gcc) CCS="CC=gcc-12 CXX=g++-12" ;; clang) CCS="CC=clang-18 CXX=clang++-18" ;; esac
 echo "linux_gate: $(git -C "$REPO" rev-parse --short "$REV") on $PLATFORM with $CC_KIND"
 docker run --rm --security-opt seccomp=unconfined --platform "$PLATFORM" -v "$WORK":/src -w /src/daq-server "$TAG" bash -c "
