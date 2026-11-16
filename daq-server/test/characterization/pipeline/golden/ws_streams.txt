@@ -164,7 +164,7 @@ envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): 
   SELF_TEST.BOARD_21.sensor_7 {1}
   SELF_TEST.BOARD_21.sensor_8 {1}
   SELF_TEST.BOARD_21.sensor_9 {1}
-# history client A: 67 series
+# viewer_client client B: 67 series
   ACT_CMD.B2.CH1.actuator_state_commanded {0}
   ACT_CMD.B2.CH2.actuator_state_commanded {0}
   ACT_CMD.B2.CH3.actuator_state_commanded {0}
@@ -232,14 +232,14 @@ envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): 
   SELF_TEST.BOARD_21.sensor_7 {1}
   SELF_TEST.BOARD_21.sensor_8 {1}
   SELF_TEST.BOARD_21.sensor_9 {1}
-# viewer_client client B: 70 series
+# history client A: 67 series
   ACT_CMD.B2.CH1.actuator_state_commanded {0}
-  ACT_CMD.B2.CH2.actuator_state_commanded {0, 1}
+  ACT_CMD.B2.CH2.actuator_state_commanded {0}
   ACT_CMD.B2.CH3.actuator_state_commanded {0}
   ACT_CMD.B2.CH5.actuator_state_commanded {0}
   ACT_CMD.B2.CH6.actuator_state_commanded {0}
   ACT_CMD.B2.CH7.actuator_state_commanded {0}
-  ACT_CMD.B2.CH8.actuator_state_commanded {0, 1}
+  ACT_CMD.B2.CH8.actuator_state_commanded {1}
   ACT_CMD.B4.CH1.actuator_state_commanded {0}
   ACT_CMD.B4.CH10.actuator_state_commanded {0}
   ACT_CMD.B4.CH2.actuator_state_commanded {0}
@@ -249,9 +249,6 @@ envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): 
   ACT_CMD.B4.CH6.actuator_state_commanded {0}
   ACT_CMD.B4.CH7.actuator_state_commanded {0}
   ACT_CMD.B4.CH8.actuator_state_commanded {0}
-  CONTROLLER.state.from_state {1, 2}
-  CONTROLLER.state.reason {0}
-  CONTROLLER.state.to_state {1, 2}
   PT1.CH1.raw_adc_counts {1463500000}
   PT1.CH10.raw_adc_counts {1199500000}
   PT1.CH2.raw_adc_counts {1353500000}
