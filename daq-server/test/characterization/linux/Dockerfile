@@ -7,8 +7,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
-# elodin-db: the pinned v0.16.1 (deploy/README.md), installed where the harness looks for it.
-RUN curl -LsSf https://github.com/elodin-sys/elodin/releases/download/v0.16.1/elodin-db-installer.sh | sh \
-    && /root/.cargo/bin/elodin-db --version
+# elodin-db: the pinned v0.16.1 (deploy/README.md), installed where the harness looks for it, from
+# the release's checksummed tarball. It uses io_uring, which Docker's default seccomp profile
+# blocks (panics with EPERM), so it is not run here and linux_gate.sh runs with seccomp=unconfined.
+ARG TARGETARCH
+RUN set -e; case "$TARGETARCH" in arm64) a=aarch64 ;; amd64) a=x86_64 ;; esac; \
+    f="elodin-db-$a-unknown-linux-musl.tar.gz"; \
+    u="https://github.com/elodin-sys/elodin/releases/download/v0.16.1/$f"; \
+    cd /tmp && curl -fsSLO "$u" && curl -fsSL "$u.sha256" | sed 's/ \*/  /' | sha256sum -c - \
+    && tar xzf "$f" && mkdir -p /root/.cargo/bin && install "elodin-db-$a-unknown-linux-musl/elodin-db" /root/.cargo/bin/ \
+    && rm -rf /tmp/elodin-db*
 ENV PATH=/root/.cargo/bin:$PATH
 WORKDIR /src
