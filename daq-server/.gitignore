@@ -3,6 +3,7 @@
 # Build artifacts
 build/
 build-ns/
+build-gate/
 *.o
 *.a
 *.so

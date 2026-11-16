@@ -1,0 +1,10 @@
+diablo_server/lib/include/calibration/RobustCalibrationFramework.hpp: warning: private field 'sigma_ref_' is not used [-Wunused-private-field]
+diablo_server/lib/include/calibration/SensorCalibration.hpp: warning: private field 'default_order_' is not used [-Wunused-private-field]
+diablo_server/lib/include/toml++/toml.hpp: warning: identifier '_toml' preceded by whitespace in a literal operator declaration is deprecated [-Wdeprecated-literal-operator]
+diablo_server/lib/include/toml++/toml.hpp: warning: identifier '_tpath' preceded by whitespace in a literal operator declaration is deprecated [-Wdeprecated-literal-operator]
+diablo_server/lib/src/calibration/RobustCalibrationFramework.cpp: warning: unused variable 'kLog2' [-Wunused-const-variable]
+diablo_server/lib/test/test_hold_rules.cpp: warning: missing field 'gate_actuator' initializer [-Wmissing-field-initializers]
+diablo_server/services/calibration/calibration_main.cpp: warning: unused variable 'logged_ch5' [-Wunused-variable]
+diablo_server/services/config_broadcast/config_broadcast_service_main.cpp: warning: unused variable 'DEFAULT_LISTEN_PORT' [-Wunused-const-variable]
+diablo_server/services/sequencer/ScriptRunner.cpp: warning: missing field 'vars' initializer [-Wmissing-field-initializers]
+ld: warning: ignoring duplicate libraries: '-lpthread'
