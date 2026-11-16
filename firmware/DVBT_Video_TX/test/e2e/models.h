@@ -404,10 +404,34 @@ struct Adrf6755 {
     bool broken = false;                // injected: the PLL never locks (e.g. a dead loop filter)
     double bad_lo_hz = 0;               // injected: it never locks at this LO (a VCO band edge on this board)
     double lo_hz = 0, vco_hz = 0, pfd_hz = 0;
+    // 5V_RF powers the part and, through its regulator output, the TCXO's
+    // enable: the reference runs tcxo_start_s after power-up (Jauch datasheets:
+    // 3-10 ms maximum; the model takes the 10 ms worst case).
+    bool powered = false;
+    fs_t tcxo_at = -1;
+    double tcxo_start_s = 10e-3;
+    // The datasheet's 40 MHz PFD maximum is a nominal, characterised point; a
+    // 40 MHz TCXO within its tolerance runs a few ppm over it. The model
+    // accepts that much, not more.
+    static constexpr double PFD_MAX_HZ = 40e6 * (1 + 5e-6);
     Adrf6755(Report &r, double refin) : rep(r), refin_hz(refin) { reg[33] = act[33] = 0x13; }
+
+    void power(fs_t t, bool on)
+    {
+        if (on == powered) return;
+        powered = on;
+        if (on) { tcxo_at = t + (fs_t)(tcxo_start_s * 1e15); return; }
+        // Everything back to power-on: I2C mode, registers unwritten, unlocked.
+        spi_mode = false; cs_rises = 0; cs = false; bit = 0; reading = false; rd_sel = -1;
+        for (auto &w : written) w = false;
+        for (int k = 0; k < 33; k++) reg[k] = act[k] = 0;
+        lock_at = -1; tcxo_at = -1;
+        locked(t);
+    }
 
     void set_cs(fs_t t, bool low)
     {
+        if (!powered) return;
         if (low && !cs) { bit = 0; sh = 0; reading = false; }
         if (!low && cs) {
             if (!spi_mode) {
@@ -416,18 +440,14 @@ struct Adrf6755 {
         }
         cs = low;
     }
-    // Any SCLK edge on the shared setup bus (whichever chip is selected).
     bool warned_i2c = false;
-    void bus_clock(bool selected)
-    {
-        if (!spi_mode && !warned_i2c) {
-            rep.violation("setup bus clocked while the ADRF6755 is still in I2C mode (it would see I2C traffic)");
-            warned_i2c = true;
-        }
-        (void)selected;
-    }
     void clk_rise(bool sdi)
     {
+        if (!powered) return;
+        if (!spi_mode && !warned_i2c) {
+            rep.violation("ADRF6755 clocked while still in I2C mode (it would see I2C traffic)");
+            warned_i2c = true;
+        }
         if (!cs || !spi_mode) return;
         sh = (sh << 1) | sdi;
         bit++;
@@ -523,7 +543,8 @@ struct Adrf6755 {
         double autocal = act[25] * 28.0 / pfd_hz;                           // Equation 3
         bool ok = true;
         auto bad = [&](const std::string &s) { rep.violation("ADRF6755 will not lock: " + s); ok = false; };
-        if (pfd_hz > 40e6) bad("PFD above 40 MHz");
+        if (pfd_hz > PFD_MAX_HZ) bad("PFD above 40 MHz (+5 ppm)");
+        if (tcxo_at < 0 || t < tcxo_at) bad("PLL programmed before its TCXO was running");
         if (intg < 23 || intg > 4095) bad("INT out of range");
         if (vco_hz < 2310e6 || vco_hz > 4800e6) bad("VCO outside 2310-4800 MHz");
         if (rfdiv > 4) bad("RFDIV code");
@@ -552,7 +573,7 @@ struct Adrf6755 {
     }
     bool locked(fs_t t)
     {
-        bool l = lock_at >= 0 && t >= lock_at && t >= forced_unlock_until;
+        bool l = powered && lock_at >= 0 && t >= lock_at && t >= forced_unlock_until;
         if (l != locked_flag) { locked_flag = l; rep.event(l ? "ADRF6755 LDET high" : "ADRF6755 LDET low"); }
         return l;
     }
@@ -565,7 +586,8 @@ struct Adrf6755 {
         locked(t);
     }
     bool modulator_on() const { return act[29] & 1; }
-    // RF output: the modulator powered, TXDIS low; it emits whether or not the
-    // PLL is locked (that is what the firmware has to prevent).
-    bool rf_out() const { return modulator_on() && !txdis; }
+    // RF output: the modulator powered, TXDIS low and the PA on; it emits
+    // whether or not the PLL is locked (that is what the firmware has to prevent).
+    bool pa_en = false;
+    bool rf_out() const { return powered && modulator_on() && !txdis && pa_en; }
 };

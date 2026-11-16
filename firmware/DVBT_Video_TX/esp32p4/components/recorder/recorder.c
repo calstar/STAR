@@ -26,7 +26,7 @@ static void task(void *arg)
         if (n >= 32768 || (n && due)) {
             if (n > 32768) n = 32768;
             if (fwrite(p, 1, n, s_f) != n) {
-                ESP_LOGE(TAG, "write failed: card full or removed; recording stops");
+                ESP_LOGE(TAG, "write failed: SD NAND full or failing; recording stops");
                 s_on = false;
                 fclose(s_f);
                 vTaskDelete(NULL);
@@ -48,15 +48,25 @@ esp_err_t recorder_start(const recorder_config_t *cfg)
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot = SDMMC_HOST_SLOT_1;
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot.width = 1;
+    slot.width = cfg->width == 4 ? 4 : 1;
     slot.clk = cfg->pin_clk;
     slot.cmd = cfg->pin_cmd;
     slot.d0 = cfg->pin_d0;
+    if (slot.width == 4) {
+        slot.d1 = cfg->pin_d1;
+        slot.d2 = cfg->pin_d2;
+        slot.d3 = cfg->pin_d3;
+    }
+    slot.cd = SDMMC_SLOT_NO_CD;                 // soldered down: always there
+    slot.wp = SDMMC_SLOT_NO_WP;
     slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
-    esp_vfs_fat_sdmmc_mount_config_t mc = { .format_if_mount_failed = false, .max_files = 2,
+    // A soldered SD NAND cannot be formatted in a card reader, so a new board
+    // needs cfg->format once. Not by default: IDF formats on FR_INT_ERR too,
+    // which a power cut mid-write can leave, and that would erase the flight.
+    esp_vfs_fat_sdmmc_mount_config_t mc = { .format_if_mount_failed = cfg->format, .max_files = 2,
                                             .allocation_unit_size = 32 * 1024 };
     sdmmc_card_t *card;
-    ESP_RETURN_ON_ERROR(esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot, &mc, &card), TAG, "no card");
+    ESP_RETURN_ON_ERROR(esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot, &mc, &card), TAG, "SD NAND");
     char name[32];
     struct stat st;
     int i = 0;

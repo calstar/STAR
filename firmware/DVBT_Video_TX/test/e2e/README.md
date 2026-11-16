@@ -19,9 +19,9 @@ Needs Verilator, gcc, ffmpeg and Ubuntu's gnuradio (bindings for python3.12).
    ├─ config SPI ────▶ ECP5 sysCONFIG model ── DONE ──▶ FPGA logic starts
    ├─ stream SPI ────▶ dvbt_tx_top (gateware/rtl, Verilated), bit by bit at 20 MHz
    │   DREQ ◀────────┘          │ 12-bit DDR bus + DCLKIO
-   ├─ setup SPI ─────▶ AD9116 model ◀────────┘ latches on DCLKIO edges per DATA_CTRL
-   │   (spi_bus_pack) └▶ ADRF6755 model ── LO, LDET, TXDIS, modulator power
-   └─ GPIO: TXDIS, DAC RESET, LDET
+   ├─ DAC SPI ───────▶ AD9116 model ◀────────┘ latches on DCLKIO edges per DATA_CTRL
+   ├─ bit-banged SPI ▶ ADRF6755 model ── LO, LDET, TXDIS, PA_EN, modulator power, 5V_RF, TCXO start
+   └─ GPIO: TXDIS, PA_EN, DAC RESET, LDET, RF_PWR, ARM (5V_RF and ARM on the run's schedule)
                                 ▼
                 rf.iq: I/Q at 27.43 MS/s while the RF is on
                                 ▼
@@ -39,9 +39,11 @@ Needs Verilator, gcc, ffmpeg and Ubuntu's gnuradio (bindings for python3.12).
   its port goes quiet after wake-up, the AD9116's RESET width, instruction
   format and read-only registers, setup/hold of the DAC data against
   DCLKIO, the retimer's 128 cycles of CLKIN and DCLKIO, the ADRF6755's I²C
-  power-up mode, every "set to" bit, all writable registers written before
-  CR0, Equations 1-3 and Table 6, the VCO range, and the modulator powered
-  only after lock.
+  power-up mode (again after every 5V_RF loss), every "set to" bit, all
+  writable registers written before CR0, Equations 1-3 and Table 6, the PFD
+  at most 5 ppm over 40 MHz, the VCO range, no PLL programming before the
+  TCXO has started (10 ms after 5V_RF), the modulator powered only after
+  lock, and no RF-chain pin driven while 5V_RF is down.
 - **The FPGA starts from zero** (`--x-initial 0`), as the ECP5's global
   set/reset leaves every flip-flop and BRAM after configuration.
 - **The receiver** (`model/dvbt_rx.py`) is gr-dtv's: synchronisation,
@@ -57,18 +59,24 @@ Needs Verilator, gcc, ffmpeg and Ubuntu's gnuradio (bindings for python3.12).
 | `corrupt_image_boots_from_flash` | bad image CRC: never sent to the FPGA, fallback |
 | `rejected_bitstream_boots_from_flash` | a valid image the FPGA rejects: FAIL status, fallback |
 | `nothing_boots_keeps_rf_off` | no image and no flash: bring-up fails with the RF never on |
-| `pll_never_locks_keeps_rf_off` | the ADRF6755 never locks: bring-up stops (LDET timeout), RF never on |
+| `pll_never_locks_keeps_rf_off` | the ADRF6755 never locks: the stream runs, the RF never goes on, the lock is retried every health period |
 | `lo_unlock_recovers` | the VCO drifts out of its band in flight (unlocked until reprogrammed): RF off within one health period, relock, back on air, received again |
 | `fpga_loss_recovers` | the FPGA loses its configuration: ID check, RF off, reload, DAC re-sync, re-prime, back on air |
 | `p4_stall_longer_than_fifo` | the P4 stops for 40 ms (past the 16 KB FIFO): the FPGA fills with nulls, no packet lost, and the mux's clock catches up so the PCRs stay on the air's timeline |
 | `p4_under_load_needs_no_nulls` | a busy P4 (8 ms preemptions, interrupt latency, frame gaps) never makes the FPGA insert a null |
-| `tcxo_tolerance_still_locks` | the ADRF6755 locks with its TCXO 2.5 ppm fast or slow (20 MHz PFD) |
+| `tcxo_tolerance_still_locks` | the 40 MHz TCXO 2.5 ppm fast or slow: PFD at the TCXO undivided (40 MHz, the characterised point), locks, LO follows |
 | `lo_feedthrough_calibration` | through the RF chain: the -43 dBc LO feedthrough corrupts every 4th symbol until the DC-offset calibration removes it |
 | `flight_profile_15km` | every typical impairment at once, through the RF chain and the air at 15 km: every packet, clean video |
 | `boots_at_either_end_of_the_band` | boot channel at 1243.5 and 1296.5 MHz: locks, LO exact |
 | `out_of_band_boot_channel_keeps_rf_off` | 1300 MHz (half the signal outside the band): no bring-up, RF never on |
 | `channel_commands_retries_and_refusals` | the flight computer's UART at 115200 baud against the flight code: bad checksum, out of band, reused seq refused with nothing changed; a retry answered identically and never switching twice; exactly one LO change, `DONE` within 3 ms of the command, RF dark < 1 ms and never on unlocked |
 | `switch_to_a_channel_that_will_not_lock_falls_back` | this board's PLL will not lock at 1260 MHz: `FAIL`, back on air on the old channel within the LDET timeout |
+| `usb_power_only_leaves_the_rf_chain_alone` | 5V_RF never up: FPGA, stream and recording run; not one RF-chain pin driven |
+| `rf_power_late_waits_for_the_tcxo` | 5V_RF after bring-up: pins driven safe at once, nothing to the ADRF6755 for the TCXO's 10 ms, then SPI mode, lock, RF |
+| `rf_power_drop_releases_and_relocks` | 5V_RF lost for 20 ms in flight: pins released within a pump; on return the SPI-mode pulses again, the TCXO wait, lock, RF |
+| `not_armed_keeps_rf_off` | ARM low: locked and ready, PA, TXDIS and modulator off |
+| `disarm_turns_rf_off_and_rearm_back_on` | ARM low 40 ms: RF off after the 20 ms debounce, back on 20 ms after re-arming; a 5 ms glitch changes nothing |
+| `channel_selected_while_unpowered_locks_there` | `$HOP` before 5V_RF is up: accepted, and the PLL's first lock is on that channel |
 | `switch_in_flight_received_on_the_new_channel` | in flight with video: a receiver on 1279 MHz has every packet up to the switch, one on 1255 MHz every packet after; ~150 ms of stream lost across it (the old receiver's pipeline + acquisition) |
 
 ## Real-world imperfections
@@ -81,7 +89,7 @@ where the link breaks: see [IMPAIRMENTS.md](IMPAIRMENTS.md).
 
 ## Can it fail? (`mutation_check.py`)
 
-Twenty-four planted integration bugs, each of the kind that only shows when
+Thirty-two planted integration bugs, each of the kind that only shows when
 the pieces meet, must each turn a scenario red: stale-status FIFO priming,
 a 1 s DREQ wait with the FPGA gone, FPGA offset binary against a two's
 complement DAC, RF on without waiting for lock, a health check blind to
@@ -90,11 +98,15 @@ I/Q swapped by the DAC's latch edge, the modulator on in the init
 sequence, RFDIV off by one, a 3-wire read one bit long, DCLKIO inverted,
 DCLKIO in phase with the data, and DREQ promising one packet of room
 where the firmware sends two, the 2 KB FIFO back, the mux clock not
-caught up after FPGA nulls, the PFD sized for a nominal TCXO, the
-bench calibration never written; and for channel switching: the modulator
+caught up after FPGA nulls, the reference divided down to a 20 MHz PFD
+again, the bench calibration never written; and for channel switching: the modulator
 on before the new channel locks, an out-of-band channel accepted at boot or
 by command, a retry switching twice, the flight computer's checksum
-ignored, and a channel that will not lock leaving the RF off. A control mutant (an erase delay removed)
+ignored, and a channel that will not lock leaving the RF off; and for the
+RF chain: 5V_RF never checked, pins left driven when it drops, the PLL
+programmed before the TCXO starts, no SPI-mode pulses after 5V_RF returns,
+ARM ignored, ARM not debounced, PA_EN's polarity wrong, and a channel chosen
+before 5V_RF forgotten. A control mutant (an erase delay removed)
 is expected to survive: the ECP5 model does not time the erase.
 
 ## What it found while being written

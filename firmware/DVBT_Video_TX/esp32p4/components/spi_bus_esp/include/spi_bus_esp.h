@@ -1,8 +1,7 @@
-// spi_bus_if on an ESP32-P4 SPI host, for the board's setup bus: the
-// AD9116 (3-wire, SDIO) and the ADRF6755 (4-wire, SDI on the same data
-// line, its own SDO back) share SCLK and the data line; each has a chip
-// select, driven as a plain GPIO so a chip-select-only pulse (the
-// ADRF6755's SPI-mode lock) is possible. Mode 0, MSB first.
+// spi_bus_if on an ESP32-P4 SPI host, for the AD9116's bus (3-wire, SDIO;
+// 4-wire devices are supported too) with GPIO chip selects, so a
+// chip-select-only pulse is possible. Mode 0, MSB first. (The ADRF6755 has
+// its own lines and is bit-banged: spi_bitbang.h.)
 #pragma once
 #include "esp_err.h"
 #include "spi_bus_if.h"

@@ -44,6 +44,7 @@ static void trace_dump(fs_t) {}
 extern "C" {
 #include "tx_app.h"
 #include "spi_bus_pack.h"
+#include "spi_bitbang.h"
 }
 
 // --------------------------------------------------------------- options --
@@ -63,6 +64,11 @@ struct Opts {
     uint32_t good_crc = 0;
     uint32_t lo_khz = 1279000, pll_bad_lo_khz = 0;
     std::vector<std::pair<double, std::string>> fc;     // (ms after bring-up, line)
+    // 5V_RF: up at this many ms after power-up (<0: never); down for a while
+    // (ms after bring-up, duration). ARM: high from this many ms after power-up
+    // (<0: never); low for a while (ms after bring-up, duration).
+    double rf_up_ms = 0, rf_drop_ms = -1, rf_drop_dur_ms = 0;
+    double arm_ms = 0, disarm_ms = -1, disarm_dur_ms = 0;
 };
 static Opts O;
 
@@ -439,19 +445,17 @@ static bool link_dreq(void *, uint32_t timeout_ms)
     return ok;
 }
 
-// ------------------------------------------------------- HAL: setup bus --
+// --------------------------------------------------- HAL: the AD9116's bus --
 // As spi_bus_esp does it: spi_bus_pack (the firmware's own code) makes the
 // frame, the bits go out MSB first at 10 MHz with a GPIO chip select.
 static const fs_t SETUP_HALF = 50 * FS_PER_NS;
 static esp_err_t setup_xfer(void *, int dev, int nbits, bool three_wire, int wr_bits, uint32_t tx, uint32_t *rxp)
 {
-    if (dev < 0 || dev > 1 || nbits < 1 || nbits > 32) return ESP_ERR_INVALID_ARG;
+    if (dev != 0 || nbits < 1 || nbits > 32) return ESP_ERR_INVALID_ARG;
     spi_bus_frame_t f;
     spi_bus_pack(nbits, three_wire, wr_bits, tx, &f);
     uint8_t rxb[4] = {0, 0, 0, 0};
-    auto cs = [&](bool low) {
-        if (dev == 0) g_dac->set_cs(low); else g_adrf->set_cs(g_now, low);
-    };
+    auto cs = [&](bool low) { g_dac->set_cs(low); };
     cs(true);
     advance(g_now + SETUP_HALF);
     int total = f.tx_bits + (three_wire ? f.rx_bits : 0);
@@ -459,16 +463,11 @@ static esp_err_t setup_xfer(void *, int dev, int nbits, bool three_wire, int wr_
         bool writing = k < f.tx_bits;
         bool out = writing ? (f.tx[k / 8] >> (7 - k % 8)) & 1 : false;
         advance(g_now + SETUP_HALF);
-        g_adrf->bus_clock(dev == 1);
         // the line: the master's bit while writing; the AD9116's while it reads back
-        bool line = writing ? out : (dev == 0 ? g_dac->sdio_out() : true);
-        bool sdo = g_adrf->sdo();
-        if (dev == 0) g_dac->clk_rise(line);
-        else g_adrf->clk_rise(line);
-        int rbit = -1;
-        if (three_wire && !writing) rbit = k - f.tx_bits;
-        else if (!three_wire && f.rx_bits) rbit = k;
-        if (rbit >= 0 && ((three_wire ? line : sdo)))
+        bool line = writing ? out : g_dac->sdio_out();
+        g_dac->clk_rise(line);
+        int rbit = three_wire && !writing ? k - f.tx_bits : -1;
+        if (rbit >= 0 && line)
             rxb[rbit / 8] |= 0x80 >> (rbit % 8);
         advance(g_now + SETUP_HALF);
     }
@@ -478,27 +477,105 @@ static esp_err_t setup_xfer(void *, int dev, int nbits, bool three_wire, int wr_
     if (rxp) *rxp = spi_bus_unpack(&f, rxb);
     return ESP_OK;
 }
-static esp_err_t setup_cs_pulse(void *, int dev)
+// ------------------------------------------- HAL: the RF chain (5V_RF) --
+// 5V_RF and ARM follow the run's schedule (Opts). The RF chain's outputs
+// (ADRF6755 CS/CLK/SDI, TXDIS, PA_EN) may be driven only while 5V_RF is up:
+// driving one into the unpowered chips is a violation, and so is still
+// driving them 2 ms after 5V_RF went down.
+static bool g_rf_driven = false;
+static fs_t g_rf_down_at = -1;
+static fs_t g_t_up = -1;            // bring-up returned
+static bool g_rf_violated = false;
+static uint32_t g_rf_pwr_events = 0;
+static bool sched_rf_power()
 {
-    auto cs = [&](bool low) { if (dev == 0) g_dac->set_cs(low); else g_adrf->set_cs(g_now, low); };
-    cs(true);
-    advance(g_now + FS_PER_US);
-    cs(false);
-    advance(g_now + FS_PER_US);
-    return ESP_OK;
+    bool on = O.rf_up_ms >= 0 && g_now >= (fs_t)(O.rf_up_ms * 1e12);
+    if (on && O.rf_drop_ms >= 0 && g_t_up >= 0) {
+        fs_t a = g_t_up + (fs_t)(O.rf_drop_ms * 1e12);
+        if (g_now >= a && g_now < a + (fs_t)(O.rf_drop_dur_ms * 1e12)) on = false;
+    }
+    return on;
+}
+static void rf_power_tick()
+{
+    bool on = sched_rf_power();
+    if (on == g_adrf->powered) {
+        if (!on && g_rf_driven && !g_rf_violated && g_rf_down_at >= 0 && g_now - g_rf_down_at > 2000 * FS_PER_US) {
+            R.violation("RF chain pins still driven 2 ms after 5V_RF went down");
+            g_rf_violated = true;
+        }
+        return;
+    }
+    R.event(on ? "5V_RF up" : "5V_RF down");
+    g_rf_pwr_events++;
+    g_adrf->power(g_now, on);
+    if (!on) g_rf_down_at = g_now;
+}
+static void rf_pin_write(const char *what)
+{
+    rf_power_tick();
+    if (!g_adrf->powered || !g_rf_driven) {
+        if (!g_rf_violated)
+            R.violation(std::string("firmware drove ") + what + (g_adrf->powered ? " before configuring the RF pins"
+                                                                                 : " with 5V_RF down"));
+        g_rf_violated = true;
+    }
+}
+static void rf_pins(void *, bool drive)
+{
+    rf_power_tick();
+    if (drive && !g_adrf->powered) R.violation("RF chain pins driven with 5V_RF down");
+    R.event(drive ? "RF pins driven" : "RF pins released");
+    g_rf_driven = drive;
+    if (!drive) {                   // undriven: PA_EN's pull-down, TXDIS and CS float
+        g_adrf->pa_en = false;
+        g_adrf->txdis = true;
+        g_adrf->set_cs(g_now, false);
+    }
+}
+static bool g_bb_sdi = false, g_bb_clk = false;
+static void bb_set(void *, spi_bb_pin_t pin, bool v)
+{
+    rf_pin_write("the ADRF6755's SPI lines");
+    if (pin == SPI_BB_SDI) g_bb_sdi = v;
+    else if (pin == SPI_BB_CS) g_adrf->set_cs(g_now, !v);
+    else {
+        if (v && !g_bb_clk) g_adrf->clk_rise(g_bb_sdi);
+        g_bb_clk = v;
+    }
+}
+static bool bb_sdo(void *) { return g_adrf->sdo(); }
+static void bb_half(void *) { advance(g_now + 100 * FS_PER_NS); }   // CONFIG_DVBT_ADRF_HALF_NS
+static bool sched_arm()
+{
+    bool on = O.arm_ms >= 0 && g_now >= (fs_t)(O.arm_ms * 1e12);
+    if (on && O.disarm_ms >= 0 && g_t_up >= 0) {
+        fs_t a = g_t_up + (fs_t)(O.disarm_ms * 1e12);
+        if (g_now >= a && g_now < a + (fs_t)(O.disarm_dur_ms * 1e12)) on = false;
+    }
+    return on;
 }
 
 // -------------------------------------------------------------- HAL: GPIO --
 static void gpio_set(void *, tx_pin_t p, bool v)
 {
     if (p == TX_PIN_TXDIS) {
+        rf_pin_write("TXDIS");
         if (g_adrf->txdis != v) R.event(v ? "TXDIS high (RF off)" : "TXDIS low (RF on)");
         g_adrf->txdis = v;
+    } else if (p == TX_PIN_PA_EN) {
+        rf_pin_write("PA_EN");
+        if (g_adrf->pa_en != v) R.event(v ? "PA_EN high (PA on)" : "PA_EN low (PA off)");
+        g_adrf->pa_en = v;
     } else if (p == TX_PIN_DAC_RESET) g_dac->set_reset(g_now, v);
+    else R.violation("firmware drove an input pin");
 }
 static bool gpio_get(void *, tx_pin_t p)
 {
+    rf_power_tick();
     if (p == TX_PIN_LDET) return g_adrf->locked(g_now);
+    if (p == TX_PIN_RF_PWR) return g_adrf->powered;
+    if (p == TX_PIN_ARM) return sched_arm();
     return false;
 }
 static int64_t now_us(void *) { return g_now / FS_PER_US; }
@@ -561,6 +638,7 @@ static void usage()
 {
     fprintf(stderr, "e2e --out DIR [--image FILE] [--good-crc HEX] [--aus FILE] [--video-start-ms N] [--air-ms N]\n"
                     "    [--health-ms N] [--lo-khz N] [--pll-bad-lo-khz N] [--fc MS:LINE]...\n"
+                    "    [--rf-up-ms N] [--rf-drop MS,DUR] [--arm-ms N] [--disarm MS,DUR]\n"
                     "    [--no-flash] [--inject-ldet MS[,DUR]] [--inject-fpga MS] [--inject-stall MS[,DUR]] [--seed N]\n"
                     "    [--impair si_ppm=..,tcxo_ppm=..,clk_jitter_ps=..,pll_phase_ps=..,pll_jitter_ps=..,io_skew_ps=..,\n"
                     "              dclk_delay_ps=..,p4_gap_us=..,isr_us=..,stall_prob=..,stall_ms=..,sck_ppm=..,\n"
@@ -599,6 +677,15 @@ int main(int argc, char **argv)
         else if (a == "--seed") O.seed = atoi(val().c_str());
         else if (a == "--video-start-ms") O.video_start_ms = atof(val().c_str());
         else if (a == "--lo-khz") O.lo_khz = strtoul(val().c_str(), nullptr, 10);
+        else if (a == "--rf-up-ms") O.rf_up_ms = atof(val().c_str());
+        else if (a == "--arm-ms") O.arm_ms = atof(val().c_str());
+        else if (a == "--rf-drop" || a == "--disarm") {
+            std::string v = val();
+            size_t k = v.find(',');
+            if (k == std::string::npos) usage();
+            (a == "--rf-drop" ? O.rf_drop_ms : O.disarm_ms) = atof(v.c_str());
+            (a == "--rf-drop" ? O.rf_drop_dur_ms : O.disarm_dur_ms) = atof(v.c_str() + k + 1);
+        }
         else if (a == "--pll-bad-lo-khz") O.pll_bad_lo_khz = strtoul(val().c_str(), nullptr, 10);
         else if (a == "--fc") { std::string v = val(); size_t k = v.find(':'); if (k == std::string::npos) usage();
             O.fc.push_back({atof(v.substr(0, k).c_str()), v.substr(k + 1)}); }
@@ -649,13 +736,17 @@ int main(int argc, char **argv)
     ecp5_hal_t ecp5 = {nullptr, e_set_cfg, e_programn, e_initn, e_done, e_cs, e_spi, e_read, hal_delay_us};
     static uint8_t ltx[FPGA_FRAME_MAX], lrx[FPGA_FRAME_MAX];
     fpga_link_t link = {link_frame, link_dreq, nullptr, ltx, lrx};
-    spi_bus_if_t setup = {setup_xfer, setup_cs_pulse, nullptr};
+    spi_bus_if_t dac_bus = {setup_xfer, nullptr, nullptr}, lo_bus;
+    static const spi_bitbang_t bb = {bb_set, bb_sdo, bb_half, nullptr};
+    spi_bitbang_bus(&bb, &lo_bus);
     tx_board_t board = {};
     board.i2c = &i2c;
     board.ecp5 = &ecp5;
     board.fpga_part_size = g_part.size();
     board.link = &link;
-    board.setup = &setup;
+    board.dac_bus = &dac_bus;
+    board.lo_bus = &lo_bus;
+    board.rf_pins = rf_pins;
     board.gpio_set = gpio_set;
     board.gpio_get = gpio_get;
     board.now_us = now_us;
@@ -669,7 +760,7 @@ int main(int argc, char **argv)
     cfg.xtal_hz = 25000000;
     cfg.xtal_load_pf = 8;
     cfg.refin_hz = 40000000;
-    cfg.refin_tol_ppm = 5;
+    cfg.refin_tol_ppm = 0;                  // CONFIG_DVBT_ADRF_REFIN_TOL_PPM: the PFD at 40 MHz
     cfg.lo_hz = (uint64_t)O.lo_khz * 1000;
     cfg.atten_db = 0;
     cfg.bw_mhz = 6;
@@ -690,9 +781,11 @@ int main(int argc, char **argv)
 
     static tx_app_t app;
     // The P4 boots ~0.3 s after power-up (ROM, bootloader, app start).
+    rf_power_tick();
     advance(300 * 1000 * FS_PER_US);
     esp_err_t e = tx_bringup(&app, &board, &cfg);
     fs_t t_up = g_now;
+    g_t_up = t_up;
     char b[200];
     snprintf(b, sizeof b, "bring-up returned 0x%x after %.3f ms", (unsigned)e, (t_up - 300e12) / 1e12);
     R.event(b);
@@ -745,6 +838,7 @@ int main(int argc, char **argv)
             stalls++;
             stall_max = std::max(stall_max, st);
         }
+        rf_power_tick();
         tx_pump(&app);
     }
 #ifdef E2E_TRACE
@@ -778,6 +872,8 @@ int main(int argc, char **argv)
             g_setup_min_ps < 1e17 ? g_setup_min_ps : 0.0, g_hold_min_ps < 1e17 ? g_hold_min_ps : 0.0, g_dac_timing_errors);
     fprintf(j, " \"p4_stalls\": %" PRIu64 ",\n \"p4_stall_max_s\": %.6f,\n", stalls, stall_max / 1e15);
     fprintf(j, " \"tx_status\": %u,\n", app.last_status);
+    fprintf(j, " \"rf_state\": %d,\n \"armed\": %d,\n \"rf_ups\": %u,\n \"rf_downs\": %u,\n \"lock_fails\": %u,\n",
+            (int)app.rf, (int)app.armed, app.rf_ups, app.rf_downs, app.lock_fails);
     fprintf(j, " \"cur_khz\": %u,\n \"hops\": %u,\n \"hops_failed\": %u,\n \"fc_lines\": %u,\n \"fc_bad\": %u,\n",
             app.cur_khz, app.hops, app.hops_failed, app.fc_lines, app.fc_bad);
     fprintf(j, " \"rf_segments\": [");

@@ -9,13 +9,25 @@
 //  2. FPGA: bitstream over slave SPI from the P4's flash partition; if that
 //     is missing or fails, the FPGA boots from its own W25Q32. Wait for its
 //     PLL and reset (10 ms), then the stream link's ID check.
-//  3. RF off (TXDIS high). Setup bus: lock the ADRF6755 into SPI mode first
-//     (it powers up in I2C mode on the same SCLK/SDIO lines), then the
-//     AD9116: reset, data format, retimer lock (needs CLKIN from the Si5351A
-//     and DCLKIO from the FPGA, hence after 1 and 2).
-//  4. ADRF6755: PLL to the carrier, modulator powered down; wait for LDET.
-//  5. FPGA modulator configured, TS FIFO primed, tx_en; then the ADRF6755's
-//     modulator on and TXDIS low: RF out.
+//  3. AD9116 (its own SPI bus): reset, data format, retimer lock (needs
+//     CLKIN from the Si5351A and DCLKIO from the FPGA, hence after 1 and 2).
+//  4. FPGA modulator configured, TS FIFO primed, tx_en: the DAC runs.
+//  5. The RF chain (tx_rf_step below), if 5V_RF is up: bring-up waits for it
+//     to reach "locked", and on air if ARM is high.
+//
+// The RF chain (ADRF6755, TCXO, PA) is on 5V_RF, which is off on USB power
+// alone; a pin driven into an unpowered chip powers it through its ESD diodes.
+// So its pins (ADRF6755 CS/CLK/SDI, TXDIS, PA_EN) are left undriven until
+// RF_PWR (5V_RF, sensed on a GPIO) reads high, and released the moment it
+// reads low. tx_rf_step, every pump:
+//   unpowered -> 5V_RF up: drive the pins safe (TXDIS high, PA off), wait
+//     tcxo_start_us (the TCXO's enable is the ADRF6755's regulator output, so
+//     it starts with 5V_RF);
+//   -> three CS pulses (SPI mode: the ADRF6755 powers up in I2C mode, every
+//     time), PLL to the carrier, modulator off, LDET: "locked";
+//   locked + ARM high (debounced arm_ms) + the stream up: modulator on, TXDIS
+//     low, PA_EN high -- on air. ARM low: PA off, TXDIS high, modulator off.
+//   A lock failure is retried every health period.
 //
 // Running: tx_pump sends the next two TS packets (blocking on DREQ, so it
 // paces the caller at the channel rate) and runs the health check when due.
@@ -32,8 +44,10 @@
 // 1240-1300 MHz amateur band). The flight computer sends $HOP with a
 // channel; tx_pump checks it (band, PLL plan) and switches at once: RF off,
 // the PLL to the new channel, LDET, modulator on, RF on (the LO-unlock
-// recovery's path), $DONE. A channel that will not lock goes back to the old
-// one ($DONE ... FAIL). The FPGA, its FIFO and the SD recording never stop;
+// recovery's path; on air again only if it was allowed to be), $DONE. A
+// channel that will not lock goes back to the old one ($DONE ... FAIL). With
+// the RF chain unpowered the channel is only selected: the PLL locks there
+// when 5V_RF comes up. The FPGA, its FIFO and the SD recording never stop;
 // the air is dark for the relock, a fraction of a millisecond. Telling the
 // ground station is the flight computer's job (telemetry).
 #pragma once
@@ -51,7 +65,16 @@
 #include "ts_mux.h"
 #include "fc_link.h"
 
-typedef enum { TX_PIN_TXDIS, TX_PIN_DAC_RESET, TX_PIN_LDET } tx_pin_t;
+typedef enum {
+    TX_PIN_TXDIS,       // out, RF domain: ADRF6755 RF off when high
+    TX_PIN_DAC_RESET,   // out
+    TX_PIN_LDET,        // in: ADRF6755 lock detect
+    TX_PIN_PA_EN,       // out, RF domain: PA on when high (board pull-down)
+    TX_PIN_RF_PWR,      // in: 5V_RF is up
+    TX_PIN_ARM,         // in: armed (board pull-down: unplugged = not armed)
+} tx_pin_t;
+
+typedef enum { TX_RF_UNPOWERED, TX_RF_TCXO, TX_RF_LOCKED, TX_RF_ON_AIR } tx_rf_state_t;
 
 typedef struct {
     void *ctx;
@@ -62,7 +85,11 @@ typedef struct {
     // the stream link (closed); called around every FPGA load. May be NULL.
     esp_err_t (*fpga_port)(void *ctx, bool open);
     const fpga_link_t *link;
-    const spi_bus_if_t *setup;          // dev 0 AD9116 (3-wire), dev 1 ADRF6755
+    const spi_bus_if_t *dac_bus;        // dev 0: the AD9116 (3-wire)
+    const spi_bus_if_t *lo_bus;         // dev 0: the ADRF6755 (4-wire; RF domain)
+    // Drive the RF domain's outputs (TXDIS high, PA_EN low, ADRF6755 CS high,
+    // CLK and SDI low) or release them all (inputs, no pulls).
+    void (*rf_pins)(void *ctx, bool drive);
     void (*gpio_set)(void *ctx, tx_pin_t pin, bool level);
     bool (*gpio_get)(void *ctx, tx_pin_t pin);
     int64_t (*now_us)(void *ctx);
@@ -105,6 +132,9 @@ typedef struct {
     // Channels: the carrier must lie in lo_min_hz..lo_max_hz (0: 1243.5 and
     // 1296.5 MHz, so the 5.7 MHz signal stays inside 1240-1300 MHz).
     uint64_t lo_min_hz, lo_max_hz;
+    uint32_t tcxo_start_us;             // 5V_RF up to TCXO running (0: 10000)
+    uint32_t arm_ms;                    // ARM debounce (0: 20)
+    bool rf_without_arm;                // bench: ignore ARM
 } tx_config_t;
 
 // Faults (tx_app_t.faults is sticky; tx_health returns this check's).
@@ -132,6 +162,14 @@ typedef struct {
     ts_mux_t mux;
     uint8_t pkts[2 * TS_PKT];
     bool on_air;
+    tx_rf_state_t rf;
+    int64_t rf_at_us;                   // TCXO started / next lock attempt
+    bool lo_spi;                        // the ADRF6755 is in SPI mode (since 5V_RF came up)
+    bool stream_ok;                     // the FPGA is transmitting (RF may go on)
+    bool armed, arm_raw;
+    bool hold_off;                      // tx_rf_hold: off for good (an FPGA update)
+    int64_t arm_since_us;
+    uint32_t rf_ups, rf_downs, lock_fails;
     int64_t next_health_us;
     uint32_t faults, last_status;
     uint64_t nulls, frames, frames_dropped, pumped;
@@ -155,5 +193,10 @@ uint32_t tx_health(tx_app_t *a);
 // One command from the flight computer (tx_pump reads the UART and calls
 // this; exposed for tests). Replies through b->fc_write.
 void tx_fc_command(tx_app_t *a, const fc_cmd_t *cmd);
-// RF off: TXDIS high and the ADRF6755's modulator powered down.
+// RF off: PA off, TXDIS high and the ADRF6755's modulator powered down (if
+// the RF chain is powered); it stays off until tx_rf_step turns it on.
 void tx_rf_off(tx_app_t *a);
+// RF off for good (until reboot), e.g. before a flash write.
+void tx_rf_hold(tx_app_t *a);
+// The RF chain's state machine (above); tx_pump calls it every time.
+void tx_rf_step(tx_app_t *a);

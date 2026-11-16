@@ -84,14 +84,26 @@ def test_fc_format_round_trips():
 
 # --------------------------------------------------------- PLL plans --
 def test_every_channel_in_the_band_has_a_plan():
-    """Every 125 kHz from 1243.5 to 1296.5 MHz, from the 40 MHz TCXO at its
-    5 ppm (the flight configuration): a plan, within 1 Hz, PFD <= 40 MHz at
-    the fast end, VCO inside 2310-4800 MHz, RFDIV 0 (Table 6)."""
+    """All 425 channels, every 125 kHz from 1243.5 to 1296.5 MHz, from the
+    40 MHz TCXO undivided (CONFIG_DVBT_ADRF_REFIN_TOL_PPM 0, the board's
+    choice): PFD 40 MHz with no reference division, N = LO / 40 MHz exactly to
+    a 2^-25 step (within 1 Hz), VCO inside 2310-4800 MHz, RFDIV 0 (Table 6),
+    and the 40 MHz register values from the datasheet's power-up sequence:
+    CR25 0x64, CR23 0x70, CR13 0xE8."""
+    from fractions import Fraction
+    from test_host import aseq, regs_of
     lib = fwlib.load()
+    n = 0
     for khz in range(1243500, 1296501, 125):
         p = APlan()
-        assert lib.adrf6755_plan_tol(ctypes.c_uint32(40_000_000), ctypes.c_uint32(5), ctypes.c_uint64(khz * 1000),
+        assert lib.adrf6755_plan_tol(ctypes.c_uint32(40_000_000), ctypes.c_uint32(0), ctypes.c_uint64(khz * 1000),
                                      ctypes.byref(p)), khz
+        assert p.pfd_hz == 40_000_000 and not p.r_enable and not p.r_half and not p.doubler, khz
+        n_want = Fraction(khz * 1000, 40_000_000)
+        assert p.intg == int(n_want) and abs(Fraction(p.frac, 1 << 25) - (n_want - int(n_want))) <= Fraction(1, 1 << 26)
         assert abs(p.lo_hz - khz * 1e3) < 1.0, (khz, p.lo_hz)
-        assert p.pfd_hz * (1 + 5e-6) <= 40e6
         assert 2310e6 <= p.lo_hz * 2 * (1 << p.rfdiv) <= 4800e6 and p.rfdiv == 0
+        r = regs_of(aseq(p))
+        assert (r[25], r[23], r[13], r[5] & 0x10) == (0x64, 0x70, 0xE8, 0), (khz, r[25], r[23], r[13])
+        n += 1
+    assert n == 425

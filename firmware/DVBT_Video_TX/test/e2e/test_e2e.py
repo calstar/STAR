@@ -59,7 +59,7 @@ pytestmark = pytest.mark.skipif((not shutil.which("verilator") or not shutil.whi
 RATE = Fraction(1512 * 188 * 8, 204 * 8) / Fraction(336, 1_000_000)      # QPSK 1/2, 1/8, 6 MHz
 CALLSIGN = "N0CALL"
 F_NOT_NULLS = 0x1EF                                                        # every fault bit but NULLS
-F_NULLS, F_FPGA_LOST, F_LO_UNLOCK = 1 << 4, 1 << 5, 1 << 6
+F_NULLS, F_FPGA_LOST, F_LO_UNLOCK, F_RECOVER_FAIL = 1 << 4, 1 << 5, 1 << 6, 1 << 8
 
 
 # ------------------------------------------------------------------ fixtures --
@@ -318,13 +318,15 @@ def test_nothing_boots_keeps_rf_off(harness, bitstream, tmp_path):
 
 
 def test_pll_never_locks_keeps_rf_off(harness, bitstream, tmp_path):
-    """The ADRF6755's PLL never locks (a dead loop filter, a bad TCXO):
-    bring-up must stop with the RF never on, not transmit off-frequency."""
+    """The ADRF6755's PLL never locks (a dead loop filter, a bad TCXO): the
+    stream runs (the SD recording with it) but the RF never goes on, and the
+    lock is retried every health period rather than given up on."""
     d, crc = bitstream
     rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--pll-broken",
-              "--air-ms", 10)
-    assert rep["bringup_err"] == 0x107, hex(rep["bringup_err"])          # ESP_ERR_TIMEOUT
+              "--air-ms", 45)
+    assert rep["bringup_err"] == 0 and rep["packets_sent"] > 0
     assert rep["rf_samples"] == 0 and not events(rep, "TXDIS low")
+    assert rep["faults"] & F_RECOVER_FAIL and rep["lock_fails"] >= 3, (hex(rep["faults"]), rep["lock_fails"])
     assert rep["violations"] == [], rep["violations"]
 
 
@@ -410,13 +412,16 @@ def test_p4_under_load_needs_no_nulls(harness, bitstream, video, tmp_path):
 
 @pytest.mark.parametrize("ppm", [2.5, -2.5])
 def test_tcxo_tolerance_still_locks(harness, bitstream, tmp_path, ppm):
-    """A 40 MHz TCXO 2.5 ppm fast used to put the ADRF6755's PFD past its
-    40 MHz maximum and the PLL never locked; the planner now divides by 2."""
+    """The PFD runs at the 40 MHz TCXO itself, undivided: the operating point
+    the ADRF6755 datasheet characterises. A TCXO 2.5 ppm fast is 100 Hz over
+    the nominal 40 MHz maximum, which the part tolerates (the model accepts
+    5 ppm over); the LO follows the TCXO."""
     d, crc = bitstream
     rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 10,
               "--impair", f"tcxo_ppm={ppm}")
     assert rep["violations"] == [] and rep["bringup_err"] == 0, rep["violations"]
-    assert rep["pfd_hz"] < 40e6 and abs(rep["lo_hz"] - 1279e6 * (1 + ppm * 1e-6)) < 1
+    assert abs(rep["pfd_hz"] - 40e6 * (1 + ppm * 1e-6)) < 1, rep["pfd_hz"]
+    assert abs(rep["lo_hz"] - 1279e6 * (1 + ppm * 1e-6)) < 1
 
 
 def rf_receive(tmp_path, rep, **over):
@@ -596,3 +601,103 @@ def test_switch_in_flight_received_on_the_new_channel(harness, bitstream, video,
     outage = (where_b.full[0] - where_a.full[-1]) * 188 * 8 / float(RATE)
     # the old receiver's pipeline (~45 ms) + acquisition on the new channel
     assert outage < 0.25, f"{outage * 1e3:.0f} ms of stream lost across the switch"
+
+
+# ------------------------------------------------- RF power, TCXO, ARM --
+def after(rep, text, t0):
+    return [t for t in events(rep, text) if t >= t0]
+
+
+def test_usb_power_only_leaves_the_rf_chain_alone(harness, bitstream, tmp_path):
+    """On USB power alone 5V_RF is off: the FPGA, the stream and the SD
+    recording run, and not one RF-chain pin is driven (a driven pin would
+    power the ADRF6755 through its ESD diodes)."""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 30,
+              "--rf-up-ms", -1)
+    assert rep["violations"] == [], rep["violations"]
+    assert rep["bringup_err"] == 0 and rep["packets_sent"] > 50 and rep["rf_state"] == 0
+    assert rep["rf_samples"] == 0 and not events(rep, "RF pins driven") and not events(rep, "acquisition")
+
+
+def test_rf_power_late_waits_for_the_tcxo(harness, bitstream, tmp_path):
+    """5V_RF comes up after bring-up: pins driven safe at once, nothing sent
+    to the ADRF6755 until its TCXO has started (10 ms), then SPI mode, lock,
+    RF on -- in that order."""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 300,
+              "--rf-up-ms", 700)
+    assert rep["violations"] == [], rep["violations"]
+    assert rep["t_bringup_s"] < 0.7 and rep["bringup_err"] == 0 and not events(rep, "RF pins driven")[0] < 0.7
+    t_up = events(rep, "5V_RF up")[0]
+    t_drv = events(rep, "RF pins driven")[0]
+    t_spi = events(rep, "SPI mode")[0]
+    t_ldet = events(rep, "LDET high")[0]
+    t_rf = events(rep, "TXDIS low")[0]
+    assert 0 <= t_drv - t_up < 0.001, t_drv - t_up
+    assert t_spi - t_up >= 0.010, "ADRF6755 touched before its TCXO started"
+    assert t_up < t_spi < t_ldet < t_rf < t_up + 0.015, (t_up, t_spi, t_ldet, t_rf)
+    assert rep["rf_samples"] > 0 and rep["rf_state"] == 3
+
+
+def test_rf_power_drop_releases_and_relocks(harness, bitstream, tmp_path):
+    """5V_RF drops for 20 ms in flight: every RF pin released within a pump,
+    and when it returns the ADRF6755 (back in I2C mode, registers lost) gets
+    its three CS pulses again, the TCXO its start-up time, then lock and RF."""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 120,
+              "--rf-drop", "40,20")
+    assert rep["violations"] == [], rep["violations"]
+    t_down = events(rep, "5V_RF down")[0]
+    t_rel = after(rep, "RF pins released", t_down)[0]
+    assert t_rel - t_down < 0.001, t_rel - t_down
+    t_back = after(rep, "5V_RF up", t_down)[0]
+    assert len(events(rep, "SPI mode")) == 2
+    t_spi = after(rep, "SPI mode", t_back)[0]
+    t_rf = after(rep, "TXDIS low", t_back)[0]
+    assert t_spi - t_back >= 0.010 and t_rf - t_back < 0.015, (t_spi - t_back, t_rf - t_back)
+    assert (rep["rf_ups"], rep["rf_downs"]) == (2, 1) and rep["rf_state"] == 3
+    assert rep["rf_unlocked_max_s"] == 0
+
+
+def test_not_armed_keeps_rf_off(harness, bitstream, tmp_path):
+    """ARM low (an unplugged cable reads low): everything up and the PLL
+    locked, ready, but the PA, TXDIS and the modulator stay off."""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 40,
+              "--arm-ms", -1)
+    assert rep["violations"] == [], rep["violations"]
+    assert rep["bringup_err"] == 0 and rep["rf_state"] == 2 and events(rep, "LDET high")
+    assert rep["rf_samples"] == 0 and not events(rep, "TXDIS low") and not events(rep, "PA_EN high")
+
+
+def test_disarm_turns_rf_off_and_rearm_back_on(harness, bitstream, tmp_path):
+    """Disarmed for 40 ms: RF off once ARM has read low for the 20 ms
+    debounce, back on 20 ms after it reads high again -- and a 5 ms glitch on
+    ARM changes nothing."""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 150,
+              "--disarm", "40,40")
+    assert rep["violations"] == [], rep["violations"]
+    t0 = rep["t_bringup_s"]
+    t_off = after(rep, "PA_EN low", t0 + 0.040)[0]
+    t_on = after(rep, "PA_EN high", t_off)[0]
+    assert 0.020 <= t_off - (t0 + 0.040) < 0.022, t_off - t0
+    assert 0.020 <= t_on - (t0 + 0.080) < 0.022, t_on - t0
+    assert len(rf_gaps(rep)) == 1 and rep["rf_state"] == 3
+    glitch = run(harness, tmp_path / "glitch", "--image", d / "fpga.img", "--good-crc", f"{crc:08x}",
+                 "--air-ms", 80, "--disarm", "40,5")
+    assert glitch["violations"] == [] and rf_gaps(glitch) == [], rf_gaps(glitch)
+
+
+def test_channel_selected_while_unpowered_locks_there(harness, bitstream, tmp_path):
+    """The flight computer picks a channel before 5V_RF is up: the firmware
+    accepts it, and the PLL locks there (not on the boot channel) when the RF
+    chain comes up."""
+    d, crc = bitstream
+    rep = run(harness, tmp_path, "--image", d / "fpga.img", "--good-crc", f"{crc:08x}", "--air-ms", 300,
+              "--rf-up-ms", 700, "--fc", "20:" + fc("HOP,9,1255000"))
+    assert rep["violations"] == [], rep["violations"]
+    assert fc_tx(rep) == ["DONE,9,1255000,OK"], fc_tx(rep)
+    assert abs(rep["lo_hz"] - 1255e6) < 1 and lo_changes(rep) == [1255e6] and rep["cur_khz"] == 1255000
+    assert len(events(rep, "acquisition")) == 1, "locked once, on the commanded channel"

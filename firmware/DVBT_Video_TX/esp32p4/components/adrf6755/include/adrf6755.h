@@ -1,9 +1,9 @@
 // ADRF6755 I/Q modulator with fractional-N PLL and VCO (datasheet Rev. B),
 // generic over the SPI transport (spi_bus_if, 4-wire: SDI in, SDO out).
 //
-// The part powers up in I2C mode (address 0x60 with CS high -- the same as
-// the Si5351A's -- or 0x40 with CS low) and switches to SPI, for good until
-// power is cycled, on the third chip-select pulse. SPI write: 24 bits,
+// The part powers up in I2C mode (address 0x60 with CS high, 0x40 with CS
+// low) and switches to SPI, until its power is cycled, on the third
+// chip-select pulse: so again every time 5V_RF comes back. SPI write: 24 bits,
 // D4 | register | data. Read: 16-bit D4 | register, then 16-bit D5 | data
 // back on SDO.
 #pragma once
@@ -28,10 +28,11 @@ typedef struct {
 // division, PFD <= 40 MHz); RFDIV per Table 6; INT/FRAC per Equations 4-5
 // with FRAC rounded to the nearest 1/2^25.
 bool adrf6755_plan(uint32_t refin_hz, uint64_t lo_hz, adrf6755_plan_t *p);
-// The same, keeping the PFD within its 40 MHz limit at REFIN + tol_ppm: a
-// 40 MHz TCXO a few ppm fast would otherwise put the PFD past the datasheet
-// maximum, so with any tolerance it is divided by 2 (20 MHz PFD; about 3 dB
-// more in-band phase noise, still 0.3 deg rms class).
+// The same, keeping the PFD at or below 40 MHz at REFIN + tol_ppm. The board
+// uses tol_ppm 0: its 40 MHz TCXO undivided is the 40 MHz PFD the datasheet
+// characterises (a few ppm over is within what the part tolerates). Any
+// tolerance with a 40 MHz REFIN divides it by 2: a 20 MHz PFD, outside the
+// characterised point.
 bool adrf6755_plan_tol(uint32_t refin_hz, uint32_t tol_ppm, uint64_t lo_hz, adrf6755_plan_t *p);
 
 // Pure: the datasheet's initial register write sequence (Suggested

@@ -11,8 +11,9 @@ Interfaces: ESP32-P4 → FPGA is SPI (FPGA slave, mode 0, up to ~20 MHz)
 carrying TS bytes at the channel rate, paced by a DREQ line from the FPGA's
 input FIFO, plus register commands on the same bus. FPGA → AD9116 is a
 12-bit DDR bus with I and Q interleaved (27.43 MS/s each) and a forwarded
-data clock. The AD9116's and ADRF6755's setup buses (SPI), the AD9116's
-RESET and the ADRF6755's TXDIS and LDET go straight to the ESP32-P4: the
+data clock. The AD9116's and ADRF6755's SPI buses (separate; the
+ADRF6755's bit-banged), the AD9116's RESET, the ADRF6755's TXDIS and LDET,
+the PA's enable, the 5V_RF sense and the ARM input go straight to the ESP32-P4: the
 FPGA only carries the stream, and the RF chips can be set up without it.
 (Their drivers are in `esp32p4/`.)
 
@@ -93,7 +94,7 @@ Current state: 84 test cases pass (42 cases × 2 seeds), and all 45 planted bugs
 On top of the per-block tests, `test/e2e` runs the firmware that flies
 against the whole FPGA top level and datasheet models of the Si5351A,
 ECP5, AD9116 and ADRF6755, demodulates the DAC output with gr-dtv's
-receiver and decodes the 1080p video with ffmpeg, in twenty scenarios from a
+receiver and decodes the 1080p video with ffmpeg, in twenty-six scenarios from a
 clean boot to the FPGA losing its configuration mid-flight, a channel switch
 the flight computer orders mid-flight, and a full
 15 km flight profile with every realistic impairment (`test/e2e/IMPAIRMENTS.md`

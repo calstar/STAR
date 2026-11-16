@@ -94,19 +94,110 @@ static esp_err_t stream_start(tx_app_t *a)
     return rb == (a->ctrl | DVBT_CTRL_TX_EN) ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
 }
 
+static bool pin(const tx_app_t *a, tx_pin_t p) { return a->b->gpio_get(a->b->ctx, p); }
+static int64_t now_us(const tx_app_t *a) { return a->b->now_us(a->b->ctx); }
+
 static esp_err_t rf_on(tx_app_t *a)
 {
     TRY(adrf6755_modulator_on(&a->mod, true));      // only after lock (step 34)
     a->b->gpio_set(a->b->ctx, TX_PIN_TXDIS, false);
+    a->b->gpio_set(a->b->ctx, TX_PIN_PA_EN, true);
     a->on_air = true;
+    a->rf = TX_RF_ON_AIR;
     return ESP_OK;
 }
 
 void tx_rf_off(tx_app_t *a)
 {
+    a->on_air = false;
+    // Below "locked" the RF pins are undriven (no 5V_RF) or already safe, and
+    // the ADRF6755 may still be in I2C mode: nothing to write.
+    if (a->rf < TX_RF_LOCKED) return;
+    a->b->gpio_set(a->b->ctx, TX_PIN_PA_EN, false);
     a->b->gpio_set(a->b->ctx, TX_PIN_TXDIS, true);
     adrf6755_modulator_on(&a->mod, false);
-    a->on_air = false;
+    a->rf = TX_RF_LOCKED;
+}
+
+void tx_rf_hold(tx_app_t *a)
+{
+    a->hold_off = true;
+    tx_rf_off(a);
+}
+
+// The PLL did not lock (or would not take its registers): RF stays off and
+// tx_rf_step tries again a health period from now.
+static void lock_failed(tx_app_t *a)
+{
+    tx_rf_off(a);
+    if (a->rf != TX_RF_UNPOWERED) a->rf = TX_RF_TCXO;
+    a->rf_at_us = now_us(a) + 1000ll * a->c.health_ms;
+    a->faults |= TX_F_RECOVER_FAIL;
+    a->lock_fails++;
+}
+
+void tx_rf_step(tx_app_t *a)
+{
+    const tx_board_t *b = a->b;
+    int64_t t = now_us(a);
+    if (!pin(a, TX_PIN_RF_PWR)) {
+        if (a->rf != TX_RF_UNPOWERED) {
+            // Let go of every RF pin at once: the chips behind them are losing power.
+            if (b->rf_pins) b->rf_pins(b->ctx, false);
+            a->rf = TX_RF_UNPOWERED;
+            a->on_air = false;
+            a->lo_spi = false;
+            a->rf_downs++;
+            logf_(a, 'W', "5V_RF down: RF chain released");
+        }
+        return;
+    }
+    if (a->rf == TX_RF_UNPOWERED) {
+        if (b->rf_pins) b->rf_pins(b->ctx, true);
+        b->gpio_set(b->ctx, TX_PIN_TXDIS, true);
+        b->gpio_set(b->ctx, TX_PIN_PA_EN, false);
+        a->rf = TX_RF_TCXO;
+        a->rf_at_us = t + a->c.tcxo_start_us;
+        a->rf_ups++;
+        logf_(a, 'I', "5V_RF up: waiting %lu us for the TCXO", (unsigned long)a->c.tcxo_start_us);
+        return;
+    }
+    if (a->rf == TX_RF_TCXO) {
+        if (t < a->rf_at_us) return;
+        esp_err_t e = ESP_OK;
+        if (!a->lo_spi) {                       // it came up in I2C mode
+            e = adrf6755_lock_spi(&a->mod);
+            a->lo_spi = e == ESP_OK;
+        }
+        if (e == ESP_OK) e = lo_lock(a);
+        if (e != ESP_OK) {
+            lock_failed(a);
+            logf_(a, 'E', "ADRF6755 not locked (0x%x): RF off, retrying in %lu ms", (unsigned)e,
+                  (unsigned long)a->c.health_ms);
+            return;
+        }
+        a->rf = TX_RF_LOCKED;
+        logf_(a, 'I', "ADRF6755 locked: LO %.1f Hz (PFD %lu, INT %u, FRAC %lu, RFDIV %u)", a->lo.lo_hz,
+              (unsigned long)a->lo.pfd_hz, a->lo.intg, (unsigned long)a->lo.frac, a->lo.rfdiv);
+    }
+    // ARM, debounced both ways.
+    bool raw = a->c.rf_without_arm || pin(a, TX_PIN_ARM);
+    if (raw != a->arm_raw) {
+        a->arm_raw = raw;
+        a->arm_since_us = t;
+    } else if (raw != a->armed && t - a->arm_since_us >= 1000ll * a->c.arm_ms) {
+        a->armed = raw;
+        logf_(a, 'I', "%s", raw ? "armed" : "disarmed: RF off");
+    }
+    bool want = a->armed && a->stream_ok && !a->hold_off;
+    if (a->rf == TX_RF_LOCKED && want) {
+        if (rf_on(a) != ESP_OK) {
+            lock_failed(a);
+            logf_(a, 'E', "ADRF6755 modulator did not take: RF off, retrying");
+        }
+    } else if (a->rf == TX_RF_ON_AIR && !want) {
+        tx_rf_off(a);
+    }
 }
 
 static bool in_band(const tx_app_t *a, uint64_t hz)
@@ -125,10 +216,18 @@ static void fc_reply(tx_app_t *a, const char *fmt, ...)
     if (fc_format(line, sizeof line, body)) a->b->fc_write(a->b->ctx, line);
 }
 
-// Switch the carrier to khz (plan p): RF off, relock, RF on. Back to the
-// old channel if the new one will not lock.
+// Switch the carrier to khz (plan p): RF off, relock, RF on (if it may be).
+// Back to the old channel if the new one will not lock. With the RF chain not
+// up yet, only select it: the PLL locks there when it comes up.
 static bool switch_to(tx_app_t *a, uint32_t khz, const adrf6755_plan_t *p)
 {
+    a->hops++;
+    if (a->rf < TX_RF_LOCKED) {
+        a->lo = *p;
+        a->cur_khz = khz;
+        logf_(a, 'I', "channel %lu kHz: selected (RF chain not up)", (unsigned long)khz);
+        return true;
+    }
     adrf6755_plan_t old = a->lo;
     tx_rf_off(a);
     a->lo = *p;
@@ -140,11 +239,11 @@ static bool switch_to(tx_app_t *a, uint32_t khz, const adrf6755_plan_t *p)
         a->faults |= TX_F_HOP_FAIL;
         a->hops_failed++;
     } else a->cur_khz = khz;
-    if (e == ESP_OK) e = rf_on(a);
-    if (e != ESP_OK) a->faults |= TX_F_RECOVER_FAIL;    // RF stays off; the health check keeps trying
-    a->hops++;
+    if (e != ESP_OK) lock_failed(a);    // RF stays off; tx_rf_step keeps trying
+    tx_rf_step(a);
     logf_(a, ok ? 'I' : 'E', "channel %lu kHz: %s", (unsigned long)khz,
-          ok ? "on air" : e == ESP_OK ? "no lock, back on the old channel" : "no lock, RF off");
+          ok ? (a->on_air ? "on air" : "locked, RF off") :
+          e == ESP_OK ? "no lock, back on the old channel" : "no lock, RF off");
     return ok;
 }
 
@@ -194,28 +293,13 @@ esp_err_t tx_bringup(tx_app_t *a, const tx_board_t *b, const tx_config_t *c)
     if (!a->c.health_ms) a->c.health_ms = 100;
     if (!a->c.lo_min_hz) a->c.lo_min_hz = 1243500000ull;
     if (!a->c.lo_max_hz) a->c.lo_max_hz = 1296500000ull;
-    a->dac = (ad9116_t){ .bus = b->setup, .dev = 0, .set_reset = dac_reset, .reset_ctx = a };
-    a->mod = (adrf6755_t){ .bus = b->setup, .dev = 1 };
-    // RF off and DAC in SPI mode (RESET/PINMD low) before anything is clocked.
-    b->gpio_set(b->ctx, TX_PIN_TXDIS, true);
+    if (!a->c.tcxo_start_us) a->c.tcxo_start_us = 10000;
+    if (!a->c.arm_ms) a->c.arm_ms = 20;
+    a->dac = (ad9116_t){ .bus = b->dac_bus, .dev = 0, .set_reset = dac_reset, .reset_ctx = a };
+    a->mod = (adrf6755_t){ .bus = b->lo_bus, .dev = 0 };
+    a->rf = TX_RF_UNPOWERED;            // the RF pins stay undriven until 5V_RF reads high
+    // DAC in SPI mode (RESET/PINMD low) before anything is clocked.
     b->gpio_set(b->ctx, TX_PIN_DAC_RESET, false);
-
-    // 1. Clocks.
-    esp_err_t e = si5351_start(b->i2c, c->xtal_hz, c->xtal_load_pf, 192000000ull, 7, 2, &a->clk);
-    if (e != ESP_OK) { logf_(a, 'E', "Si5351A: 0x%x", (unsigned)e); return e; }
-    logf_(a, 'I', "CLK0/CLK1 %.3f Hz (VCO %.0f Hz, MS %lu)", a->clk.out_hz, a->clk.vco_hz,
-          (unsigned long)a->clk.ms_div);
-
-    // 2. FPGA.
-    TRY(fpga_load(a));
-
-    // 3. Setup bus: ADRF6755 into SPI mode before any other traffic, then the DAC.
-    TRY(adrf6755_lock_spi(&a->mod));
-    e = ad9116_init(&a->dac, true, &a->dac_version);
-    if (e != ESP_OK) { logf_(a, 'E', "AD9116 init: 0x%x", (unsigned)e); return e; }
-    logf_(a, 'I', "AD9116 version %02x, retimer locked", a->dac_version);
-
-    // 4. LO.
     if (!in_band(a, c->lo_hz)) {
         logf_(a, 'E', "carrier %llu Hz outside %llu..%llu Hz", (unsigned long long)c->lo_hz,
               (unsigned long long)a->c.lo_min_hz, (unsigned long long)a->c.lo_max_hz);
@@ -226,9 +310,31 @@ esp_err_t tx_bringup(tx_app_t *a, const tx_board_t *b, const tx_config_t *c)
               (unsigned long)c->refin_hz);
         return ESP_ERR_INVALID_ARG;
     }
-    TRY(lo_lock(a));
-    logf_(a, 'I', "ADRF6755 locked: LO %.1f Hz (PFD %lu, INT %u, FRAC %lu, RFDIV %u)", a->lo.lo_hz,
-          (unsigned long)a->lo.pfd_hz, a->lo.intg, (unsigned long)a->lo.frac, a->lo.rfdiv);
+    a->cur_khz = (uint32_t)(c->lo_hz / 1000);
+
+    // 1. Clocks.
+    esp_err_t e = si5351_start(b->i2c, c->xtal_hz, c->xtal_load_pf, 192000000ull, 7, 2, &a->clk);
+    if (e != ESP_OK) { logf_(a, 'E', "Si5351A: 0x%x", (unsigned)e); return e; }
+    logf_(a, 'I', "CLK0/CLK1 %.3f Hz (VCO %.0f Hz, MS %lu)", a->clk.out_hz, a->clk.vco_hz,
+          (unsigned long)a->clk.ms_div);
+
+    // 2. FPGA.
+    TRY(fpga_load(a));
+
+    // 3. DAC.
+    e = ad9116_init(&a->dac, true, &a->dac_version);
+    if (e != ESP_OK) { logf_(a, 'E', "AD9116 init: 0x%x", (unsigned)e); return e; }
+    logf_(a, 'I', "AD9116 version %02x, retimer locked", a->dac_version);
+
+    // 4. The RF chain to "locked", if 5V_RF is up (TCXO start, SPI mode, PLL).
+    a->arm_raw = a->armed = c->rf_without_arm || pin(a, TX_PIN_ARM);
+    a->arm_since_us = now_us(a);
+    tx_rf_step(a);
+    while (a->rf == TX_RF_TCXO && !a->lock_fails) {
+        int64_t w = a->rf_at_us - now_us(a);
+        if (w > 0) b->delay_us(b->ctx, (uint32_t)w);
+        tx_rf_step(a);
+    }
 
     // 5. Stream: the mux runs at the rate of exactly the mode CTRL sets.
     a->ctrl = DVBT_CTRL_MOD(c->mod) | DVBT_CTRL_RATE(c->rate) | DVBT_CTRL_GUARD(c->guard);  // two's complement
@@ -239,13 +345,14 @@ esp_err_t tx_bringup(tx_app_t *a, const tx_board_t *b, const tx_config_t *c)
     };
     ts_dvbt_rate(c->bw_mhz, c->mod, c->rate, c->guard, &mc.rate_num, &mc.rate_den);
     ts_mux_init(&a->mux, &mc);
-    a->cur_khz = (uint32_t)(c->lo_hz / 1000);
     ts_mux_next(&a->mux, a->pkts);
     TRY(stream_start(a));
-    TRY(rf_on(a));
-    logf_(a, 'I', "transmitting at %.3f MHz, %.0f bit/s", a->lo.lo_hz / 1e6,
-          (double)mc.rate_num / (double)mc.rate_den);
-    a->next_health_us = b->now_us(b->ctx) + 1000ll * a->c.health_ms;
+    a->stream_ok = true;
+    tx_rf_step(a);                      // on air, if locked and armed
+    logf_(a, 'I', "streaming %.0f bit/s for %.3f MHz: %s", (double)mc.rate_num / (double)mc.rate_den,
+          a->lo.lo_hz / 1e6, a->on_air ? "on air" : a->rf == TX_RF_UNPOWERED ? "RF off (no 5V_RF)" :
+          a->rf != TX_RF_LOCKED ? "RF off (PLL not locked)" : "RF off (not armed)");
+    a->next_health_us = now_us(a) + 1000ll * a->c.health_ms;
     return ESP_OK;
 }
 
@@ -270,6 +377,7 @@ esp_err_t tx_pump(tx_app_t *a)
     lock(a, false);
     a->pumped += 2;
     fc_poll(a);
+    tx_rf_step(a);
     if (a->b->now_us(a->b->ctx) >= a->next_health_us) {
         tx_health(a);
         a->next_health_us = a->b->now_us(a->b->ctx) + 1000ll * a->c.health_ms;
@@ -326,7 +434,7 @@ uint32_t tx_health(tx_app_t *a)
         if (st & (0xFu | 0xFFFF0000u))
             fpga_reg_write(b->link, DVBT_REG_STATUS, (st & 0xFu) | (DVBT_ST_NULLS(st) ? DVBT_ST_CLEAR_NULLS : 0));
     }
-    if (!b->gpio_get(b->ctx, TX_PIN_LDET)) f |= TX_F_LO_UNLOCK;
+    if (a->rf >= TX_RF_LOCKED && !pin(a, TX_PIN_LDET)) f |= TX_F_LO_UNLOCK;
     uint8_t cm = 0;
     if (!lost && ad9116_read(&a->dac, AD9116_CLKMODE, &cm) == ESP_OK && (cm & AD9116_CLKMODE_SEARCHING))
         f |= TX_F_DAC_UNLOCK;
@@ -337,14 +445,20 @@ uint32_t tx_health(tx_app_t *a)
     if (f & (TX_F_FPGA_LOST | TX_F_LO_UNLOCK | TX_F_DAC_UNLOCK)) {
         tx_rf_off(a);
         esp_err_t e = ESP_OK;
+        if (f & (TX_F_FPGA_LOST | TX_F_DAC_UNLOCK)) a->stream_ok = false;
         if (f & TX_F_FPGA_LOST) e = recover_fpga(a);
         else if (f & TX_F_DAC_UNLOCK) e = ad9116_init(&a->dac, true, &a->dac_version);
-        if (e == ESP_OK && (f & TX_F_LO_UNLOCK)) e = lo_lock(a);
-        if (e == ESP_OK) e = rf_on(a);
+        if (e == ESP_OK) a->stream_ok = true;
+        if (f & TX_F_LO_UNLOCK) {
+            esp_err_t e2 = lo_lock(a);
+            if (e2 != ESP_OK) lock_failed(a);
+            if (e == ESP_OK) e = e2;
+        }
         a->recoveries++;
         if (e != ESP_OK) f |= TX_F_RECOVER_FAIL;
+        tx_rf_step(a);                  // back on air, if it may be
         logf_(a, e == ESP_OK ? 'W' : 'E', "recovery %lu: %s (0x%x)", (unsigned long)a->recoveries,
-              e == ESP_OK ? "back on air" : "RF stays off", (unsigned)e);
+              e != ESP_OK ? "RF stays off" : a->on_air ? "back on air" : "recovered, RF off", (unsigned)e);
     }
     a->faults |= f;
     return f;
