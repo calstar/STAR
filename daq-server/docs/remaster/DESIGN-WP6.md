@@ -3,9 +3,8 @@
 The WP6 design as decided (LEDGER D39, D40, D42-D44, D48, and the simplicity rulings of D49 and
 D51). It says what an implementer must do and why. Design only: nothing here has been executed.
 Paths are relative to `daq-server/diablo_server/backend/src/` unless stated. How the design got
-here — the
-amendments A1-A10, struck text, superseded baselines and checks, the debate, the alternatives,
-the walkthroughs — is in `debates/WP6/history.md`.
+here — the amendments A1-A10, struck text, superseded baselines and checks, the debate, the
+alternatives, the walkthroughs — is in `debates/WP6/history.md`.
 
 **Baseline.** Line numbers are `server.ts` on `backend-remastered` @ `bcb96252` (blob `646524ff`,
 1885 lines; the same blob as at `b2599617`), re-verified against
@@ -699,8 +698,9 @@ npx --prefix ../../../../diablo_server/backend tsc --noEmit -p .    # exit 0
 ```
 
 **The stubs are frozen as of D49 and are not maintained once step 1 starts.** They were cut back
-to D49 and D51 (all 2.10 decisions removed) but still show 2.8's `send…(ws)` functions and "private after 2.8" comments, which WP6 no longer builds: where a stub
-and this note disagree, this note wins.
+to D49 and D51 (all 2.10 decisions removed) but still show 2.8's `send…(ws)` functions and
+"private after 2.8" comments, which WP6 no longer builds: where a stub and this note disagree,
+this note wins.
 
 STYLE beyond the rules cited above: S15 (harness-read lines named in module headers); S20 as
 amended by D44(1) (`SEQUENCER_PORT` is read by `sequencer-client.ts`, which dials it; `USE_SIM` is
