@@ -1,17 +1,15 @@
-<!--
-HISTORY — superseded by ../../DESIGN-WP10.md (the "as decided" execution note). Preserved verbatim
-below: the reviewed note (D39) with its debate AMENDMENTs (D47), the struck text, alternatives A/B/C,
-§A.1 collaborator tiers, interfaces table, walkthroughs C(a)-(c) and the closed open questions.
-Line numbers here were anchored on backend-remastered @ b2599617 and are unchanged on fbc4ad70.
-Overridden since by LEDGER D49 (simplicity review round 1): the move-only work is ONE queue item
-with three commits (no "item 2", no fallback); there is no ActuatorCommander_udp.cpp (sendBatch and
-sendUDP stay in core ActuatorCommander.cpp); there is no register_all_tables / TableRegistration
-(the two registration sites stay separate, and §7.4 gap 1 / open question 3 is a future
-D-SLOT/D-SUB package's, not a WP10 gate); D-PF does not gate WP10; the dead ControllerService code
-goes in one cleanup commit proven by build + git grep (no nm proof); the collaborator tier table and
-admission rule live in LEDGER D47 only. Where this file and DESIGN-WP10.md disagree, DESIGN-WP10.md
-wins.
--->
+> **History — superseded by [`../../DESIGN-WP10.md`](../../DESIGN-WP10.md)** (the "as decided"
+> execution note). Preserved verbatim below: the reviewed note (D39) with its debate AMENDMENTs (D47), the struck text, alternatives A/B/C,
+> §A.1 collaborator tiers, interfaces table, walkthroughs C(a)-(c) and the closed open questions.
+> Line numbers here were anchored on backend-remastered @ b2599617 and are unchanged on fbc4ad70.
+> Overridden since by LEDGER D49 (simplicity review round 1): the move-only work is ONE queue item
+> with three commits (no "item 2", no fallback); there is no ActuatorCommander_udp.cpp (sendBatch and
+> sendUDP stay in core ActuatorCommander.cpp); there is no register_all_tables / TableRegistration
+> (the two registration sites stay separate, and §7.4 gap 1 / open question 3 is a future
+> D-SLOT/D-SUB package's, not a WP10 gate); D-PF does not gate WP10; the dead ControllerService code
+> goes in one cleanup commit proven by build + git grep (no nm proof); the collaborator tier table and
+> admission rule live in LEDGER D47 only. Where this file and DESIGN-WP10.md disagree, DESIGN-WP10.md
+> wins.
 
 # DESIGN-WP10 — split the sequencer, actuator, controller and bridge god files
 

@@ -259,12 +259,14 @@ Move-only renames nothing; cleanup's only new identifiers are `print_board_routi
    (ControllerService: lines 13-39, the two `using` lines included). File-statics move to their
    one user (§1.4, §2).
 3. `SequencerService.hpp`, `ActuatorCommander.hpp`, `ControllerService.hpp` untouched. No comment
-   line added or edited (STYLE-S38).
+   line added or edited (STYLE-S38), except the two new daq_bridge headers' STYLE-S36 header
+   comment and declaration doc lines, as the stubs give them.
 4. `export PATH=/Users/roshantaneja/Downloads/STAR/.git/remaster-tools/fmtvenv/bin:$PATH;
    clang-format -i <new and edited files only>` (19.1.7).
 5. Review with `git diff -M --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change
    HEAD~1`: every non-dimmed line is an include, a namespace line, a removed `static` or default
-   argument (daq_bridge only), CMake, or clang-format's include regrouping/rewrap (D43(6)).
+   argument (daq_bridge only), the new headers' S36/doc comments, CMake, or clang-format's include
+   regrouping/rewrap (D43(6)).
 6. String literals (STYLE-S15): `grep -oh '"[^"]*"' <files> | sort` over the touched sources is
    identical before and after the commit, except the include paths of copied include blocks.
 
@@ -317,9 +319,10 @@ branch is deleted and the item re-cut from the then-current tip with a full re-g
 - [ ] Harness proof (D18): `config/golden/cpp/*` and `config/golden/bin/daq_bridge/*`
       byte-identical; the config area's recorded mutations re-run; two new mutations, each red
       then reverted: in `ActuatorCommander_load.cpp` `role.is_pwm = !r.controller_role.empty();` →
-      `= false;` (the `role … is_pwm=` lines go red); in `BoardMap.cpp` `if (octet >= 2)` → `>= 3`
-      (the `board_by_octet[…]` and `resolve("127.0.0.2…")` lines go red). The orchestrator reviews
-      the harness diff.
+      `= false;` (the `role … is_pwm=` lines go red); in `BoardMap.cpp`,
+      `load_board_map_from_config`'s `if (octet >= 2)` (baseline 218, not the one at 298) →
+      `>= 3` (the `board_by_octet[…]` and `resolve("127.0.0.2…")` lines go red). The orchestrator
+      reviews the harness diff.
 
 **Commit a — SequencerService TUs.**
 
