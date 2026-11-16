@@ -63,15 +63,15 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | C0 | gate, lock, characterization skeleton, ledger | orchestrator | remaster | merged (158d330d, f0c4b22c) | `test/characterization/{gate,run,with_stack_lock}.sh`, `CMakeLists.txt`, `README.md`, `docs/remaster/` | — |
 | C1 | packets (daq-protocol bytes, transport structs) + Elodin schema goldens | agent | worktree, branch `char/packets` | reported (10 tests, 10 mutations caught); sent back for D20 black-box rework of service goldens | `test/characterization/{packets,elodin}/` | C0 |
 | C2 | config loaders (C++ + TS), scripts parser, bad configs | agent | `char/config` → `char/config-blackbox` | merged 041a5246 (gate after the fact, D19); black-box rework in progress (D20) | `test/characterization/config/` | C0 |
-| C3 | calibration math (C++, calibration_service, TS) | agent | `char/calibration` | running | `test/characterization/calibration/` | C0 |
-| C4 | sequencer/controller UDP streams, TCP replies, aborts | agent | `char/sequencer` | running | `test/characterization/sequencer/` | C0 |
+| C3 | calibration math (C++, calibration_service, TS) | agent | `char/calibration` | running: 90a378a1, 3 mutations caught; moving its calibration_main harness to the stack run (D20) | `test/characterization/calibration/` | C0 |
+| C4 | sequencer/controller UDP streams, TCP replies, aborts | agent | `char/sequencer` | running: WIP 169127e9, 64 sessions, converging; black-box (built binaries over TCP/UDP, stand-in Elodin) | `test/characterization/sequencer/` | C0 |
 | C5 | pipeline WS frames, HTTP, logger CSV | agent | `char/pipeline` | running | `test/characterization/pipeline/` | C0 |
-| C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | reported (7 goldens, 5 mutations, black-box); sent back: normaliser must mask values, never drop keys | `test/characterization/lifecycle/` | C0 |
+| C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | **merged** 9d846bd6 (7 goldens, 6 mutations incl. normaliser, black-box) | `test/characterization/lifecycle/` | C0 |
 | B0 | bloat-map research (read-only) | agent | none | done → `docs/remaster/BLOAT-MAP.md` | — | — |
 | WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | queued (after suite) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
 | WP2 | delete C++ no target compiles | — | — | queued | BLOAT-MAP WP2 | WP1 |
 | WP3 | lib hygiene: PressureStateMachine, move db.hpp, split Parser/DatabaseConfig | — | — | queued | BLOAT-MAP WP3 | WP2 |
-| WP4 | dead launchers + superseded test scripts, `--legacy` branch; make test_integration.sh fail loudly (non-zero, listing them) when a macOS loopback alias is missing instead of `|| true` + a false ✅ (reviewer suggestion) | — | — | queued | BLOAT-MAP WP4 | WP1 |
+| WP4 | dead launchers + superseded test scripts, `--legacy` branch; park and restore `abort_thresholds.txt` like the other live stores (H-1); make test_integration.sh fail loudly (non-zero, listing them) when a macOS loopback alias is missing instead of `|| true` + a false ✅ (reviewer suggestion) | — | — | queued | BLOAT-MAP WP4 | WP1 |
 | WP5 | backend dead TS + line client + slot helper | — | — | queued | BLOAT-MAP WP5 | WP1 |
 | WP6 | split server.ts | — | — | queued | BLOAT-MAP WP6 | WP5 |
 | WP7 | split api-server.ts | — | — | queued | BLOAT-MAP WP7 | WP5 |
@@ -85,6 +85,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 | when | package | merge commit | gate |
 |---|---|---|---|
+| 2026-11-15 | C6 char/lifecycle (queue/C6, ff) | 9d846bd6 | `--fast` PASS incl. characterization (LIFECYCLE PASS) |
 | 2026-11-15 | C2 char/config (merged before gate — one-off, D19) | 041a5246 | `--fast` PASS on 78aff6cd (after gate fixes: Ninja build, vitest allowlist); full integration on main code PASS 167/0 earlier |
 
 ## Parked
@@ -100,6 +101,8 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 ## Defects found in the original (kept as-is, for the team)
 
+- H-1 (harness, found by the orchestrator) `test/test_integration.sh` parks `cubic_calibration.json` and `lc_tare.json` but **not** `scripts/calibration/calibrations/abort_thresholds.txt`; its `calibration_service` regenerates that tracked file in place (seen 2026-11-15 20:03, ADC values 858993460→901943133). On the stand an integration run overwrites the live abort thresholds. Fix belongs in WP4 (park and restore it like the others); the gate now fails on any dirty tracked file after a run.
+
 **Lead REPORT.md with these (safety-relevant on the real stand), each with its operator-visible consequence:** C2-2 (shipped profile TOMLs never checked for underscore ints), C6-3 (server-heartbeat loss undetected; daq_bridge never takes over), C6-4 (board shown disconnected while its data still displays), C6-1 (log claims SENSOR_CONFIG sent, 0 packets), C6-6 (config_broadcast silent unless an actuator board is designated survivor), C2-1 (digital-twin fire timer disabled), C2-4 (bad/missing TOML → service starts on defaults).
 
 From C1 (packets/Elodin; each frozen in a golden):
@@ -110,6 +113,13 @@ From C1 (packets/Elodin; each frozen in a golden):
 - C1-5 Parsers ignore the version byte and accept trailing bytes (the pipeline enforces both only for ENVIRONMENTAL_DATA).
 - C1-6 TS `ElodinClient` never resyncs on an implausible length: waits forever, buffers, re-schedules `setImmediate` every tick.
 - C1-7 With config_base's cubic models and no thresholds file, ACTUATOR_CONFIG carries no abort-PT thresholds.
+
+From C4 (sequencer; provisional until its report):
+- C4-1 A refused dynamic state deadlocks the sequencer worker when Elodin is connected.
+- C4-2 A script timeout fires twice (HoldTimer and ScriptRunner).
+- C4-3 An abort does not cancel a pending stage.
+- C4-4 With `owns_valves`, the PWM roles are not commanded during Fire.
+- C4-5 controller_service does not trim CR from commands.
 
 From C6 (lifecycle):
 - C6-1 daq_bridge logs "✅ Proactive SENSOR_CONFIG sent to N sense boards" but `FSWConfigManager` sends nothing (0 packets).
