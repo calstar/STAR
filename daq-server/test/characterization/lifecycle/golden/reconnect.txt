@@ -1,14 +1,14 @@
 == board_simulator.py stopped (SIGTERM) mid-session
   sim exit 0
-  [4-7.5s (stale 5000 ms + 1 s sweep + 1 s heartbeat period)] notification error: 'Board 21 (PT) connection lost' ongoing=True key=board_lost_21
-  [4-7.5s (stale 5000 ms + 1 s sweep + 1 s heartbeat period)] board 21: connected=False boardState=2
+  [[4, 8] s: BOARD_HEARTBEAT_STALE_MS 5000 - 1 s hb period, + 1 s sweep + 1 s hb + 1 s] notification error: 'Board 21 (PT) connection lost' ongoing=True key=board_lost_21
+  [[4, 8] s: BOARD_HEARTBEAT_STALE_MS 5000 - 1 s hb period, + 1 s sweep + 1 s hb + 1 s] board 21: connected=False boardState=2
   PT1.* sensor updates on the WS after the stop (+1 s on): 0
 
 == board_simulator.py restarted (boots in SETUP again)
-  [0-3s] board 21: connected=True boardState=1
-  [0-3s] notification error: 'Board 21 (PT) connection lost' ongoing=False key=board_lost_21
-  [0-3s] notification info: 'Board 21 (PT) connected' ongoing=- key=-
-  [0-3s] board 21: connected=True boardState=2
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] board 21: connected=True boardState=1
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] notification error: 'Board 21 (PT) connection lost' ongoing=False key=board_lost_21
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] notification info: 'Board 21 (PT) connected' ongoing=- key=-
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] board 21: connected=True boardState=2
   sim log: [pt_board] SENSOR_CONFIG received from ('127.0.0.1', <port>), running self-test
   sim log: [pt_board] SELF_TEST sent, transitioning to ACTIVE
   PT1.* sensor updates resumed on the WS: True

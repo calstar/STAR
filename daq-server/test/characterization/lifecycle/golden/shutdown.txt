@@ -1,41 +1,41 @@
 == SIGTERM board_simulator
-  exit 0 within <1 s (handler sleeps 0.1 s)
+  exit 0 within [0, 1] s: _sigterm_handler sleeps 0.1 s, + 0.9 s
 == SIGTERM config_broadcast_service
-  exit 0 within <0.6 s
+  exit 0 within [0, 0.6] s: exits on its next loop check (<= 100 ms), + 0.5 s
   packets after the signal: pt_board=0, actuator_board_2=0, actuator_board_4=0, integration_startup=0
 == SIGTERM stacklight_service
-  exit 0 within <1.2 s (Elodin recv timeout 500 ms + 100 ms loop)
+  exit 0 within [0, 1.2] s: kStacklightRecvTimeoutMs 500 + 100 ms loop, + 0.6 s
   packets after the signal: P_STACK=0
 == SIGTERM calibration_service
-  exit 0 within <3.5 s
+  exit 0 within [0, 3.5] s: timing assumption, README
   'Saved robust adjustments on shutdown' logged: True
   adjustments file written: True
   '[Cal] Stopped.' logged: True
 == SIGTERM ota_service
-  exit 0 within <1.6 s (select timeout 1 s)
+  exit 0 within [0, 1.6] s: select timeout 1 s, + 0.6 s
   command port still accepting: False
 == SIGTERM elodin-db
-  exit -15 within <0.6 s
+  exit -15 within [0, 5] s: not our code: timing assumption, README
   backend connection_status (elodinConnected, dataFresh) after: [(False, False)]
   heartbeat_service still sending SERVER_HEARTBEAT: True
   daq_bridge still running: True
   backend still running: True
 == SIGTERM daq_bridge
-  exit 0 within <0.6 s
+  exit 0 within [0, 0.6] s: exits on its next loop check (<= 100 ms), + 0.5 s
   'Shutdown complete' logged: True
 == SIGTERM heartbeat_service
-  exit 0 within <3.6 s (Elodin recv timeout 3000 ms + 100 ms loop)
+  exit 0 within [0, 3.6] s: kElodinRecvTimeoutMs 3000 + 100 ms loop, + 0.5 s
   packets after the signal: P_HB_SVC=0
   '[HeartbeatService] Stopped.' logged: True
 == SIGTERM backend (node server.ts)
-  exit -15 within <0.6 s
+  exit -15 within [0, 0.6] s: no signal handler: default action
   WS client sees close code 1006
 == SIGINT, each service started alone against a fresh elodin-db
-  heartbeat_service: exit 0 within <4 s
-  stacklight_service: exit 0 within <4 s
-  config_broadcast_service: exit 0 within <4 s
-  ota_service: exit 0 within <4 s
-  calibration_service: exit 0 within <4 s
-  daq_bridge: exit 0 within <4 s
-  backend (node server.ts): exit -2 within <1 s
-  elodin-db: exit -2 within <1 s
+  heartbeat_service: exit 0 within [0, 4] s: slowest loop: kElodinRecvTimeoutMs 3000, + 1 s
+  stacklight_service: exit 0 within [0, 4] s: slowest loop: kElodinRecvTimeoutMs 3000, + 1 s
+  config_broadcast_service: exit 0 within [0, 4] s: slowest loop: kElodinRecvTimeoutMs 3000, + 1 s
+  ota_service: exit 0 within [0, 4] s: slowest loop: kElodinRecvTimeoutMs 3000, + 1 s
+  calibration_service: exit 0 within [0, 4] s: slowest loop: kElodinRecvTimeoutMs 3000, + 1 s
+  daq_bridge: exit 0 within [0, 4] s: slowest loop: kElodinRecvTimeoutMs 3000, + 1 s
+  backend (node server.ts): exit -2 within [0, 1] s: no signal handler: default action
+  elodin-db: exit -2 within [0, 5] s: not our code: timing assumption, README
