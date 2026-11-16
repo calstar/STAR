@@ -8,6 +8,20 @@ WP7 runs after WP5 (which adds `boardSlot()` to `sensor-config.ts`) and may run 
 WP5 does not edit this file, so these line numbers stay valid. Read with `DESIGN-WP6.md` §3.4: the
 seam between the two is `createAPIHandler(opts)`.
 
+**Prerequisites.** C1 merged on `backend-remastered`, and `npx tsc --noEmit` in
+`diablo_server/backend/` added to `gate.sh` as a merge-gate step (orchestrator). WP5 merged (WP7
+appends to WP5's `sensor-config.ts`).
+
+**Orchestrator decisions (design review, 2026-11-16), recorded here:**
+
+- D-a: route handlers live in `src/api/`, not `src/routes/` (accepted).
+- D-b: `buildSensorConfig` and `SensorConfigEntry` go into the existing `sensor-config.ts`; WP7 runs
+  after WP5 (accepted). The orchestrator amends BLOAT-MAP's WP7 file list.
+- `npx tsc --noEmit` is a merge-gate step and a required check for every WP7 commit (§6.1).
+- Step 2.3 (`isOperatorRequest` in `operators.ts`) is done only after both WP6 and WP7 have merged;
+  the WS path keeps `authEmail` for `CONTROL_STATUS`.
+- Step 1 (move-only) and step 2 (cleanup) are **separate queue items**, each fully gated.
+
 **Contract (frozen, D5/D17).** Every path, method, status code, `Content-Type`,
 `Content-Disposition`, the three CORS headers, JSON body shape and error text; first-match routing,
 including that a known path with the wrong method is **404 `{"error":"Not found"}`, never 405**
@@ -242,9 +256,22 @@ Rules:
   and group order cannot change which body runs. Groups are still dispatched in today's
   first-occurrence order: config, states, profiles, history, gui-config, board-logs, debug,
   calibration, feed-char, ota.
-- **S2 (imports).** `api-server.ts` keeps all of today's import statements in step 1 (it is imported
-  by `server.ts:35`, early, and pulls in `session-manager`, `routes/*`, `ota-*` — keeping its list
-  keeps every module's evaluation order). Group modules import what their bodies use.
+- **S2 (imports).** `api-server.ts` keeps all of today's import statements in step 1, in today's
+  order (it is imported by `server.ts:35`, early, and pulls in `session-manager`, `routes/*`, `ota-*`
+  — keeping its list keeps every module's evaluation order), and adds the new `./api/*.js` imports
+  **after** all of them. Group modules import what their bodies use, and (import closure, DoD
+  check) every module an `api/*` file imports must already be in `api-server.ts`'s import list, so
+  no `api/*` import is ever the first import of anything:
+
+  ```bash
+  cd diablo_server/backend/src
+  have=$(grep -oE "from '\./[^']+'" api-server.ts | sed "s/from '\.\///; s/'$//" | sort -u)
+  need=$(grep -ohE "from '\.\./[^']+'" api/*.ts | sed "s/from '\.\.\///; s/'$//" | sort -u)
+  comm -13 <(echo "$have") <(echo "$need")   # prints nothing
+  ```
+
+  (`api/*`'s `../../../shared/*` imports are compared the same way against `api-server.ts`'s
+  `../../shared/*` list; `api/http.ts`, imported only by `api/*` and `api-server.ts`, is effect-free.)
 - **S3 (`__dirname`).** The only `__dirname` user is `/api/cubic_calibration` (941-946). In
   `api/calibration.ts` define `const SRC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');`
   and replace the two `path.join(__dirname, …)` candidates with `path.join(SRC_DIR, …)`, same
@@ -257,7 +284,7 @@ Rules:
 | # | commit: create | cut from `api-server.ts` | notes |
 |---|---|---|---|
 | 1.1 | `api/http.ts` | 305-361 (types + `isConfigWriteAuthorized` + `readJsonBody`) | `api-server.ts` re-exports the three types |
-| 1.2 | `sensor-config.ts` (append) | 47-303 | `api-server.ts`: `export { buildSensorConfig, type SensorConfigEntry } from './sensor-config.js';` — `t7.test.ts` unchanged. `readConfig`, `t7Channels` imports added to `sensor-config.ts`; `isCurrentLoopBoard` is already local. The config characterization harness imports named functions from this file; adding exports does not change `config/golden/ts/` |
+| 1.2 | `sensor-config.ts` (append) | 47-303 | `api-server.ts`: `export { buildSensorConfig, type SensorConfigEntry } from './sensor-config.js';` — `t7.test.ts` unchanged. No import is added: `sensor-config.ts` already imports `readConfig` (`:6`) and `t7Channels` (`:7`), and `isCurrentLoopBoard` is defined there. The config characterization harness imports named functions from this file; adding exports does not change `config/golden/ts/` |
 | 1.3 | `api/config.ts` | 394-507, 685-690 | |
 | 1.4 | `api/states.ts` | 508-684 | |
 | 1.5 | `api/profiles.ts` | 691-784 | |
@@ -270,15 +297,23 @@ Rules:
 | 1.12 | `api/ota.ts` | 1097-1256 | the `MAX_BODY` constant and SSE closure move inside the body unchanged |
 
 After 1.12 `api-server.ts` is the router (~90 lines): imports, re-exports, `createAPIHandler` with
-363-393 verbatim, ten `if (await handle…Request(req, res, url, opts)) return true;` lines, 1257-1267
-verbatim.
+363-393 verbatim (the `if (video && url.pathname.startsWith('/api/video/'))` guard kept verbatim,
+first inside the try), ten `if (await handle…Request(req, res, url, opts)) return true;` lines,
+1257-1267 verbatim.
 
-**Checks for every commit:** `npx tsc --noEmit` (exit 0 on the baseline), backend `npm test` with no
-failure outside `test/characterization/baseline_vitest_failures.txt`
-(`t7.test.ts`, `config-profile-create-calibration.test.ts` exercise the exports), then under the
-stack lock `pipeline/run.sh pt nocal boards` and `lifecycle/run.sh` (its `ota` golden drives
-`POST /api/ota-flash`); `test_integration.sh` once at the end of the step. **Route-table check**
-(the WP's DoD "path+method list diff empty"):
+**Checks for every commit** (no ports):
+
+1. `npx tsc --noEmit` in `diablo_server/backend/` — exit 0 (required; merge-gate step).
+2. Backend `npm test`, no failure outside `test/characterization/baseline_vitest_failures.txt`
+   (`t7.test.ts`, `config-profile-create-calibration.test.ts` exercise the exports).
+3. Import closure (S2) and the cycle grep (§8).
+4. Route-table check, dispatch check and move-only check, below.
+
+Under the stack lock, at the end of the step (and at most at one midpoint, within AGENT-RULES rule
+7's hold limit): `pipeline/run.sh pt nocal boards` and `lifecycle/run.sh` (its `ota` golden drives
+`POST /api/ota-flash`). `test_integration.sh` runs in the merge queue's full gate.
+
+**Route-table check** (the WP's DoD "path+method list diff empty"):
 
 ```bash
 cd daq-server/diablo_server/backend/src
@@ -287,21 +322,79 @@ git show backend-remastered:./api-server.ts > /tmp/api-old.ts
 diff <(routes /tmp/api-old.ts) <(routes api-server.ts api/*.ts)    # must print nothing
 ```
 
+The route table cannot see a group that is never dispatched (its routes are still "in the table").
+**Dispatch check:** every exported `handle\w+Request` of `api/*.ts` is called exactly once in
+`api-server.ts`, in the form `if (await handleX(req, res, url, opts)) return true;`, on a line
+between the router's `try {` and its `} catch`:
+
+```bash
+try_l=$(grep -n "^    try {" api-server.ts | head -1 | cut -d: -f1)
+catch_l=$(grep -n "^    } catch (error: any) {" api-server.ts | head -1 | cut -d: -f1)
+for f in $(grep -ohE "export async function handle[A-Za-z]+Request" api/*.ts | awk '{print $4}'); do
+  hits=$(grep -n "if (await $f(req, res, url, opts)) return true;" api-server.ts | cut -d: -f1)
+  [ "$(echo "$hits" | grep -c .)" = 1 ] && [ "$hits" -gt "$try_l" ] && [ "$hits" -lt "$catch_l" ] \
+    || echo "BAD dispatch: $f"
+done                                                                    # must print nothing
+```
+
+**Move-only check** (scripted; `--color-moved` is a review aid only): split today's ladder
+(`api-server.ts` 394-1256 at `backend-remastered`) into branches at each line matching
+`^      (} else )?if \(` at the ladder's indentation; for each branch take `COND` (the header without
+the leading `} else `) and `BODY` (the lines up to the next header); strip leading whitespace from
+every line. Every branch's `[COND] + BODY` must occur as one contiguous run of lines, after the same
+stripping, in **exactly one** `api/*.ts` file (and nowhere twice). The only lines of an `api/*.ts`
+file outside such runs may be imports, the handler's signature, its `opts` destructuring (S4), the
+added `return true;` per branch, `return false;`, closing braces, and S3's `SRC_DIR` line plus its
+two candidate lines. A ~40-line Python script; WP7 commits it with the package's checks (outside
+`src/`).
+
 ### 6.2 Step 2 — cleanup toward the target
 
-1. **`sendJson` and `denyUnlessOperator`** in `api/http.ts`. `sendJson` is exactly
-   `res.writeHead(status, {'Content-Type': 'application/json'}); res.end(JSON.stringify(body));`, so
-   it can replace only call sites that are exactly that pair (not the CSV, text, SSE or
-   `Content-Disposition` ones, nor `cubic_calibration`'s raw-body path). `denyUnlessOperator`
-   replaces the 14 identical `if (!isConfigWriteAuthorized(req)) { 403 …; return true; }` blocks.
+1. **`sendJson` and `denyUnlessOperator`** in `api/http.ts`.
+
+   `sendJson(res, status, body)` is **not** a pure refactor in general. Today `res.writeHead(...)`
+   runs **before** the body expression of `res.end(JSON.stringify(<expr>))` is evaluated; if `<expr>`
+   calls something that throws, the router's catch then fails on `writeHead(500)` (headers already
+   sent) and the request hangs. With `sendJson`, `<expr>` is evaluated first, so the same throw
+   becomes a clean 500 — a silent defect fix. So `sendJson` may replace **only** a pair whose body
+   argument is built from literals and already-evaluated locals (optional-chained reads such as
+   `error?.message` included), where nothing in the expression can throw. Eligible (today's line of
+   the `res.end`; each is directly preceded by `res.writeHead(<n>, { 'Content-Type':
+   'application/json' });`, checked mechanically):
+
+   410, 441, 467, 498, 559, 584, 606, 634, 679, 707, 714, 723, 728, 753, 758, 768, 773, 783, 790,
+   810, 822, 848, 854, 874, 890, 905, 919, 928, 932, 936, 968, 984, 1014, 1031, 1038, 1044, 1050,
+   1055, 1063, 1073, 1084, 1096, 1100, 1105, 1181, 1188, 1197, 1221, 1249, 1259 (50 sites).
+
+   **Not eligible, keep the raw pair:**
+   - the body calls a function after `writeHead`: 398, 404, 426, 690, 695, 720, 750, 765, 780,
+     860, 894, 963, 977, 981, 995, 1059, 1069, 1080, 1092;
+   - the body reads a property of a local without `?.` (it throws if the local is
+     `null`/`undefined`, e.g. a thrown non-Error): 445, 459, 505, 562, 577, 613, 627, 651, 658, 666,
+     682, 814, 834, 922, 1254, 1264;
+   - not an adjacent pair: 955, 958, 997 (`writeHead` sits before an `if` or `try`);
+   - not JSON or not that header set: the CSV, text, SSE and `Content-Disposition` responses.
+
+   `denyUnlessOperator(req, res)` replaces the 14 identical
+   `if (!isConfigWriteAuthorized(req)) { 403 …; return true; }` blocks (their bodies are literals).
+   **Before 2.1** the 8 gates no golden covers yet get a viewer-403 line (H8): today only
+   `http.txt` 1413 (`/api/config`), 1420 (`/import`), 1427 (`/state-csv`), 1462 (`profiles/switch`),
+   1504 (`board-log-mode`) and 1539 (`calibration_profiles/save`) are covered.
 2. **Slot rule** (after H4 exists): `elodinSlotFromBoardId` (96-100, now in `sensor-config.ts`) →
    WP5's `boardSlot()`. Equivalent for every number; `asBoardId` still guarantees one.
-3. **One identity rule** (coordinate with WP6): `isConfigWriteAuthorized` (345-348) and the WS
-   control path (`server.ts:978-979`) are the same expression. Move it to `operators.ts` as
-   `isOperatorRequest(headers)` used by both. Same result for every header value.
-4. **Prune `api-server.ts`'s imports** to what the router uses (evaluation order of `session-manager`
-   et al. then follows `server.ts`'s import list; only import-time logs can move — diff the first 60
-   lines of `backend.log` before and after).
+3. **One identity rule — after both WP6 and WP7 have merged** (decision): `isConfigWriteAuthorized`
+   (345-348) and the WS control path (`server.ts:978-979`) compute the same thing. Move it to
+   `operators.ts` as `isOperatorRequest(headers)` used by both. The WS path still computes and keeps
+   `authEmail`, which `CONTROL_STATUS` sends (`email: authEmail || null`). Same result for every
+   header value.
+4. **Prune `api-server.ts`'s imports** to what the router uses. **Never drop a module with
+   import-time effects** (`session-manager.ts`, `legacy/state-actuators.ts` / `state-csv/`, anything
+   that reads config, logs or constructs a singleton at import) unless another import still
+   evaluates it at the same point. The check: diff the first 60 lines of `backend.log` (a 5 s
+   backend-only start under the stack lock, as DESIGN-WP6 §6.3 item 5) before and after; any
+   difference beyond timestamps and PIDs fails the commit.
+Step 2 is its own queue item, gated in full like step 1.
+
 5. Not in WP7 (Parked): unifying body reading, removing the never-wired `getQueryClient` /
    `getCalibrationStatus` options, renaming `routes/`.
 
@@ -340,8 +433,17 @@ diff <(routes /tmp/api-old.ts) <(routes api-server.ts api/*.ts)    # must print 
 
 ### Gaps — a move could change these and no golden would notice
 
-H1-H3 and H5 belong in `test/characterization/pipeline/` (C0-owned); H4 is pure-function
+H1-H3, H5 and H8 belong in `test/characterization/pipeline/` (C0-owned); H4 is pure-function
 characterization (D20 allows white-box for pure functions with a stable signature).
+
+| gap | priority (orchestrator) | must exist before |
+|---|---|---|
+| H1, H2 | MUST | step 1 (H2's `flash-all` only against a config with no enabled boards) |
+| H8 | MUST | step 2.1 (`denyUnlessOperator`) |
+| H4 | should | step 2.2, including negative and non-integer `board_id`s |
+| H3 | should, only if `sendJson` survives review | step 2.1 |
+| H5 | nice-to-have | — |
+| H6, H7 | accepted as documented | — |
 
 - **H1 Success paths of the writes and their callbacks.** Only error shapes are frozen for
   `POST /api/config`, `/api/config/import`, `/api/state-csv`, `/api/state-script`,
@@ -364,10 +466,16 @@ characterization (D20 allows white-box for pure functions with a stable signatur
   `board_id % 10 == 0` (the boards session's sensor list is PT1, PT2, TC1, RTD1, LC2, T71). Freeze
   `buildSensorConfig` for an injected config with board_ids 10, 20, 21, two RTD and two LC boards
   without roles (`generatedRole` multi-board names), a disabled board, a non-numeric `board_id`
-  (`asBoardId` fallbacks 1/51/31/41), and T7 channels — before step 2.2.
+  (`asBoardId` fallbacks 1/51/31/41), negative (`-21`) and non-integer (`21.5`) board_ids, and T7
+  channels — before step 2.2.
 - **H5 `PUT /api/feed-char/results` during a session (405)**: the no-session 409 (`POST`, `PUT`),
   the in-session `GET` (200, `results: []`) and `POST` (500 `ENOENT`, mock mode) are frozen; the
   405 branch is not.
+- **H8 The 8 operator gates without a viewer-403 line**: `POST /api/state-script`,
+  `POST /api/config/profiles/create`, `…/rename`, `…/delete`, `POST /api/ball_valve_cal`,
+  `POST /api/feed-char/results`, `POST /api/calibration_profiles/load`, `…/new_blank`. Freeze each
+  as the viewer (403, no side effect). The `feed-char` one must run **during a session**: without
+  one the route answers 409 before it reaches the gate.
 - **H6 `cubic_calibration` candidate order** cannot be observed (§6.1 S3); prescribed rather than
   tested.
 - **H7 SSE headers and framing** of `flash-all` — covered by H2's no-boards case only for the JSON
@@ -381,6 +489,9 @@ characterization (D20 allows white-box for pure functions with a stable signatur
 - **Shared state.** None in the file (§1.2). The risk is the callbacks: a moved body must call
   `onConfigUpdated` / `onStateCsvUpdated` under the same condition and through the same
   `setImmediate`; H1 is what would notice.
+- **Unrestricted `sendJson`** would turn today's hang-after-headers into a clean 500 on ~35 call
+  sites — a defect fix no golden notices. §6.2 item 1 restricts it to the listed sites.
+- **A group never dispatched** passes the route-table diff; the dispatch check of §6.1 catches it.
 - **Import cycles.** Types in `api/http.ts`; `api/*` never imports `api-server.ts` or `server/*`. A
   grep in the DoD: `grep -l "api-server\|\.\./server/" src/api/*.ts` prints nothing.
 - **Startup order.** `createAPIHandler` is called once, at `server.ts:784`, after `video.start()`;
@@ -421,6 +532,9 @@ characterization (D20 allows white-box for pure functions with a stable signatur
 - `GET /api/config/profiles` can write (`ensureSeeded()`).
 
 ## Open questions
+
+Q1 and Q2 are settled by the orchestrator's decisions at the top of this note (D-b, D-a); Q3 by the
+gap priority table in §7; Q4 by the decision that step 2.3 waits until both WP6 and WP7 have merged.
 
 - **Q1** `buildSensorConfig` into the existing `sensor-config.ts` (this note) or a new
   `sensor-config-build.ts` (the WP table)?
