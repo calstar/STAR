@@ -1,0 +1,12 @@
+[ConfigBroadcast] board traffic pinned to <iface> 127.0.0.1 (auto)
+[ConfigBroadcast] Started — interval=60000ms (C++ standalone, live config reload)
+[ConfigBroadcast] 3 packet types
+=== stopped
+=== port 5005: 3 datagram(s)
+packet[0] type=6 len=24
+  0000: 06 00 00 00 00 00 01 02 01 00 00 7f 01 00 01 01
+  0010: 00 00 7f 01 00 00 00 00
+packet[1] type=5 len=13
+  0000: 05 00 00 00 00 00 03 01 02 03 00 00 00
+packet[2] type=5 len=12
+  0000: 05 00 00 00 00 00 02 01 02 00 00 00

@@ -1,0 +1,11 @@
+=== DAQ Bridge - DiabloAvionics Packet Receiver ===
+Config: config/config.toml
+Listening on: 0.0.0.0:5006
+
+[TimeSync] mode=board-clock window=10s
+[DAQ] board traffic pinned to <iface> 127.0.0.1 (auto)
+[Config] Loopback fallback (127.0.0.<host-octet>): 1 enabled boards
+[Config] Board routing table (from config/config.toml):
+  127.0.0.21 → PT (4 channels) ✅
+[System] Mode: GROUND
+=== stopped
