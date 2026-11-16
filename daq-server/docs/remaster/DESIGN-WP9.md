@@ -415,7 +415,7 @@ Checks for the move-only package, all required:
 - **Not in cleanup** (behaviour, contract or arithmetic risk; parked or left):
   merging `resolve_pt_sensor_uid`/`resolve_lc_sensor_uid` (behaviour-neutral but the duplication
   is a documented decision; open question 2); replacing header bytes `[4..7]` with
-  `elodin::PacketHeader` (only with a byte-equality proof; leave to WP8's B3 decision); deleting
+  `elodin::PacketHeader` (DESIGN-WP8 §0 decided against it; not done); deleting
   `logged_ch5` (removes a `baseline_warnings.txt` line; orchestrator decides); any change to the
   defects (signal-handler I/O, 2 s uninterruptible sleep, SIGPIPE, C3-1, C6-9).
 
