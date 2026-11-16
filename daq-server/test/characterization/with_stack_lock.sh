@@ -21,9 +21,28 @@ WAIT_S="${DAQ_STACK_LOCK_WAIT:-7200}"
 # just runs.
 if [ "${DAQ_STACK_LOCK_HELD:-}" = "$LOCK_DIR" ]; then exec "$@"; fi
 
+# Priority: DAQ_STACK_LOCK_PRIORITY=1 (the orchestrator's baseline and merge-gate runs) registers a
+# ticket in $LOCK_DIR.priority/; while any live ticket exists, ordinary callers do not take the lock,
+# so a priority waiter cannot lose every race to a stream of ordinary ones (mkdir is not FIFO).
+PRIO_DIR="$LOCK_DIR.priority"
+if [ "${DAQ_STACK_LOCK_PRIORITY:-}" = 1 ]; then
+  mkdir -p "$PRIO_DIR"
+  touch "$PRIO_DIR/$$"
+  trap 'rm -f "$PRIO_DIR/$$"' EXIT INT TERM
+fi
+priority_waiting() {
+  [ "${DAQ_STACK_LOCK_PRIORITY:-}" = 1 ] && return 1
+  local t
+  for t in "$PRIO_DIR"/*; do
+    [ -e "$t" ] || continue
+    if kill -0 "$(basename "$t")" 2>/dev/null; then return 0; else rm -f "$t"; fi
+  done
+  return 1
+}
+
 deadline=$((SECONDS + WAIT_S))
 announced=0
-while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+while priority_waiting || ! mkdir "$LOCK_DIR" 2>/dev/null; do
   owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
   if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
     echo "with_stack_lock: taking over stale lock from pid $owner" >&2
@@ -40,7 +59,8 @@ done
 
 echo $$ > "$LOCK_DIR/pid"
 echo "$PWD: $*" > "$LOCK_DIR/what"
-trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+trap 'rm -rf "$LOCK_DIR"; rm -f "$PRIO_DIR/$$"' EXIT INT TERM
+rm -f "$PRIO_DIR/$$"
 export DAQ_STACK_LOCK_HELD="$LOCK_DIR"
 
 "$@"
