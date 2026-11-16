@@ -74,55 +74,36 @@ external-linkage `getTomlValue` (WP8 §6.2), file-statics a `#include`d main exp
 
 **S8 — The refactor preserves every failure mode.** Defects are parked, not fixed (D17,
 AGENT-RULES 6): status codes, exit codes, error texts, "continue" vs "exit", what is left half
-written. Everything below S8 describes the shape new structure takes and the direction a future,
-team-approved fix takes (golden first, then the fix, as its own package). A refactor never applies
-it to existing behaviour. WPs: all.
+written. S8a–S14a describe the shape new structure takes and the direction a future,
+team-approved fix takes (golden first, then the fix with its code and unit file, as its own
+package). A refactor never applies them to existing behaviour. WPs: all.
 
-**S9 — Catch only where input enters.** TS boundaries are WP6 §4.3's table (browser message,
-browser command, Elodin row, sequencer line, HTTP request, process) plus WP7's router catch. C++
-boundaries are a TCP client reader, an Elodin read loop, `main`'s startup, and a command worker —
-good: `services/sequencer/SequencerService.cpp:94-105` catches a throwing command, logs it and still
-fulfils the promise. Inner modules do not catch-and-log unless the catch *is* a decision (config
-missing → defaults, WP6 §4.3). A try/catch moves with its body and keeps its exact span; a move adds
-none and removes none (WP6 §4.2, WP7 §4.2, WP9 §4). WPs: 6, 7, 9, 10.
+**S8a — Every path carries a criticality class and a phase; the pair decides the policy.** Phase is *startup* (before `main` starts its worker, opens its serve socket or sends its first packet) or *duty*. A new header or module names its classes (S36). A process hosting several classes takes the most conservative exit policy among them (daq_bridge, the sequencer, the backend).
 
-**S10 — Every request gets exactly one answer; every accepted subscription delivers or fails
-loudly.** What `main` gets wrong, kept by the refactor: `backend/src/api-server.ts:397-398` (and
-~40 more) write headers before evaluating the body, so a throw leaves `server.ts:888-893` nothing
-to send and the request hangs (D-API3); a throw inside a `req.on('end')` callback outside its try
-never answers; a subscription made during re-registration is accepted and dead forever, and
-`backend/src/elodin-vtable-registry.ts:136` retries only refused ones (D-SUB). The canonical trap
-when tidying: a helper that evaluates the body before `writeHead` silently fixes D-API3, so WP7's
-`sendJson` is allowed only on literal/local bodies (WP7 §6.2, D39). WPs: 5–7.
+| class — paths | startup fault | fault in duty | loud surface |
+|---|---|---|---|
+| **safety** — ABORT/ABORT_DONE, SERVER_HEARTBEAT, abort batch, FIRE_STOP/PWM close, ACTUATOR_CONFIG thresholds | exit 78 on config that makes the boards unreachable or a threshold wrong; socket/NIC exit 1 (warm stand: TQ3) | never exit, block or throw mid-send; bounded independent sends; degraded beats none | boards (D-HB), stacklight |
+| **control** — sequencer worker, state machine, scripts, PressureFeed, controller loop, `:9998`/`:9999`, backend relay | exit 78 on config that moves a valve or lands a table; exit 1 on bind | refuse as a value with a reason; rig unchanged; never exit | `ERR:` + `refusal_reason`; `ERROR` to the sender |
+| **observation** — daq_bridge ingest, calibration, backend WS/HTTP, registry, stacklight, t7 | transients retried, never fatal; exit 1 on argv/port | drop the row, keep the stream; one answer per request; dead subscription reported | keyed `ongoing` notification |
+| **tooling** — ota, `/api/ota-flash` | exit 1 on argv/port | fail per request with `ERR:`; never touches safety or control | reply + log |
 
-**S11 — Fail fast on configuration that makes a service unsafe or useless; never start "on
-defaults" silently.** One stderr line with the tag, exit 1, before any socket opens. What `main`
-does instead, kept: `lib/src/config/Config.cpp:49-53` logs `[Config] ERROR` for slot > 8 and
-continues, so the table id wraps onto PT2.CH1 (D-SLOT); `services/controller/controller_main.cpp:147`
-ignores `listen()`, and a bind failure returns from the control thread while the service runs on
-with no fire gate (D-CTL); `config::load` logs and returns defaults (C2-4); a malformed IP becomes
-`0.0.0.0` on the wire (C1-8); `heartbeat_service_main.cpp:252` ignores `bindToDaqInterface` (D-BIND);
-the same bad board id is SIGABRT in config_broadcast and exit 1 in daq_bridge (C2-12). WPs: 8–10.
+**S9 — Catch only where input enters; a catch decides or rethrows; a boundary catch ends one unit of work.** Boundaries as WP6 §4.3 (model `SequencerService.cpp:94-105`). A catch names its recovery or rethrows to the boundary that can; it never ends the thread serving the others, or the process. Spans move verbatim. No new keep-alive guard; `server.ts:1823-1829` is kept, labelled, its comment corrected in cleanup.
 
-**S12 — Preserved behaviour is explicit, never a silent default of shared code.** Where one helper
-serves services that behave differently, each service's behaviour is a named setting at its call
-site. Models: WP8 §2.1 `ShutdownNotice` and `Sigpipe` per-service tables; §2.3 `TcpListener::Failed`
-returned to the caller, who decides (the controller falls through on `kListen`, the others exit 1);
-§2.5 `ConfigFileChoice{found, fell_back}` with the caller emitting its own log lines. In the cleanup
-pass a kept defect at a call site carries `// Kept: <LEDGER id> (D17)` and one line on why; a
-move-only pass adds no such line (its diff rules forbid it). WPs: 8–10.
+**S10 — Every request gets exactly one answer; every accepted subscription delivers or is reported dead.** D-API3, D-SUB kept as drafted; `sendJson` only on literal bodies (D39). D-SUB direction: classify by the echoed `VTableMsg` (Idea 2), re-send only a classified-dead pair, recreate the connection only when unclassifiable (Idea 3); a dead channel is shown dead.
 
-**S13 — Exit codes.** 0 on clean stop and `--help`; 1 for a startup failure, with one stderr line.
-Frozen exceptions (WP8 §4): t7_bridge 2 and 3, config_broadcast −6 (C2-12), −2/−15 before a
-service's handlers are installed, −13 for SIGPIPE in the five default-disposition services,
-calibration's `return 1` on first Elodin connect (`services/calibration/calibration_main.cpp:1545`,
-C6-9). New helpers return status; only `main` exits. `std::exit` inside a helper exists only where
-moved verbatim (t7_bridge's `next` lambda, WP8 §6.2). WPs: 8–10.
+**S11 — Startup: fail fast on what retrying cannot fix, with a status the unit will not loop on.** Collect every config error, print all, exit 78 before any socket opens — one policy for D-SLOT, C2-4, C1-8, C2-5, C2-12; `RestartPreventExitStatus=78` in the same package. Transients: bounded retry or exit 1 so the unit retries (C6-9 inverted).
 
-**S14 — Keep a seam's error style.** Where a seam returns status, it keeps returning status: the
-TS line client never rejects and resolves `{ok, reply}` (WP6 §4.1); `SequencerService` returns
-`bool` plus `refusal_reason`, which the TCP layer prints after `ERR:` (WP10 §1.6). No new exception
-crosses such a seam. WPs: 5, 6, 10.
+**S11a — Duty: never exit from a safety or control path; a failed re-read is rejected, the last validated config kept, logged once, shown.** A wedge is answered by the boards through D-HB, not by a restart that commands the boot batch.
+
+**S12 — Preserved behaviour is explicit, never a silent default of shared code.** Per-service settings at call sites (WP8 §2). A kept site reads `// Kept: <id> (D17) — <class>/<phase>: <rule violated>; loud half: <surface>` (supersedes D43(4)).
+
+**S13 — Exit codes are frozen; 78 is reserved.** 0, 1, frozen exceptions as WP8 §4; −6 only for a programming invariant; 78 only for refused config, never restarted (precedent `sensor-t7.service:21-22`). Only `main` exits, in its startup block.
+
+**S14 — A seam keeps its error style; a fault is a value that reaches a decider.** Status seams keep returning status (`{ok, reply}`, `bool` + `refusal_reason`, `TcpListener::Failed`); no exception crosses them. New helpers are `[[nodiscard]]`; a status is consumed or passed up, `(void)` only under `// Kept:`. Nothing reports an in-duty fault only in a log.
+
+**S14a — Every degraded part is a keyed `ongoing` status on an operator surface, and the safety layer never depends on a service choosing to exit.** Model `markStaleBoards` (`server.ts:661-701`). The backend raises it from what it observes today (stale ingest, board heartbeats, WS close, `{ok:false}`); it does **not** observe SERVER_HEARTBEAT loss (C6-3), per-pair liveness (D-SUB) or any C++ in-duty fault; those need plumbing (C++ precedent: the Boards-page journal, `star-dhcp-sync.service:13-16`; TQ6).
+
+*Ratified by the STYLE-errors debate (`debates/STYLE-errors/verdict.md`, LEDGER D46); team questions TQ1–TQ7 there.*
 
 ## 3. Logging
 
