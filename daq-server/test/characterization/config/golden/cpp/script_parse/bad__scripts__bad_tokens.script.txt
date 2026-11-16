@@ -1,0 +1,15 @@
+
+=== script fixtures/bad/scripts/bad_tokens.script (parse only)
+parse.ok = false
+parse.diag.count = 1
+parse.diag 1:5 E_BAD_NUMBER "malformed number — digits and at most one '.', with no exponent and no trailing letters"
+top = [0, 0) empty=true max_depth=0
+block_items = []
+canonical:
+(seq)
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

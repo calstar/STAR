@@ -1,0 +1,73 @@
+{
+  "counts": {
+    "errors": 4,
+    "warnings": 1
+  },
+  "grouped": [
+    {
+      "issues": [
+        {
+          "level": "error",
+          "message": "PT Board #1 (pt_a): Slot 1 is also claimed by PT Board #2 (ID 31) — their channels will merge.",
+          "page": "boards"
+        },
+        {
+          "level": "error",
+          "message": "PT Board #2 (pt_b): Slot 1 is also claimed by PT Board #1 (ID 21) — their channels will merge.",
+          "page": "boards"
+        },
+        {
+          "level": "error",
+          "message": "PT Board #3 (pt_c): Board ID 29 maps to slot 9, but packet IDs only encode slots 1-8.",
+          "page": "boards"
+        },
+        {
+          "level": "error",
+          "message": "TC Board (tc_d): Board ID 20 maps to slot 10, but packet IDs only encode slots 1-8.",
+          "page": "boards"
+        }
+      ],
+      "label": "Boards",
+      "page": "boards"
+    },
+    {
+      "issues": [
+        {
+          "level": "warn",
+          "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Main, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+          "page": "state"
+        }
+      ],
+      "label": "State Machine",
+      "page": "state"
+    }
+  ],
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "PT Board #1 (pt_a): Slot 1 is also claimed by PT Board #2 (ID 31) — their channels will merge.",
+      "page": "boards"
+    },
+    {
+      "level": "error",
+      "message": "PT Board #2 (pt_b): Slot 1 is also claimed by PT Board #1 (ID 21) — their channels will merge.",
+      "page": "boards"
+    },
+    {
+      "level": "error",
+      "message": "PT Board #3 (pt_c): Board ID 29 maps to slot 9, but packet IDs only encode slots 1-8.",
+      "page": "boards"
+    },
+    {
+      "level": "error",
+      "message": "TC Board (tc_d): Board ID 20 maps to slot 10, but packet IDs only encode slots 1-8.",
+      "page": "boards"
+    },
+    {
+      "level": "warn",
+      "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Main, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+      "page": "state"
+    }
+  ]
+}

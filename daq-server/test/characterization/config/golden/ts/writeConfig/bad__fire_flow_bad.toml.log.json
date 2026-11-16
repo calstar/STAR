@@ -1,0 +1,9 @@
+{
+  "error": "<undefined>",
+  "logs": [
+    "log: 💾 Writing config to: <WORK>/write/fire_flow_bad.toml",
+    "warn:    File may not exist yet, will create",
+    "log:    Generated TOML content: 550 bytes",
+    "log: ✅ Config written successfully to <WORK>/write/fire_flow_bad.toml"
+  ]
+}

@@ -1,0 +1,6 @@
+=== args --config fixtures/bad/slug_collision.toml --state Armed ../../../config/profiles/digital-twin/scripts/dynamic_test.script
+=== stdout
+=== stderr
+config: actuator "???" has no usable slug (got "???") — a script cannot name it
+config: actuator "fuel-main" has no usable slug (got "FUEL-MAIN") — a script cannot name it
+=== exit 2

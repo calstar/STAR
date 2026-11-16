@@ -1,0 +1,7 @@
+,Idle,Armed,Warp Drive,Emergency Abort
+Idle,1,1,1,1
+Warp Drive,1,1,1,1
+ armed ,1,0,1,1
+"Emergency Abort",1,0,0,1
+,1,1,1,1
+Fire,yes,1,true,1
