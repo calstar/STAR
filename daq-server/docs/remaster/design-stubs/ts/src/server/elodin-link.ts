@@ -20,7 +20,7 @@
  * **no** `.catch` (STYLE-S28, kept) — `lifecycle/golden/{reconnect,shutdown}.txt`.
  * Seams (debate verdict, 2026-11-16): **no factory and no deps object in WP6** — no
  * `createElodinLink`, no `now` dep, no `setClockForTests` here. `scheduleResubscribe` and the four
- * listeners stay verbatim; only the delay is a pure function (`nextResubscribeDelay`). A later
+ * listeners stay verbatim (LEDGER D49: no pure delay function either). A later
  * D-SUB/D-ECHO package passes `client` as a **parameter at the decision**
  * (`registerVTables(client)`, `duePairs(desired, state, now)`), not a factory.
  * Import-time effects: none beyond the pure constructor; `server.ts` registers
@@ -28,7 +28,7 @@
  * `elodin.on('connected' | 'dbError' | 'disconnected' | 'error', …)` in today's order.
  */
 
-import type { ElodinClient, SubscriptionPassResult } from '../product-types.js';
+import type { ElodinClient } from '../product-types.js';
 
 export declare const elodin: ElodinClient;
 
@@ -78,15 +78,5 @@ export function onElodinDisconnected(): void {
 
 /** `error`: log `Elodin error: <message>` only. */
 export function onElodinError(err: Error): void {
-  throw new Error('stub');
-}
-
-/**
- * [step 2.10, debate verdict] How long the resubscribe loop waits after a pass (server.ts:1512-1516):
- * 0 when the pass left `remaining` pairs; the 5 s minimum when nothing is waiting; else
- * `max(5 s, res.nextAttemptMs - now)`. `scheduleResubscribe` passes `Date.now()` (its inline read at
- * :1516 becomes this parameter, read at the same point). Return type inferred by DESIGN-WP6.
- */
-export function nextResubscribeDelay(res: SubscriptionPassResult, now: number): number {
   throw new Error('stub');
 }
