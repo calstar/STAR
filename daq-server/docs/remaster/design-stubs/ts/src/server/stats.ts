@@ -10,7 +10,10 @@
  * Must not know about: who reads it. Imports nothing.
  * Contract: the `/stats` keys (`pipeline/golden/http.txt`, P9 schema) and `ws_data_flow_test`'s
  * sample-conservation reading of `rawPrimarySamplesIngested` / `rawPrimarySamplesByGroup`.
- * Import-time effect: `startTimeMs = Date.now()` (WP6 §1.3 row 14, a pure clock read; allowed).
+ * Import-time effects: none (STYLE-S30 does not list a clock read). `startTimeMs` starts at 0 and
+ * is set by `initStats()`, which `server.ts` calls where today's statement is (WP6 §1.3 row 14),
+ * so `uptimeMs` keeps today's origin to the millisecond [A9e]. Nothing reads `stats` before
+ * `listen`.
  */
 
 export interface IngestStats {
@@ -29,3 +32,8 @@ export interface IngestStats {
 }
 
 export declare const stats: IngestStats;
+
+/** Row 14: `stats.startTimeMs = Date.now()`. */
+export function initStats(): void {
+  throw new Error('stub');
+}
