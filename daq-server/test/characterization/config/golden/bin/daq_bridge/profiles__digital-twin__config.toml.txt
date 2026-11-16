@@ -1,0 +1,24 @@
+=== DAQ Bridge - DiabloAvionics Packet Receiver ===
+Config: config/config.toml
+Listening on: 0.0.0.0:5006
+
+[TimeSync] mode=board-clock window=10s
+[DAQ] board traffic pinned to <iface> 127.0.0.1 (auto)
+[Config] Loopback fallback (127.0.0.<host-octet>): 9 enabled boards
+[Config] Board routing table (from config/config.toml):
+  127.0.0.11 → ACTUATOR (10 channels) ❌
+  127.0.0.12 → ACTUATOR (10 channels) ✅
+  127.0.0.13 → ACTUATOR (10 channels) ❌
+  127.0.0.14 → ACTUATOR (10 channels) ✅
+  127.0.0.21 → PT (10 channels) ✅
+  127.0.0.22 → PT (4 channels) ✅
+  127.0.0.31 → RTD (4 channels) ✅
+  127.0.0.32 → RTD (4 channels) ❌
+  127.0.0.41 → LC (1 channels) ✅
+  127.0.0.42 → LC (1 channels) ✅
+  127.0.0.51 → TC (4 channels) ✅
+  127.0.0.52 → TC (10 channels) ❌
+  127.0.0.61 → ENCODER (2 channels) ✅
+  127.0.0.71 → BALL_VALVE (2 channels) ❌
+[System] Mode: GROUND
+=== stopped
