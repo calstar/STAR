@@ -6,8 +6,6 @@
 // module is the single source of truth. Each field carries the historical call-site default so a
 // missing key reproduces the old behavior exactly. Only sections that C++ actually consumes are
 // modeled — [sim_pt_targets], [gui.*], [pressure_limits.*], [adc], [discovery] are TS/Python-only.
-//
-// NOTE: distinct from the unrelated legacy global `class Config` in lib/include/Config.h.
 
 #include <cstdint>
 #include <map>
