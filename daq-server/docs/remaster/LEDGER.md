@@ -89,6 +89,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 ## Parked
 
+- **SIGPIPE disposition — team decision pending (user decision, relayed).** Today 4 services ignore SIGPIPE (`daq_bridge`, `ota_service`, `sequencer_service`, `t7_bridge`) and 5 take the default (die): `controller_service`, `calibration_service`, `heartbeat_service`, `config_broadcast_service`, `stacklight_service`. WP8's shared plumbing keeps each service's current disposition as an explicit per-service setting, bit for bit. Operator consequences: *as today* — a write to a closed socket kills the service; the four with `Restart=always` units (controller, calibration, heartbeat, config-broadcast) come back after systemd's restart delay, with a gap in what they publish (for `controller_service` a restart of the PWM-gate owner, for `heartbeat_service` a gap in SERVER_HEARTBEAT); `stacklight_service` has no unit in `deploy/` and stays down. *Uniform ignore* — those five keep running and see `EPIPE` from the write instead, so whatever each does on a failed send becomes the behaviour (not yet characterized per service).
 - Untracking `scripts/calibration/calibrations/{cubic_calibration.json,abort_thresholds.txt}`: tracked but gitignored live stores; untracking deletes them on every other checkout (the stand included) at the next pull.
 - `calibration/*.json`: the backend's live PT-coefficient store (`calibration.ts:348`).
 - `elodin-relay.ts` + `npm run relay`: no consumer found, but tools may connect to ws :9090.
