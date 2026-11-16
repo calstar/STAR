@@ -29,21 +29,26 @@ catch a change of a meaningful size:
 |---|---|---|---|---|---|
 | `rtd-cvd-near-R0` | CVD inverse outputs with \|T\| < 1 °C | abs 1e-11 °C | catastrophic cancellation in (-A + sqrt(A²-4B(1-R/R0)))/2B near R0 | 7.5e-13 °C (2.2e5 ULP) | CVD `A` × (1+1e-9): 6 of these values red (with 72 others) |
 | `rtd-cvd` | the rest of the CVD inverse (`T(`, `board(`, T7 `rtd` lines) | rel 1e-13 | same cancellation: a constant ~4e-13 °C absolute error | 106 ULP, rel 2e-14 | same mutation: 46 values red |
-| `robust-parameters` | robust learner θ, covariance, RLS P, adjustments | rel 1e-7 | ridge least-squares seed on a 9-term basis, -O0 vs -O2 | rel 6.8e-10 | `kRidgeLambda` × (1+1e-6): 108 values red |
+| `robust-parameters` | robust learner θ, covariance, RLS P (lib); the service's `adj.json` snapshots (stack) | rel 1e-7 | ridge least-squares seed on a 9-term basis, -O0 vs -O2 | rel 6.8e-10 (lib), 3.7e-10 (stack, 252 values) | `kRidgeLambda` × (1+1e-6): 108 values red |
 | `robust-prediction` | robust predictions (`pred` lines) | abs 1e-9 psi | values that should be 0 psi are cancellation residue (~1e-15) | 2.3e-11 psi | same mutation: 39 values red |
 | `allan-fit` | `fit` line fields K and tau_min | 8 ULP | 4-column least-squares solve | 5 ULP | K column × (1+1e-12) (fit moves 5e-13 rel): red at 2254 / 3005 ULP |
 
 Mutations of the default 4-ULP rule (each applied, seen red, reverted):
 
-- `PTCalibrationCoeffs::calculate_pressure`, `D` × (1+1e-12): lib red (201 values), stack red.
+- `PTCalibrationCoeffs::calculate_pressure`, `D` × (1+1e-12): lib red (201 values), stack red
+  (46 values, e.g. a published T7 cubic PT value 9e9 float32 ULP off).
 - the same function's result × (1+2.2e-15), about 10-17 ULP: lib red (201 values, e.g. 17 ULP).
-- `LcTareStore` offset sign flipped: lib red (integer 25 → -25 exact, 15 floats), stack red.
+- `LcTareStore` offset sign flipped: lib red (integer 25 → -25 exact, 15 floats), stack red
+  (22 values, `offset_kg` 24.99… → -24.99…).
 - `calculatePressure` in `calibration.ts`, `C·x` × (1+1e-12): ts red (86 values).
 
 A known fragility: the same function's result × (1+4.4e-16), about 2 ULP, passes every PT value
 but moves robust θ₁ by 1e-5 relative (the seed is that ill-conditioned), so `robust-parameters`
-goes red. If the refactor changes rounding in `calculate_pressure`, a red robust family is that
-conditioning, not a behaviour change: check the PT values first.
+goes red. Recorded as a WP9 constraint: `calculate_pressure` and the robust-seed path must move
+bit-identically, and a red robust family is a contract change.
+
+Without the family limits, the unoptimised build fails the Release goldens on 226 lib values and
+252 stack values; with them, both builds pass `lib.txt`, `stack.txt` and `ts.txt`.
 
 Not covered: `IMUCalibration.cpp` (commented out of the build; does not compile on main),
 `T7Stream` (the LabJack socket layer), `save_coefficients` in `calibration-handler.ts` (writes into

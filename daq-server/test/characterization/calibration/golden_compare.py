@@ -21,10 +21,11 @@ A few computations are ill-conditioned (a cancellation, a least-squares solve) a
 builds by more than a few ULP of their result. Those, and only those, are named in the tolerance
 file, one family per line (the first rule that matches a value wins):
 
-    family=<name> [section=<header>] [line=<regex>] [fields=<i,j>] [below=<x>]
+    family=<name> [section=<header>] [block=<file>] [line=<regex>] [fields=<i,j>] [below=<x>]
                   [ulps=<n>] [abs=<x>] [rel=<x>]
 
-`section` is the text of the enclosing `== <header> ==` line in the golden, `line` a regex the
+`section` is the text of the enclosing `== <header> ==` line in the golden, `block` the file a
+stack-golden snapshot (`  --- <file> ---` / `  --- <file>: diff`) is printing, `line` a regex the
 golden line must match (search), `fields` the 0-based indices of the numbers on that line it
 covers, `below` restricts the rule to golden values with |v| < x. A value
 under a rule passes when it is within the rule's ulps (default ULPS), or |out - golden| <= abs, or
@@ -42,12 +43,15 @@ from dataclasses import dataclass
 NUM = re.compile(r"(?<![\w.])[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?f?(?![\w.])")
 INT = re.compile(r"^[-+]?\d+$")
 SECTION = re.compile(r"^== (.*) ==$")
+BLOCK = re.compile(r"^  --- (\S+?)(?: ---$|: )")
+BLOCK_END = re.compile(r"^(?:== |-- |  --- end )")
 
 
 @dataclass
 class Rule:
     family: str
     section: str | None = None
+    block: str | None = None
     line: re.Pattern | None = None
     fields: set[int] | None = None
     below: float | None = None
@@ -80,6 +84,7 @@ def load_rules(path: str | None) -> list[Rule]:
                 Rule(
                     family=kv["family"],
                     section=kv.get("section"),
+                    block=kv.get("block"),
                     line=re.compile(kv["line"]) if "line" in kv else None,
                     fields=(
                         {int(x) for x in kv["fields"].split(",")}
@@ -114,9 +119,11 @@ def split(line: str) -> tuple[list[str], list[str]]:
 
 
 def rule_for(
-    rules: list[Rule], section: str, line: str, field: int, value: float
+    rules: list[Rule], section: str, block: str, line: str, field: int, value: float
 ) -> Rule | None:
     for r in rules:
+        if r.block is not None and r.block != block:
+            continue
         if r.fields is not None and field not in r.fields:
             continue
         if r.section is not None and r.section != section:
@@ -136,12 +143,18 @@ def compare(
     errs: list[str] = []
     rules = rules or []
     section = ""
+    block = ""
     if len(g_lines) != len(o_lines):
         errs.append(f"line count: golden {len(g_lines)}, output {len(o_lines)}")
     for n, (g, o) in enumerate(zip(g_lines, o_lines), 1):
         sm = SECTION.match(g)
         if sm:
             section = sm.group(1)
+        bm = BLOCK.match(g)
+        if bm:
+            block = bm.group(1)
+        elif BLOCK_END.match(g):
+            block = ""
         if g == o:
             continue
         gt, gn = split(g)
@@ -162,7 +175,7 @@ def compare(
             ga, ob = float(a.rstrip("f")), float(b.rstrip("f"))
             diff = abs(ob - ga)
             dist = diff / (f32_ulp(ga) if single else math.ulp(ga))
-            r = rule_for(rules, section, g, k, ga)
+            r = rule_for(rules, section, block, g, k, ga)
             limit = r.ulps if r is not None and r.ulps is not None else ulps
             if dist <= limit:
                 continue
