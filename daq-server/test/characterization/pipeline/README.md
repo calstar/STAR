@@ -122,10 +122,17 @@ GET sweep → connect A → 3 s live → unknown `subscribe`, non-JSON, `get_sta
 four `query_historical` shapes → control commands while locked → `control_unlock` → locally
 rejected transitions (unknown id, bad hold) → a transition the sequencer refuses (Idle→Fire) →
 Idle→Armed → debug on → actuator open/close/unknown → debug off → `extend_fire` outside Fire →
-Armed→Idle → countdown set/clear → a calibration command → an unsupported command →
-`session_start` (blocked, forced, again) → GET sweep during the session + session POSTs →
-`session_extend` (good, bad) → `session_stop` (twice) → viewer client B (`X-Auth-Email`, not an
-operator) → HTTP error shapes → disconnect.
+Armed→Idle → viewer client B (`X-Auth-Email`, not an operator) → countdown set/clear → a
+calibration command → an unsupported command → `session_start` (blocked, forced, again) → GET
+sweep during the session + session POSTs → `session_extend` (good, bad) → `session_stop` (twice) →
+HTTP error shapes → disconnect.
+
+**Timing.** A step that sends something lasts its nominal time and then until the event stream
+(everything but the streams and board-health notifications) has been quiet for `QUIET_MS` = 1.5 s,
+capped at 20 s, so a reply that a loaded machine delivers late still lands in its own step. The
+viewer client connects ~35 s after the first sample, well inside the backend's 60 s connect
+backfill horizon (`history-backfill.ts HISTORY_CONNECT_SPAN_MS`); at ~60 s, where it used to be,
+whether the one-shot self-test series made the cut depended on the machine's speed.
 
 There is no subscription protocol in the thin backend (every client gets every stream); the
 `subscribe` step records that an unknown message type gets no reply.
@@ -136,7 +143,7 @@ There is no subscription protocol in the thin backend (every client gets every s
 |---|---|
 | `ws_handshake.txt` | each client's connect burst, in order (`server.ts` `wss.on('connection')`) |
 | `ws_events.txt` | per step: what was sent (`>`) and every event-like frame back (`<`), in arrival order |
-| `ws_streams.txt` | the streaming types: channel set, value where the sim fixes it, rate class; distinct normalised payloads of the periodic types; history series per request |
+| `ws_streams.txt` | the streaming types: channel set and value where the sim fixes it; the timing bound T1; distinct normalised payloads of the periodic types; history series per request |
 | `ws_schema.txt` | every key path of every message type, with the JSON types seen |
 | `http.txt` | every request: status, content-type and the headers that matter, normalised body |
 | `csv.txt` | the CSV bodies the backend serves (`/api/state-csv`) |
@@ -169,8 +176,9 @@ those byte for byte (header, column order, cell format).
 
 | rule | what | why |
 |---|---|---|
-| P1 | board-health notifications (`board_lost_<id>`, `Board N (T) connected`) are collected as a set over the run, outside the ordered event log | a 1 Hz stale sweep races the boards' 1 Hz heartbeat; whether a status reset (session start/stop reloads boards from config) shows as "connection lost" depends on which fires first |
-| P2 | stream rates are classes: event (<0.25/s), stream (0.25-5/s), fast (>5/s) | counts depend on scheduling and on the outbox's own throttling |
+| P1 | board-health notifications (`board_lost_<id>`, `Board N (T) connected`) are collected as a set over the run, outside the ordered event log | they come from a 1 Hz sweep, not from the step that is running |
+| P1b | a reset flap — `board_lost_<id>` raised and cleared again within 2.5 s, plus the "connected" the clearing sweep raises — is not recorded | session start/stop reloads board status from config; whether the next 1 Hz sweep beats the board's next 1 Hz heartbeat (and so reports a board that never stopped as lost) is a race. A board that really stops stays lost and is recorded |
+| P2 | no delivery rates or counts of streaming frames are recorded; the one timing property frozen is T1 | delivery depends on scheduling and on the outbox's throttling |
 | P3 | `connection_status` `lagMs`/`resolutionPct`/`throttled` → their type | the link's own measurements |
 | P4 | `board_status_update` `heartbeatTimes` → `<ts[]>` (or `[]`), `frequencyHz` → `<hz>` | measured |
 | P5 | `board_log` sim counter `#N` → `#<n>`, `totals` counts → `<n>` | running counter |
@@ -179,8 +187,16 @@ those byte for byte (header, column order, cell format).
 | P8 | history: per request, the series keys and the distinct values each carries (not their times or lengths) | lengths depend on uptime |
 | P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema; `/api/cubic_calibration` → sha256 + keys (it reads the committed store via `__dirname`, ignoring `DAQ_CALIBRATIONS_DIR`) | counters / wall clock |
 | P10 | the handshake's self-test replay is regrouped by board id (each board's frames keep their order) | `selfTestLatest` replays in Elodin arrival order, a race across boards |
+| P11 | in a run of consecutive `error` / `state_update` frames within a step, errors are recorded first (each kind keeps its own order) | a command's TCP reply (`error`) and the sequencer's Elodin publish (`state_update`) take independent paths; their order swapped under load |
 
 P7 also applies to history series (more than four distinct values → `<varies>`).
+
+### Timing bounds (from config or spec, never observed values)
+
+| bound | how | assumption |
+|---|---|---|
+| T1 | the 10 s `query_historical` of `PT1.CH1.raw_adc_counts`: median spacing of consecutive points within [0.9 W, 2 W], W = 2000 / `[gui] points_per_second` (4 → 500 ms) | the envelope (`gui-stream.ts`) opens a window at a sample and closes it at the first sample ≥ W later, emitting a constant stream's window at its first sample time; samples come every 100 ms (sim 10 Hz). Measured on sample timestamps, so load cannot move it |
+| — | `QUIET_MS` 1.5 s / cap 20 s per step | a reply arrives within 20 s on a machine under 1× load |
 
 Determinism: `CHAR_UPDATE=1` followed by two comparison runs, back to back, all identical; five
 earlier captures (before the fixture-cwd change) were identical to each other under the same rules.
@@ -195,6 +211,7 @@ Each applied to the backend source, run, reverted (none committed):
 | `server.ts` `broadcastStateUpdate`: payload field `stateName` → `state_name` | `ws_events.txt` (every live `state_update`), `ws_schema.txt` |
 | `api-server.ts` `/api/feed-char/results` without a session: 409 → 410 | `http.txt` (three requests) |
 | `routes/config-profiles.ts` `readStateCsv`: swap the Idle/Armed columns | `csv.txt` (header and every row of all three CSVs) |
+| `gui-stream.ts` `envelopeWindowMs`: `2000 /` → `1000 /` (double the GUI rate), run under 1× load | `ws_streams.txt` T1 |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 

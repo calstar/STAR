@@ -69,9 +69,3 @@
 {"payload": {"component": "sensor_8", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
 {"payload": {"component": "sensor_9", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
 {"payload": {"component": "sensor_10", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"category": "error", "key": "session-timeout-300000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
-{"payload": {"category": "error", "key": "session-timeout-60000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
-{"payload": {"category": "error", "key": "session-timeout-300000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
-{"payload": {"category": "error", "key": "session-timeout-60000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
-{"payload": {"category": "error", "key": "session-timeout-300000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
-{"payload": {"category": "error", "key": "session-timeout-60000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}

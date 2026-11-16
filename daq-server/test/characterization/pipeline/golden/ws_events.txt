@@ -67,6 +67,12 @@
 > A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":1}}}
 < A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": false, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
 
+## viewer_client
+> B {"type":"control_unlock","payload":{}}
+> B {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
+< B {"payload": {"ok": false, "reason": "not_operator"}, "timestamp": "<ts>", "type": "control_unlock_result"}
+< B {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
+
 ## countdown
 > A {"type":"send_command","payload":{"commandType":"set_countdown_target","data":{"targetTimeMs":4102444000000}}}
 > A {"type":"send_command","payload":{"commandType":"set_countdown_target","data":{"targetTimeMs":null}}}
@@ -117,17 +123,9 @@
 > A {"type":"send_command","payload":{"commandType":"session_extend","data":{"addMs":1000}}}
 < A {"payload": {"message": "Session extend failed: No active run to extend."}, "timestamp": "<ts>", "type": "error"}
 
-## viewer_client
-> B {"type":"control_unlock","payload":{}}
-> B {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
-< B {"payload": {"ok": false, "reason": "not_operator"}, "timestamp": "<ts>", "type": "control_unlock_result"}
-< B {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
-
 ## http_errors
 
 ## disconnect
 
-## board-health notifications seen (any step, any client; P1)
-{"category": "error", "key": "board_lost_21", "message": "Board 21 (PT) connection lost", "ongoing": false, "timestampMs": "<ts>"}
-{"category": "error", "key": "board_lost_21", "message": "Board 21 (PT) connection lost", "ongoing": true, "timestampMs": "<ts>"}
+## board-health notifications seen (any step, any client; P1, reset flaps P1b)
 {"category": "info", "message": "Board 21 (PT) connected", "timestampMs": "<ts>"}
