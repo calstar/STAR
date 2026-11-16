@@ -210,6 +210,7 @@ those byte for byte (header, column order, cell format).
 | P10 | the handshake's self-test replay is regrouped by board id (each board's frames keep their order) | `selfTestLatest` replays in Elodin arrival order, a race across boards |
 | P11 | in a run of consecutive `error` / `state_update` frames within a step, errors are recorded first (each kind keeps its own order) | a command's TCP reply (`error`) and the sequencer's Elodin publish (`state_update`) take independent paths; their order swapped under load |
 | P12 | self-test results are one line per board the simulators self-test (expected set from `selftest_expected.py`: adc_good + every active connector; board 60: 0 and 2), written as `<exact result> | not-received (one-shot UDP self-test, defect)`, and a rule line that fails if (a) a received result differs, (b) more than half the boards are not-received, or (c) the run is quiet (`CHAR_UNDER_LOAD` unset) and any board is not-received. The handshake replay and the history series are summarised there | on a loaded Linux box some boards' one-shot self-test never reaches the backend |
+| P12d | in a quiet run every self-test path must carry every expected board exactly, checked separately: each client's handshake replay (A, B, C) and each full history reply (connect A, the unnarrowed query in `history`, viewer B), with the startup board exempt from paths that closed before it self-tested. A late client C (after the session) freezes the notification-buffer replay; its own backfill is past the 60 s horizon and is not frozen | the old golden froze each path line by line |
 | A1 | `ACT_CMD.B2.CH7` (Fuel Main) commanded: `{0} \| {0, 1}`, an explicit alternative, only for that series | the sequencer's boot-time de-energized row is replayed by elodin-db on subscribe on a loaded Linux box (defect) |
 
 P7 also applies to history series (more than four distinct values → `<varies>`).
@@ -252,6 +253,8 @@ purpose:
   refused pairs with backoff; rows written before a pair's subscription takes effect are never
   delivered), the same mechanism that lost board 21's self-test sensors 2–10 before the harness
   waited for subscriptions. Not proven: the backend logs no per-pair subscription acceptance.
+
+Every golden line removed since `backend-remastered` is accounted for in `GOLDEN-AUDIT.md`.
 
 ## Mutation check
 
