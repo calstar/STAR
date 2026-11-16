@@ -995,7 +995,7 @@ GET /api/cubic_calibration
   access-control-allow-origin: *
   access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
   access-control-allow-headers: Content-Type
-  body: sha256=e86712f19d132808c9626bfd3c214e224f2a93983a1617a65d09a6e174ec3d36 keys=["calibration_adc_norm_min", "calibration_adc_norm_scale", "calibration_poly_coeffs", "calibration_polynomials", "cubic_state", "framework", "generated_unix", "sensor_type", "unit"]
+  body: sha256=316ac9006dbe3f5a6ebed0cb38144176dc3f87237091bf394cb0ef38f1ffe798 keys=["calibration_adc_norm_min", "calibration_adc_norm_scale", "calibration_poly_coeffs", "calibration_polynomials", "cubic_state", "framework", "generated_unix", "lc_calibration_adc_norm_min", "lc_calibration_adc_norm_scale", "lc_calibration_poly_coeffs", "lc_calibration_polynomials", "sensor_type", "unit"]
 GET /api/ball_valve_cal
   status 200
   content-type: application/json
