@@ -47,7 +47,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | format | daq-server C/C++ clang-format-19 clean; repo-wide `format.sh --check` red on `main` (firmware/ Python under black 25.11) — see D11 |
 | integration | **PASS, 167 passed / 0 failed** on elodin-db v0.16.1 with the 16 loopback aliases (the goal's "58/58" predates the current suite; the gate requires the script's own PASS, i.e. 0 failed). History: 0 samples first (aliases missing), then 47/76 on elodin-db 0.14.2 (`Impeller(Postcard(SerdeDeCustom))`, every subscription refused); the user installed the pinned v0.16.1 (0.14.2 kept as `~/.cargo/bin/elodin-db.0.14.2.bak`). |
 | t7_integration | fails one check, twice in a row, under agent build load: "T7 calibrated rows recorded though the T7 registered after the subscribe: 280" (then 295; threshold > 300 in a 14 s window). Throughput-borderline; stays allowlisted until rerun 3× on an idle machine |
-| backend vitest skips | the 9 skipped tests are all `test/video-gateway.integration.test.ts` (`describe.skipIf(!VIDEO_GATEWAY_IT)`), run in CI's separate video-gateway job; to be run here once the stack lock is free |
+| backend vitest skips | the 9 skipped tests are all `test/video-gateway.integration.test.ts` (`describe.skipIf(!VIDEO_GATEWAY_IT)`, CI's separate job). **Run here: 9/9 pass** with the pinned MediaMTX v1.21.3 (`scripts/video-gateway.sh --fetch`) and playwright chromium-headless-shell. Added to the gate as step `video-gateway`. |
 | uWebSockets | `usockets` (services/CMakeLists.txt:84-99) is only for `archive/legacy/cpp/fsw_web_bridge.cpp`, which no target builds; `external/uWebSockets` does not exist. No live target unbuilt. Dead block → WP2 |
 
 ## Work packages
