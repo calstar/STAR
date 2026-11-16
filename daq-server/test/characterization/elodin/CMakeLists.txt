@@ -1,28 +1,17 @@
 # elodin/: golden-master characterization of the Elodin schema — what the C++ services register
-# (this CMakeLists, captured over loopback TCP) and the backend's view of it (run.sh, TypeScript).
-# CHAR_UPDATE=1 rewrites golden/.
-set(CHAR_ELODIN_GOLDEN ${CMAKE_CURRENT_SOURCE_DIR}/golden)
+# (blackbox_schema.py: the real daq_bridge, calibration_service, sequencer_service and
+# controller_service started against a stand-in elodin-db on loopback) and the backend's view of it
+# (run.sh, TypeScript). CHAR_UPDATE=1 rewrites golden/.
 set(CHAR_ELODIN_WORK ${CMAKE_CURRENT_BINARY_DIR}/work)
 file(MAKE_DIRECTORY ${CHAR_ELODIN_WORK})
-set(CHAR_PACKETS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/../packets)
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-add_executable(char_elodin_schema
-    elodin_schema.cpp
-    # daq_bridge's own board-id derivation, compiled from its main TU (see packets/svc_*.cpp)
-    ${CHAR_PACKETS_SRC}/svc_daq_bridge.cpp
-)
-target_include_directories(char_elodin_schema PRIVATE
-    ${CHAR_PACKETS_SRC}
-    ${CMAKE_SOURCE_DIR}/diablo_server/lib/include
-    ${CMAKE_SOURCE_DIR}/diablo_server/transport/include)
-target_compile_definitions(char_elodin_schema PRIVATE CHAR_GOLDEN_DIR="${CHAR_ELODIN_GOLDEN}")
-target_link_libraries(char_elodin_schema fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads)
-
-# Loopback TCP listener on 127.0.0.1 (ephemeral port): RUN_SERIAL, run ctest under the stack lock.
+# The services bind real ports: RUN_SERIAL, and ctest runs under with_stack_lock.sh.
 foreach(cfg config_base profile_default)
     add_test(NAME char_elodin_schema_${cfg}
-             COMMAND char_elodin_schema ${CMAKE_SOURCE_DIR} ${cfg}
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/blackbox_schema.py
+                     $<TARGET_FILE_DIR:daq_bridge> ${CMAKE_SOURCE_DIR} ${CHAR_ELODIN_WORK} ${cfg}
              WORKING_DIRECTORY ${CHAR_ELODIN_WORK})
     set_tests_properties(char_elodin_schema_${cfg} PROPERTIES
-        LABELS characterization RUN_SERIAL TRUE TIMEOUT 120)
+        LABELS characterization RUN_SERIAL TRUE TIMEOUT 300)
 endforeach()

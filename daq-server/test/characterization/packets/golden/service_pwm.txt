@@ -1,0 +1,31 @@
+# controller_service (black box), config_base with fallback duty 0.1/0.1: what reaches
+# the boards' port on FIRE_START / FIRE_STOP sent to its TCP control port.
+## before FIRE_START: 0 datagrams
+## FIRE_START -> reply 'OK'
+  -> 127.0.0.12 len=33 timestamp <system_clock ms, LE u32>
+  header.packet_type @0    +1  : 0a
+  header.version @1    +1  : 00
+  header.timestamp (zeroed here, checked above) @2    +4  : 00 00 00 00
+  num_commands @6    +1  : 02
+  cmd[0].actuator_id @7    +1  : 03
+  cmd[0].duration_ms @8    +4  : d0 07 00 00
+  cmd[0].duty_cycle @12   +4  : cd cc cc 3d
+  cmd[0].frequency @16   +4  : 00 00 c0 40
+  cmd[1].actuator_id @20   +1  : 08
+  cmd[1].duration_ms @21   +4  : d0 07 00 00
+  cmd[1].duty_cycle @25   +4  : cd cc cc 3d
+  cmd[1].frequency @29   +4  : 00 00 c0 40
+## FIRE_STOP -> reply 'OK'
+  -> 127.0.0.12 len=33 timestamp <system_clock ms, LE u32>
+  header.packet_type @0    +1  : 0a
+  header.version @1    +1  : 00
+  header.timestamp (zeroed here, checked above) @2    +4  : 00 00 00 00
+  num_commands @6    +1  : 02
+  cmd[0].actuator_id @7    +1  : 03
+  cmd[0].duration_ms @8    +4  : d0 07 00 00
+  cmd[0].duty_cycle @12   +4  : 00 00 00 00
+  cmd[0].frequency @16   +4  : 00 00 c0 40
+  cmd[1].actuator_id @20   +1  : 08
+  cmd[1].duration_ms @21   +4  : d0 07 00 00
+  cmd[1].duty_cycle @25   +4  : 00 00 00 00
+  cmd[1].frequency @29   +4  : 00 00 c0 40

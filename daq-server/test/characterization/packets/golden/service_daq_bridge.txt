@@ -1,0 +1,26 @@
+# daq_bridge (black box), config_base on loopback; sensor port, Elodin and the
+# backend log port moved to free ports on 127.0.0.1.
+## heartbeat_service enabled (as committed)
+  SERVER_HEARTBEAT: none within 1.5 s
+  LOGS from 127.0.0.21 len=21 -> backend envelope:
+    len=16
+    board_id @0    +1  : 15
+    flags @1    +1  : 01
+    text_len @2    +2  : 0c 00
+    text @4    +12 : 68 65 6c 6c 6f 0a 77 6f 72 6c 64 0a
+  LOGS from 127.0.0.1 len=9 -> backend envelope:
+    len=4
+    board_id @0    +1  : 00
+    flags @1    +1  : 00
+    text_len @2    +2  : 00 00
+    text @4: <missing>
+  LOGS from 127.0.0.71 len=309 -> backend envelope:
+    len=304
+    board_id @0    +1  : 47
+    flags @1    +1  : 02
+    text_len @2    +2  : 2c 01
+    text @4    +300: 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78 78
+  LOGS from 127.0.0.21 len=14 -> backend envelope:
+    none within 1 s
+## heartbeat_service disabled
+  SERVER_HEARTBEAT len=7: 02 00 [<steady_clock ms, LE u32>] 00

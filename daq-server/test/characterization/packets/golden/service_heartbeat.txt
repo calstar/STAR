@@ -1,0 +1,36 @@
+# heartbeat_service (black box): SERVER_HEARTBEAT datagrams it sends to
+# --broadcast-ip 127.0.0.1, following SequencerState rows from a stand-in elodin-db.
+## Elodin traffic it sends on connect: 1 packets
+  len=6 ty=0 id=[0x11,0x0d] req=0
+    payload: 50 00
+## before any SequencerState row
+  len=7: 02 00 [<system_clock ms, LE u32>] 00
+## after a SequencerState [0x50,0x00] row with current_state = s
+  0: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  1: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  2: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  3: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  4: len=7: 02 00 [<system_clock ms, LE u32>] 02
+  5: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  6: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  7: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  8: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  9: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  10: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  11: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  12: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  13: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  14: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  15: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  16: len=7: 02 00 [<system_clock ms, LE u32>] 03
+  17: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  18: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  19: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  20: len=7: 02 00 [<system_clock ms, LE u32>] 01
+  21: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  22: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  23: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  24: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  25: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  254: len=7: 02 00 [<system_clock ms, LE u32>] 00
+  255: len=7: 02 00 [<system_clock ms, LE u32>] 00
