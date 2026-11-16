@@ -29,6 +29,11 @@ import wire as W  # noqa: E402
 from fake_elodin import FakeElodin  # noqa: E402
 
 GOLDEN = H.HERE / "golden"
+# How long after a republish a settled window ends. Must exceed wire.BOUNDARY_LOOKAHEAD_NS (60 ms)
+# plus the next transition's own latency: a tick landing within the lookahead of the next state's
+# publish is taken for that state's entry (seen on Linux under load, where the next command's
+# publish arrived within 50 ms of the tick). The next tick is still ~0.8 s away.
+SETTLE_TAIL = 0.2
 WORK = H.DAQ / ".tmp" / f"char_sequencer_{os.getpid()}"
 OUT = H.DAQ / ".tmp" / "char_sequencer_out"
 
@@ -535,7 +540,7 @@ class Session:
             if need is None and any(s.ptype == until_type and s.t > t0 for s in sends):
                 need = max(ticks, rounds + 1)
             if need is not None and rounds >= need:
-                time.sleep(0.05)
+                time.sleep(SETTLE_TAIL)
                 return
             time.sleep(0.02)
         raise RuntimeError(
@@ -552,7 +557,7 @@ class Session:
             W.mark_ticks(sends, bounds)
             for s in sends:
                 if s.tick and s.t > start and self._is_full(s, bounds):
-                    time.sleep(0.05)
+                    time.sleep(SETTLE_TAIL)
                     return
             time.sleep(0.02)
         raise RuntimeError("no republish tick seen")

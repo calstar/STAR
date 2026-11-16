@@ -108,9 +108,12 @@ the rules below were changed for those mechanisms, never to fit one golden.
   marked for it print a summary instead: the period floored to 1 s (the 100 x 10 ms loop runs at
   ~1.0 s on Linux, ~1.2 s on macOS and up to ~1.6 s on this machine under load), the first tick's
   age when the state was entered in that window, and the distinct contents. The tick count is not
-  frozen. Such a window does not end on a timer: `Session.settle()` ends it 50 ms after the second
-  tick of whatever state the rig has landed in (after ABORT_DONE, for an abort), so its ticks are
-  fixed and the next command is ~1 s clear of the next tick.
+  frozen. Such a window does not end on a timer: `Session.settle()` ends it `SETTLE_TAIL` (200 ms)
+  after the second complete tick round of whatever state the rig has landed in (after ABORT_DONE,
+  for an abort), so its ticks are fixed and the next command is ~0.8 s clear of the next tick. The
+  tail must exceed the 60 ms boundary lookahead: at 50 ms, on Linux under load, the next command's
+  transition publish arrived within 60 ms of the tick, the tick was taken for that state's entry,
+  and it showed up as an extra `+4s` command with the summary's `every` lost.
 - **N6** Service logs are written by several threads with no line atomicity, so lines can come
   out spliced (seen in the 3x runs). Only two things are frozen: the sequencer's load-time verdicts
   (printed by `init()` before its other threads talk: fire/flow/script verdicts, warnings, refusals),
