@@ -27,6 +27,9 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D4 | Warnings are gated against `test/characterization/baseline_warnings.txt` (10 on `main`, clang/macOS), compared without line numbers. | "No new warnings" needs a fixed reference; line numbers move under any refactor. |
 | D5 | `lib/daq-protocol` (repo root, shared with firmware) is out of scope; it is the board wire protocol and stays byte-identical by not being touched. Its bytes are still frozen by the packet goldens. | Firmware is out of scope; the contract is frozen. |
 | D6 | clang-format 19.1.7 from pip, not brew's 23. | CI pins 19 (`daq-server-ci.yml`); 23 reformats untouched files. |
+| D7 | ctest runs under the stack lock too. | Its sequencer tests bind real local UDP ports (`lib/test/BoardListener.hpp`), so ctest in two worktrees can collide. |
+| D8 | Lock lives at `<git-common-dir>/daq-stack.lock` and is re-entrant (`DAQ_STACK_LOCK_HELD`). | Agent shells may have different `TMPDIR`s; gate → run.sh → area run.sh nests. |
+| D9 | Two empty agent worktrees (`agent-a129babb…`, `agent-af69f3b5…`) from a failed concurrent launch are left in place. | Removing them was declined by the permission layer; they sit at `main` with no changes. Left for the user. |
 
 ## Baseline on `main` (this machine)
 
@@ -39,7 +42,14 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 | id | goal | owner | worktree | status | files owned | depends on |
 |---|---|---|---|---|---|---|
-| C0 | gate, lock, characterization skeleton, ledger | orchestrator | remaster | in progress | `test/characterization/{gate,run,with_stack_lock}.sh`, `CMakeLists.txt`, `README.md`, `docs/remaster/` | — |
+| C0 | gate, lock, characterization skeleton, ledger | orchestrator | remaster | merged (158d330d, f0c4b22c) | `test/characterization/{gate,run,with_stack_lock}.sh`, `CMakeLists.txt`, `README.md`, `docs/remaster/` | — |
+| C1 | packets (daq-protocol bytes, transport structs) + Elodin schema goldens | agent | worktree, branch `char/packets` | running | `test/characterization/{packets,elodin}/` | C0 |
+| C2 | config loaders (C++ + TS), scripts parser, bad configs | agent | `char/config` | running | `test/characterization/config/` | C0 |
+| C3 | calibration math (C++, calibration_service, TS) | agent | `char/calibration` | running | `test/characterization/calibration/` | C0 |
+| C4 | sequencer/controller UDP streams, TCP replies, aborts | agent | `char/sequencer` | running | `test/characterization/sequencer/` | C0 |
+| C5 | pipeline WS frames, HTTP, logger CSV | agent | `char/pipeline` | running | `test/characterization/pipeline/` | C0 |
+| C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | running | `test/characterization/lifecycle/` | C0 |
+| B0 | bloat-map research (read-only) | agent | none | running | scratchpad draft only | — |
 
 ## Merge log
 
