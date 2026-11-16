@@ -1,0 +1,154 @@
+{
+  "ballValveBoardIds": {
+    "logs": [],
+    "value": []
+  },
+  "perBoard": {
+    "pt_absolute": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "PT Board #1"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "pt_legacy": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "PT Board #3"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [
+          "warn: ⚠️  Board has no pt_type; inferring \"4-20 mA absolute\" from its hp_pt_* keys. Add pt_type to the board."
+        ],
+        "value": true
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "pt_legacy_2": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "PT Board #4"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": true
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "pt_unknown": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "PT Board #2"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    }
+  },
+  "t7Channels": {
+    "logs": [],
+    "value": []
+  },
+  "t7RoleClashes": {
+    "logs": [],
+    "value": []
+  }
+}

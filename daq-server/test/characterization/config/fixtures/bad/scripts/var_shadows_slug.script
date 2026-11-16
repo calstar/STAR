@@ -1,0 +1,2 @@
+FUEL_MAIN = 3
+open_valve(FUEL_MAIN)

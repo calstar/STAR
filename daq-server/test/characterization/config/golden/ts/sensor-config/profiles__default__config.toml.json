@@ -1,0 +1,183 @@
+{
+  "hpBoardNumbers": {
+    "logs": [],
+    "value": [
+      2
+    ]
+  },
+  "loadActuatorChannelToEntityMap": {
+    "logs": [],
+    "value": {
+      "1": "ACT.Fuel_Fill_Vent",
+      "2": "ACT.Fuel_Fill_Press",
+      "3": "ACT.GSE_High_Press_Control",
+      "4": "ACT.GSE_Med_Press_Control",
+      "5": "ACT.GSE_High_Press_Vent",
+      "6": "ACT.GN2_Vent",
+      "7": "ACT.LOX_Fill",
+      "8": "ACT.LOX_Dump",
+      "10": "ACT.GSE_LOX_Fill_Vent",
+      "11": "ACT.LOX_Main",
+      "12": "ACT.Fuel_Vent",
+      "13": "ACT.Fuel_Press",
+      "15": "ACT.GSE_Low_Press_Vent",
+      "16": "ACT.LOX_Vent",
+      "17": "ACT.Fuel_Main",
+      "18": "ACT.LOX_Press",
+      "31": "ACT.Fuel_Fill_Vent",
+      "32": "ACT.Fuel_Fill_Press",
+      "33": "ACT.GSE_High_Press_Control",
+      "34": "ACT.GSE_Med_Press_Control",
+      "35": "ACT.GSE_High_Press_Vent",
+      "36": "ACT.GN2_Vent",
+      "37": "ACT.LOX_Fill",
+      "38": "ACT.LOX_Dump",
+      "40": "ACT.GSE_LOX_Fill_Vent"
+    }
+  },
+  "loadLcBoardConfig": {
+    "logs": [
+      "log:    ⏭️  Skipping lc_board (192.168.2.41): board is disabled",
+      "log: 📋 Registered LC board lc_board_2 (192.168.2.42), active connectors: 1, 2, 6"
+    ],
+    "value": [
+      [
+        "192.168.2.42",
+        [
+          1,
+          2,
+          6
+        ]
+      ]
+    ]
+  },
+  "loadRtdBoardConfig": {
+    "logs": [
+      "log: 📋 Registered RTD board rtd_board (192.168.2.31), active connectors: 1, 2, 3, 4",
+      "log:    ⏭️  Skipping rtd_board_2 (192.168.2.32): board is disabled"
+    ],
+    "value": [
+      [
+        "192.168.2.31",
+        [
+          1,
+          2,
+          3,
+          4
+        ]
+      ]
+    ]
+  },
+  "loadSensorRoleMap": {
+    "logs": [
+      "log: 📋 Loaded sensor role map from config.toml (14 channels): {\"1\":\"PT_Cal.Fuel_Upstream\",\"2\":\"PT_Cal.GSE_Low\",\"3\":\"PT_Cal.Fuel_Downstream\",\"4\":\"PT_Cal.Chamber_Mid_PT_1\",\"5\":\"PT_Cal.Ox_Upstream\",\"6\":\"PT_Cal.GN2_Regulated\",\"7\":\"PT_Cal.Ox_Downstream\",\"8\":\"PT_Cal.Chamber_Mid_PT_2\",\"9\":\"PT_Cal.Chamber_Throat_PT_1\",\"10\":\"PT_Cal.Chamber_Throat_PT_2\",\"11\":\"PT_Cal.GSE_High\",\"12\":\"PT_Cal.Excitation_V\",\"13\":\"PT_Cal.GSE_Mid\",\"14\":\"PT_Cal.GN2_High\"}",
+      "log: 📋 Loaded sensor role map for board pt_board (192.168.2.21): {\"1\":\"PT_Cal.Fuel_Upstream\",\"2\":\"PT_Cal.GSE_Low\",\"3\":\"PT_Cal.Fuel_Downstream\",\"4\":\"PT_Cal.Chamber_Mid_PT_1\",\"5\":\"PT_Cal.Ox_Upstream\",\"6\":\"PT_Cal.GN2_Regulated\",\"7\":\"PT_Cal.Ox_Downstream\",\"8\":\"PT_Cal.Chamber_Mid_PT_2\",\"9\":\"PT_Cal.Chamber_Throat_PT_1\",\"10\":\"PT_Cal.Chamber_Throat_PT_2\"}",
+      "log: 📋 Loaded sensor role map for board pt_board_2 (192.168.2.22): {\"1\":\"PT_Cal.GSE_High\",\"2\":\"PT_Cal.Excitation_V\",\"3\":\"PT_Cal.GSE_Mid\",\"4\":\"PT_Cal.GN2_High\"}",
+      "log: 📋 Loaded sensor role map for board lc_board_2 (192.168.2.42): {\"1\":\"PT_Cal.Fuel_Upstream\",\"2\":\"PT_Cal.GSE_Low\",\"3\":\"PT_Cal.Fuel_Downstream\",\"4\":\"PT_Cal.Chamber_Mid_PT_1\",\"5\":\"PT_Cal.Ox_Upstream\",\"6\":\"PT_Cal.GN2_Regulated\",\"7\":\"PT_Cal.Ox_Downstream\",\"8\":\"PT_Cal.Chamber_Mid_PT_2\",\"9\":\"PT_Cal.Chamber_Throat_PT_1\",\"10\":\"PT_Cal.Chamber_Throat_PT_2\",\"11\":\"PT_Cal.GSE_High\",\"12\":\"PT_Cal.Excitation_V\",\"13\":\"PT_Cal.GSE_Mid\",\"14\":\"PT_Cal.GN2_High\"}",
+      "log: 📋 Loaded sensor role map for board tc_board (192.168.2.51): {\"2\":\"TC.Chamber_Mid_TC_1\",\"3\":\"TC.Chamber_Mid_TC_2\",\"4\":\"TC.Chamber_Throat_TC_1\",\"5\":\"TC.Chamber_Throat_TC_2\"}",
+      "log: 📋 Loaded sensor role map for board rtd_board (192.168.2.31): {\"1\":\"RTD.COPV_RTD\",\"2\":\"RTD.LOX_Upper\",\"3\":\"RTD.LOX_Mid\",\"4\":\"RTD.LOX_Lower\"}"
+    ],
+    "value": {
+      "boardChannelToEntityMaps": [
+        [
+          "192.168.2.21",
+          {
+            "1": "PT_Cal.Fuel_Upstream",
+            "2": "PT_Cal.GSE_Low",
+            "3": "PT_Cal.Fuel_Downstream",
+            "4": "PT_Cal.Chamber_Mid_PT_1",
+            "5": "PT_Cal.Ox_Upstream",
+            "6": "PT_Cal.GN2_Regulated",
+            "7": "PT_Cal.Ox_Downstream",
+            "8": "PT_Cal.Chamber_Mid_PT_2",
+            "9": "PT_Cal.Chamber_Throat_PT_1",
+            "10": "PT_Cal.Chamber_Throat_PT_2"
+          }
+        ],
+        [
+          "192.168.2.22",
+          {
+            "1": "PT_Cal.GSE_High",
+            "2": "PT_Cal.Excitation_V",
+            "3": "PT_Cal.GSE_Mid",
+            "4": "PT_Cal.GN2_High"
+          }
+        ],
+        [
+          "192.168.2.31",
+          {
+            "1": "RTD.COPV_RTD",
+            "2": "RTD.LOX_Upper",
+            "3": "RTD.LOX_Mid",
+            "4": "RTD.LOX_Lower"
+          }
+        ],
+        [
+          "192.168.2.42",
+          {
+            "1": "PT_Cal.Fuel_Upstream",
+            "2": "PT_Cal.GSE_Low",
+            "3": "PT_Cal.Fuel_Downstream",
+            "4": "PT_Cal.Chamber_Mid_PT_1",
+            "5": "PT_Cal.Ox_Upstream",
+            "6": "PT_Cal.GN2_Regulated",
+            "7": "PT_Cal.Ox_Downstream",
+            "8": "PT_Cal.Chamber_Mid_PT_2",
+            "9": "PT_Cal.Chamber_Throat_PT_1",
+            "10": "PT_Cal.Chamber_Throat_PT_2",
+            "11": "PT_Cal.GSE_High",
+            "12": "PT_Cal.Excitation_V",
+            "13": "PT_Cal.GSE_Mid",
+            "14": "PT_Cal.GN2_High"
+          }
+        ],
+        [
+          "192.168.2.51",
+          {
+            "2": "TC.Chamber_Mid_TC_1",
+            "3": "TC.Chamber_Mid_TC_2",
+            "4": "TC.Chamber_Throat_TC_1",
+            "5": "TC.Chamber_Throat_TC_2"
+          }
+        ]
+      ],
+      "channelToEntityMap": {
+        "1": "PT_Cal.Fuel_Upstream",
+        "2": "PT_Cal.GSE_Low",
+        "3": "PT_Cal.Fuel_Downstream",
+        "4": "PT_Cal.Chamber_Mid_PT_1",
+        "5": "PT_Cal.Ox_Upstream",
+        "6": "PT_Cal.GN2_Regulated",
+        "7": "PT_Cal.Ox_Downstream",
+        "8": "PT_Cal.Chamber_Mid_PT_2",
+        "9": "PT_Cal.Chamber_Throat_PT_1",
+        "10": "PT_Cal.Chamber_Throat_PT_2",
+        "11": "PT_Cal.GSE_High",
+        "12": "PT_Cal.Excitation_V",
+        "13": "PT_Cal.GSE_Mid",
+        "14": "PT_Cal.GN2_High"
+      }
+    }
+  },
+  "loadTcBoardConfig": {
+    "logs": [
+      "log: 📋 Registered TC board tc_board (192.168.2.51), active connectors: 2, 3, 4, 5",
+      "log:    ⏭️  Skipping tc_board_2 (192.168.2.52): board is disabled"
+    ],
+    "value": [
+      [
+        "192.168.2.51",
+        [
+          2,
+          3,
+          4,
+          5
+        ]
+      ]
+    ]
+  },
+  "t7CalFields": {
+    "logs": [],
+    "value": []
+  }
+}

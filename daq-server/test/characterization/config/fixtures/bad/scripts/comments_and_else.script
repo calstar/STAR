@@ -1,0 +1,12 @@
+# A valid script exercising every statement kind.
+level = pressure(GN2_HIGH)  # trailing comment
+if level > 500 and not elapsed() > 3:
+    open_valve(HIGH_PRESS_CTRL)
+elif level <= 100 or level == 0:
+    close_valve(HIGH_PRESS_CTRL)
+else:
+    delay(0.5)
+while elapsed() < 2:
+    delay(0.25)
+    level = level - 1
+transition_to(PRESS_STANDBY)

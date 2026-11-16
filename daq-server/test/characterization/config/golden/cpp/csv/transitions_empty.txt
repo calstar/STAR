@@ -1,0 +1,35 @@
+=== StateMachine
+load(fixtures/bad/csv/transitions_empty.csv) = false isLoaded=false
+bootState = 1 "Idle"
+state 0 "Debug" isAbort=false fromName(name)=255 bitmask=0x00000000 allowedFrom=[]
+state 1 "Idle" isAbort=false fromName(name)=1 bitmask=0x00000000 allowedFrom=[]
+state 2 "Armed" isAbort=false fromName(name)=2 bitmask=0x00000000 allowedFrom=[]
+state 3 "Fuel Fill" isAbort=false fromName(name)=3 bitmask=0x00000000 allowedFrom=[]
+state 4 "Ox Fill" isAbort=false fromName(name)=4 bitmask=0x00000000 allowedFrom=[]
+state 5 "GN2 Low Press" isAbort=false fromName(name)=5 bitmask=0x00000000 allowedFrom=[]
+state 6 "GN2 Low Vent" isAbort=false fromName(name)=6 bitmask=0x00000000 allowedFrom=[]
+state 7 "Fuel Press" isAbort=false fromName(name)=7 bitmask=0x00000000 allowedFrom=[]
+state 8 "Fuel Vent" isAbort=false fromName(name)=8 bitmask=0x00000000 allowedFrom=[]
+state 9 "Ox Press" isAbort=false fromName(name)=9 bitmask=0x00000000 allowedFrom=[]
+state 10 "Ox Vent" isAbort=false fromName(name)=10 bitmask=0x00000000 allowedFrom=[]
+state 11 "GN2 High Press" isAbort=false fromName(name)=11 bitmask=0x00000000 allowedFrom=[]
+state 12 "GN2 High Vent" isAbort=false fromName(name)=12 bitmask=0x00000000 allowedFrom=[]
+state 13 "Vent" isAbort=false fromName(name)=13 bitmask=0x00000000 allowedFrom=[]
+state 14 "Calibrate" isAbort=false fromName(name)=14 bitmask=0x00000000 allowedFrom=[]
+state 15 "Ready" isAbort=false fromName(name)=15 bitmask=0x00000000 allowedFrom=[]
+state 16 "Fire" isAbort=false fromName(name)=16 bitmask=0x00000000 allowedFrom=[]
+state 17 "Engine Abort" isAbort=true fromName(name)=17 bitmask=0x00000000 allowedFrom=[]
+state 18 "GSE Abort" isAbort=true fromName(name)=18 bitmask=0x00000000 allowedFrom=[]
+state 19 "Emergency Abort" isAbort=true fromName(name)=19 bitmask=0x00000000 allowedFrom=[]
+state 20 "Press Standby" isAbort=false fromName(name)=20 bitmask=0x00000000 allowedFrom=[]
+fromName("Abort") = 255
+fromName("Quick Fire") = 255
+fromName("GN2 Press") = 255
+fromName("GN2 Vent") = 255
+fromName("High Press") = 255
+fromName("fire") = 255
+fromName("IDLE") = 255
+fromName("No Such State") = 255
+fromName("") = 255
+
+=== ActuatorCommander

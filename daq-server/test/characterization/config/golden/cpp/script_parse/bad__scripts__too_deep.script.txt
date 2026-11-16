@@ -1,0 +1,42 @@
+
+=== script fixtures/bad/scripts/too_deep.script (parse only)
+parse.ok = false
+parse.diag.count = 1
+parse.diag 10:37 E_TOO_DEEP "nested 9 deep; the limit is 8"
+top = [0, 0) empty=true max_depth=9
+expr[0] Elapsed @1:4 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[1] Number @1:16 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[2] Binary @1:14 number=0 var=-1 slug=-1 op=> lhs=0 rhs=1
+expr[3] Elapsed @2:8 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[4] Number @2:20 number=1 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[5] Binary @2:18 number=0 var=-1 slug=-1 op=> lhs=3 rhs=4
+expr[6] Elapsed @3:12 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[7] Number @3:24 number=2 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[8] Binary @3:22 number=0 var=-1 slug=-1 op=> lhs=6 rhs=7
+expr[9] Elapsed @4:16 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[10] Number @4:28 number=3 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[11] Binary @4:26 number=0 var=-1 slug=-1 op=> lhs=9 rhs=10
+expr[12] Elapsed @5:20 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[13] Number @5:32 number=4 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[14] Binary @5:30 number=0 var=-1 slug=-1 op=> lhs=12 rhs=13
+expr[15] Elapsed @6:24 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[16] Number @6:36 number=5 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[17] Binary @6:34 number=0 var=-1 slug=-1 op=> lhs=15 rhs=16
+expr[18] Elapsed @7:28 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[19] Number @7:40 number=6 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[20] Binary @7:38 number=0 var=-1 slug=-1 op=> lhs=18 rhs=19
+expr[21] Elapsed @8:32 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[22] Number @8:44 number=7 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[23] Binary @8:42 number=0 var=-1 slug=-1 op=> lhs=21 rhs=22
+expr[24] Elapsed @9:36 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[25] Number @9:48 number=8 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[26] Binary @9:46 number=0 var=-1 slug=-1 op=> lhs=24 rhs=25
+block_items = []
+canonical:
+(seq)
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

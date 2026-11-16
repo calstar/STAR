@@ -1,0 +1,143 @@
+{
+  "logs": [],
+  "value": {
+    "actuator_roles": {
+      "Fuel Main": [
+        "NC",
+        1,
+        12
+      ]
+    },
+    "boards": {
+      "actuator_board": {
+        "board_id": 12,
+        "ip": "192.168.2.12",
+        "type": "ACTUATOR"
+      }
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    },
+    "fire": {
+      "expiry_target": "Idle",
+      "state": "Fire"
+    },
+    "states": [
+      {
+        "id": 1,
+        "is_boot": true,
+        "name": "Idle"
+      },
+      {
+        "id": 16,
+        "name": "Fire",
+        "script_file": "fire.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 17,
+        "is_abort": true,
+        "name": "Engine Abort",
+        "script_file": "abort.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 2,
+        "name": "Armed",
+        "script_file": "../escape.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 3,
+        "name": "Fuel Fill",
+        "script_file": "no_timeout.script",
+        "script_return_target": "Idle",
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 4,
+        "name": "Ox Fill",
+        "script_file": "long.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 600001,
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 5,
+        "name": "GN2 Low Press",
+        "script_file": "no_return.script",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 6,
+        "name": "GN2 Low Vent",
+        "script_file": "bad_target.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Nowhere"
+      },
+      {
+        "id": 7,
+        "is_flow": true,
+        "name": "Fuel Press",
+        "script_file": "flow.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 8,
+        "name": "Fuel Vent",
+        "script_file": "does_not_exist.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 9,
+        "name": "Ox Press",
+        "script_file": "syntax.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      },
+      {
+        "id": 10,
+        "name": "Ox Vent",
+        "script_file": "unknown_names.script",
+        "script_return_target": "Idle",
+        "script_timeout_ms": 1000,
+        "script_timeout_target": "Idle"
+      }
+    ]
+  }
+}

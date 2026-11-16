@@ -1,0 +1,28 @@
+=== script fixtures/bad/scripts/transition_not_allowed.script as state "Dynamic Test"
+parse.ok = true
+parse.diag.count = 0
+top = [0, 3) empty=false max_depth=0
+stmt[0] Delay @1:1 var=-1 expr=0 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[1] TransitionTo @2:1 var=-1 expr=-1 slug=0 body=[-1, -1) else=[-1, -1)
+stmt[2] TransitionTo @3:1 var=-1 expr=-1 slug=1 body=[-1, -1) else=[-1, -1)
+expr[0] Number @1:7 number=1 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+block_items = [0, 1, 2]
+slug[0] FIRE ns=state @2:15 len=4
+slug[1] PRESS_STANDBY ns=state @3:15 len=13
+canonical:
+(seq (delay 1) (goto FIRE) (goto PRESS_STANDBY))
+validate.diag.count = 1
+validate.diag 2:15 E_TRANSITION_NOT_ALLOWED "this state is not allowed to transition to FIRE — state_transitions.csv does not permit it"
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 13 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0

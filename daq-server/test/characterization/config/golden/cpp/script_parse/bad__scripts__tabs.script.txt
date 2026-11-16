@@ -1,0 +1,15 @@
+
+=== script fixtures/bad/scripts/tabs.script (parse only)
+parse.ok = false
+parse.diag.count = 1
+parse.diag 2:1 E_TAB_INDENT "tab in indentation — use spaces (a tab is invisible in the editor, and mixed indentation silently changes which branch a valve command is in)"
+top = [0, 0) empty=true max_depth=0
+block_items = []
+canonical:
+(seq)
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

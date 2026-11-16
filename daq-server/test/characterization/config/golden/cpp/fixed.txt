@@ -1,0 +1,30 @@
+
+=== SensorAssignmentManager::load_sensor_definitions
+return = true
+"PT_FDP" = {sensor_id="PT_FDP" name="Downstream Fuel PT" description="Downstream Fuel PT (1000 psi)" max_pressure_psi=1000 system_state=FLIGHT location="Rocket" purpose="Fuel downstream"}
+"PT_FF" = {sensor_id="PT_FF" name="Fuel Fill PT" description="Fuel fill PT that goes up to 1000 psi" max_pressure_psi=1000 system_state=GSE location="GSE - Fuel Fill" purpose="Fuel fill pressure"}
+"PT_FUP" = {sensor_id="PT_FUP" name="Upstream Fuel PT" description="Upstream Fuel PT (1000 psi)" max_pressure_psi=1000 system_state=FLIGHT location="Rocket" purpose="Fuel upstream"}
+"PT_HP" = {sensor_id="PT_HP" name="High Pressure PT" description="High pressure PT capable of going up to 5k PSI reading" max_pressure_psi=5000 system_state=FLIGHT location="Rocket" purpose="High pressure"}
+"PT_HPF" = {sensor_id="PT_HPF" name="High Pressure Fill PT" description="High pressure fill with PT rated to 5000 psi" max_pressure_psi=5000 system_state=GSE location="GSE - Pressurant Fill" purpose="High pressure fill"}
+"PT_LP" = {sensor_id="PT_LP" name="COPV PT Post Regulator" description="COPV PT post regulator (1000psi)" max_pressure_psi=1000 system_state=FLIGHT location="Rocket" purpose="COPV post regulator"}
+"PT_LPF" = {sensor_id="PT_LPF" name="Low Pressure Fill PT" description="Low pressure line with PT rated to 1000 psi" max_pressure_psi=1000 system_state=GSE location="GSE - Pressurant Fill" purpose="Low pressure fill"}
+"PT_MPF" = {sensor_id="PT_MPF" name="Medium Pressure Fill PT" description="Medium press fill with PT rated to 2000 PSI" max_pressure_psi=2000 system_state=GSE location="GSE - Pressurant Fill" purpose="Medium pressure fill"}
+"PT_ODP" = {sensor_id="PT_ODP" name="Downstream Oxidizer PT" description="Downstream Oxidizer PT (1000 PSI)" max_pressure_psi=1000 system_state=FLIGHT location="Rocket" purpose="Oxidizer downstream"}
+"PT_OF" = {sensor_id="PT_OF" name="LOX Fill PT" description="LOX Fill PT that goes up to 1000 psi" max_pressure_psi=1000 system_state=GSE location="GSE - LOX Fill" purpose="LOX fill pressure"}
+"PT_OUP" = {sensor_id="PT_OUP" name="Upstream Oxidizer PT" description="Upstream Oxidizer PT (1000 PSI)" max_pressure_psi=1000 system_state=FLIGHT location="Rocket" purpose="Oxidizer upstream"}
+
+=== DynamicConfigManager::load_base_config
+return = true
+[database] (0)
+[network] (0)
+[sensors] (0)
+
+=== BoardDiscovery::generate_config (no boards)
+
+=== captured stdout
+[SensorAssignment] Loaded 11 pressure sensor definitions
+[DynamicConfig] Loaded base config from: ignored/path.toml
+
+=== captured stderr
+
+=== exit 0

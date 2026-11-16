@@ -1,0 +1,4 @@
+# Parses, but carries none of the sections a run needs: no [[states]], no [boards.*],
+# no [actuator_roles], no [fire], no [state_machine].
+[network]
+bind_ip = "0.0.0.0"

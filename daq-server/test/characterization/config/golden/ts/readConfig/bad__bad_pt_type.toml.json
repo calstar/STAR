@@ -1,0 +1,83 @@
+{
+  "logs": [],
+  "value": {
+    "boards": {
+      "pt_absolute": {
+        "active_connectors": [
+          1
+        ],
+        "board_id": 21,
+        "ip": "192.168.2.21",
+        "pt_type": "0-5V absolute",
+        "type": "PT"
+      },
+      "pt_legacy": {
+        "active_connectors": [
+          1,
+          2
+        ],
+        "board_id": 23,
+        "hp_pt_connectors": [
+          1,
+          2
+        ],
+        "hp_pt_full_scale_psi": 10000,
+        "ip": "192.168.2.23",
+        "type": "PT"
+      },
+      "pt_legacy_2": {
+        "active_connectors": [
+          1
+        ],
+        "board_id": 24,
+        "hp_pt_full_scale_psi": 3000,
+        "hp_pt_sense_resistor_ohms": 249,
+        "ip": "192.168.2.24",
+        "type": "PT"
+      },
+      "pt_unknown": {
+        "active_connectors": [
+          1
+        ],
+        "board_id": 22,
+        "ip": "192.168.2.22",
+        "pt_type": "4-20mA",
+        "type": "PT"
+      }
+    },
+    "calibration_full_scale_pt_absolute": {
+      "Chamber": -100
+    },
+    "calibration_model_pt_absolute": {
+      "Chamber": "neural"
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    },
+    "sensor_roles_pt_absolute": {
+      "Chamber": 1
+    }
+  }
+}

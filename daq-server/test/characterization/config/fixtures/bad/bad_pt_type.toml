@@ -1,0 +1,38 @@
+[boards.pt_absolute]
+type = "PT"
+ip = "192.168.2.21"
+board_id = 21
+pt_type = "0-5V absolute"
+active_connectors = [1]
+
+[boards.pt_unknown]
+type = "PT"
+ip = "192.168.2.22"
+board_id = 22
+pt_type = "4-20mA"
+active_connectors = [1]
+
+[boards.pt_legacy]
+type = "PT"
+ip = "192.168.2.23"
+board_id = 23
+hp_pt_connectors = [1, 2]
+hp_pt_full_scale_psi = 10000
+active_connectors = [1, 2]
+
+[boards.pt_legacy_2]
+type = "PT"
+ip = "192.168.2.24"
+board_id = 24
+hp_pt_full_scale_psi = 3000.0
+hp_pt_sense_resistor_ohms = 249
+active_connectors = [1]
+
+[sensor_roles_pt_absolute]
+"Chamber" = 1
+
+[calibration_model_pt_absolute]
+"Chamber" = "neural"
+
+[calibration_full_scale_pt_absolute]
+"Chamber" = -100

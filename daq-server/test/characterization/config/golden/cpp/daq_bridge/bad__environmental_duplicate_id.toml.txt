@@ -1,0 +1,7 @@
+EXCEPTION [Config] environmental board ID 90 is claimed by both [boards.env_a] and [boards.env_b]
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 1
