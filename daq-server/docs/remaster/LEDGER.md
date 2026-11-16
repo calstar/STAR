@@ -2,7 +2,7 @@
 
 Single source of truth for the remaster. **After any context loss, read this first.**
 
-## CHECKPOINT — read this first after any context loss (updated 2026-11-16 ~10:00)
+## CHECKPOINT — read this first after any context loss (updated 2026-11-16 ~12:30)
 
 Then read `git log --oneline -30 backend-remastered` and the Merge log below before acting.
 
@@ -11,19 +11,19 @@ C2 (config + black-box rework), C3 (calibration), C5/C5b (pipeline, all board ty
 C4/C4b/C4L (sequencer + destination boards + load), H1 (abort-thresholds harness fix), and the harness:
 gate, stack lock (priority, ownerless takeover, portable mtime, `--status`), bounded ctest retry
 (D31), leftover-process + port check (D33), Linux leg with full-tree export, per-Dockerfile image tag,
-`--areas` (D36), load guard (D27). Tip at checkpoint: b2599617 (+ queue/C1 pending). Pushed to origin.
+`--areas` (D36), load guard (D27). Tip: 18a4b519 (docs-only on top of b2599617; queue/C1 pending). Pushed to origin.
 
 **In flight (next step for each):**
 
 | item | branch / worktree | state | next step |
 |---|---|---|---|
-| C1 packets (+ `CHAR_EMULATED` for the amd64 leg) | `queue/C1` (f872c788) in `.claude/worktrees/remaster` | macOS `--fast` + full arm64 Linux leg running (bg task) | on green: `git checkout backend-remastered && git merge --ff-only queue/C1`, log it, push |
+| C1 packets (+ CHAR_EMULATED, D37 sleep-void, D38 timeouts) | `queue/C1` (86f87bca) in `.claude/worktrees/remaster` | macOS `--fast` PASS (11:46). Linux arm64: all ok except integration, PT2_Cal.CH1 missing 2/2 (D41) | bisect D41 (integration alone ×3 on C1, then the tip); on resolution ff, log, push; then merge backend-remastered's docs commits into the next queue item |
 | stress pass (D27) | — | not started | after C1: every area under 1× load (`yes` × 14 inside one lock hold, `CHAR_UNDER_LOAD=1` for pipeline), list any golden that moves |
 | tag candidate | — | not started | full gate (with integration), Linux arm64 full + `--amd64`, CI dispatch (`gh workflow run daq-server-ci.yml --ref backend-remastered`, judge format job per D24, timing tests per D34), then `git tag remaster-baseline`, add the golden/frontend-test diff gate step (D12a), push tag? — **tags: push only if the user asks; branch push is authorised (D1)** |
-| DESIGN-WP6/7 (TS) | `design/ts`, agent a054ca918ee2ecd28 | writing | then a fresh-subagent design review of each note (D17) |
-| DESIGN-WP8/9/10 (C++) | `design/cpp`, agent ae3d4c8fc88bcf834 | writing | then design review |
-| WP1 prep (tracked junk) | `wp/WP1-junk`, agent ac3108d72d0ed94e9 | preparing with evidence (`WP1-EVIDENCE.md`) | queue only after the tag |
-| WP2 prep (uncompiled C++) | `wp/WP2-dead-cpp`, agent a7b22746b6a73fb4c | preparing with evidence (`WP2-EVIDENCE.md`); lists lines outside daq-server (format.sh, CI ccache key) for the orchestrator | queue only after the tag |
+| tsc gate step (D40) | — | not started | own harness queue item after C1, with mutation |
+| design notes WP6–WP10 | merged (D39) | reviewed, revised | must-close-first gaps are C0 test-only work before each step (lists in each note) |
+| WP1 (tracked junk, 6101 files) | `wp/WP1-junk` (10ced66a), evidence `WP1-EVIDENCE.md` | ready | queue after the tag; full gate + Linux leg |
+| WP2 (37 dead C++ files) | `wp/WP2-dead-cpp` (4cc0b2e4), evidence `WP2-EVIDENCE.md` | ready; keeps 14 headers C1's comms_messages.cpp includes (WP3 must keep ControlMessages.hpp or change C0's test) | queue after WP1 |
 
 Finished characterization agents (idle, resumable by ID for follow-ups): config a7914367a1c4a926a,
 packets a8e7fa24dc102066b, calibration aaaf2cc5c24c84367, sequencer a2460b6ec7ac10557, pipeline
@@ -99,6 +99,11 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D21 | The goal's "data-logger CSV output" has no counterpart on `main`: the data logger is archived (`archive/legacy/python-services/data_logger_service.py`, wrote binary `.sensorlog`), `[data_logger_service]` in config is unused, elodin-db 0.16.1 has no export command. The only CSV the backend serves is `/api/state-csv`; C5 freezes those three tables byte for byte (`pipeline/golden/csv.txt`). REPORT.md says so. | Freezing a CSV that is never written would be a test that cannot fail. |
 | D22 | Float goldens: **one golden per output for every build type, OS and arch**, compared at ≤ 4 ULP for floating-point values (exact for integers, raw codes, ids, non-float bytes; NaN/inf exact); never a per-variant golden, never SKIP for an unknown variant. | C3's first version kept per-variant goldens and skipped unknown variants, so Linux (the stand, CI) could not fail; WP9 moving math across TUs can change inlining and FMA contraction (clang fuses a*b+c at -O2 on arm64) and would turn last-bit noise red. 4 ULP still catches a 1e-12-relative coefficient change (~4500 ULP). **Scoped exceptions (C3):** values that are ill-conditioned by construction get a named, value-scoped limit, each proven by a mutation in its family: RTD Callendar-Van Dusen inverse near R0 (catastrophic cancellation; abs 1e-9 °C in a stated band), the robust learner's ridge-fit seed and its covariance and predictions (-O0 vs -O2 differ at 1e-10 to 1e-8 relative; rel 1e-7, abs 1e-9 psi), AllanVariance (8 ULP, 2 values); `cubic-fit` (CubicCalibrationStore fit coefficients; Linux gcc/glibc measured 1040 ULP on B): limit = next power of two above the largest spread measured across macOS noopt/Release and Linux gcc/clang, plus a one-coefficient 1e-9-relative mutation that must go red on all three. Every family limit is set just above measured spread, never to a round "safe" number. The comparator prints family, limit and distance on failure. |
 | D12 | Adopt the reviewer's (star-f9) advice: (a) tag `remaster-baseline` after C1–C6 merge and add a gate step `git diff --exit-code remaster-baseline -- <goldens> frontend/__tests__ frontend/e2e`; only the orchestrator moves the tag, each move logged here; (b) run the suite 3× back-to-back and once under parallel ctest load before trusting it; (c) the normaliser replaces timestamps/IDs only, never sorts, drops fields or rounds, and the mutation check targets it (extra WS field, reordered sensor list, changed 4th-decimal float); (d) WP1 checks deploy/, dev.sh, flake.nix, systemd units for build-ci/ users, and the gate's `npm ci` from clean must still work; (e) god-file splits (WP6/7, WP9/10) go in two packages each: a mechanical move-only split merged alone, then cleanup. | Enforces the golden rule mechanically; avoids flaky goldens being "fixed" by loosening; keeps diffs bisectable. |
+| D37 | **A run the machine slept through is void.** `gate.sh` ends with `GATE: VOID — the machine slept during the run (…); rerun` (exit 2) when `pmset -g log` shows a Sleep entry after the gate started (Darwin). Checked both ways: start before today's sleeps lists them; start = now lists none. (a52bb6c5 on queue/C1) | 2026-11-16: a clamshell sleep 10:13:34–10:36:44 (1390 s) turned `char_packets_service_heartbeat` into a 1403 s "Timeout" whose golden had matched; the 206 s elodin run overlapped an earlier 165 s sleep. Wall-clock jumps make every timeout and timing golden meaningless. |
+| D38 | **Every characterization ctest has an explicit TIMEOUT** (star-f9): pure tests 60 s, config_cpp and pipeline_decode 120 s, packets services 120 s (900 s with `CHAR_EMULATED=1` at configure, as elodin's 600/3600). Verified on all 16 with `ctest --show-only=json-v1`. (86f87bca) | A hang costs the lock 2 min, not ctest's 1500 s default. |
+| D39 | **Design reviews (D17) done; notes merged** (`design/cpp` 6d90d37f, `design/ts` 18a4b519 — docs only). All five notes APPROVE WITH CHANGES; changes applied by the authors. Accepted deviations from BLOAT-MAP: WP8 shares functions, not classes; WP9's TUs go in `services/calibration/`; WP10 owns `diablo_server/CMakeLists.txt`; WP10's `char_config_services.cpp` include re-points to `BoardMap.hpp` and **D18 is extended** to `test/characterization/config/CMakeLists.txt` (new TUs into `char_config_dump`, `BoardMap.cpp` into `char_cfg_daq_bridge`), landing in one commit with the BoardMap and ActuatorCommander splits; WP7 handlers in `src/api/`; `buildSensorConfig` into WP5's `sensor-config.ts` (WP7 after WP5); WP6 uses module singletons (on condition of D40) and 15 modules (BLOAT-MAP's WP6 file list/DoD amended accordingly); `lc-tare.test.ts` may be re-pointed under D18's conditions by analogy (anchors/paths only, non-vacuity assertion added, mutations re-run); its replacement by a real test is a separate test-only package. **WP9's `main < 400` DoD is waived** (~430 lines after move-only; main holds argv, construction, loop head with dispatch, shutdown). Every split's pass 1 and pass 2 are separate, fully gated queue items. WP5 deletes the uncalled :9999 sender (`sendToControllerService`) rather than folding it into a helper. Each note's must-close-first gaps are C0 (test-only) work that lands before the step it guards; WP7's `sendJson` is restricted to literal/local bodies (otherwise it silently fixes a headers-sent hang). LEDGER correction: the SequencerService targets are 6 test executables + `sequencer_service`, plus 4 ActuatorCommander-only targets. | The notes are the contract each WP is held to; the reviewers found real traps (lc-tare going vacuous, `sendJson` evaluation order, sequencer signal order, inner-loop `continue`s). |
+| D40 | **`npx tsc --noEmit` in `diablo_server/backend` becomes a gate step** before WP6/WP7 start (baseline exit 0 in 1.6 s, checked 2026-11-16). Lands as its own harness queue item with a mutation (a write to an imported binding must go red). | tsx and vitest strip types; with module singletons a missed setter would otherwise fail only at runtime ("Bad message"). |
+| D41 | **The Linux `PT2_Cal.CH1` miss is not a tolerated flake** (star-f9). `test_integration.sh` Sensor Info missed `[HPT] Pressure (PSI) → PT2_Cal.CH1.pressure_psi` (166/167) on both arm64 legs of queue/C1 (f872c788, 86f87bca); batch-2's leg passed. Bisect: integration alone ×3 on queue/C1, then on the tip. Whatever the result, root-cause it and fix the harness wait or freeze it as a named, bounded condition; never "166/167 is normal on Linux". | It is exactly the signal a daq_bridge or calibration refactor could break for real, and CI runs it on every push. |
 
 ## Baseline on `main` (this machine)
 
@@ -250,3 +255,16 @@ From the bloat map (BLOAT-MAP.md, "Defects found"):
 6. Only 4 of 9 services ignore SIGPIPE; most signal handlers do non-async-signal-safe I/O.
 7. Controller PWM and abort packets hard-code protocol version 0 rather than `DIABLO_COMMS_VERSION`.
 8. `tools/controller_lut/*.sh` invoke `python -m scripts.controller_lut.*` (moved): the documented LUT regeneration fails.
+
+From the design notes and WP prep (2026-11-16; reported, not fixed):
+- **D-OTA (lead for REPORT.md)** `POST /api/ota-flash` and `POST /api/ota-flash/flash-all` have no operator gate (`api-server.ts` A1101, A1169): behind Caddy a signed-in non-operator can reflash board firmware; `flash-all` reflashes every enabled board.
+- D-CTL controller_service keeps running with no TCP fire gate when its control port fails to bind (`controller_main.cpp:146` ignores `listen()`; the control thread logs and returns).
+- D-OTA2 ota_service abandons its detached client threads when SIGTERM arrives mid-flash.
+- D-SL stacklight `--help` omits `--force-state`.
+- D-BIND heartbeat and config_broadcast ignore `bindToDaqInterface`'s result.
+- D-SEQ The sequencer's `notifyControllerFireOnce` `send()` lacks `MSG_NOSIGNAL` (harmless only because the sequencer ignores SIGPIPE).
+- D-API1 `getQueryClient`/`getCalibrationStatus` are never passed in: `/api/query` and `/api/sensors` always 503, `/api/calibration_status` always the error object.
+- D-API2 Malformed JSON is 500 on five routes, 400 elsewhere; `GET /api/config/profiles` can write files (`ensureSeeded()`).
+- D-API3 Two paths leave a request unanswered: a throw inside a `req.on('end')` callback outside its try, an exception after `flash-all` sent SSE headers; and ~40 handlers evaluate calls after `writeHead`, so a throw there hangs the request (`ERR_HTTP_HEADERS_SENT`).
+- D-WS `registerVTables(...)` on connect has no `.catch`; `conn_close`'s outbound counter skips `mission_start_time` and `session_update`; `server.ts:344-345` is a sixth copy of the `board_id % 10` slot rule.
+- D-FLASH `flash/flash.sh` uses `${BLUE}` in `log_info`, never set.
