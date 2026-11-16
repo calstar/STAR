@@ -1,0 +1,57 @@
+# session default/malformed
+> RELOAD_CONFIG
+  < ERR:unknown command
+> RELOAD_CONFIG:1
+  < ERR:unknown command
+> FOO
+  < ERR:unknown command
+> transition:Armed
+  < ERR:unknown command
+> TRANSITION:
+  < ERR:empty state name
+> TRANSITION:   
+  < ERR:empty state name
+> TRANSITION:No Such State
+  < ERR:unknown state
+> TRANSITION:armed
+  < ERR:unknown state
+> TRANSITION:Armed:abc
+  < ERR:unknown state
+> TRANSITION:Armed:0
+  < ERR:bad hold duration
+> TRANSITION:Armed:-5
+  < ERR:unknown state
+> TRANSITION:Armed:99999999999
+  < ERR:bad hold duration
+> EXTEND_FIRE
+  < ERR:not in FIRE state
+> EXTEND_FIRE:1
+  < ERR:unknown command
+> SCRIPTS:1
+  < ERR:unknown command
+> DEBUG_MODE
+  < ERR:unknown command
+> ACTUATOR
+  < ERR:unknown command
+> SCRIPTS
+  < END
+> <blank lines> then DEBUG_MODE:0
+  < OK
+> two CRLF commands in one write
+  < OK | OK
+> padded TRANSITION:Armed
+  < OK
+  state Idle -> Armed
+  first datagram: ACTUATOR_COMMAND
+       +0s x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=7: ch7=1[Fuel Main] ch3=0[Fuel Press] ch2=0[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=1[LOX Press] ch6=0[LOX Vent]
+              raw 0400........070701030002000500010008010600
+       +0s x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=0[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
+              raw 0400........09020001000600030005000a00040008000700
+> 600 bytes without a newline
+  < <connection closed>
+> DEBUG_MODE:0
+  < OK
+-- sequencer log (N6: load-time lines, then message counts)
+   [SequencerService] Fire state: Fire → expires to Armed after 500 ms (extended 600 ms)
+   [SequencerService] WARNING: fire opens "Fuel Main" 0.08 s after entry, but no [fire].gate_actuator is set — the burn window is measured from the TRANSITION, so that valve is open for 0.42 s, not 0.5 s.
+   [SequencerService] WARNING: fire opens "LOX Main" 0.001 s after entry, but no [fire].gate_actuator is set — the burn window is measured from the TRANSITION, so that valve is open for 0.499 s, not 0.5 s.

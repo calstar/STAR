@@ -1,0 +1,422 @@
+# session default/matrix
+# 20 states; each row entered with DEBUG_MODE, then every target
+Idle:
+  Idle -> Idle: OK
+  Idle -> Armed: OK
+  Idle -> Fuel Fill: ERR:transition rejected
+  Idle -> Ox Fill: ERR:transition rejected
+  Idle -> GN2 Low Press: ERR:transition rejected
+  Idle -> GN2 Low Vent: ERR:transition rejected
+  Idle -> Fuel Press: ERR:transition rejected
+  Idle -> Fuel Vent: ERR:transition rejected
+  Idle -> Ox Press: ERR:transition rejected
+  Idle -> Ox Vent: ERR:transition rejected
+  Idle -> GN2 High Press: ERR:transition rejected
+  Idle -> GN2 High Vent: ERR:transition rejected
+  Idle -> Vent: ERR:transition rejected
+  Idle -> Calibrate: ERR:transition rejected
+  Idle -> Ready: ERR:transition rejected
+  Idle -> Fire: ERR:transition rejected
+  Idle -> Engine Abort: ERR:transition rejected
+  Idle -> GSE Abort: OK
+  Idle -> Emergency Abort: OK
+  Idle -> Press Standby: ERR:transition rejected
+Armed:
+  Armed -> Idle: OK
+  Armed -> Armed: OK
+  Armed -> Fuel Fill: OK
+  Armed -> Ox Fill: OK
+  Armed -> GN2 Low Press: ERR:transition rejected
+  Armed -> GN2 Low Vent: ERR:transition rejected
+  Armed -> Fuel Press: ERR:transition rejected
+  Armed -> Fuel Vent: ERR:transition rejected
+  Armed -> Ox Press: ERR:transition rejected
+  Armed -> Ox Vent: ERR:transition rejected
+  Armed -> GN2 High Press: ERR:transition rejected
+  Armed -> GN2 High Vent: ERR:transition rejected
+  Armed -> Vent: ERR:transition rejected
+  Armed -> Calibrate: ERR:transition rejected
+  Armed -> Ready: ERR:transition rejected
+  Armed -> Fire: ERR:transition rejected
+  Armed -> Engine Abort: OK
+  Armed -> GSE Abort: OK
+  Armed -> Emergency Abort: ERR:transition rejected
+  Armed -> Press Standby: OK
+Fuel Fill:
+  Fuel Fill -> Idle: ERR:transition rejected
+  Fuel Fill -> Armed: OK
+  Fuel Fill -> Fuel Fill: OK
+  Fuel Fill -> Ox Fill: ERR:transition rejected
+  Fuel Fill -> GN2 Low Press: ERR:transition rejected
+  Fuel Fill -> GN2 Low Vent: ERR:transition rejected
+  Fuel Fill -> Fuel Press: ERR:transition rejected
+  Fuel Fill -> Fuel Vent: ERR:transition rejected
+  Fuel Fill -> Ox Press: ERR:transition rejected
+  Fuel Fill -> Ox Vent: ERR:transition rejected
+  Fuel Fill -> GN2 High Press: ERR:transition rejected
+  Fuel Fill -> GN2 High Vent: ERR:transition rejected
+  Fuel Fill -> Vent: ERR:transition rejected
+  Fuel Fill -> Calibrate: ERR:transition rejected
+  Fuel Fill -> Ready: ERR:transition rejected
+  Fuel Fill -> Fire: ERR:transition rejected
+  Fuel Fill -> Engine Abort: OK
+  Fuel Fill -> GSE Abort: OK
+  Fuel Fill -> Emergency Abort: ERR:transition rejected
+  Fuel Fill -> Press Standby: ERR:transition rejected
+Ox Fill:
+  Ox Fill -> Idle: ERR:transition rejected
+  Ox Fill -> Armed: OK
+  Ox Fill -> Fuel Fill: ERR:transition rejected
+  Ox Fill -> Ox Fill: OK
+  Ox Fill -> GN2 Low Press: ERR:transition rejected
+  Ox Fill -> GN2 Low Vent: ERR:transition rejected
+  Ox Fill -> Fuel Press: ERR:transition rejected
+  Ox Fill -> Fuel Vent: ERR:transition rejected
+  Ox Fill -> Ox Press: ERR:transition rejected
+  Ox Fill -> Ox Vent: ERR:transition rejected
+  Ox Fill -> GN2 High Press: ERR:transition rejected
+  Ox Fill -> GN2 High Vent: ERR:transition rejected
+  Ox Fill -> Vent: ERR:transition rejected
+  Ox Fill -> Calibrate: ERR:transition rejected
+  Ox Fill -> Ready: ERR:transition rejected
+  Ox Fill -> Fire: ERR:transition rejected
+  Ox Fill -> Engine Abort: OK
+  Ox Fill -> GSE Abort: OK
+  Ox Fill -> Emergency Abort: ERR:transition rejected
+  Ox Fill -> Press Standby: ERR:transition rejected
+GN2 Low Press:
+  GN2 Low Press -> Idle: ERR:transition rejected
+  GN2 Low Press -> Armed: ERR:transition rejected
+  GN2 Low Press -> Fuel Fill: ERR:transition rejected
+  GN2 Low Press -> Ox Fill: ERR:transition rejected
+  GN2 Low Press -> GN2 Low Press: OK
+  GN2 Low Press -> GN2 Low Vent: OK
+  GN2 Low Press -> Fuel Press: ERR:transition rejected
+  GN2 Low Press -> Fuel Vent: OK
+  GN2 Low Press -> Ox Press: ERR:transition rejected
+  GN2 Low Press -> Ox Vent: OK
+  GN2 Low Press -> GN2 High Press: ERR:transition rejected
+  GN2 Low Press -> GN2 High Vent: OK
+  GN2 Low Press -> Vent: ERR:transition rejected
+  GN2 Low Press -> Calibrate: ERR:transition rejected
+  GN2 Low Press -> Ready: ERR:transition rejected
+  GN2 Low Press -> Fire: OK
+  GN2 Low Press -> Engine Abort: OK
+  GN2 Low Press -> GSE Abort: OK
+  GN2 Low Press -> Emergency Abort: ERR:transition rejected
+  GN2 Low Press -> Press Standby: OK
+GN2 Low Vent:
+  GN2 Low Vent -> Idle: ERR:transition rejected
+  GN2 Low Vent -> Armed: ERR:transition rejected
+  GN2 Low Vent -> Fuel Fill: ERR:transition rejected
+  GN2 Low Vent -> Ox Fill: ERR:transition rejected
+  GN2 Low Vent -> GN2 Low Press: OK
+  GN2 Low Vent -> GN2 Low Vent: OK
+  GN2 Low Vent -> Fuel Press: ERR:transition rejected
+  GN2 Low Vent -> Fuel Vent: OK
+  GN2 Low Vent -> Ox Press: ERR:transition rejected
+  GN2 Low Vent -> Ox Vent: OK
+  GN2 Low Vent -> GN2 High Press: ERR:transition rejected
+  GN2 Low Vent -> GN2 High Vent: OK
+  GN2 Low Vent -> Vent: ERR:transition rejected
+  GN2 Low Vent -> Calibrate: ERR:transition rejected
+  GN2 Low Vent -> Ready: ERR:transition rejected
+  GN2 Low Vent -> Fire: OK
+  GN2 Low Vent -> Engine Abort: OK
+  GN2 Low Vent -> GSE Abort: OK
+  GN2 Low Vent -> Emergency Abort: ERR:transition rejected
+  GN2 Low Vent -> Press Standby: OK
+Fuel Press:
+  Fuel Press -> Idle: ERR:transition rejected
+  Fuel Press -> Armed: ERR:transition rejected
+  Fuel Press -> Fuel Fill: ERR:transition rejected
+  Fuel Press -> Ox Fill: ERR:transition rejected
+  Fuel Press -> GN2 Low Press: ERR:transition rejected
+  Fuel Press -> GN2 Low Vent: OK
+  Fuel Press -> Fuel Press: OK
+  Fuel Press -> Fuel Vent: OK
+  Fuel Press -> Ox Press: ERR:transition rejected
+  Fuel Press -> Ox Vent: OK
+  Fuel Press -> GN2 High Press: ERR:transition rejected
+  Fuel Press -> GN2 High Vent: OK
+  Fuel Press -> Vent: ERR:transition rejected
+  Fuel Press -> Calibrate: ERR:transition rejected
+  Fuel Press -> Ready: ERR:transition rejected
+  Fuel Press -> Fire: OK
+  Fuel Press -> Engine Abort: OK
+  Fuel Press -> GSE Abort: OK
+  Fuel Press -> Emergency Abort: ERR:transition rejected
+  Fuel Press -> Press Standby: OK
+Fuel Vent:
+  Fuel Vent -> Idle: ERR:transition rejected
+  Fuel Vent -> Armed: ERR:transition rejected
+  Fuel Vent -> Fuel Fill: ERR:transition rejected
+  Fuel Vent -> Ox Fill: ERR:transition rejected
+  Fuel Vent -> GN2 Low Press: ERR:transition rejected
+  Fuel Vent -> GN2 Low Vent: OK
+  Fuel Vent -> Fuel Press: ERR:transition rejected
+  Fuel Vent -> Fuel Vent: OK
+  Fuel Vent -> Ox Press: ERR:transition rejected
+  Fuel Vent -> Ox Vent: OK
+  Fuel Vent -> GN2 High Press: ERR:transition rejected
+  Fuel Vent -> GN2 High Vent: OK
+  Fuel Vent -> Vent: ERR:transition rejected
+  Fuel Vent -> Calibrate: ERR:transition rejected
+  Fuel Vent -> Ready: ERR:transition rejected
+  Fuel Vent -> Fire: OK
+  Fuel Vent -> Engine Abort: OK
+  Fuel Vent -> GSE Abort: OK
+  Fuel Vent -> Emergency Abort: ERR:transition rejected
+  Fuel Vent -> Press Standby: OK
+Ox Press:
+  Ox Press -> Idle: ERR:transition rejected
+  Ox Press -> Armed: ERR:transition rejected
+  Ox Press -> Fuel Fill: ERR:transition rejected
+  Ox Press -> Ox Fill: ERR:transition rejected
+  Ox Press -> GN2 Low Press: ERR:transition rejected
+  Ox Press -> GN2 Low Vent: OK
+  Ox Press -> Fuel Press: ERR:transition rejected
+  Ox Press -> Fuel Vent: OK
+  Ox Press -> Ox Press: OK
+  Ox Press -> Ox Vent: OK
+  Ox Press -> GN2 High Press: ERR:transition rejected
+  Ox Press -> GN2 High Vent: OK
+  Ox Press -> Vent: ERR:transition rejected
+  Ox Press -> Calibrate: ERR:transition rejected
+  Ox Press -> Ready: ERR:transition rejected
+  Ox Press -> Fire: OK
+  Ox Press -> Engine Abort: OK
+  Ox Press -> GSE Abort: OK
+  Ox Press -> Emergency Abort: ERR:transition rejected
+  Ox Press -> Press Standby: OK
+Ox Vent:
+  Ox Vent -> Idle: ERR:transition rejected
+  Ox Vent -> Armed: ERR:transition rejected
+  Ox Vent -> Fuel Fill: ERR:transition rejected
+  Ox Vent -> Ox Fill: ERR:transition rejected
+  Ox Vent -> GN2 Low Press: ERR:transition rejected
+  Ox Vent -> GN2 Low Vent: OK
+  Ox Vent -> Fuel Press: ERR:transition rejected
+  Ox Vent -> Fuel Vent: OK
+  Ox Vent -> Ox Press: ERR:transition rejected
+  Ox Vent -> Ox Vent: OK
+  Ox Vent -> GN2 High Press: ERR:transition rejected
+  Ox Vent -> GN2 High Vent: OK
+  Ox Vent -> Vent: ERR:transition rejected
+  Ox Vent -> Calibrate: ERR:transition rejected
+  Ox Vent -> Ready: ERR:transition rejected
+  Ox Vent -> Fire: OK
+  Ox Vent -> Engine Abort: OK
+  Ox Vent -> GSE Abort: OK
+  Ox Vent -> Emergency Abort: ERR:transition rejected
+  Ox Vent -> Press Standby: OK
+GN2 High Press:
+  GN2 High Press -> Idle: ERR:transition rejected
+  GN2 High Press -> Armed: ERR:transition rejected
+  GN2 High Press -> Fuel Fill: ERR:transition rejected
+  GN2 High Press -> Ox Fill: ERR:transition rejected
+  GN2 High Press -> GN2 Low Press: ERR:transition rejected
+  GN2 High Press -> GN2 Low Vent: OK
+  GN2 High Press -> Fuel Press: ERR:transition rejected
+  GN2 High Press -> Fuel Vent: OK
+  GN2 High Press -> Ox Press: ERR:transition rejected
+  GN2 High Press -> Ox Vent: OK
+  GN2 High Press -> GN2 High Press: OK
+  GN2 High Press -> GN2 High Vent: OK
+  GN2 High Press -> Vent: OK
+  GN2 High Press -> Calibrate: OK
+  GN2 High Press -> Ready: ERR:transition rejected
+  GN2 High Press -> Fire: ERR:transition rejected
+  GN2 High Press -> Engine Abort: ERR:transition rejected
+  GN2 High Press -> GSE Abort: OK
+  GN2 High Press -> Emergency Abort: OK
+  GN2 High Press -> Press Standby: OK
+GN2 High Vent:
+  GN2 High Vent -> Idle: ERR:transition rejected
+  GN2 High Vent -> Armed: ERR:transition rejected
+  GN2 High Vent -> Fuel Fill: ERR:transition rejected
+  GN2 High Vent -> Ox Fill: ERR:transition rejected
+  GN2 High Vent -> GN2 Low Press: ERR:transition rejected
+  GN2 High Vent -> GN2 Low Vent: OK
+  GN2 High Vent -> Fuel Press: ERR:transition rejected
+  GN2 High Vent -> Fuel Vent: OK
+  GN2 High Vent -> Ox Press: ERR:transition rejected
+  GN2 High Vent -> Ox Vent: OK
+  GN2 High Vent -> GN2 High Press: OK
+  GN2 High Vent -> GN2 High Vent: OK
+  GN2 High Vent -> Vent: OK
+  GN2 High Vent -> Calibrate: ERR:transition rejected
+  GN2 High Vent -> Ready: ERR:transition rejected
+  GN2 High Vent -> Fire: ERR:transition rejected
+  GN2 High Vent -> Engine Abort: ERR:transition rejected
+  GN2 High Vent -> GSE Abort: OK
+  GN2 High Vent -> Emergency Abort: OK
+  GN2 High Vent -> Press Standby: OK
+Vent:
+  Vent -> Idle: ERR:transition rejected
+  Vent -> Armed: OK
+  Vent -> Fuel Fill: ERR:transition rejected
+  Vent -> Ox Fill: ERR:transition rejected
+  Vent -> GN2 Low Press: ERR:transition rejected
+  Vent -> GN2 Low Vent: ERR:transition rejected
+  Vent -> Fuel Press: ERR:transition rejected
+  Vent -> Fuel Vent: ERR:transition rejected
+  Vent -> Ox Press: ERR:transition rejected
+  Vent -> Ox Vent: ERR:transition rejected
+  Vent -> GN2 High Press: ERR:transition rejected
+  Vent -> GN2 High Vent: ERR:transition rejected
+  Vent -> Vent: OK
+  Vent -> Calibrate: ERR:transition rejected
+  Vent -> Ready: ERR:transition rejected
+  Vent -> Fire: ERR:transition rejected
+  Vent -> Engine Abort: OK
+  Vent -> GSE Abort: OK
+  Vent -> Emergency Abort: OK
+  Vent -> Press Standby: OK
+Calibrate:
+  Calibrate -> Idle: ERR:transition rejected
+  Calibrate -> Armed: ERR:transition rejected
+  Calibrate -> Fuel Fill: ERR:transition rejected
+  Calibrate -> Ox Fill: ERR:transition rejected
+  Calibrate -> GN2 Low Press: ERR:transition rejected
+  Calibrate -> GN2 Low Vent: ERR:transition rejected
+  Calibrate -> Fuel Press: ERR:transition rejected
+  Calibrate -> Fuel Vent: ERR:transition rejected
+  Calibrate -> Ox Press: ERR:transition rejected
+  Calibrate -> Ox Vent: ERR:transition rejected
+  Calibrate -> GN2 High Press: ERR:transition rejected
+  Calibrate -> GN2 High Vent: ERR:transition rejected
+  Calibrate -> Vent: OK
+  Calibrate -> Calibrate: OK
+  Calibrate -> Ready: OK
+  Calibrate -> Fire: ERR:transition rejected
+  Calibrate -> Engine Abort: ERR:transition rejected
+  Calibrate -> GSE Abort: OK
+  Calibrate -> Emergency Abort: OK
+  Calibrate -> Press Standby: OK
+Ready:
+  Ready -> Idle: ERR:transition rejected
+  Ready -> Armed: ERR:transition rejected
+  Ready -> Fuel Fill: ERR:transition rejected
+  Ready -> Ox Fill: ERR:transition rejected
+  Ready -> GN2 Low Press: ERR:transition rejected
+  Ready -> GN2 Low Vent: ERR:transition rejected
+  Ready -> Fuel Press: ERR:transition rejected
+  Ready -> Fuel Vent: ERR:transition rejected
+  Ready -> Ox Press: ERR:transition rejected
+  Ready -> Ox Vent: ERR:transition rejected
+  Ready -> GN2 High Press: ERR:transition rejected
+  Ready -> GN2 High Vent: ERR:transition rejected
+  Ready -> Vent: OK
+  Ready -> Calibrate: ERR:transition rejected
+  Ready -> Ready: OK
+  Ready -> Fire: OK
+  Ready -> Engine Abort: ERR:transition rejected
+  Ready -> GSE Abort: OK
+  Ready -> Emergency Abort: OK
+  Ready -> Press Standby: ERR:transition rejected
+Fire:
+  Fire -> Idle: OK
+  Fire -> Armed: OK
+  Fire -> Fuel Fill: ERR:transition rejected
+  Fire -> Ox Fill: ERR:transition rejected
+  Fire -> GN2 Low Press: ERR:transition rejected
+  Fire -> GN2 Low Vent: ERR:transition rejected
+  Fire -> Fuel Press: ERR:transition rejected
+  Fire -> Fuel Vent: ERR:transition rejected
+  Fire -> Ox Press: ERR:transition rejected
+  Fire -> Ox Vent: ERR:transition rejected
+  Fire -> GN2 High Press: ERR:transition rejected
+  Fire -> GN2 High Vent: ERR:transition rejected
+  Fire -> Vent: ERR:transition rejected
+  Fire -> Calibrate: ERR:transition rejected
+  Fire -> Ready: ERR:transition rejected
+  Fire -> Fire: OK
+  Fire -> Engine Abort: ERR:transition rejected
+  Fire -> GSE Abort: OK
+  Fire -> Emergency Abort: OK
+  Fire -> Press Standby: ERR:transition rejected
+Engine Abort:
+  Engine Abort -> Idle: ERR:transition rejected
+  Engine Abort -> Armed: ERR:transition rejected
+  Engine Abort -> Fuel Fill: ERR:transition rejected
+  Engine Abort -> Ox Fill: ERR:transition rejected
+  Engine Abort -> GN2 Low Press: ERR:transition rejected
+  Engine Abort -> GN2 Low Vent: ERR:transition rejected
+  Engine Abort -> Fuel Press: ERR:transition rejected
+  Engine Abort -> Fuel Vent: ERR:transition rejected
+  Engine Abort -> Ox Press: ERR:transition rejected
+  Engine Abort -> Ox Vent: ERR:transition rejected
+  Engine Abort -> GN2 High Press: ERR:transition rejected
+  Engine Abort -> GN2 High Vent: ERR:transition rejected
+  Engine Abort -> Vent: ERR:transition rejected
+  Engine Abort -> Calibrate: ERR:transition rejected
+  Engine Abort -> Ready: ERR:transition rejected
+  Engine Abort -> Fire: ERR:transition rejected
+  Engine Abort -> Engine Abort: OK
+  Engine Abort -> GSE Abort: OK
+  Engine Abort -> Emergency Abort: OK
+  Engine Abort -> Press Standby: ERR:transition rejected
+GSE Abort:
+  GSE Abort -> Idle: OK
+  GSE Abort -> Armed: OK
+  GSE Abort -> Fuel Fill: ERR:transition rejected
+  GSE Abort -> Ox Fill: ERR:transition rejected
+  GSE Abort -> GN2 Low Press: ERR:transition rejected
+  GSE Abort -> GN2 Low Vent: ERR:transition rejected
+  GSE Abort -> Fuel Press: ERR:transition rejected
+  GSE Abort -> Fuel Vent: ERR:transition rejected
+  GSE Abort -> Ox Press: ERR:transition rejected
+  GSE Abort -> Ox Vent: ERR:transition rejected
+  GSE Abort -> GN2 High Press: ERR:transition rejected
+  GSE Abort -> GN2 High Vent: ERR:transition rejected
+  GSE Abort -> Vent: OK
+  GSE Abort -> Calibrate: ERR:transition rejected
+  GSE Abort -> Ready: ERR:transition rejected
+  GSE Abort -> Fire: ERR:transition rejected
+  GSE Abort -> Engine Abort: ERR:transition rejected
+  GSE Abort -> GSE Abort: OK
+  GSE Abort -> Emergency Abort: OK
+  GSE Abort -> Press Standby: OK
+Emergency Abort:
+  Emergency Abort -> Idle: OK
+  Emergency Abort -> Armed: ERR:transition rejected
+  Emergency Abort -> Fuel Fill: ERR:transition rejected
+  Emergency Abort -> Ox Fill: ERR:transition rejected
+  Emergency Abort -> GN2 Low Press: ERR:transition rejected
+  Emergency Abort -> GN2 Low Vent: ERR:transition rejected
+  Emergency Abort -> Fuel Press: ERR:transition rejected
+  Emergency Abort -> Fuel Vent: ERR:transition rejected
+  Emergency Abort -> Ox Press: ERR:transition rejected
+  Emergency Abort -> Ox Vent: ERR:transition rejected
+  Emergency Abort -> GN2 High Press: ERR:transition rejected
+  Emergency Abort -> GN2 High Vent: ERR:transition rejected
+  Emergency Abort -> Vent: ERR:transition rejected
+  Emergency Abort -> Calibrate: ERR:transition rejected
+  Emergency Abort -> Ready: ERR:transition rejected
+  Emergency Abort -> Fire: ERR:transition rejected
+  Emergency Abort -> Engine Abort: ERR:transition rejected
+  Emergency Abort -> GSE Abort: ERR:transition rejected
+  Emergency Abort -> Emergency Abort: OK
+  Emergency Abort -> Press Standby: ERR:transition rejected
+Press Standby:
+  Press Standby -> Idle: ERR:transition rejected
+  Press Standby -> Armed: ERR:transition rejected
+  Press Standby -> Fuel Fill: ERR:transition rejected
+  Press Standby -> Ox Fill: ERR:transition rejected
+  Press Standby -> GN2 Low Press: OK
+  Press Standby -> GN2 Low Vent: OK
+  Press Standby -> Fuel Press: OK
+  Press Standby -> Fuel Vent: OK
+  Press Standby -> Ox Press: OK
+  Press Standby -> Ox Vent: OK
+  Press Standby -> GN2 High Press: OK
+  Press Standby -> GN2 High Vent: OK
+  Press Standby -> Vent: ERR:transition rejected
+  Press Standby -> Calibrate: ERR:transition rejected
+  Press Standby -> Ready: ERR:transition rejected
+  Press Standby -> Fire: OK
+  Press Standby -> Engine Abort: OK
+  Press Standby -> GSE Abort: OK
+  Press Standby -> Emergency Abort: ERR:transition rejected
+  Press Standby -> Press Standby: OK
