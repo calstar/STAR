@@ -28,6 +28,8 @@ anchors given in each step; the function names, not the numbers, are the contrac
   in ONE commit** (§6.1 step 4). Goldens byte-identical; the area's mutations re-run; the
   orchestrator reviews the harness diff.
 - The move-only pass and the cleanup pass are **separate queue items, each fully gated**.
+  **AMENDMENT (debate verdict):** the move-only pass is itself two queue items (item 1, then item 2
+  cut from item 1's tip), then the cleanup item (§6.1).
 
 Rules this note applies: D5 (contract frozen), D12(e) (move-only package merged alone, then
 cleanup), D17 (design over speed, behaviour bit for bit, per-service settings, no single-user
@@ -192,6 +194,16 @@ therefore construction/destruction order unchanged). All four TUs define members
 Public interface: unchanged (`init`, `transitionTo` x4, `setDebugMode`, `manualActuator`,
 `extendFire`, `scriptStatusReport`, `currentState`, `isDebugMode`). No new types.
 
+**AMENDMENT (debate verdict, `debates/WP10/verdict.md` §2):** the `_elodin` cut above stands
+(not a retry-only `_elodin`, not none) under the cut criterion's part (ii), §A "Why C lost": it
+keeps the 17-byte `[0x50,0x00]` layout and the `VTABLE_*` ids with their publisher, keeps core at
+~610 rather than ~690, and is what §1.3, §1.5, D42(c) and research structural choice 4
+presuppose. STYLE-S27 is met by it: `now_ns` (49) has exactly two users, both publishers
+(`publishState` 1164, `publishStateTransition` 1249), and `tryConnectElodin` (1253-1293) uses none
+of `now_ns`, `VTABLE_*` or the message aliases. Keeping `publishState` beside `doTransitionTo` never
+guarded C4-1 (all three debaters conceded it); the re-entry is the same call on the same member
+mutex either way (§1.3).
+
 File-statics each have exactly one using TU, so no shared internal header is needed:
 `now_ns`, `VTABLE_*`, `SequencerStateMsg`, `StateTransitionMsg` → `_elodin`;
 `kControllerConnectTimeoutMs` → `_controller_notify`; `readFile`, `resolveDataPath` → `_config`.
@@ -208,6 +220,16 @@ only new fact is that some lock-holding call chains cross TUs: `doTransitionTo` 
 `HoldTimer` on the worker or the timer thread → `notifyControllerFire` (`_controller_notify`);
 `applyConfig` (`_config`) writes the fields `doTransitionTo` and `notifyControllerFireOnce` read,
 before the worker exists.
+
+**AMENDMENT (debate verdict, facts 5 and 7):** the timer and script threads run core code too, not
+only `_controller_notify`: `enqueueDetached` (core, 129-137) is called on the `HoldTimer` thread
+from the `on_expire` lambda (864-882, call at 879) and on the `ScriptRunner` thread from
+`makeScriptEnv`'s `env.transition` (1186-1190, call at 1187). `_controller_notify` is the only
+I/O on the timer thread. No WP8 TCP helper lands in `_controller_notify` (§0 row B1, open
+question 2). `config_mutex_` is taken at 546 and 552 (`applyConfig`, before the worker starts at
+616), 673, 717, 740, 904, 925 (`doTransitionTo`), 1130 (`publishState`) and 1217
+(`scriptStatusReport`); `notifyControllerFire`/`notifyControllerFireOnce` (995-1114) take none, so
+the mutex does not thread through all four TUs.
 
 ### 1.6 Error handling as today
 
@@ -322,12 +344,18 @@ precedence manual > script > CSV, `is_fire && is_pwm` skip (C4-4).
 | primitive | guards |
 |---|---|
 | `input_mutex_` | `current_meas_`, `current_cmd_`, `current_nav_`, `has_measurement_` |
-| `output_mutex_` | `last_actuation_`, `last_diagnostics_` |
+| `output_mutex_` | `last_actuation_`, `last_diagnostics_` — **AMENDMENT (debate verdict): dead; removed in cleanup** (§6.2 commit c2) |
 | atomics | `running_`, `fire_active_`, `fire_gate_enabled_`, `test_duty_fuel_/ox_` |
 | unguarded | `fire_start_time_` (written by `setFireActive` on a TCP or subscriber thread, read by `controllerLoop`: an existing data race, keep and report); `elodin_client_` used by the loop and by `setFireActive` (relies on `ElodinClient::publish_mutex_`); `udp_socket_fd_` (`sendto` from two threads); `elodin_connected_` (set once in `initialize`, never on reconnect) |
 
 `input_mutex_` and `output_mutex_` are never nested; `setFireActive` releases `input_mutex_` before
 `sendActuationPWM` and before the [0x44] publish (353-358).
+
+**AMENDMENT (debate verdict, fact 1):** `output_mutex_`, `last_actuation_`, `last_diagnostics_`,
+their only writer (the store block in `controllerLoop`, cpp 703-708) and their only readers
+(`getLastActuation`/`getLastDiagnostics`, cpp 373-381) have no other reference in the repository,
+archive included; nor has `setNavState` (cpp 245-248), the only writer of `current_nav_`.
+`current_nav_` is read at 322 and 558 and stays. All of it is deleted in cleanup (§6.2).
 
 Known defect C4-5 (keep): the loop reads `fire_active_` at 699 and can send one more test-duty PWM
 after `setFireActive(false)` sent its zero (N7b drops it from the golden). The CR, wrong-cause reply
@@ -336,8 +364,11 @@ subscriber read the move does not touch.
 
 ### 3.3 Target TUs
 
-Header unchanged. All three TUs go into `fsw_daq_lib` (`lib/CMakeLists.txt` `FSW_SOURCES`, after
-`src/control/ControllerService.cpp` at line 41).
+~~Header unchanged.~~ **AMENDMENT (debate verdict): header unchanged in move-only; cleanup deletes
+hpp:92, 138-140, 220-223** (`setNavState`, the two getters with their doc comment, `output_mutex_`
+and `last_*` with their comment; §6.2). That is WP10's one header edit. All three TUs go into
+`fsw_daq_lib` (`lib/CMakeLists.txt` `FSW_SOURCES`, after `src/control/ControllerService.cpp` at
+line 41).
 
 | TU | contents | approx. lines |
 |---|---|---|
@@ -363,6 +394,23 @@ component and entity names and their registration order (`elodin/golden` section
 `controller_service`), the subscribe set (100 calibrated-PT tables then [0x50,0x00]),
 `setFireActive` log lines including "FIRE close command sent (duty=0)" (CTL_FACTS), loop log
 sampling (`tick % 10/50/100`), subscriber retry 20 x 100 ms, 1 ms read back-off.
+
+### 3.5 Ownership and data flow after the split — AMENDMENT (debate verdict, fact 4)
+
+Mirrors §1.5. Unchanged: all state stays on the one object; which thread runs which member is
+identical. Which thread enters which new TU:
+
+| thread | enters `_pwm` | enters `_elodin` |
+|---|---|---|
+| `controller_thread_` (`controllerLoop`, core) | `sendActuationPWM` at 700 | `writeActuationToDB`, `writeDiagnosticsToDB`, `writeMeasurementToDB` at 728-731 |
+| connection threads (`FIRE_START`/`FIRE_STOP`) | `setFireActive` (core) → `sendActuationPWM` at 329 (open) and 341 (close) | — |
+| `elodin_subscriber_thread_` | `setFireActive` (parity, called from `_elodin`) → `sendActuationPWM` at 329, 341 | `elodinSubscriberLoop`, `subscriberReadLoop` |
+
+So "partition by thread" is true only for `SequencerService_{config,controller_notify}` and
+`ActuatorCommander_load`; `_pwm` and `ControllerService_elodin` are each entered from more than one
+thread and are cut under criterion (ii) (wire format / transport), §A "Why C lost". `_pwm` is
+lock-free: `setFireActive` takes `input_mutex_` only in inner blocks and releases it before
+`sendActuationPWM`. `sendActuationPWM` (509-530) is clamp and cast, nothing fusable; D22 holds.
 
 ---
 
@@ -469,9 +517,33 @@ fixed at startup) unchanged.
 
 ---
 
-## 6. The move-only pass (one package, merged alone), then cleanup
+## 6. The move-only pass (~~one package, merged alone~~ **AMENDMENT (debate verdict): two queue items, each merged alone**, §6.1), then cleanup
 
 ### 6.1 Move-only steps
+
+**AMENDMENT (debate verdict §2, "Queue"; D25, D-PF, D31, D45(3)).** The move-only work is **two
+queue items**, each fully gated, merged in order; the steps below are assigned to them as follows.
+
+- **Item 1** = step 4 verbatim (BoardMap, BackendLogForwarder, the ActuatorCommander split into
+  `ActuatorCommander_{load,udp}`, the §7.2 and §7.3 harness edits; one commit) plus **all** the
+  CMake restructuring of step 5: define `ACTUATOR_COMMANDER_SOURCES` and `SEQUENCER_SOURCES` (step
+  5's list **minus** the three new `SequencerService_*` TUs) and use them in the 6 + 4 test targets
+  and `sequencer_service`. `FSW_SOURCES` is not touched in item 1. **Before item 1 is queued**, D-PF
+  is reproduced and its result recorded (§A amendment): item 1 runs `CHAR_AREAS=sequencer`, so it is
+  the item D-PF gates. Verify: step 6 in full; full gate, Linux leg, CI (D34). (`controller_pwm_roles`
+  and `robust_ddp` test `fsw_daq_lib`, which item 1 leaves alone; they can move only in item 2.)
+- **Item 2**, cut from item 1's tip after item 1 merges: commit **a** = step 1
+  (`SequencerService_{config,controller_notify,elodin}.cpp`) and three lines appended to
+  `SEQUENCER_SOURCES`; commit **b** = step 3 (`ControllerService_{pwm,elodin}.cpp`) and the two
+  `FSW_SOURCES` lines. Verify: step 6 in full (item 2 is the one that changes `fsw_daq_lib`, which
+  `controller_pwm_roles`, `robust_ddp` and `t7_integration` link). **D31's 10× comparison runs
+  against item 1's tip**, not the pre-WP tip.
+- **Fallback** (D45(3), replacing alternative C as the fallback): if CI cannot judge the D34 timing
+  tests when item 2 would be queued, **item 2 is not queued**, with a LEDGER entry at that time.
+  Item 1 alone is already alternative C's file set plus `ActuatorCommander_load`.
+- A failed queue branch of either item is deleted and re-cut from the then-current tip with a full
+  re-gate (D25); "truncate after commit 1" is not an option, it is a re-cut.
+- The **cleanup item** (§6.2) follows item 2 (or item 1, if the fallback is taken).
 
 General rules for every step: cut whole top-level definitions with their leading comment blocks and
 section banners; paste them in the same relative order; open/close the same namespace; copy the
@@ -519,7 +591,9 @@ CMake.
          ${SEQ_SRC_DIR}/ScriptRunner.cpp
          ${SEQ_SRC_DIR}/PressureFeed.cpp)
      ```
-     (same order the targets list today).
+     (same order the targets list today). **AMENDMENT (debate verdict):** item 1 defines this list
+     without the three `SequencerService_{config,controller_notify,elodin}.cpp` lines; item 2
+     commit a appends them after `SequencerService.cpp`.
    - `services/CMakeLists.txt` `sequencer_service` (14-24): `sequencer/sequencer_main.cpp
      ${SEQUENCER_SOURCES}`.
    - `lib/CMakeLists.txt`. Users, correctly counted: **6 SequencerService test executables plus 4
@@ -532,7 +606,8 @@ CMake.
      `test_actuator_delays` (203), `test_script_positions` (223), `test_ball_valve_commander`
      (239) — replace their `ActuatorCommander.cpp` line with `${ACTUATOR_COMMANDER_SOURCES}`.
      `FSW_SOURCES`: add `src/control/ControllerService_pwm.cpp` and
-     `src/control/ControllerService_elodin.cpp` after line 41.
+     `src/control/ControllerService_elodin.cpp` after line 41 (**AMENDMENT (debate verdict):** in
+     item 2 commit b only).
    - `daq_bridge/CMakeLists.txt`: `add_executable(daq_bridge daq_bridge_main.cpp BoardMap.cpp)`.
    - Harness CMake (`test/characterization/config/CMakeLists.txt`), §7.2/§7.3: in step 4's commit
      only (D18 extension above).
@@ -554,6 +629,26 @@ CMake.
 - daq_bridge: `registerAllTables`, `print_board_routing_table`, `publish_self_tests`,
   `publish_raw_batch` (§4.3). Only after the reconnect characterization in §7.4 exists.
 - Optional adoptions of WP8 helpers only under the conditions in §0.
+- **AMENDMENT (debate verdict §2, "Cleanup item"):** the cleanup item is, in this order of
+  content: include pruning; `using namespace vtable…` out of the core TU; the `// Kept:` tags and
+  the `publishState` lock-contract comment (§A amendments; D45(2) stands, STYLE-S12/S38: a
+  move-only pass adds no comment line); `register_all_tables` (after §7.4 gap 1),
+  `print_board_routing_table`, `publish_self_tests`, `publish_raw_batch`; and the dead
+  `ControllerService` code (§3.2 amendment), **27 lines in two commits**:
+  - **c1:** `setNavState` and both getters — hpp:92, 138-140; cpp:245-248, 373-381.
+  - **c2:** `output_mutex_`, `last_actuation_`, `last_diagnostics_` and the store block —
+    hpp:220-223; cpp:703-708. Separate from c1 because it edits `controllerLoop`, the D22 TU.
+  - **Proof:** `nm -C` on `fsw_daq_lib` loses exactly three symbols after c1
+    (`ControllerService::setNavState`, `getLastActuation`, `getLastDiagnostics`) and none after
+    c2; `packets/golden/service_pwm.txt`, `sequencer/golden/controller__*` and the config goldens
+    byte-identical. `current_nav_` stays (read at cpp 322, 558; open question 8).
+  - These hpp lines are **WP10's one header edit**; it needs no harness file edit but recompiles
+    the harness binary `char_config_dump` (§7.2 amendment).
+- **AMENDMENT (debate verdict §2): no STYLE-S33 waiver.** `daq_bridge_main.cpp` is ~835 lines
+  between item 1 and cleanup: interim, not a waiver (STYLE.md item 9). The three extractions not
+  gated by §7.4 gap 1 (383-418, 816-883, 885-989) bring it to ~626; `register_all_tables` takes it
+  lower. Without `_pwm`, core `ControllerService.cpp` would be ~790 and need a waiver; with the cuts
+  in §3.3 every TU is ≤ 700.
 - Not in cleanup (parked or forbidden): fixing C4-1/C4-2/C4-3/C1-10/C4-4/C4-5/C6-1/C6-3/C1-12;
   replacing the republish 10 ms slices with a condition variable (comment at
   `ActuatorCommander.cpp:652-654` already defers it; it changes timing); B4 encoders; unifying
@@ -605,6 +700,23 @@ in both passes, so the file itself needs **no edit**. Its CMake target does: `ch
 byte-identical; mutation — in `ActuatorCommander_load.cpp` change `role.is_pwm =
 !r.controller_role.empty();` to `= false;` → the `role … is_pwm=` lines go red; revert. Any later
 change to those member names is a harness change and out of WP10's scope.
+
+**AMENDMENT (debate verdict, facts 2 and 9).** (a) The only `#define private public` in the tree is
+`char_ac_private.cpp:23`; no harness reaches a private of `SequencerService.hpp` or
+`ControllerService.hpp`. (b) Transitive include: `char_config_dump.cpp:38` includes
+`control/PWMTargets.hpp`, which includes `control/ControllerService.hpp` (`PWMTargets.hpp:29`). So
+cleanup's header edit (§6.2 c1/c2) needs **no harness file edit** but **recompiles the harness
+binary `char_config_dump`**; its config goldens must stay byte-identical. The other includers of
+`ControllerService.hpp` are `ControllerService.cpp` and `controller_main.cpp:36`; `PWMTargets.hpp`
+is also included by `controller_main.cpp:37` and `lib/test/test_controller_pwm_roles.cpp:25`. The
+verdict's fact 2 also lists `ActuatorCommander.cpp` as an includer of `PWMTargets.hpp`, so that the
+header edit would recompile the 10 ActuatorCommander ctests and `sequencer_service`. Checked with
+`git show backend-remastered:…`, that is not so: `ActuatorCommander.cpp:101` names `PWMTargets.hpp`
+in a comment only, and neither its include block nor `ActuatorCommander.hpp`'s includes it. The
+recompile set of the header edit is `fsw_daq_lib`'s ControllerService TUs, `controller_service`,
+`test_controller_pwm_roles` and `char_config_dump`. (c) Moving `sendBatch` to
+`ActuatorCommander_udp.cpp` needs this §7.2 CMake edit in every variant that moves it, alternative
+C included (fact 9).
 
 ### 7.3 `char_config_services.cpp` (`#include` of `daq_bridge_main.cpp`, `CHAR_SERVICE_DAQ_BRIDGE`)
 
@@ -668,7 +780,9 @@ go red; revert. Orchestrator reviews the harness diff. If the cleanup moves
   gain external linkage in the global namespace; they are linked only into `daq_bridge` and
   `char_cfg_daq_bridge`. `BackendLogForwarder` leaves its anonymous namespace; no other definition
   of that name exists in the tree. ControllerService's new TUs are in the shared `fsw_daq_lib`;
-  their symbols are members already declared in the header, so the library exports the same set.
+  their symbols are members already declared in the header, so the library exports the same set
+(**AMENDMENT (debate verdict):** in move-only; after cleanup it exports **three fewer symbols**,
+`setNavState`, `getLastActuation`, `getLastDiagnostics`, checked with `nm -C`, §6.2).
 - **Float/inlining (D22).** All control-path arithmetic stays in the TU with its callers (§3.3).
 - **Timing tests (D31, D34).** On this Mac `sleep_for(10 ms)` overshoots ~3.5 ms, so the
   republish (100 x 10 ms) runs ~1.35 s: `actuator_delays` and `script_positions` fail
@@ -678,10 +792,13 @@ go red; revert. Orchestrator reviews the harness diff. If the cleanup moves
   sequencer session whose only diff is a republish interval is checked against the same run on the
   pre-WP tip before it is blamed on WP10. D31: if any of `actuator_delays`, `script_positions`,
   `script_runtime`, `sequencer_concurrency` needed a retry, run it 10x alone (Linux) on the WP and
-  on the pre-WP tip; WP10 is not done unless its pass rate is no worse.
+  on the pre-WP tip; WP10 is not done unless its pass rate is no worse. **AMENDMENT (debate
+  verdict):** the baseline is per queue item: item 1 against the pre-WP tip, **item 2 against item
+  1's tip** (§6.1).
 - **Harness drift.** Two harness edits (§7.2 CMake, §7.3 include + CMake), each with goldens
   byte-identical and a mutation that goes red; nothing else under `test/characterization/` changes,
-  and no golden line is removed.
+  and no golden line is removed. **AMENDMENT (debate verdict):** both land in item 1; cleanup's
+  header edit recompiles `char_config_dump` without editing it (§7.2 amendment).
 
 ## Open questions
 
@@ -691,7 +808,8 @@ go red; revert. Orchestrator reviews the harness diff. If the cleanup moves
    controller-notify client and the B3 sites in these four files stay hand-written after WP10;
    only the optional `openUdpSocket` adoption in cleanup remains.
 3. Who adds the Elodin-reconnect characterization (§7.4 gap 1)? It gates only cleanup's
-   `registerAllTables`, so it can land any time before WP10's cleanup item.
+   `registerAllTables`, so it can land any time before WP10's cleanup item. (**AMENDMENT (debate
+   verdict):** still open.)
 4. The LEDGER's "8 CMake test targets" should read: 6 SequencerService test executables plus 4
    ActuatorCommander-only test executables, plus the `sequencer_service` executable.
 
@@ -710,31 +828,59 @@ the reviewed text are marked **AMENDMENT**.
 |---|---|---|---|
 | shape | `SequencerService_{config,controller_notify,elodin}.cpp`, `ActuatorCommander_{load,udp}.cpp`, `ControllerService_{pwm,elodin}.cpp` define members of the unchanged classes; daq_bridge gets `BoardMap`, `BackendLogForwarder`, then (cleanup) `TableRegistration`, `ElodinPublish` | `SequencerConfigLoader` (returns a value), `ControllerNotifier`, `SequencerPublisher`, `ActuatorUdpLink`, `PwmLink`, `ControllerTables`, a daq_bridge `BoardRouter` class; the god classes hold them as members and call through interfaces | only `daq_bridge_main.cpp` (the one god *function*) is split; `SequencerService.cpp` (1295) and `ControllerService.cpp` (1160) stay whole; `ActuatorCommander` loses only `sendBatch` |
 | clarity | concern per file; class layout, lock members and call graph unchanged; a reader still sees one class | each collaborator is small and nameable; but the C4-1 chain (`doTransitionTo` holds `config_mutex_` → `publishState` locks it again) would cross an object boundary: the publisher needs the service's private mutex or the state it guards | nothing moves in the two classes, so nothing to learn; but a 430-line `applyConfig` keeps sitting between the command queue and `doTransitionTo` |
-| lines deleted | ~0 in move-only (a split); cleanup: the duplicated registration (~15), `using namespace` in the core TU | ~0, plus ~150 of interface/plumbing | ~0 / ~15 (same daq_bridge cleanup) |
+| lines deleted | ~~\~0 in move-only (a split); cleanup: the duplicated registration (~15), `using namespace` in the core TU~~ **AMENDMENT (debate verdict): ~0 / ≈ 42 (15 registration, 27 dead `ControllerService` lines, 2 `using`)** | ~0, plus ~150 of interface/plumbing | ~0 / ~15 (same daq_bridge cleanup) |
 | testability | unchanged; black-box goldens and the existing ctests (§7) | interfaces invite fakes, but D20 keeps goldens black-box and no ctest would be rewritten in a refactor | unchanged |
-| fit with characterization | two reviewed harness edits (§7.2 CMake, §7.3 include), one commit (D18 extension) | **fails by construction**: `char_ac_private.cpp` reads `ActuatorCommander`'s private members (`bind_addr_`, `roles_`, …, §7.2) — moving them into a link object is a harness rewrite; `SequencerService.hpp`'s member order is its destruction order, which the shutdown goldens see (worker joined before the retry thread, loop and hold timer, §1.1); new members change it | smallest harness exposure (only §7.3) |
+| fit with characterization | two reviewed harness edits (§7.2 CMake, §7.3 include), one commit (D18 extension) | `char_ac_private.cpp` reads `ActuatorCommander`'s private members (`bind_addr_`, `roles_`, …, §7.2) — moving them into a link object is a harness rewrite; ~~**fails by construction** … `SequencerService.hpp`'s member order is its destruction order, which the shutdown goldens see (worker joined before the retry thread, loop and hold timer, §1.1); new members change it~~ **AMENDMENT (debate verdict, fact 8): wrong — `lifecycle/golden/shutdown.txt` has no sequencer or controller row; the destructor body (56-71) stops the worker, retry thread, loop and hold timer explicitly, and only `PressureFeed` and `ScriptRunner` stop in their own destructors (`PressureFeed.cpp:33`, `ScriptRunner.cpp:61`), so member order matters only for those two (hpp:227-229). The tiers in "Collaborator objects" below replace this claim.** | ~~smallest harness exposure (only §7.3)~~ **AMENDMENT (debate verdict, fact 9): §7.3 and §7.2 — moving `sendBatch` to `_udp` puts `ActuatorCommander_udp.cpp` in `char_config_dump`'s sources, as in A** |
 | abort paths (D42 binding 1; research abort-statemachines "Structural choices" 1-5) | both `triggerAbort` sites, the 716-730 block, the 835 call and every `publishState` call site stay in `doTransitionTo` in core `SequencerService.cpp`; `schedule_gen_`, `pending_roles_`, `applyForState`, the stage thread and `emit` stay in core `ActuatorCommander.cpp` (only `sendBatch` moves); `enqueueAndWait`/`enqueueDetached` stay together in core | an `AbortPath` collaborator is the research's own idea (teststand-architecture Idea 3(b): "make abort its own path… fixes C1-10 by construction") — which is exactly why it is a **PROPOSAL**: it changes ABORT counts and timing (`service_abort.txt`, N3a) | untouched by construction |
 | float path (D22) | `interpolateThrustCurve` and every control-path double stay in the core TU with `setFireActive`/`controllerLoop` (§3.3); `sendActuationPWM`'s clamp-and-cast has no fused operation | the DDP/LUT/thrust math behind an interface → different inlining context | none |
 | thread/lock risk | none: same members, same threads, same lock order; the only new fact is cross-TU call chains (§1.5) | the C4-1 re-entry and `config_mutex_ → ScriptRunner::mtx_ / PressureFeed::mtx_` order would have to be re-expressed across objects (S23: no new nesting; forbidden in §8) | none |
 | timing tests (D31/D34) | every sequencer/actuator ctest recompiles; CI-only judgement for three of them | same plus behaviour risk | `ActuatorCommander_udp` alone still recompiles them; much smaller blast radius |
 
-**Why B lost.** Two independent reasons, each sufficient: the headers cannot change (harness reads
-privates; member order is destruction order), and the one place where a collaborator would help a
-reader — the abort — is the place D42 binds to stay together and every improvement there is a
-proposal (research abort-statemachines Ideas 1-4 all change goldens). Also STYLE-S34: each
-collaborator would have one user.
+**Why B lost.** Two independent reasons, each sufficient: ~~the headers cannot change (harness reads
+privates; member order is destruction order)~~ **AMENDMENT (debate verdict): (1) D17(d) / STYLE-S34
+— each collaborator would have one user, and a refactor pass introduces none — plus the harness's
+four `ActuatorCommander` members (`bind_addr_`, `bind_addr_explicit_`, `actuator_port_`, `roles_`,
+§7.2) that a link object would move; not goldens (the shutdown golden sees no member order, fact
+8)**, and (2) the one place where a collaborator would help a reader — the abort — is the place D42
+binds to stay together and every improvement there is a proposal (research abort-statemachines
+Ideas 1-4 all change goldens). ~~Also STYLE-S34: each collaborator would have one user.~~ (folded
+into reason 1). What B won — the tier taxonomy — is kept for fix packages in "Collaborator objects"
+below.
 
 **Why C lost (narrowly).** C is the safest and fully meets D42 binding 1. It loses on the one thing
-WP10 exists for: `SequencerService.cpp` mixes four concerns with different threads and different
-reviewers (config parsing before the worker exists; the worker's transitions; a TCP client that
-runs on the hold-timer thread; an Elodin publisher shared by worker, retry thread and loop). A
-separates exactly those, moves none of the abort ordering, and its move-only diff is checked by
+WP10 exists for: `SequencerService.cpp` mixes four concerns ~~with different threads and different
+reviewers~~ (config parsing before the worker exists; the worker's transitions; a TCP client that
+runs on the hold-timer thread; an Elodin publisher shared by worker, retry thread and loop).
+
+**AMENDMENT (debate verdict §2) — the cut criterion actually applied**, replacing "different
+threads and different reviewers" (true by thread for three TUs only, fact 4). A TU is cut where
+**(i)** it runs in a different phase or thread set — `SequencerService_config` (before the worker
+exists), `ActuatorCommander_load`, `SequencerService_controller_notify` (worker and timer thread,
+TCP client) — **or (ii)** it is a wire format or transport a different reader reviews —
+`ActuatorCommander_udp`, `ControllerService_pwm`, `SequencerService_elodin`,
+`ControllerService_elodin`. `_pwm` has `_udp`'s exact shape (codec + `sendto`, several callers,
+lock-free, bytes frozen), so C's moving `_udp` and keeping `_pwm` has no distinguishing fact; and
+without `_pwm` core `ControllerService.cpp` is ~790, a STYLE-S33 waiver. Both `_elodin` TUs are
+criterion (ii) (§1.4 amendment, §3.5).
+
+A separates exactly those, moves none of the abort ordering, and its move-only diff is checked by
 `--color-moved` (every non-dimmed line is an include, a namespace line or CMake; D43(6): include
-regrouping by clang-format is an expected non-dimmed line). If the D34 timing tests cannot be judged
-on CI when WP10 is queued, C is the fallback: it is a strict subset of A's steps (§6.1 steps 2 and
-4 only).
+regrouping by clang-format is an expected non-dimmed line). ~~If the D34 timing tests cannot be
+judged on CI when WP10 is queued, C is the fallback: it is a strict subset of A's steps (§6.1
+steps 2 and 4 only).~~ **AMENDMENT (debate verdict, D45(3)): the fallback is "item 2 not queued",
+with a LEDGER entry (§6.1); item 1 is already C's file set.**
 
 **Decision: A, as reviewed**, with these amendments:
+
+- **AMENDMENT (debate verdict §2, `debates/WP10/verdict.md`):** A's file list as reviewed (§1.4,
+  §2.3, §3.3, §4.3), including `ControllerService_pwm` and A's `SequencerService_elodin` cut, by the
+  two-part criterion above; C's 27-line dead-code deletion (cleanup, §6.2); two move-only queue
+  items then cleanup (§6.1); B's tiers for fix packages with `StageScheduler` re-tiered (§A.1).
+  Headers untouched in move-only. Core `SequencerService.cpp` keeps the destructor, the queue,
+  `init`, the `do*` bodies and `doTransitionTo` with both `triggerAbort` sites, the 716-730 block
+  and the 835 call; core `ActuatorCommander.cpp` keeps `applyForState`, `emit`, the stage thread,
+  `schedule_gen_` and `pending_roles_`; only `sendBatch` (with `sendUDP`) goes to `_udp` (D42
+  binding 1). No STYLE-S33 waiver (§6.2).
 
 - **AMENDMENT (D42 binding 1, research structural choice 4):** cleanup step 1 (not move-only,
   STYLE-S12/S38: a move adds no comment lines) adds above `publishState` in
@@ -751,8 +897,8 @@ on CI when WP10 is queued, C is the fallback: it is a strict subset of A's steps
   `ActuatorCommander::applyForState`), C4-2 (the dynamic-state hold rule in `applyConfig`), C4-4
   (`is_fire && role.is_pwm` skip; `notify_controller` gate), C4-5 (`controllerLoop`'s `fire_active_`
   read), C1-12 (daq_bridge `sensor_port` override), C6-1 (proactive SENSOR_CONFIG log), C6-3
-  (`send_from_daq_bridge` fixed at start-up). Open question 5 if the orchestrator wants the
-  literal `FROZEN`.
+  (`send_from_daq_bridge` fixed at start-up). ~~Open question 5 if the orchestrator wants the
+  literal `FROZEN`.~~ **AMENDMENT (debate verdict):** settled by D45(1); open question 5 closed.
 - **AMENDMENT (D42 binding 1):** the single enqueue entry point is structural and stays so: every
   `do*` member is `private` (`SequencerService.hpp:187-191`), the public commands are the only
   callers of `enqueueAndWait`, and `enqueueDetached` is used only from the hold-timer and script
@@ -773,8 +919,44 @@ on CI when WP10 is queued, C is the fallback: it is a strict subset of A's steps
   the offset is `TableHalf::kRaw` (0x00): integer-identical, but the name reads wrong there.
 - **AMENDMENT (D42, D-PF):** WP10 does not move `PressureFeed.cpp` (it is only named in the
   `SEQUENCER_SOURCES` list). The suspected re-subscribe accumulation (`PressureFeed.cpp:118-146`,
-  LEDGER D-PF) must be reproduced, and its result recorded, **before** WP10's move-only item is
-  queued, so a multiplied PressureFeed stream on the WP10 tip is not blamed on the move.
+  LEDGER D-PF) must be reproduced, and its result recorded, **before** ~~WP10's move-only item is
+  queued~~ **item 1 is queued (AMENDMENT (debate verdict, fact 10): item 1 runs
+  `CHAR_AREAS=sequencer`, so it is the item D-PF gates)**, so a multiplied PressureFeed stream on the
+  WP10 tip is not blamed on the move.
+- **AMENDMENT (debate verdict §2):** the `publishState` lock-contract comment stays in cleanup
+  (D45(2) stands; STYLE-S12 "a move-only pass adds no such line"; §6.1's list of permitted
+  non-dimmed lines is what lets a reviewer trust the dimmed ones). Until then the header's "Guarded
+  by config_mutex_" and §1.3 say it. Open question 6 closed.
+
+### A.1 Collaborator objects — AMENDMENT (debate verdict §4)
+
+**WP10's passes introduce no collaborator object** (STYLE-S34, D17(d)). The tiers and the admission
+rule below govern later **team fix packages**; the orchestrator records them as a LEDGER Decision
+row pointing at `debates/WP10/verdict.md` §4.
+
+| tier | what qualifies | where it may appear |
+|---|---|---|
+| **Tier 0** | free functions, carrier structs; header untouched | WP10 passes 1-2 (daq_bridge only, §4.3) |
+| **Tier 1** | plain data; no mutex another member function takes; a thread only if the destructor's first statements already stop it; not placed between `script_runner_` and `pressure_feed_` (`SequencerService.hpp:227-229`, the two members that stop in their own destructors); an appended member or a dead member removed | fix packages only |
+| **Tier 2** | a thread or fd the destructor body does not stop, `config_mutex_`'s guarded state, any of the four `char_ac_private.cpp` members (§7.2), or a path captured by `emit` | never |
+
+Rulings:
+
+- **`StageScheduler`: Tier 2** (fact 6). The stage thread (`ActuatorCommander.cpp:592`) captures
+  `emit` (504), which captures `this` and takes `script_positions_mutex_` (515) and
+  `overrides_mutex_` (520); `pending_roles_mutex_` is taken by `applyForState` (464, 493, 499), the
+  stage thread (605) and `setScriptPosition` (780). C4-3's fix is therefore
+  `cancelPendingStages()` on `ActuatorCommander` plus the call at `doTransitionTo` 835, as research
+  Idea 3 words it, not a new object.
+- **`CommandQueue`: Tier 1** while the destructor's 56-66 block stays first.
+- **`ControllerNotifier`: Tier 1, not worth it** — its observable lines are SEQ_FACTS
+  (`char_sequencer.py:357-364`), already frozen as they are.
+- **Publisher, `ActuatorUdpLink`, `PwmLink`, `SequencerConfigLoader`: Tier 2.**
+
+**Admission rule.** A collaborator enters only in the fix package whose fix is its reason to
+exist; that package's LEDGER row names its single user (the S34 exception); its header edit is
+judged on CI there. The publisher waits for the C4-1 hoist and a const snapshot replacing
+`config_mutex_`.
 
 ## B. Interfaces
 
@@ -789,6 +971,9 @@ class splits add **no header** (headers unchanged, §1.4, §2.3, §3.3).
 | `daq_bridge/ElodinPublish.hpp` | cleanup | §4.3 |
 
 `print_board_routing_table` is declared in `BoardMap.hpp` (cleanup addition, one call site).
+
+**AMENDMENT (debate verdict):** the class splits still add no header; cleanup *removes* 8 lines
+from `ControllerService.hpp` (hpp:92, 138-140, 220-223; §6.2), WP10's one header edit.
 
 ## C. Walkthroughs
 
@@ -943,3 +1128,14 @@ Ownership check:
    comment lines); either is behaviour-neutral.
 7. If CI cannot judge the D34 timing tests when WP10 is queued, is alternative C (daq_bridge +
    `ActuatorCommander_udp` only) the accepted fallback?
+
+**AMENDMENT (debate verdict §5 edit 10):** 5 **closed** by D45(1) (`// Kept: <id> (D17)`). 6
+**closed** by D45(2) and verdict §2: cleanup. 7 **closed** by D45(3) and the item structure: the
+fallback is "item 2 not queued", with a LEDGER entry (§6.1). 3 (who records the Elodin-reconnect
+characterization, §7.4 gap 1) **stays open**. Added from verdict §6:
+
+8. After cleanup deletes `setNavState`, `current_nav_` is never written (it is read at
+   `ControllerService.cpp:322, 558`): a planned input or a dead member? WP10 keeps it either way.
+
+The verdict's other team questions (§6 items 1-4: the abort stop path and priority lane, C4-3's
+precedence, C1-10/C1-9, the C4-1 hoist) are the research's PROPOSALS, not WP10's.
