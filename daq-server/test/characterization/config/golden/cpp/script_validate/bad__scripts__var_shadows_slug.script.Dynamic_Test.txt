@@ -1,0 +1,27 @@
+=== script fixtures/bad/scripts/var_shadows_slug.script as state "Dynamic Test"
+parse.ok = true
+parse.diag.count = 0
+top = [0, 2) empty=false max_depth=0
+stmt[0] Assign @1:1 var=0 expr=0 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[1] OpenValve @2:1 var=-1 expr=-1 slug=0 body=[-1, -1) else=[-1, -1)
+expr[0] Number @1:13 number=3 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+block_items = [0, 1]
+slug[0] FUEL_MAIN ns=actuator @2:12 len=9
+variable[0] FUEL_MAIN
+canonical:
+(seq (set FUEL_MAIN 3) (open FUEL_MAIN))
+validate.diag.count = 1
+validate.diag 1:1 E_VAR_SHADOWS_SLUG "variable 'FUEL_MAIN' has the same name as an actuator (FUEL_MAIN) — rename the variable"
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 13 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0

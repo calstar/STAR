@@ -1,0 +1,4 @@
+# A section header that never closes, then a value with no quotes.
+[network
+bind_ip = 0.0.0.0
+sensor_port = 5006

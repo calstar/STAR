@@ -1,0 +1,15 @@
+
+=== script fixtures/bad/scripts/oversize.script (parse only)
+parse.ok = false
+parse.diag.count = 1
+parse.diag 1:1 E_PROGRAM_TOO_LARGE "script is 5400 bytes; the limit is 4096"
+top = [0, 0) empty=true max_depth=0
+block_items = []
+canonical:
+(seq)
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

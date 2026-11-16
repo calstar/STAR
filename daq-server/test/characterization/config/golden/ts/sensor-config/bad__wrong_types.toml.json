@@ -1,0 +1,47 @@
+{
+  "hpBoardNumbers": {
+    "logs": [],
+    "value": []
+  },
+  "loadActuatorChannelToEntityMap": {
+    "logs": [],
+    "value": {}
+  },
+  "loadLcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadRtdBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadSensorRoleMap": {
+    "logs": [
+      "log: 📋 Loaded sensor role map from config.toml (2 channels): {\"2\":\"PT_Cal.Ox_Upstream\",\"3\":\"PT_Cal.COPV\"}",
+      "log: 📋 Loaded sensor role map for board pt_board (192.168.2.21): {\"2\":\"PT_Cal.Ox_Upstream\",\"3\":\"PT_Cal.COPV\"}"
+    ],
+    "value": {
+      "boardChannelToEntityMaps": [
+        [
+          "192.168.2.21",
+          {
+            "2": "PT_Cal.Ox_Upstream",
+            "3": "PT_Cal.COPV"
+          }
+        ]
+      ],
+      "channelToEntityMap": {
+        "2": "PT_Cal.Ox_Upstream",
+        "3": "PT_Cal.COPV"
+      }
+    }
+  },
+  "loadTcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "t7CalFields": {
+    "logs": [],
+    "value": []
+  }
+}

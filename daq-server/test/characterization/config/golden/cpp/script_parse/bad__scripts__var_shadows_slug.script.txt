@@ -1,0 +1,19 @@
+
+=== script fixtures/bad/scripts/var_shadows_slug.script (parse only)
+parse.ok = true
+parse.diag.count = 0
+top = [0, 2) empty=false max_depth=0
+stmt[0] Assign @1:1 var=0 expr=0 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[1] OpenValve @2:1 var=-1 expr=-1 slug=0 body=[-1, -1) else=[-1, -1)
+expr[0] Number @1:13 number=3 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+block_items = [0, 1]
+slug[0] FUEL_MAIN ns=actuator @2:12 len=9
+variable[0] FUEL_MAIN
+canonical:
+(seq (set FUEL_MAIN 3) (open FUEL_MAIN))
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

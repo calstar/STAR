@@ -1,0 +1,50 @@
+{
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): scan_rate_hz must be positive.",
+      "page": "boards"
+    },
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): channel 1: range must be one of 10, 1, 0.1, 0.01 (volts).",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): channel 2: AIN1 is already used by channel 1.",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): channel 2: tc_type \"\": only type K thermocouples are converted so far.",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): channel 3: ain must be 0-13.",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): channel 4: a differential input must be an even AIN (it pairs with the odd one above it).",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): channel 4: a 4-20mA PT needs shunt_ohms.",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): channel 5: kind \"STRAIN\" must be one of PT, TC, LC, RTD, VOLTAGE.",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "LabJack T7 Board (labjack_1): channel 6: an RTD needs ljtr_ohms (the LJTick-Resistance's fixed resistor).",
+      "page": "roles"
+    }
+  ]
+}

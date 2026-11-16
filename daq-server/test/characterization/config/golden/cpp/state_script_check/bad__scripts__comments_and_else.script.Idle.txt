@@ -1,0 +1,6 @@
+=== stdout
+12:15: E_TRANSITION_NOT_ALLOWED this state is not allowed to transition to PRESS_STANDBY — state_transitions.csv does not permit it
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

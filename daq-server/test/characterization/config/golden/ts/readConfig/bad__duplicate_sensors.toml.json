@@ -1,0 +1,92 @@
+{
+  "logs": [],
+  "value": {
+    "actuator_roles": {
+      "Fuel Main": [
+        "NC",
+        1,
+        12
+      ],
+      "Ox Main": [
+        "NC",
+        1,
+        12
+      ]
+    },
+    "boards": {
+      "actuator_board": {
+        "board_id": 12,
+        "designated_survivor": true,
+        "enabled": true,
+        "ip": "192.168.2.12",
+        "type": "ACTUATOR"
+      },
+      "pt_board": {
+        "active_connectors": [
+          1,
+          2,
+          3
+        ],
+        "board_id": 21,
+        "enabled": true,
+        "ip": "192.168.2.21",
+        "pt_type": "0-5V ratiometric",
+        "type": "PT"
+      },
+      "pt_board_2": {
+        "active_connectors": [
+          1,
+          2
+        ],
+        "board_id": 22,
+        "enabled": true,
+        "ip": "192.168.2.21",
+        "pt_type": "0-5V ratiometric",
+        "type": "PT"
+      }
+    },
+    "calibration_model_pt_board": {
+      "COPV": "cubic",
+      "Fuel Downstream": "cubic",
+      "Fuel Upstream": "cubic"
+    },
+    "calibration_model_pt_board_2": {
+      "COPV": "cubic",
+      "Ox Upstream": "cubic"
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    },
+    "sensor_roles_pt_board": {
+      "COPV": 2,
+      "Fuel Downstream": 1,
+      "Fuel Upstream": 1
+    },
+    "sensor_roles_pt_board_2": {
+      "COPV": 1,
+      "Ox Upstream": 2
+    }
+  }
+}

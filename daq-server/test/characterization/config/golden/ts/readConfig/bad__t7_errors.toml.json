@@ -1,0 +1,81 @@
+{
+  "logs": [],
+  "value": {
+    "boards": {
+      "labjack_1": {
+        "board_id": 81,
+        "channels": [
+          {
+            "ain": 1,
+            "full_scale": 1000,
+            "kind": "PT",
+            "range": 5,
+            "role": "LOX Tank",
+            "signal": "0-5V"
+          },
+          {
+            "ain": 1,
+            "kind": "TC",
+            "role": "Nozzle"
+          },
+          {
+            "ain": 14,
+            "kind": "VOLTAGE",
+            "role": "Rail"
+          },
+          {
+            "ain": 3,
+            "differential": true,
+            "full_scale": 500,
+            "kind": "PT",
+            "role": "Odd Diff",
+            "signal": "4-20mA"
+          },
+          {
+            "ain": 4,
+            "kind": "STRAIN",
+            "role": "Strain"
+          },
+          {
+            "ain": 6,
+            "kind": "RTD",
+            "r0_ohms": 100,
+            "role": "Line Temp"
+          }
+        ],
+        "ip": "192.168.2.81",
+        "scan_rate_hz": 0,
+        "type": "T7"
+      }
+    },
+    "calibration_model_labjack_1": {
+      "LOX Tank": "physics",
+      "Odd Diff": "physics"
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    }
+  }
+}
