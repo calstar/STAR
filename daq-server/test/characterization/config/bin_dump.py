@@ -115,7 +115,9 @@ class Run:
 
     def finish(self):
         """Stop it if it is still running; return the closing line for the golden."""
-        if self.eof:  # it closed its output: it is exiting on its own, so wait for the status
+        if (
+            self.eof
+        ):  # it closed its output: it is exiting on its own, so wait for the status
             try:
                 self.p.wait(timeout=10)
             except subprocess.TimeoutExpired:
