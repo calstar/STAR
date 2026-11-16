@@ -66,6 +66,9 @@ shared_types() {
   (cd "$ROOT/diablo_server/frontend" && npm run build:shared) &&
     git -C "$ROOT" diff --exit-code -- diablo_server/shared/
 }
+# The 9 tests vitest skips by default (CI's separate video-gateway job). Needs
+# `scripts/video-gateway.sh --fetch` and `npx playwright-core install chromium` once.
+video_gateway() { (cd "$ROOT/diablo_server/backend" && bash "$CHAR/with_stack_lock.sh" npm run test:video-gateway); }
 characterization() { CHAR_BUILD_DIR="$ROOT/build-gate" bash "$CHAR/with_stack_lock.sh" bash "$CHAR/run.sh"; }
 integration() { bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"; }
 # format.sh --check is red on main in firmware/ Python (out of scope), so the gate checks what this
@@ -86,6 +89,7 @@ format_check() {
 step build build_clean
 step ctest ctest_all
 step backend-vitest backend_vitest
+step video-gateway video_gateway
 step frontend-vitest frontend_vitest
 step frontend-lint frontend_lint
 step frontend-build frontend_build
