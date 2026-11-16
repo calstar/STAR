@@ -14,14 +14,15 @@ set(_CFG_INCLUDES
 # tools/state_script_check does for StateMachine.cpp.
 add_executable(char_config_dump
     char_config_dump.cpp
+    char_ac_private.cpp
     ${_DS}/services/sequencer/StateMachine.cpp
     ${_DS}/services/sequencer/ActuatorCommander.cpp
     ${_DS}/services/sequencer/ScriptStates.cpp
 )
 target_include_directories(char_config_dump PRIVATE ${_CFG_INCLUDES})
-# char_config_dump.cpp redefines `private` around one header on purpose (see the comment there).
+# char_ac_private.cpp redefines `private` around one header on purpose (see the comment there).
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    target_compile_options(char_config_dump PRIVATE -Wno-keyword-macro)
+    set_source_files_properties(char_ac_private.cpp PROPERTIES COMPILE_OPTIONS -Wno-keyword-macro)
 endif()
 target_link_libraries(char_config_dump
     fsw_daq_lib daq_comms_lib daqv2_comms Eigen3::Eigen Threads::Threads pthread ${RT_LIBRARY})
