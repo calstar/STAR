@@ -29,9 +29,6 @@ A vitest that imports a `server/*` module of layer 2 or above (DESIGN-WP6 §2) n
    `sessionManager` at import), `state-csv/state-actuators` (reads config at import, `:79-81`), or
    `config-caches` (G6 reads the boards). Never the checkout's `config/config.toml`.
 
-A pure function over values (DESIGN-WP6's `mismatchVerdict`, if G1's fallback is recorded) needs
-none of this.
-
 Every such test lands with a mutation that turns it red (break the thing it guards, see it fail,
 restore), recorded in the package's report. A backend vitest does not discharge a DESIGN-WP6 §7
 characterization row; substituting one for a row is a decision the orchestrator records per row.

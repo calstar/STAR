@@ -1,10 +1,10 @@
 # DESIGN-WP6 — split `diablo_server/backend/src/server.ts`
 
-The WP6 design as decided (LEDGER D39, D40, D42-D44, D48, and D49's simplicity rulings). It says
-what an implementer must do and why. Design only: nothing here has been executed. Paths are
-relative to `daq-server/diablo_server/backend/src/` unless stated. How the design got here — the
-amendments A1-A10, struck text, superseded baselines and checks, the debate, the alternatives,
-the walkthroughs — is in `debates/WP6/history.md`.
+The WP6 design as decided (LEDGER D39, D40, D42-D44, D48, and the simplicity rulings of D49 and
+D51). It says what an implementer must do and why. Design only: nothing here has been executed.
+Paths are relative to `daq-server/diablo_server/backend/src/` unless stated. How the design got
+here — the amendments A1-A10, struck text, superseded baselines and checks, the debate, the
+alternatives, the walkthroughs — is in `debates/WP6/history.md`.
 
 **Baseline.** Line numbers are `server.ts` on `backend-remastered` @ `bcb96252` (blob `646524ff`,
 1885 lines; the same blob as at `b2599617`), re-verified against
@@ -151,7 +151,7 @@ is read during evaluation — exactly the startup-order failure this split must 
 | 3 | `server/calibration-state.ts` | the backend's half of calibration: PT coefficients, raw-ADC tracking, the `CalibrationHost` handed to `calibration-handler.ts` | `calibrationHost` (live), `initCalibrationState()`, `reloadCalibrationEntityMap()`, `lastRawAdc`; step 2: `noteRawAdc(entity, value)`, `setCalibrationElodin(client)` |
 | 3 | `server/board-status.ts` | what the backend knows about each board: config baseline, heartbeats, T7 liveness, stale sweep and its notifications, self-test results, diagnostics log | `BOARD_STATUS_HZ`, `BOARD_HEARTBEAT_STALE_MS`, `boardsStatus`, `loadBoardsFromConfig()`, `updateBoard(low, payload)`, `countHeartbeat(id)`, `noteT7Alive(slot)`, `markStaleBoards()`, `broadcastBoardStatus()`, `boardLabel(status)`, `logDiagnostics()`, `selfTestLatest`, `selfTestNotifiedBoards`; step 2: `noteSelfTestResults(boardId, rows, epochNow)` |
 | 3 | `server/engine-state.ts` | the sequencer's state as the backend reports it: current state, debug mode, allowed set, refusal reasons, the CSV-derived commanded positions | `currentState`, `debugMode`, `STATE_ACTUATOR_MAP` (live), `initEngineState()`, `reloadStateActuatorMap()`, `configStateName(id)`, `getExpectedPositions(state)`, `broadcastCommandedActuatorsForState(state)`, `broadcastStateUpdate()`, `refreshScriptStatus()`, `setDebugMode(v)`, `applySequencerState(rows)`; step 2: `resolveTransitionTarget(id)` |
-| 4 | `server/actuator-mismatch.ts` | the 5 s commanded-vs-sensed check | `actuatorSensedState`, `scheduleActuatorMismatchCheck(state)`; step 2: `noteSensedRow(row, rows)`; `mismatchVerdict(…)` only if G1's fallback is recorded (§7) |
+| 4 | `server/actuator-mismatch.ts` | the 5 s commanded-vs-sensed check | `actuatorSensedState`, `scheduleActuatorMismatchCheck(state)`; step 2: `noteSensedRow(row, rows)` (only once G1 has landed, 2.1) |
 | 4 | `server/elodin-link.ts` | the Elodin DB connection: connect/disconnect with the session, subscription passes, link health shown on the status badge | `elodin`, `noteIngest()`, `isSimulated()`, `connectionStatusPayload(extra)`, `broadcastConnectionStatus()`, `syncElodinToSession()`, `onElodinConnected`, `onElodinDbError`, `onElodinDisconnected`, `onElodinError` |
 | 5 | `server/ingest.ts` | route each Elodin row to the module that owns what it says | `handleElodinPacket(header, payload)` |
 | 5 | `server/commands.ts` | browser → backend messages and engine commands | `handleMessage(ws, msg)` (`handleCommand` stays module-private) |
@@ -162,7 +162,8 @@ is read during evaluation — exactly the startup-order failure this split must 
 `notifications`, `history`, `mission-time` → `ws-clients`; `mission-time` → `env`.
 `sensor-stream` → `ws-clients`, `history`, `stats`. `calibration-state` → `ws-clients`,
 `config-caches`. `board-status` → `ws-clients`, `notifications`, `stats`, `config-caches`, `env`.
-`engine-state` → `ws-clients`, `history`, `stats`, `sequencer-client`. `actuator-mismatch` →
+`engine-state` → `ws-clients`, `history`, `stats`, `sequencer-client`, `env` (`THIN_VERBOSE_CONNECTION_LOG`,
+`server.ts:1705`, in the moved `_SEQUENCER_STATE` block). `actuator-mismatch` →
 `engine-state`, `notifications`. `elodin-link` → `env`, `ws-clients`, `calibration-state`,
 `engine-state`. `ingest` → `elodin-link`, `board-status`, `engine-state`, `actuator-mismatch`,
 `sensor-stream`, `mission-time`, `calibration-state`, `config-caches`, `notifications`, `stats`,
@@ -305,8 +306,9 @@ Rules for every commit in step 1:
   move-only edit. Do it **only** for a module the R1b list shows evaluating first at that line
   *before* the commit — never for an import already elided today (type-only or unused, e.g.
   `import type { StateActuatorMap }`), where a bare import would **add** a module to the
-  evaluation set. Measured on the 46-module bundle, step 1 makes exactly **fifteen** bare imports,
-  each in the commit that moves its last value user out of `server.ts`:
+  evaluation set. Measured on the bundle (46 modules today, `server.ts` included; 47 after WP5 adds
+  `sequencer-client`, which changes none of the fifteen), step 1 makes exactly **fifteen** bare
+  imports, each in the commit that moves its last value user out of `server.ts`:
 
   | line | module | line | module |
   |---|---|---|---|
@@ -326,7 +328,9 @@ Rules for every commit in step 1:
 - **R1b (runtime order — the check that counts).** Every commit diffs the esbuild bundle's module
   order against its **parent commit** (§6.3 item 4). The only permitted difference is new
   `server/*` entries. There is no stored baseline: each commit equal to its parent makes the end
-  of the step equal to the start (D49(4)).
+  of the step equal to the start (D49(4)). The queue item's merge check also runs §6.3 item 4 on
+  the item's tip against its base, so the guarantee does not rest only on per-commit discipline
+  (D51).
 - **R1c.** Never enable `verbatimModuleSyntax` (or `isolatedModules`-driven `import type`
   rewrites) to "pin" imports: it would add `elodin-query.ts` to today's evaluation set and move
   `calibration.ts` ahead of `calibration-handler.ts` — a behaviour change.
@@ -361,7 +365,7 @@ Rules for every commit in step 1:
 | 1.8 | `server/config-caches.ts` | 327-373 (incl. the T7 map 350-351); 329/331 initialisers → `initConfigCaches()`; 854-857 → `resetConfigCaches()` | §2 | `noteT7Alive`'s own lazy fill (575-579) moves with it in 1.10, unchanged |
 | 1.9 | `server/calibration-state.ts` | 305-325 (load → `initCalibrationState()`), 375-384 (host built inside `initCalibrationState()`, after the load), 852-853 → `reloadCalibrationEntityMap()` | §2 | the host must be built after `loadPTCalibration` (it copies the path by value; frozen in `ws_events.txt` `calibration_command`) |
 | 1.10 | `server/board-status.ts` | 87-89, 386-420 (call at 422 stays), 519-594, 596-618 (timer body → `logDiagnostics`), 622-626, 628-631, 654-722 (timer at 724 stays), 919-936 (937-939 stay: `startDhcpStatusPoller()` and the timer) | §2 | `logDiagnostics` reads `stats` and `wss.clients.size` |
-| 1.11 | `server/engine-state.ts` | 143-161, 424-470 (430 → `reloadStateActuatorMap()`, called at row 11 and from the two callbacks), 756-775 (774 → `initEngineState()`), 1236-1265; **the body of 1697-1720 → `applySequencerState(parsedList)`** without its last two statements | §2 | in `ingest`: `if (parsedList[0]?.entity === '_SEQUENCER_STATE') { applySequencerState(parsedList); scheduleActuatorMismatchCheck(currentState); return; }` — today's order. `server.ts` keeps `setInterval(refreshScriptStatus, 15000)` (row 26) |
+| 1.11 | `server/engine-state.ts` | 143-161, 424-470 (430 → `reloadStateActuatorMap()`, called at row 11 and from the two callbacks), 756-775 (774 → `initEngineState()`), 1236-1265; **the body of 1697-1720 → `applySequencerState(parsedList)`** without its last two statements | §2 | in `server.ts`'s packet listener (the `elodin.on('packet', …)` body; `ingest.ts` exists only from 1.14): `if (parsedList[0]?.entity === '_SEQUENCER_STATE') { applySequencerState(parsedList); scheduleActuatorMismatchCheck(currentState); return; }` — today's order. `server.ts` keeps `setInterval(refreshScriptStatus, 15000)` (row 26) |
 | 1.12 | `server/actuator-mismatch.ts` | 472-517 | §2 | |
 | 1.13 | `server/elodin-link.ts` | 734-738 (+ `noteIngest()` = `lastIngestMs = Date.now()`), 1471, 1486-1555, 1564-1576, 1583-1602 → `onElodinConnected`, 1610-1635 → `onElodinDbError`, `onElodinDisconnected`, `onElodinError`, 1831-1846 (`syncElodinToSession`) | §2 | `server.ts` keeps `setInterval(broadcastConnectionStatus, 1000)` (row 24), `elodin.on('connected', onElodinConnected)`, row 26, then the other `on`s in today's order. Log text `Connected to Elodin, subscriptions sent.` unchanged (§8 R8) |
 | 1.14 | `server/ingest.ts` | 1637-1816 → `handleElodinPacket(header, payload)` | | `server.ts`: `elodin.on('packet', handleElodinPacket)`. **Same commit:** re-point the parse-site assertion of `__tests__/lc-tare.test.ts:196-197` (`expandWithTare(parseElodinPacket(`) to `server/ingest.ts`. Mutation: drop the `expandWithTare(` wrapper → red |
@@ -411,19 +415,26 @@ reading imported bindings), `applyDeployedConfigChange` (body verbatim with 852-
    `grep -lE "from '\./commands\.js'" src/server/*.ts | grep -v '/ws-connection\.ts$'`
 4. **Module-evaluation order vs the parent commit** (R1b). esbuild's bundle concatenates modules
    in evaluation order with a `// <path>` banner per module, and this graph has no lazy `__esm`
-   wrappers, so the list is exact. It runs in under 1 s and writes nothing:
+   wrappers, so the list is the exact static order. (At runtime `shared-types.ts`'s top-level
+   `await import(…)` makes `state-csv/state-transitions` evaluate after its later siblings; no
+   observable effect today; G12 covers runtime order.) The binary is the backend's own esbuild;
+   the scratch checkout of the parent gets this worktree's `node_modules` symlinked in. It runs in
+   under 1 s and writes nothing:
 
    ```bash
    cd diablo_server/backend
-   order() { npx esbuild src/server.ts --bundle --platform=node --format=esm --packages=external \
+   ESB=$PWD/node_modules/.bin/esbuild
+   order() { "$ESB" src/server.ts --bundle --platform=node --format=esm --packages=external \
      --log-level=error | grep -E '^// (src|\.\./)' \
      | awk '{last[$2]=NR; o[NR]=$2} END{for(i=1;i<=NR;i++) if(last[o[i]]==i) print o[i]}'; }
-   order > /tmp/order-after.txt     # the same in a scratch checkout of the parent → /tmp/order-before.txt
+   order > /tmp/order-after.txt
+   # the same in a scratch checkout of the parent (ln -s "$PWD/node_modules" <scratch>/daq-server/diablo_server/backend/node_modules) → /tmp/order-before.txt
    diff <(grep -v '^src/server/' /tmp/order-before.txt) <(grep -v '^src/server/' /tmp/order-after.txt)   # prints nothing
    ```
 
    In step 2 the expected diff outside `src/server/` is also empty (nothing in step 2 prunes or
-   adds an import outside `server/*`); any diff is a stop, reviewed under D44(2).
+   adds an import outside `server/*`); any diff is a stop, reviewed under D49(4). The queue item's
+   merge check runs the same diff on the item's tip against its base (R1b).
 
 **At the end of step 1 and the end of step 2 — startup-order check** (G11 and §1.2's row
 order). Extract every top-level startup statement of `server.ts` and diff it against §1.2's last
@@ -464,8 +475,11 @@ a stop (D43(6)).
 Each is its own commit, with the per-commit checks of §6.3; checkpoints after 2.1 and at the end.
 Order matters only where noted. Numbering is kept from the reviewed note (LEDGER cites it).
 
-1. **`ingest` becomes a router.** G1 (or its recorded fallback) exists first; G2 and G3 should (§7).
-   Move each row block into its owner, keeping the per-row order of §3.2 step 6: self-test →
+1. **`ingest` becomes a router.** G2 and G3 should exist first (§7). G1 **must** exist before the
+   two sensed-row blocks move — the ball-valve `position_pct` block and the `actuator_state` block
+   (`server.ts:1726-1750`), each updating `actuatorSensedState` and rescheduling the mismatch
+   check; if G1 has not landed, those two blocks stay in `ingest` (D51). Move each row block
+   into its owner, keeping the per-row order of §3.2 step 6: self-test →
    `board-status.noteSelfTestResults` (the `break` after the first failure stays); ball-valve and
    `actuator_state` → `actuator-mismatch.noteSensedRow`; raw ADC → `calibration-state.noteRawAdc`;
    T+0 → `mission-time.noteFirstSample`; counters → `stats`; downsampling →
@@ -505,32 +519,17 @@ Order matters only where noted. Numbering is kept from the reviewed note (LEDGER
    `STATE_TO_CSV_NAME` moves with it. `commands` keeps the warn line, the `ERROR` reply text, the
    `holdMs` check (still after the id check) and the line format.
 
-**`mismatchVerdict` — only as G1's recorded fallback** (§7). If, and only if, the orchestrator
-records the G1 substitution, this commit lands **before 2.1**:
-`actuator-mismatch.mismatchVerdict(expected, sensed, stateName, mismatchActive, now):
-NotificationPayload | null` — the decision of `:489-516` (including the `expected`-empty → `null`
-early-out of `:490`) minus the sends; it returns today's payload literals (same text, same key
-order) or `null`, with no import-time read, send, log, clock read or write. `checkActuatorMismatch`
-(the timer callback) fetches `getExpectedPositions(state)`, `configStateName(state) ??
-SystemState[state] ?? 'UNKNOWN'` and `activeNotificationKeys.has('actuator_mismatch')`, keeps
-`const now = Date.now()` (`:492`) where it is, calls the verdict, then does today's
-`console.warn` (on raise), `broadcastNotification` and `add`/`delete` (`:510-515`) — **owners send,
-decisions return**. Listed non-verbatim edits: `configStateName` is hoisted out of the mismatch
-branch (it reads the deployed-config cache and logs nothing); the warn line moves to the caller,
-its text built from the returned `message`. It lands with a backend vitest and a mutation that
-goes red. `now` is a parameter of this function only; every other function keeps `Date.now()` at
-today's sites.
-
-**Not in WP6** (D49; reasons in `debates/WP6/history.md`): 2.7, a real test replacing
+**Not in WP6** (D49, D51; reasons in `debates/WP6/history.md`): 2.7, a real test replacing
 `lc-tare.test.ts`'s source-text check (a separate test-only package, D39); 2.8, owners sending
 their own connect-burst frames (it changes `lastOutboundAt` in the `conn_close` log, an
-observable); 2.10's `boardHealthEvents`, `selfTestFailure`, `nextResubscribeDelay`; 2.11, the
-vitest recipe (now `TESTING-NOTES.md`); the bare-import pruning 2.6 used to be.
+observable); all of 2.10 (`mismatchVerdict`, `boardHealthEvents`, `selfTestFailure`,
+`nextResubscribeDelay`); 2.11, the vitest recipe (now `TESTING-NOTES.md`); the bare-import
+pruning 2.6 used to be.
 
 **Exports after step 2.** A `[step 1]` container stops being exported in the commit that moves its
 last outside user, so a stale writer is a build error: `selfTestNotifiedBoards`,
-`actuatorSensedState`, `lastRawAdc`, `broadcastLastTime`, `envelope`, `encoderEnvelope` after 2.1;
-`_t7SlotToBoardId` after 2.4. Because the burst stays in `ws-connection`, `boardsStatus`,
+`actuatorSensedState` (if G1 let its two blocks move), `lastRawAdc`, `broadcastLastTime`,
+`envelope`, `encoderEnvelope` after 2.1; `_t7SlotToBoardId` after 2.4. Because the burst stays in `ws-connection`, `boardsStatus`,
 `selfTestLatest` and `notificationBuffer` stay exported for reading, and `activeNotificationKeys`
 as a `ReadonlySet`. `clientStreams` stays mutably exported: `ws-connection` registers and removes
 its socket (984, 1121), as today.
@@ -573,8 +572,8 @@ its socket (984, 1121), as today.
 | end to end (calibration capture via `lastRawAdc`, LC tare, ball valve, T7, sample conservation) | `test/ws_data_flow_test.ts` via `test_integration.sh` | gate |
 
 Backend vitests (recipe: `TESTING-NOTES.md`) do not discharge these rows; they are black-box C0
-characterization. Substituting a vitest for a row is a decision the orchestrator records per row
-(as G1's fallback), never a default.
+characterization. Substituting a vitest for a row is a decision the orchestrator records per row,
+never a default.
 
 ### Gaps — a move could change these and no golden would notice
 
@@ -585,7 +584,7 @@ own scripts (§6.3, D48(3)).
 | gap | priority | must exist before |
 |---|---|---|
 | G7 + G8 | MUST | step 1 |
-| G1 | MUST — ball-valve route; recorded fallback if C0 cannot land it in time | step 2.1 (D49(9)) |
+| G1 | MUST — ball-valve route | 2.1's two sensed-row blocks (D49(9), D51); without it they stay in `ingest` |
 | G10 | MUST | commits 1.15 / 1.16 |
 | G4 | MUST, owned by WP5 | WP5 lands |
 | G11 | MUST (WP6 script) | end of step 1 |
@@ -600,7 +599,7 @@ own scripts (§6.3, D48(3)).
   `ACTn.CHm.actuator_state` row reaches the backend in the simulated stack (the simulator's
   ACTUATOR current is a free sine, `board_simulator.py:617-623`), but a **ball valve** reports a
   sensed position: `BV1_Cal.CH1.position_pct` (`pipeline/golden/boards/ws_streams.txt:100-105`) →
-  sensed entity `BV1.CH1` (`server.ts:1727-1738`; `state-actuators.ts:140-144` maps a ball-valve
+  sensed entity `BV1.CH1` (`server.ts:1728-1740`; `state-actuators.ts:140-144` maps a ball-valve
   role to `BV<n>.CH<m>`). The case C0 builds:
   - **Fixture:** the `Main Ball Valve` actuator role and a CLOSE-in-every-state CSV row, as
     `test_integration.sh` has them (`"Main Ball Valve" = ["NC", 1, 71]` at `:675`, the CSV row at
@@ -614,9 +613,9 @@ own scripts (§6.3, D48(3)).
     OPEN)"` → close the valve (a sensed change with the key active reschedules) → `"Actuator
     positions match expected" ongoing=false` → debug off. (Turning debug off first does not work:
     it clears manual overrides before publishing state, `SequencerService.cpp:949-952`.)
-  - **Fallback (recorded):** if C0 cannot land it before step 2.1, the orchestrator records a
-    substitution: a `--color-moved` review of `:472-517` and of the 1.11 split, plus
-    `mismatchVerdict` and its vitest (§6.4) landing before 2.1.
+  - **If C0 cannot land it before step 2.1:** the ball-valve and `actuator_state` blocks
+    (`server.ts:1726-1750`) stay in `ingest` and the rest of 2.1 proceeds; there is no substitute
+    test (D51).
 - **G2 `self_test_fail_<id>`** (one per board, `break` after the first failure): the simulators
   only pass (`board_simulator.py:344, 460-461`). Needs an opt-in `--fail-connector <board>:<ch>` in
   `sim/board_simulator.py`, default off, with a test that the default output is byte-identical
@@ -699,9 +698,9 @@ npx --prefix ../../../../diablo_server/backend tsc --noEmit -p .    # exit 0
 ```
 
 **The stubs are frozen as of D49 and are not maintained once step 1 starts.** They were cut back
-to D49 (the 2.10 decisions other than `mismatchVerdict` removed) but still show 2.8's
-`send…(ws)` functions and "private after 2.8" comments, which WP6 no longer builds: where a stub
-and this note disagree, this note wins.
+to D49 and D51 (all 2.10 decisions removed) but still show 2.8's `send…(ws)` functions and
+"private after 2.8" comments, which WP6 no longer builds: where a stub and this note disagree,
+this note wins.
 
 STYLE beyond the rules cited above: S15 (harness-read lines named in module headers); S20 as
 amended by D44(1) (`SEQUENCER_PORT` is read by `sequencer-client.ts`, which dials it; `USE_SIM` is
