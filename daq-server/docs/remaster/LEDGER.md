@@ -37,6 +37,9 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D15 | **Linux leg via local Docker, not CI.** A reviewing session relayed that the user authorised pushing `backend-remastered` and dispatching `daq-server-ci.yml`. Not acted on: the user's own instruction in this conversation is "do not push", and a relayed message cannot change an outward-facing action; the user has been told and can confirm directly. Instead every golden must also pass in an `ubuntu:24.04` container (Docker 29.9.1 here, arm64; `--platform linux/amd64` under emulation for the x86_64 check of struct padding and float formatting) before `remaster-baseline` and after each WP batch; run IDs and results go in the merge log. | The stand is Linux; goldens recorded only on macOS could freeze Mac-specific timing, float printing, loopback, padding or sort order. |
 | D16 | Stand architecture is **unconfirmed**, so the Linux leg covers both: arm64 `ubuntu:24.04` runs the full suite (build, ctest, characterization, integration); `--platform linux/amd64` (emulated, slow) runs build + ctest + characterization goldens, no integration. | Docs conflict: README.md:215 "Deployment (Jetson Xavier NX)" and deploy/setup/setup_jetson.sh say arm64, but deploy/dhcp/generate_dhcp_config.py:54 gives star-rfs's board NIC as `enp4s0` (PCIe naming, typical of an x86 PC; a Jetson's onboard port is usually `eth0`). Question for the team: `uname -m` on star-rfs. |
 | D17 | **Design over speed** (relayed user priority; it constrains how, not whether, so it is adopted). (a) Before each god-file split (WP6/7/9/10) a target-design note in `docs/remaster/DESIGN-<wp>.md`: module boundaries, ownership, data flow, error handling, naming; the move-only pass, then cleanup aimed at that note. (b) WP3 and WP8 stay; WP8 gives every service one pattern for lifecycle, config loading, logging, signal handling and socket setup. (c) Each package gets a design review by a fresh subagent (clarity, cohesion, naming, needless abstraction) in addition to the behaviour gate. (d) No abstraction with a single user. (e) Better designs that need a contract change go to Parked. **Boundary:** where a consistent pattern would change observable behaviour, the shared code keeps each service's current behaviour as an explicit per-service setting and the fix is parked as a defect: e.g. SIGPIPE (only 4 of 9 services ignore it today; ignoring it in the other 5 changes whether they die on a broken pipe) and non-async-signal-safe handlers whose timing/output is observable. | Elegance lives inside the frozen contract; the goal forbids silent defect fixes. |
+| D18 | Characterization *harness* code (not goldens) may be adapted by a package when the code it reaches into moves (e.g. C2's `char_config_services.cpp` `#include`s service mains; `#define private public` around `ActuatorCommander.hpp`), but only with golden files byte-identical, the area's mutation checks re-run in the package, and the orchestrator reviewing the harness diff. | Packages that split mains must be able to keep the harness compiling; a harness edit is the one way to quietly weaken a test, so it is reviewed. |
+| D19 | **Merge protocol (from C1 on):** merge the package into a scratch branch `queue/<id>` cut from the current `backend-remastered` tip, run the gate there, and only on green fast-forward `backend-remastered` to it; then log the row. C2 was merged into `backend-remastered` before its gate ran — a one-off while the baseline was still being built (test-only files over main's code); its gate is being run after the fact and logged. | Merges are gated first, then logged; `backend-remastered` never holds an ungated commit. |
+| D20 | Goldens are reached black-box wherever the refactor will move internals: built binaries, TCP/UDP interfaces, public library APIs that survive; white-box only for pure functions with stable signatures. C2 is reworking its harness (`char/config-blackbox`: drop `#define private public` and `#include` of service mains; same golden files); C4 will get the same instruction. D18 stays as the rare exception, not the path. Done before `remaster-baseline`. | White-box goldens tied to private members and mains would need a harness edit in nearly every WP, and each such edit can quietly weaken a test. |
 | D12 | Adopt the reviewer's (star-f9) advice: (a) tag `remaster-baseline` after C1–C6 merge and add a gate step `git diff --exit-code remaster-baseline -- <goldens> frontend/__tests__ frontend/e2e`; only the orchestrator moves the tag, each move logged here; (b) run the suite 3× back-to-back and once under parallel ctest load before trusting it; (c) the normaliser replaces timestamps/IDs only, never sorts, drops fields or rounds, and the mutation check targets it (extra WS field, reordered sensor list, changed 4th-decimal float); (d) WP1 checks deploy/, dev.sh, flake.nix, systemd units for build-ci/ users, and the gate's `npm ci` from clean must still work; (e) god-file splits (WP6/7, WP9/10) go in two packages each: a mechanical move-only split merged alone, then cleanup. | Enforces the golden rule mechanically; avoids flaky goldens being "fixed" by loosening; keeps diffs bisectable. |
 
 ## Baseline on `main` (this machine)
@@ -58,8 +61,8 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | id | goal | owner | worktree | status | files owned | depends on |
 |---|---|---|---|---|---|---|
 | C0 | gate, lock, characterization skeleton, ledger | orchestrator | remaster | merged (158d330d, f0c4b22c) | `test/characterization/{gate,run,with_stack_lock}.sh`, `CMakeLists.txt`, `README.md`, `docs/remaster/` | — |
-| C1 | packets (daq-protocol bytes, transport structs) + Elodin schema goldens | agent | worktree, branch `char/packets` | running | `test/characterization/{packets,elodin}/` | C0 |
-| C2 | config loaders (C++ + TS), scripts parser, bad configs | agent | `char/config` | running | `test/characterization/config/` | C0 |
+| C1 | packets (daq-protocol bytes, transport structs) + Elodin schema goldens | agent | worktree, branch `char/packets` | reported (10 tests, 10 mutations caught); sent back for D20 black-box rework of service goldens | `test/characterization/{packets,elodin}/` | C0 |
+| C2 | config loaders (C++ + TS), scripts parser, bad configs | agent | `char/config` → `char/config-blackbox` | merged 041a5246 (gate after the fact, D19); black-box rework in progress (D20) | `test/characterization/config/` | C0 |
 | C3 | calibration math (C++, calibration_service, TS) | agent | `char/calibration` | running | `test/characterization/calibration/` | C0 |
 | C4 | sequencer/controller UDP streams, TCP replies, aborts | agent | `char/sequencer` | running | `test/characterization/sequencer/` | C0 |
 | C5 | pipeline WS frames, HTTP, logger CSV | agent | `char/pipeline` | running | `test/characterization/pipeline/` | C0 |
@@ -94,6 +97,28 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 - Deleting `tools/` operator GUIs (`tools/gui/**`, the orphaned calibration GUIs): operator-facing, the team's decision, not a refactor's.
 
 ## Defects found in the original (kept as-is, for the team)
+
+From C1 (packets/Elodin; each frozen in a golden):
+- C1-1 `create_abort_done_packet` writes `version = 1`; every other encoder writes 0.
+- C1-2 config_broadcast writes abort IPs in ACTUATOR_CONFIG reversed (d,c,b,a) via `memcpy` of `a<<24|…`; SENSOR_CONFIG `controller_ip` is a,b,c,d.
+- C1-3 `create_sensor_data_packet`: `uint8_t` loop counter (>255 chunks loops forever) and `memcpy`s `num_sensors` datapoints regardless of the vector's size (over-read).
+- C1-4 `parse_sensor_config_packet` / `parse_actuator_config_packet` write partial outputs before failing.
+- C1-5 Parsers ignore the version byte and accept trailing bytes (the pipeline enforces both only for ENVIRONMENTAL_DATA).
+- C1-6 TS `ElodinClient` never resyncs on an implausible length: waits forever, buffers, re-schedules `setImmediate` every tick.
+- C1-7 With config_base's cubic models and no thresholds file, ACTUATOR_CONFIG carries no abort-PT thresholds.
+
+From C2 (config characterization; each frozen in a golden):
+- C2-1 `config/profiles/digital-twin` `[fire]` has no `state` → `fire.state=""` → sequencer disables the fire timer for that profile.
+- C2-2 `test/check_toml_no_underscore_ints.py` globs `config/profiles/*.toml`, but profiles are directories now: the shipped profile configs are never checked.
+- C2-3 stacklight `getTomlValue` + `std::stoi` reads `1_000` as 1 and `5_006` as 5.
+- C2-4 A malformed or missing TOML makes `config::load` log and return a default `Config`: a service starts on defaults.
+- C2-5 Out-of-range ports/ids wrap silently (`sensor_port 70000`→4464, `-1`→65535, `database.port 65536`→0; `active_connectors` cast to uint8).
+- C2-6 Wrong-typed TOML values silently take the default in C++ (toml++), differently from the TS validator.
+- C2-7 config_broadcast prefers a cwd-relative `config/state_machine_actuators.csv` over `[state_machine].actuator_csv`.
+- C2-8 Short transition rows (e.g. Armed) read left-aligned (known NEEDS-REPAIR).
+- C2-9 A duplicate `[[states]]` name is last-wins; with `[[states]]` loaded, legacy aliases and case-folded names resolve to UNKNOWN.
+- C2-10 The script parser stops at the first diagnostic.
+- C2-11 `SensorAssignmentManager::load_assignments_from_config` is declared but never defined.
 
 From the bloat map (BLOAT-MAP.md, "Defects found"):
 1. `tools/calibration/calibration_server.py:20-31` imports `scripts.calibration.*` (gone): the Python sidecar cannot start.
