@@ -18,7 +18,7 @@ char_packets_target(char_wire_protocol)
 foreach(mode layout encode decode malformed)
     add_test(NAME char_packets_wire_${mode} COMMAND char_wire_protocol ${mode}
              WORKING_DIRECTORY ${CHAR_PACKETS_WORK})
-    set_tests_properties(char_packets_wire_${mode} PROPERTIES LABELS characterization)
+    set_tests_properties(char_packets_wire_${mode} PROPERTIES LABELS characterization TIMEOUT 60)
 endforeach()
 
 # The decode path daq_bridge runs: SensorFramePipeline::poll() over loopback UDP (ephemeral port
@@ -39,13 +39,20 @@ target_link_libraries(char_comms_messages fsw_daq_lib daq_comms_lib)
 char_packets_target(char_comms_messages)
 add_test(NAME char_packets_comms_messages COMMAND char_comms_messages
          WORKING_DIRECTORY ${CHAR_PACKETS_WORK})
-set_tests_properties(char_packets_comms_messages PROPERTIES LABELS characterization)
+set_tests_properties(char_packets_comms_messages PROPERTIES LABELS characterization TIMEOUT 60)
 
 
 # The services, black box: blackbox_services.py starts each built binary against a loopback copy
 # of a committed config and captures what it sends (UDP by destination address, TCP to a stand-in
 # elodin-db). They bind real ports, the board port 5005 among them: RUN_SERIAL, and ctest runs
 # under with_stack_lock.sh. macOS needs the 127.0.0.<board> lo0 aliases.
+# 120 s natively (the slowest runs ~30 s), so a hang costs the gate 2 min; under emulation
+# (CHAR_EMULATED=1 at configure, as for elodin/) service start-up takes minutes: 900 s.
+if("$ENV{CHAR_EMULATED}" STREQUAL "1")
+    set(CHAR_PACKETS_SERVICE_TIMEOUT 900)
+else()
+    set(CHAR_PACKETS_SERVICE_TIMEOUT 120)
+endif()
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 foreach(mode config_broadcast heartbeat stacklight daq_bridge abort pwm)
     add_test(NAME char_packets_service_${mode}
@@ -53,5 +60,5 @@ foreach(mode config_broadcast heartbeat stacklight daq_bridge abort pwm)
                      ${mode} $<TARGET_FILE_DIR:daq_bridge> ${CMAKE_SOURCE_DIR} ${CHAR_PACKETS_WORK}
              WORKING_DIRECTORY ${CHAR_PACKETS_WORK})
     set_tests_properties(char_packets_service_${mode} PROPERTIES
-        LABELS characterization RUN_SERIAL TRUE TIMEOUT 300)
+        LABELS characterization RUN_SERIAL TRUE TIMEOUT ${CHAR_PACKETS_SERVICE_TIMEOUT})
 endforeach()
