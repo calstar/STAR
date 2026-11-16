@@ -209,6 +209,8 @@ those byte for byte (header, column order, cell format).
 | P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema | counters / wall clock |
 | P10 | the handshake's self-test replay is regrouped by board id (each board's frames keep their order) | `selfTestLatest` replays in Elodin arrival order, a race across boards |
 | P11 | in a run of consecutive `error` / `state_update` frames within a step, errors are recorded first (each kind keeps its own order) | a command's TCP reply (`error`) and the sequencer's Elodin publish (`state_update`) take independent paths; their order swapped under load |
+| P12 | self-test results are one line per board the simulators self-test (expected set from `selftest_expected.py`: adc_good + every active connector; board 60: 0 and 2), written as `<exact result> | not-received (one-shot UDP self-test, defect)`, and a rule line that fails if (a) a received result differs, (b) more than half the boards are not-received, or (c) the run is quiet (`CHAR_UNDER_LOAD` unset) and any board is not-received. The handshake replay and the history series are summarised there | on a loaded Linux box some boards' one-shot self-test never reaches the backend |
+| A1 | `ACT_CMD.B2.CH7` (Fuel Main) commanded: `{0} \| {0, 1}`, an explicit alternative, only for that series | the sequencer's boot-time de-energized row is replayed by elodin-db on subscribe on a loaded Linux box (defect) |
 
 P7 also applies to history series (more than four distinct values → `<varies>`).
 
@@ -228,15 +230,7 @@ Determinism (final evidence, commit `d4b56670`):
 | Linux container (arm64, full-tree export), idle | 3/3 pass | 3/3 pass | 3/3 pass |
 | Linux container, 14× `yes` (load 9–12) | 1/2 pass | 1/2 pass | 0/2 pass |
 
-**Still not deterministic under load on Linux — recorded, not masked:**
-
-- `ACT_CMD.B2.CH7` (Fuel Main) history reads `{0, 1}` instead of `{0}`: the backend's first row of
-  that table is the sequencer's boot-time de-energized 1, handed over by elodin-db on subscribe,
-  even though the backend starts after the sequencer's initial publish and a republish. On macOS
-  and on idle Linux it never appears.
-- boards: the one-shot SELF_TEST results of some boards (22, 31, 42, 51, 61 seen) never reach the
-  backend, though the simulator starts a full subscription pass after the backend has subscribed.
-  The simulator sends each self-test once; the harness cannot make it resend.
+Under load on Linux two races remained. They are frozen as the bounded, named alternatives A1 and P12 above; everything else is exact. `CHAR_UNDER_LOAD=1` must be set by whoever starts the synthetic load (an idle run still requires every self-test).
 
 ## Mutation check
 
@@ -248,6 +242,7 @@ Each applied to the backend source, run, reverted (none committed):
 | `api-server.ts` `/api/feed-char/results` without a session: 409 → 410 | `http.txt` (three requests) |
 | `routes/config-profiles.ts` `readStateCsv`: swap the Idle/Armed columns | `csv.txt` (header and every row of all three CSVs) |
 | `gui-stream.ts` `envelopeWindowMs`: `2000 /` → `1000 /` (double the GUI rate), run under 1× load | `ws_streams.txt` T1 |
+| `server.ts`: drop every SELF_TEST row (`[0x60..0x6F]`), idle and under 1× load (boards) | `ws_streams.txt` P12 rule line: all not-received → (c) idle, (b) under load |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
