@@ -11,10 +11,15 @@
 
 set -euo pipefail
 
-LOCK_DIR="${DAQ_STACK_LOCK:-${TMPDIR:-/tmp}/daq-stack.lock}"
+# Default: inside the repository's common git dir, which every worktree of this clone shares.
+LOCK_DIR="${DAQ_STACK_LOCK:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/daq-stack.lock}"
 WAIT_S="${DAQ_STACK_LOCK_WAIT:-7200}"
 
 [ $# -gt 0 ] || { echo "usage: $0 <command> [args...]" >&2; exit 2; }
+
+# Re-entrant: a command already running under the lock (gate.sh → run.sh → an area's run.sh)
+# just runs.
+if [ "${DAQ_STACK_LOCK_HELD:-}" = "$LOCK_DIR" ]; then exec "$@"; fi
 
 deadline=$((SECONDS + WAIT_S))
 announced=0
@@ -36,5 +41,6 @@ done
 echo $$ > "$LOCK_DIR/pid"
 echo "$PWD: $*" > "$LOCK_DIR/what"
 trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+export DAQ_STACK_LOCK_HELD="$LOCK_DIR"
 
 "$@"
