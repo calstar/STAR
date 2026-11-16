@@ -210,7 +210,7 @@ constraints likewise wait "a configured interval" for telemetry before releasing
   `noteSubscriptionRejected`); an accepted subscription that delivers nothing is dead forever and
   the GUI shows no staleness. `PressureFeed` already does the right thing: it re-asks tables that
   have never delivered (`services/sequencer/PressureFeed.cpp:17-22, 80-114`) and refuses `Stale`
-  readings older than `kMaxAgeMs = 1000` (`PressureFeed.hpp:90`). The fix pattern exists in-tree.
+  readings older than `kMaxAgeMs = 1000` (`PressureFeed.hpp:89`). The fix pattern exists in-tree.
 - D-SLOT: the uint8 table id wrap (`(slot-1)*0x20+ch`) means a mis-slotted board can *feed* a
   live channel; staleness detection would not catch it (data keeps arriving). That one needs a
   load-time refusal, not a liveness check.
