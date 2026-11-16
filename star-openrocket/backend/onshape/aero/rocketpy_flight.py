@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -40,6 +40,7 @@ from ..geometry_store import GeometryStore
 from . import drag as drag_models
 from .axis import Axis
 from .drag_geometry import DEFAULT_FINISH, apply_ork_hints, from_core
+from .high_aoa import HighAoA, high_aoa_for_core
 from .stability import (
     MotorPlacement,
     aero_components,
@@ -145,6 +146,10 @@ class FlightDynamicsResult:
     drag_model: str = "stub"
     cd_curve: dict | None = None
     cd_breakdown: dict | None = None
+    #: When the rail lets go (s), and the margin against angle of attack at the CG of
+    #: that instant (``high_aoa``): the critical angle a crosswind must stay under.
+    out_of_rail_time: float | None = None
+    rail_exit_high_aoa: HighAoA | None = None
 
 
 def _generic_motor(motor: Motor):
@@ -501,6 +506,7 @@ def _sample(flight, env, elevation, our_margin_fn, launch_stable, geom,
         drag_model="stub" if drag_tables is None else drag_tables.model,
         cd_curve=drag_models.curve_at(drag_tables, _v_nu(env, elevation, 1.0) * _sound(env, elevation) * 2 * geom.radius),
         cd_breakdown=_breakdowns(drag_breakdown_fn, env, flight, elevation),
+        out_of_rail_time=t_rail,
     )
 
 
@@ -610,17 +616,23 @@ def simulate_flight_dynamics(
 
     burn = motor.burn_time
 
-    def our_margin(t: float, mach: float) -> float | None:
+    def cg_at(t: float) -> float | None:
+        """Whole-vehicle CG (axial frame) at flight time ``t``."""
         tm = min(max(t, 0.0), burn)
         m_motor = motor.get_total_mass(tm)
         total = mass_cad + m_motor
-        if total <= 0 or ref_diameter <= 0:
+        if total <= 0:
             return None
         cg_motor_axial = fore_axial + motor.get_cmx(tm)
-        cg_total = (cg_cad_axial * mass_cad + cg_motor_axial * m_motor) / total
+        return (cg_cad_axial * mass_cad + cg_motor_axial * m_motor) / total
+
+    def our_margin(t: float, mach: float) -> float | None:
+        cg_total = cg_at(t)
+        if cg_total is None or ref_diameter <= 0:
+            return None
         return (cp_axial_at_mach(core, mach) - cg_total) / ref_diameter
 
-    return run_flight(
+    result = run_flight(
         geom,
         motor,
         nozzle_position_from_nose=placed.aft_axial - x_fore,
@@ -637,3 +649,9 @@ def simulate_flight_dynamics(
         drag_breakdown_fn=breakdown_fn,
         our_margin_fn=our_margin,
     )
+    cg_rail = cg_at(result.out_of_rail_time or 0.0)
+    if cg_rail is None:
+        return result
+    t_rail = result.out_of_rail_time or 0.0
+    mach_rail = float(np.interp(t_rail, result.times, [m or 0.0 for m in result.mach]))
+    return replace(result, rail_exit_high_aoa=high_aoa_for_core(core, cg_rail, mach=mach_rail))

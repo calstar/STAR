@@ -34,6 +34,7 @@ import { computeFlightDynamics } from '../../api/client'
 import { FINISHES, type FlightParams } from '../../types/config'
 import type { FaceRef, FlightDynamicsResult, FlightDynamicsSample, MotorSelection } from '../../types'
 import { flightDynamicsRequest } from '../../lib/designRequests'
+import { criticalTone, formatCritical } from './HighAoaBlock'
 import { useUnits } from '../../lib/units/unitsContext'
 import type { Kind } from '../../lib/units/quantities'
 import type { UiConfig } from '../../recovery/types/schema'
@@ -348,6 +349,8 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
             </p>
           )}
 
+          {result.railExit && <RailExitBanner result={result} />}
+
           {/* Summary tiles */}
           <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-8">
             <Tile label="Apogee" value={q(result.apogee, 'altitude')} sub={`at ${result.apogeeTime.toFixed(1)} s · ${result.dragModel === 'stub' ? 'stub drag' : `${result.dragModel} drag`}`} />
@@ -452,6 +455,8 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
             </div>
           </div>
 
+          {result.railExit && <AoaMarginPanel result={result} />}
+
           {result.cdCurve && <DragPanel result={result} />}
 
           <div className="mt-3 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 px-3 py-2 text-2xs text-[var(--color-text-muted)]">
@@ -467,6 +472,60 @@ export function FlightDynamicsTab({ modelId, motorSel, outerFaces, finFaces, nFi
         </>
       )}
       </div>
+    </div>
+  )
+}
+
+/** The rail exit against the critical angle of attack (aero/high_aoa.py, backend). */
+function RailExitBanner({ result }: { result: FlightDynamicsResult }) {
+  const { q } = useUnits()
+  const r = result.railExit!
+  const past = r.pastCritical === true
+  const tone = past
+    ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+    : 'border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 text-[var(--color-text-secondary)]'
+  return (
+    <p className={`mb-3 rounded border px-3 py-2 text-xs ${tone}`}>
+      {past && <strong>Leaves the rail past its critical angle of attack. </strong>}
+      Off the rail at {q(r.velocity, 'speed')}
+      {r.angleOfAttack != null && <> and {r.angleOfAttack.toFixed(1)}° angle of attack in this wind</>}; at that
+      instant's CG the critical angle is{' '}
+      <span className={`font-semibold ${criticalTone(r.criticalAoaDeg)}`}>{formatCritical(r.criticalAoaDeg)}</span>
+      {r.maxCrosswind != null && r.criticalAoaDeg !== 0 && (
+        <>, so a crosswind above {q(r.maxCrosswind, 'speed')} tips it past</>
+      )}
+      . The 6-DOF flies linear lift and cannot show this departure itself.
+    </p>
+  )
+}
+
+/** Static margin against angle of attack at the rail-exit CG, with the exit angle marked. */
+function AoaMarginPanel({ result }: { result: FlightDynamicsResult }) {
+  const r = result.railExit!
+  return (
+    <div className="mt-3">
+      <Panel
+        heightClass="h-[320px]"
+        title="Static margin vs angle of attack (rail exit)"
+        hint="With the body's crossflow lift (OpenRocket/Galejs), which the zero-angle margin and the 6-DOF leave out. Where the line crosses zero the CP has reached the CG: the critical angle."
+      >
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={r.highAoa.curve} margin={{ top: 24, right: 16, bottom: 24, left: 16 }}>
+            <CartesianGrid stroke={GRID.stroke} strokeDasharray={GRID.strokeDasharray} />
+            <XAxis dataKey="aoa" type="number" domain={[0, 'dataMax']} stroke={AXIS.stroke} tick={{ fontSize: TICK_FONT, fill: AXIS.stroke }} tickLine={false} label={axisLabelX('Angle of attack (°)')} />
+            <YAxis stroke={FD.marginOurs} tick={{ fontSize: TICK_FONT, fill: FD.marginOurs }} tickLine={false} width={56} tickFormatter={(v: number) => v.toFixed(1)} label={axisLabelY('Margin (cal)')} />
+            <Tooltip {...tip} formatter={(v: number) => [`${v.toFixed(2)} cal`, 'margin']} labelFormatter={(a: number) => `${a}°`} />
+            <ReferenceLine y={0} stroke={AXIS.stroke} strokeOpacity={0.6} />
+            {r.angleOfAttack != null && (
+              <ReferenceLine x={r.angleOfAttack} stroke={REFERENCE} strokeDasharray="4 3" label={{ value: 'off rail', fill: REFERENCE, fontSize: TICK_FONT, position: 'top' }} />
+            )}
+            {r.criticalAoaDeg != null && r.criticalAoaDeg > 0 && r.criticalAoaDeg <= 30 && (
+              <ReferenceLine x={r.criticalAoaDeg} stroke="#f87171" strokeDasharray="4 3" label={{ value: 'critical', fill: '#f87171', fontSize: TICK_FONT, position: 'insideTopRight' }} />
+            )}
+            <Line type="monotone" dataKey="margin" name="margin" stroke={FD.marginOurs} dot={false} strokeWidth={1.75} isAnimationActive={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </Panel>
     </div>
   )
 }

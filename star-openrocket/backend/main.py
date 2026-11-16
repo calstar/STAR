@@ -19,6 +19,7 @@ exposed to a network without authentication in front of it.
 
 from __future__ import annotations
 
+import math
 import json
 import threading
 import uuid
@@ -60,6 +61,7 @@ from .onshape.aero.fins import (
     extract_fin_planform,
     planform_outline_3d,
 )
+from .onshape.aero.high_aoa import to_json as high_aoa_json
 from .onshape.aero.outer_surface import detect_outer_surface
 from .onshape.aero.profile import build_profile
 from .onshape.aero.flight import simulate_flight
@@ -501,6 +503,7 @@ def stability(model_id: str, request: StabilityRequest):
             "symmetric": result.fin_symmetric,
         },
         "motor": motor_block,
+        "highAoa": high_aoa_json(result.high_aoa),
     }
 
 
@@ -841,6 +844,29 @@ def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
         "dragModel": result.drag_model,
         "cdCurve": result.cd_curve,
         "cdBreakdown": result.cd_breakdown,
+        "railExit": _rail_exit_block(result),
+    }
+
+
+def _rail_exit_block(result) -> dict | None:
+    """The rail-exit check: the angle the flown wind gave as the rail let go, against the
+    critical angle at that instant's CG, and the largest crosswind this exit speed takes."""
+    h = result.rail_exit_high_aoa
+    if h is None:
+        return None
+    crit = h.critical_aoa_deg
+    v = result.out_of_rail_velocity
+    aoa = result.out_of_rail_angle_of_attack
+    return {
+        "time": result.out_of_rail_time,
+        "velocity": v,
+        "angleOfAttack": aoa,
+        "criticalAoaDeg": crit,
+        # V tan(a_crit): the crosswind that puts the rocket at its critical angle as it
+        # leaves the rail. None when it stays stable to 90 deg.
+        "maxCrosswind": None if crit is None else v * math.tan(math.radians(crit)),
+        "pastCritical": None if (crit is None or aoa is None) else aoa >= crit,
+        "highAoa": high_aoa_json(h),
     }
 
 

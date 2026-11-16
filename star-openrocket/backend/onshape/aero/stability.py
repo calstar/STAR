@@ -33,6 +33,7 @@ from .fins import (
     is_fin_face,
     planform_outline_3d,
 )
+from .high_aoa import HighAoA, high_aoa_for_core
 from .outer_surface import detect_axis_from_cylinders
 from .profile import build_profile
 
@@ -217,6 +218,9 @@ class StabilityResult:
     #: Whether the detected fins are azimuthally symmetric. False (e.g. a fin removed) means
     #: the true CP sits off-axis and this axial model under-states the instability -- warn.
     fin_symmetric: bool = True
+    #: Margin against angle of attack with the body lift included, and the critical
+    #: angle where it reaches zero (``high_aoa``). None without a mass or a CP.
+    high_aoa: "HighAoA | None" = None
 
     @property
     def cp_from_nose(self) -> float:
@@ -438,6 +442,7 @@ def compute_stability(
     static_margin = None
     if mass > 0 and ref_diameter > 0 and abs(cna_total) > 1e-12:
         static_margin = (cp_axial - cg_axial) / ref_diameter
+    at_aoa = high_aoa_for_core(core, cg_axial) if static_margin is not None else None
 
     return StabilityResult(
         cg_world=cg_world.tolist(),
@@ -470,6 +475,7 @@ def compute_stability(
         motor_cg_world=motor_cg_world_out,
         axis_direction=axis.direction.tolist(),
         fin_symmetric=fins_symmetric(fin_pf.azimuths) if fin_pf is not None else True,
+        high_aoa=at_aoa,
     )
 
 

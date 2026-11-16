@@ -202,6 +202,31 @@ LE4 SD that reads 0.31-0.33 coasting where the pitch-damping ratio is ~0.08. The
 formula itself is right; use the Flight Dynamics tab's damping, or C2 with the
 arms from the CG.
 
+## Stability at angle of attack
+
+The static margin and the pitch-damping ratio are both slopes at zero angle of
+attack, where Barrowman gives a straight tube no lift. At an angle the tube sits in a
+crossflow and is pushed sideways like a cylinder in a wind: a force growing as
+sin²α, centred on the body's side area, which on a long rocket is well ahead of the
+CG. Fin lift only grows as α. Past the **critical angle of attack** the body wins and
+the CP crosses the CG; a rocket leaving the rail slowly in a crosswind past that
+angle goes sideways at once, whatever its zero-angle margin says. Balancing the two
+moments about the CG,
+
+    sin(α_crit) ≈ CNα · SM · d / [1.1 · (A_side / A_ref) · (x_cg − x_side)]
+
+-- fins' restoring power over the body's sail power; dynamic pressure cancels, so
+speed only sets the angle a crosswind gives, atan(wind / V).
+
+`backend/onshape/aero/high_aoa.py` computes it with OpenRocket 24.12's own terms
+(Galejs body lift, `BODY_LIFT_K = 1.1`, at the planform centre; fins held at their
+20° stall). The stability panel shows the critical angle, the margin at 5/10/15°, and
+the largest crosswind at a few rail-exit speeds; the Flight Dynamics tab checks the
+flown rail exit (its CG and Mach) against it and plots margin against angle. The
+6-DOF itself flies linear lift and cannot show this departure: read the rail-exit
+check. Excalibur (L/D 19, one-caliber fins) reads 6.9°, so a 3 m/s crosswind at a
+25 m/s rail exit tips it past.
+
 ## Drag
 
 The 6-DOF flies a named drag model (`backend/onshape/aero/drag.py`), chosen per

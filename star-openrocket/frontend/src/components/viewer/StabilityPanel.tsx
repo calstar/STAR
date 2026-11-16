@@ -14,6 +14,7 @@ import { useState } from 'react'
 import type { FaceRef, MotorSelection, MotorSummary, StabilityResult } from '../../types'
 import { useUnits } from '../../lib/units/unitsContext'
 import type { Kind } from '../../lib/units/quantities'
+import { HighAoaBlock } from './HighAoaBlock'
 import { MotorPicker } from './MotorPicker'
 import { Row } from './Row'
 
@@ -507,6 +508,7 @@ export function StabilityPanel({
               )
             })()}
             <Row label="CNₐ (total)" value={result.cna.toFixed(3)} small />
+            {result.highAoa && <HighAoaBlock h={result.highAoa} liveCgFromNose={liveCgFromNose ?? null} />}
             {result.fins.count > 0 && !result.fins.symmetric && (
               <p className="mt-2 border-t border-[var(--color-border)] pt-2 text-xs text-amber-300">
                 ⚠ Fins are not azimuthally symmetric — the true CP sits off the axis and this

@@ -331,6 +331,24 @@ export interface FinGuess {
 }
 
 /** CG, CP and static margin from POST .../stability. All backend-computed. */
+/** Static margin against angle of attack with the body's crossflow lift (aero/high_aoa.py). */
+export interface HighAoaResult {
+  /** Where the CP reaches the CG, deg. 0 = unstable at zero angle; null = stable to 90°. */
+  criticalAoaDeg: number | null
+  cgFromNose: number
+  /** Side-view area of the body (m²), its ratio to the reference area, and its centroid. */
+  sideArea: number
+  sideAreaRatio: number
+  sideCentroidFromNose: number
+  /** The small-angle balance (m): fins + body restoring per rad, crossflow overturning per rad². */
+  restoringPerRad: number
+  overturningPerRad2: number
+  curve: { aoa: number; cpFromNose: number; margin: number }[]
+  /** V·tan(critical angle) at a few rail-exit speeds, m/s. */
+  maxCrosswind: { railSpeed: number; maxCrosswind: number }[]
+  model: string
+}
+
 export interface StabilityResult {
   cg: { world: [number, number, number]; fromNose: number }
   cp: { world: [number, number, number]; fromNose: number }
@@ -345,6 +363,8 @@ export interface StabilityResult {
   fins: FinData
   /** Present only when a motor was included in the request. */
   motor?: MotorResult | null
+  /** Margin against angle of attack at this CG; null without a mass. */
+  highAoa?: HighAoaResult | null
 }
 
 /** One time step of the ascent sim. Masses kg, lengths m, times s, margin cal. */
@@ -447,6 +467,18 @@ export interface FlightDynamicsResult {
   dragModel: string
   cdCurve: { mach: number[]; powerOff: number[]; powerOn: number[] } | null
   cdBreakdown: Record<string, { mach: number; altitude: number; cd: number; terms: Record<string, number> }> | null
+  /** The rail exit against the critical angle of attack at that instant's CG and Mach. */
+  railExit: {
+    time: number | null
+    velocity: number
+    /** The angle the flown wind gave as the rail let go, deg. */
+    angleOfAttack: number | null
+    criticalAoaDeg: number | null
+    /** The crosswind that puts the rocket at its critical angle at this exit speed, m/s. */
+    maxCrosswind: number | null
+    pastCritical: boolean | null
+    highAoa: HighAoaResult
+  } | null
 }
 
 /** Launch conditions for the 6-DOF flight, on top of the geometry/motor request. */
