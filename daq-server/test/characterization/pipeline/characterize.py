@@ -285,6 +285,83 @@ def order_cross_path(lines):
     return out
 
 
+# A1. One named alternative: the Fuel Main commanded series may also carry the sequencer's
+# boot-time de-energized 1 (ActuatorCommander publishInitialState) -- elodin-db hands a late
+# subscriber that row on a loaded Linux box (defect). Exactly {0} or {0, 1}; anything else prints
+# as observed and fails.
+CH7_KEY = "ACT_CMD.B2.CH7.actuator_state_commanded"
+CH7_ALT = (
+    "{0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, "
+    "replayed by elodin-db on subscribe (defect)"
+)
+
+
+def ch7_render(key, vals):
+    """vals: sorted JSON-encoded values. Returns the alternative text, or None."""
+    if key == CH7_KEY and vals in (["0"], ["0", "1"]):
+        return CH7_ALT
+    return None
+
+
+def selftest_section(steps, ctx):
+    """P12. Self-test results, one line per board the simulator self-tests.
+
+    Each board's line is written as its exact expected result OR not-received: the result is a
+    one-shot UDP packet (the simulator's skip-startup burst), and on a loaded Linux box some never
+    reach the backend (defect). The golden is the same either way; the rule line below fails when
+      (a) any received result differs from the expected one (sensor set or a non-pass value),
+      (b) more than half the boards are not-received, or
+      (c) the run is quiet (unloaded) and ANY board is not-received.
+    `under_load` comes from run.sh (CHAR_UNDER_LOAD, set by whoever starts the synthetic load).
+    """
+    expected = ctx.get("selftest_expected", {})
+    seen = defaultdict(dict)
+    for _, frames in steps:
+        for fs in frames.values():
+            for m in fs:
+                if m["type"] == "sensor_update":
+                    e, c = m["payload"]["entity"], m["payload"]["component"]
+                    if e.startswith("SELF_TEST.BOARD_"):
+                        seen[e[len("SELF_TEST.BOARD_") :]][c] = m["payload"]["value"]
+                elif m["type"] == "historical_data":
+                    for k, series in m["payload"].items():
+                        if k.startswith("SELF_TEST.BOARD_"):
+                            ent, comp = k.rsplit(".", 1)
+                            for v in series.get("values", []):
+                                seen[ent[len("SELF_TEST.BOARD_") :]][comp] = v
+    out = [
+        "## self-test (P12): per board, the exact expected result | not-received (one-shot UDP"
+        " self-test, defect)"
+    ]
+    problems, missing = [], []
+    for board in sorted(expected, key=int):
+        exp = expected[board]
+        want = sorted(f"sensor_{i}" for i in exp["sensors"])
+        out.append(
+            f"board {board} ({exp['type']}): {', '.join(want)} all 1"
+            " | not-received (one-shot UDP self-test, defect)"
+        )
+        got = seen.pop(board, None)
+        if got is None:
+            missing.append(board)
+        elif sorted(got) != want or any(v != 1 for v in got.values()):
+            problems.append(f"board {board} received {dumps(got)}")
+    for board, got in sorted(seen.items()):
+        problems.append(f"board {board} (not expected) received {dumps(got)}")
+    under_load = bool(ctx.get("under_load"))
+    if not under_load and missing:
+        problems.append(f"quiet run, not-received: {', '.join(missing)}")
+    if 2 * len(missing) > len(expected):
+        problems.append(f"more than half not-received: {', '.join(missing)}")
+    out.append(
+        "self-test rule (a) exact if received, (b) at most half not-received, (c) all"
+        " received when quiet: "
+        + ("ok" if not problems else "VIOLATED: " + "; ".join(problems))
+    )
+    out.append("")
+    return out
+
+
 def main():
     cap_path, ctx_path, out_dir = sys.argv[1:4]
     cap = json.load(open(cap_path))
@@ -315,7 +392,15 @@ def main():
         flaps |= flap_ids(seq)
     for client, (sname, fs) in first_frames.items():
         hs.append(f"## client {client} (connected in step {sname})")
+        marked = False
         for m in replay_by_board(handshake_frames(fs)):
+            if handshake_phase(m) == HANDSHAKE_PHASES.index("selftest"):
+                if not marked:
+                    hs.append(
+                        "<self-test replay: see ws_streams.txt self-test section (P12)>"
+                    )
+                    marked = True
+                continue
             if is_board_health(m):
                 if id(m) not in flaps:
                     health.add(dumps(n.value(m["payload"])))
@@ -393,7 +478,13 @@ def main():
                         periodic_n[t] += 1
     out = ["## sensor_update (client A, whole session; P7 values)"]
     for (ent, comp), s in sorted(sens.items()):
+        if ent.startswith("SELF_TEST."):
+            continue  # P12
         vals = sorted(s["vals"])
+        alt = ch7_render(f"{ent}.{comp}", vals)
+        if alt:
+            out.append(f"{ent}.{comp}  value={alt}")
+            continue
         v = (
             vals[0]
             if len(vals) == 1
@@ -401,6 +492,7 @@ def main():
         )
         out.append(f"{ent}.{comp}  value={v}")
     out.append("")
+    out.extend(selftest_section(steps, ctx))
     out.append("## timing bounds (from config, not observed; README T1)")
     out.append(envelope_check(steps, ctx.get("gui_points_per_second", 4)))
     out.append("")
@@ -417,9 +509,14 @@ def main():
         for k, v in keys.items():
             acc.setdefault(k, set()).update(v)
     for (sname, client), keys in by_req.items():
-        out.append(f"# {sname} client {client}: {len(keys)} series")
+        keys = {k: v for k, v in keys.items() if not k.startswith("SELF_TEST.")}  # P12
+        out.append(f"# {sname} client {client}: {len(keys)} series (self-test: P12)")
         for k in sorted(keys):
             vals = sorted(keys[k])
+            alt = ch7_render(k, vals)
+            if alt:
+                out.append(f"  {k} {alt}")
+                continue
             # P7 applied to history: a stream with more than four values is "<varies>".
             shown = "{" + ", ".join(vals) + "}" if len(vals) <= 4 else "<varies>"
             out.append(f"  {k} {shown}")
