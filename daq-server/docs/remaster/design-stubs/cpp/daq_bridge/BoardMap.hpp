@@ -1,8 +1,10 @@
-// DESIGN STUB (DESIGN-WP10 §4.3, move-only step 4) — not compiled. Becomes
+// DESIGN STUB (DESIGN-WP10 §4.3, commit 1) — not compiled. Becomes
 // diablo_server/daq_bridge/BoardMap.{hpp,cpp}, linked into daq_bridge and char_cfg_daq_bridge only.
 // Bodies: daq_bridge_main.cpp 139-305, `static` removed (external linkage, STYLE-S27 lists it),
 // default arguments moved to this declaration. Lands in ONE commit with the harness re-pointing
 // (char_config_services.cpp includes this header instead of the main; D18 extension, §7.3).
+// Lines 113-137 below are verbatim, comments included (STYLE-S38); this header comment and the
+// declaration doc lines are the only new comment lines (STYLE-S36).
 //
 // Board identity for the bridge: the [boards.*] map read from config, the loopback-octet fallback
 // index, and source IP → configured board resolution.
@@ -19,7 +21,8 @@
 //             records the exception); `BoardConfig`/`ServerHeartbeatConfig` coexist with
 //             fsw::config's types only because nothing here says `using namespace fsw::config`.
 // Contract:   config/golden/cpp/daq_bridge/*, config/golden/bin/daq_bridge/* (start-up through
-//             `[System] Mode`), pipeline routing; mutation in §7.3 (`octet >= 2` → `>= 3`).
+//             `[System] Mode`), pipeline routing; mutation in §6.1 commit 1
+//             (`octet >= 2` → `>= 3`).
 #pragma once
 
 #include <cstdint>
@@ -29,25 +32,30 @@
 #include "config/LoadActiveBoards.hpp"
 #include "time/BoardClockSync.hpp"
 
+// Board type enum (matches DiabloAvionics / config [boards.*])
 using BoardType = fsw::config::ActiveBoardKind;
 
 struct BoardConfig {
     BoardType type;
     std::string ip;
-    int active_channels;  // length of active_connectors; log-only here
+    /** How many channels this board is told to sample — the length of its
+     *  active_connectors list, which is the only statement of that. Log-only here. */
+    int active_channels;
     bool enabled;
-    int board_id;
+    int board_id;  // Added board_id
 };
 
 struct ServerHeartbeatConfig {
     uint32_t interval_ms = 1000;
     uint16_t broadcast_port = 5005;
     std::string broadcast_ip = "255.255.255.255";
-    bool send_from_daq_bridge =
-        true;  // false when heartbeat_service is used (C6-3: fixed at start)
+    bool send_from_daq_bridge = true;  // false when heartbeat_service is used
 };
 
-/** Keyed by the host octet of each board's config IP (the simulator binds 127.0.0.<octet>). */
+// Loopback fallback routing (integration test only): the simulator binds 127.0.0.<host-octet> per
+// board, where host-octet is the last octet of that board's config IP, so the bridge resolves those
+// packets by that octet — identity-based and immune to how the TOML parser happens to order
+// [boards] (toml++ sorts alphabetically; the Python sim iterates file order). Keyed by host octet.
 using BoardByOctet = std::map<int, BoardConfig>;
 
 /** Last octet of a dotted IPv4 string, or -1. */

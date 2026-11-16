@@ -124,12 +124,12 @@ now across TUs.
 
 `SequencerService.hpp` is not edited (member order, construction and destruction order unchanged).
 
-| TU | source lines | size after move-only |
+| TU | source lines | size after move-only (§6.3) |
 |---|---|---|
-| `SequencerService.cpp` (core) | 1-25, 55-137, 569-993, 1170-1243, 1295 | 612 |
-| `SequencerService_config.cpp` | 139-567 | 457 |
-| `SequencerService_controller_notify.cpp` | 35-39, 995-1114 | 154 |
-| `SequencerService_elodin.cpp` | 27-33, 41-53, 1116-1168, 1245-1293 | 153 |
+| `SequencerService.cpp` (core) | 1-25, 55-137, 569-993, 1170-1243, 1295 | 608 |
+| `SequencerService_config.cpp` | 139-567 | 455 |
+| `SequencerService_controller_notify.cpp` | 35-39, 995-1114 | 151 |
+| `SequencerService_elodin.cpp` | 27-33, 41-53, 1116-1168, 1245-1293 | 148 |
 
 File-statics have exactly one using TU, so no internal header: `now_ns` (users 1164, 1249),
 `VTABLE_*`, the two message aliases → `_elodin`; `kControllerConnectTimeoutMs` →
@@ -154,10 +154,10 @@ positions, `publishCommandedState`, `publishInitialState`.
 (header 202-206). The `elodin_` pointer is written by `setElodinClient` while loop/stage threads
 read it: an existing unsynchronised write, reported, not fixed.
 
-| TU | source lines | size after move-only |
+| TU | source lines | size after move-only (§6.3) |
 |---|---|---|
-| `ActuatorCommander.cpp` (core) | 1-45, 52-55, 259-829 | 622 |
-| `ActuatorCommander_load.cpp` | 46-50 (`trimVal`), 57-257 | 236 |
+| `ActuatorCommander.cpp` (core) | 1-45, 52-55, 259-829 | 620 |
+| `ActuatorCommander_load.cpp` | 46-50 (`trimVal`), 57-257 | 233 |
 
 `ActuatorCommander.hpp` is not edited (`char_ac_private.cpp` reads its privates, §7.2). `trimVal`
 is used only by `load`; `toLower` only by core (268, 692, 726); `actuator_elodin_low_byte` only by
@@ -174,19 +174,21 @@ using namespace vtable::builder;` (35-36), namespaces; 41-62 PWM wire format and
 PWM senders (`sendActuationPWM` 509); 532-752 `controllerLoop`; 754-915 subscriber; 917-1107
 `static send_msg<T>` (921-927), `registerControllerTables`, `write*ToDB`; 1109-1160 thrust curve.
 
-| TU | source lines | size after move-only |
+| TU | source lines | size after move-only (§6.3) |
 |---|---|---|
-| `ControllerService.cpp` (core) | 1-39, 64-381, 532-752, 1109-1160 | 633 |
-| `ControllerService_pwm.cpp` | 13-39 (include block), 41-62, 383-530, 1159-1160 | 202 |
-| `ControllerService_elodin.cpp` | 13-39 (include block), 754-1107 (incl. `send_msg`), 1159-1160 | 385 |
+| `ControllerService.cpp` (core) | 1-39, 64-381, 532-752, 1109-1160 | 630 |
+| `ControllerService_pwm.cpp` | 13-39 (include block), 41-62, 383-530, 1159-1160 | 199 |
+| `ControllerService_elodin.cpp` | 13-39 (include block), 754-1107 (incl. `send_msg`), 1159-1160 | 383 |
 
 All three go into `fsw_daq_lib` (`lib/CMakeLists.txt` `FSW_SOURCES`). The header is unchanged in
 move-only; cleanup's dead-code commit is WP10's one header edit (§6.2). `interpolateThrustCurve`
 and every double-precision control step stay in core with their callers (`setFireActive`,
 `controllerLoop`), so inlining and FMA contraction see the same code (D22); `sendActuationPWM` is
-clamp-and-cast, nothing fusable. The two `using namespace` lines are copied into both core and
-`_elodin` in move-only (name lookup unchanged) and dropped from core in cleanup. If WP3 has
-replaced `send_msg` with `elodin/SendMsg.hpp`, the include moves instead of the template.
+clamp-and-cast, nothing fusable. The two `using namespace` lines (35-36) are copied, with the rest
+of 13-39, into core, `_elodin` and `_pwm` in move-only (name lookup unchanged); cleanup removes
+them from every TU that does not need them (core and `_pwm`; only `registerControllerTables`,
+929-1051, in `_elodin`, uses `vtable`/`vtable::builder` names). If WP3 has replaced `send_msg`
+with `elodin/SendMsg.hpp`, the include moves instead of the template.
 
 Threads entering the new TUs: `controller_thread_` → `sendActuationPWM` (700) and `write*ToDB`
 (728-731); connection threads → `setFireActive` → `sendActuationPWM` (329 open, 341 close);
@@ -226,17 +228,21 @@ freezing it and any shared registration helper belong to a future D-SLOT/D-SUB f
 | `daq_bridge/BackendLogForwarder.hpp` | 49-90 verbatim, `#pragma once`, its includes (`<arpa/inet.h>`, `<netinet/in.h>`, `<sys/socket.h>`, `<unistd.h>`, `<cstring>`, `<cstdint>`, `<string>`, `<vector>`); global namespace; header-only (splitting it would be an edit) | ~55 | ~55 |
 | `daq_bridge/BoardMap.hpp` | 113-137 types; declarations of the five functions, `load_board_map_from_config`'s default arguments here; includes `<cstdint>`, `<map>`, `<string>`, `config/LoadActiveBoards.hpp`, `time/BoardClockSync.hpp` | ~60 | ~63 |
 | `daq_bridge/BoardMap.cpp` | 139-305 bodies, `static` removed, defaults removed from the definition; includes `<cstdlib>`, `<fstream>`, `<iostream>`, `config/Config.hpp`, `fsw/BoardTypeWire.hpp`, `"BoardMap.hpp"` | ~180 | ~220 |
-| `daq_bridge/ElodinPublish.{hpp,cpp}` (cleanup) | `publish_self_tests` (816-883), `publish_raw_batch` (885-989) | — | ~45 / ~195 |
+| `daq_bridge/ElodinPublish.{hpp,cpp}` (cleanup) | `publish_self_tests` (816-883), `publish_raw_batch` (890-989; 885-888 stay in `main`) | — | ~45 / ~195 |
 
 Global `BoardConfig`/`ServerHeartbeatConfig` coexist with `fsw::config`'s (`Config.hpp:35, 222`)
 only because nothing here says `using namespace fsw::config`; keep it so, and no `daq_bridge`
 namespace (it would need a second harness edit). Cleanup extractions (one call site each, D43(3)):
 `print_board_routing_table` (383-418) into `BoardMap.cpp`; `publish_self_tests`,
-`publish_raw_batch` into `ElodinPublish.cpp`. The guards stay at the call sites; every local is
-passed by reference (`elodin_client`, `publishing`, `effective_cfg`, `board_map`, `discovery`,
-`source_ip`, `receive_timestamp_ns`, `clock_sync`, counters); statement order, `begin_batch` /
-`flush_batch` / drain and counter increments exactly as today. Nothing else in `main` moves. Stub
-declarations: `design-stubs/cpp/daq_bridge/{BoardMap,BackendLogForwarder,ElodinPublish}.hpp`.
+`publish_raw_batch` into `ElodinPublish.cpp`. The guards stay at the call sites: 885-888 (the
+banner, `bool publishing = …` and its `begin_batch`) stay in `main`, so `publish_raw_batch` is
+890-989 and takes `publishing` as a parameter (by value). Every other local is passed by reference
+(`elodin_client`, `effective_cfg`, `board_map`, `discovery`, `source_ip`, `receive_timestamp_ns`,
+`clock_sync`, counters); statement order, `begin_batch` / `flush_batch` / drain and counter
+increments exactly as today (the self-test path increments `elodin_publish_count` on a good flush
+and nothing on a failed one, 877-878; only the raw path counts `elodin_drop_count`, 983). Nothing
+else in `main` moves. Stub declarations:
+`design-stubs/cpp/daq_bridge/{BoardMap,BackendLogForwarder,ElodinPublish}.hpp`.
 
 ---
 
@@ -255,18 +261,23 @@ Move-only renames nothing; cleanup's only new identifiers are `print_board_routi
 
 1. Cut whole top-level definitions with their leading comment blocks and section banners; paste
    them in the same relative order; open and close the same namespace.
-2. Copy the source file's **entire include block** verbatim into each new TU, pruning nothing
-   (ControllerService: lines 13-39, the two `using` lines included). File-statics move to their
-   one user (§1.4, §2).
+2. Class TUs (`SequencerService_*`, `ActuatorCommander_load`, `ControllerService_*`): copy the
+   source file's **entire include block** verbatim into each new TU, pruning nothing
+   (ControllerService: lines 13-39, the two `using` lines included). `BoardMap.cpp` and the two
+   new daq_bridge headers take §4.3's include lists instead. File-statics move to their one user
+   (§1.4, §2).
 3. `SequencerService.hpp`, `ActuatorCommander.hpp`, `ControllerService.hpp` untouched. No comment
-   line added or edited (STYLE-S38), except the two new daq_bridge headers' STYLE-S36 header
-   comment and declaration doc lines, as the stubs give them.
+   line added or edited (STYLE-S38): moved comments are verbatim, including 113-137's in
+   `BoardMap.hpp`. The only additions are the two new daq_bridge headers' STYLE-S36 header
+   comment and declaration doc lines, as the stubs give them. Same-class TUs and definition-only
+   `.cpp` files (`_config`, `_controller_notify`, `_elodin`, `_pwm`, `_load`, `BoardMap.cpp`) get
+   no new module header comment (S36 asks it of new headers).
 4. `export PATH=/Users/roshantaneja/Downloads/STAR/.git/remaster-tools/fmtvenv/bin:$PATH;
    clang-format -i <new and edited files only>` (19.1.7).
 5. Review with `git diff -M --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change
-   HEAD~1`: every non-dimmed line is an include, a namespace line, a removed `static` or default
-   argument (daq_bridge only), the new headers' S36/doc comments, CMake, or clang-format's include
-   regrouping/rewrap (D43(6)).
+   HEAD~1`: every non-dimmed line is an include, `#pragma once` or an include guard, a namespace
+   line, a removed `static` or default argument (daq_bridge only), the new headers' prototype
+   lines and S36/doc comments, CMake, or clang-format's include regrouping/rewrap (D43(6)).
 6. String literals (STYLE-S15): `grep -oh '"[^"]*"' <files> | sort` over the touched sources is
    identical before and after the commit, except the include paths of copied include blocks.
 
@@ -350,8 +361,13 @@ subsets only, D23/D36). Build and warnings after every commit; the rest on the i
 
 - [ ] Clean build; warnings vs `test/characterization/baseline_warnings.txt` unchanged (D4).
 - [ ] `ctest -R 'actuator_delays|script_positions|ball_valve_commander|fire_lifecycle|hold_rules|script_states|script_runtime|sequencer_concurrency|abort_ordering|sequencer_elodin|controller_pwm_roles|robust_ddp|characterization_config_cpp'`.
-- [ ] `CHAR_AREAS=sequencer,config,lifecycle,packets,elodin,pipeline` (iterate with
-      `CHAR_SEQ_ONLY=<regex>`).
+- [ ] Characterization, in subsets (iterate with `CHAR_SEQ_ONLY=<regex>`):
+      ```
+      CHAR_AREAS=sequencer,packets,config,lifecycle bash test/characterization/with_stack_lock.sh \
+        bash test/characterization/run.sh                    # from daq-server/
+      CHAR_AREAS=elodin,pipeline bash test/characterization/with_stack_lock.sh \
+        bash test/characterization/run.sh
+      ```
 - [ ] `bash daq-server/test/characterization/linux/linux_gate.sh --areas sequencer,config,lifecycle,packets,elodin,pipeline <tip>`.
 - [ ] **CI run, required** (D34: any WP touching the sequencer). `actuator_delays`,
       `script_positions`, `script_runtime` and `t7_integration` (which links `fsw_daq_lib`, changed
@@ -382,8 +398,9 @@ baseline: the pre-WP tip, as for the move-only item). Content:
       (read at cpp 322, 558; §9).
 - [ ] **Include pruning** in every new and touched TU, to what it uses; a clean build is the
       proof.
-- [ ] **`using namespace vtable; using namespace vtable::builder;`** out of core
-      `ControllerService.cpp` (they stay in `_elodin`).
+- [ ] **`using namespace vtable; using namespace vtable::builder;`** out of every TU that does
+      not need them: core `ControllerService.cpp` and `ControllerService_pwm.cpp` (they stay in
+      `_elodin`).
 - [ ] **`// Kept:` tags** at every frozen-defect site, long form (STYLE-S12, D46):
       `// Kept: <id> (D17) — <class>/<phase>: <rule>; loud half: <surface>`. Proposed text,
       settled in the cleanup review; `grep -rn 'Kept: C4-\|Kept: C1-\|Kept: C6-'` is the fix
@@ -405,6 +422,14 @@ baseline: the pre-WP tip, as for the move-only item). Content:
       `// Lock contract: acquires config_mutex_ and releases it before pressure_feed_.read and
       elodin_.publish. Callers must not hold config_mutex_, except doTransitionTo's refused-state
       block (Kept: C4-1 (D17)).` Re-home the "Elodin publishing" banner (995-997) above it.
+- [ ] **Stale comments (STYLE-S38)**, comments only, each now naming a moved line or file:
+      `test/characterization/config/char_config_services.cpp:1-4` (daq_bridge's branch now
+      includes `BoardMap.hpp`, not a main) and `:100` (`BoardMap.cpp`'s
+      `load_board_map_from_config`); `test/characterization/packets/README.md:37` and
+      `test/characterization/config/README.md:40` (the BoardMap functions are no longer
+      file-static helpers of a main); `lib/include/control/ScriptStates.hpp:60` (cites
+      `SequencerService.cpp:384-445`, which moves to `SequencerService_config.cpp`). The harness
+      comment edits are allowed under D18 (goldens byte-identical; the orchestrator reviews).
 - [ ] **daq_bridge extractions** (§4.3): `print_board_routing_table`, `publish_self_tests`,
       `publish_raw_batch`; `ElodinPublish.cpp` added to `daq_bridge/CMakeLists.txt`. The harness
       does not call them.
@@ -420,20 +445,21 @@ WP3's `table_id_for` (none required; candidates in history).
 
 ### 6.3 Sizes (STYLE-S33: C++ TU ≤ 700; no waiver)
 
-Move-only figures are range arithmetic on the baseline (copied include block + moved ranges +
-namespace lines, ±3 for clang-format); cleanup figures are estimates.
+Move-only figures are bare range sums on the baseline (copied include block + moved ranges +
+namespace lines); the blank separators between pasted ranges add ±5. Cleanup figures are
+estimates.
 
 | file | today | after commit 1 | after a | after b | after cleanup |
 |---|---|---|---|---|---|
-| `SequencerService.cpp` | 1295 | 1295 | 612 | 612 | ~612 (+tags, −includes) |
-| `SequencerService_config.cpp` | — | — | 457 | 457 | ~450 |
-| `SequencerService_controller_notify.cpp` | — | — | 154 | 154 | ~140 |
-| `SequencerService_elodin.cpp` | — | — | 153 | 153 | ~150 |
-| `ActuatorCommander.cpp` | 829 | 622 | 622 | 622 | ~622 |
-| `ActuatorCommander_load.cpp` | — | 236 | 236 | 236 | ~228 |
-| `ControllerService.cpp` | 1160 | 1160 | 1160 | 633 | ~600 (−32 dead, −2 `using`, +tag) |
-| `ControllerService_pwm.cpp` | — | — | — | 202 | ~190 |
-| `ControllerService_elodin.cpp` | — | — | — | 385 | ~380 |
+| `SequencerService.cpp` | 1295 | 1295 | 608 | 608 | ~608 (+tags, −includes) |
+| `SequencerService_config.cpp` | — | — | 455 | 455 | ~450 |
+| `SequencerService_controller_notify.cpp` | — | — | 151 | 151 | ~140 |
+| `SequencerService_elodin.cpp` | — | — | 148 | 148 | ~150 |
+| `ActuatorCommander.cpp` | 829 | 620 | 620 | 620 | ~620 |
+| `ActuatorCommander_load.cpp` | — | 233 | 233 | 233 | ~225 |
+| `ControllerService.cpp` | 1160 | 1160 | 1160 | 630 | ~600 (−32 dead, −2 `using`, +tag) |
+| `ControllerService_pwm.cpp` | — | — | — | 199 | ~185 (−2 `using`) |
+| `ControllerService_elodin.cpp` | — | — | — | 383 | ~380 |
 | `ControllerService.hpp` | 244 | 244 | 244 | 244 | 234 |
 | `daq_bridge_main.cpp` | 1074 | ~841 | ~841 | ~841 | ~640 |
 | `BoardMap.{hpp,cpp}` | — | ~60 / ~180 | | | ~63 / ~220 |
@@ -442,8 +468,8 @@ namespace lines, ±3 for clang-format); cleanup figures are estimates.
 
 `daq_bridge_main.cpp` is over 700 between move-only and cleanup: interim, not a waiver (STYLE.md conflict
 9, D43(9): size targets are per WP). Its cleanup no longer relies on a registration helper: the
-three extractions alone remove 209 lines. Without `_pwm`, core `ControllerService.cpp` would be
-~805 and need a waiver.
+three extractions alone remove 204 lines (383-418, 816-883, 890-989). Without `_pwm`, core
+`ControllerService.cpp` would be ~800 and need a waiver.
 
 ### 6.4 Must not change (both items)
 
