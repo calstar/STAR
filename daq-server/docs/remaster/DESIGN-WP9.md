@@ -418,7 +418,7 @@ Checks for the move-only package, all required:
     (no `SIG_IGN`)**; installed at the same point (after the banner, before config load); every
     read of `running` → `fsw::service::running()`.
   - The two items below are **not** WP8 helpers (DESIGN-WP8 §0 rejects both). They are kept here
-    as the exact behaviour C1b must preserve if it moves the code within WP9's own TUs:
+    as the exact behaviour that stays in `calibration_main.cpp` through both passes:
   - argv: `--config`, `--host|--elodin-host`, `--port|--elodin-port` (`atoi` → `uint16_t`),
     `--adjustments`, `--help|-h` with today's exact usage text and exit 0; unknown args and
     trailing flags ignored; defaults `config/config.toml`, `127.0.0.1`, `2240`,
