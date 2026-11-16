@@ -44,4 +44,4 @@ add_test(NAME characterization_config_cpp
     COMMAND bash ${_CFG_DIR}/check.sh cpp $<TARGET_FILE_DIR:char_config_dump>
             $<TARGET_FILE_DIR:state_script_check>
     WORKING_DIRECTORY ${_CFG_DIR})
-set_tests_properties(characterization_config_cpp PROPERTIES LABELS characterization)
+set_tests_properties(characterization_config_cpp PROPERTIES LABELS characterization TIMEOUT 120)

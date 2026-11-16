@@ -17,7 +17,7 @@ add_test(NAME char_calibration_lib
     COMMAND bash ${CHAR_CAL_DIR}/check_golden.sh ${CHAR_CAL_DIR}/golden/lib.txt
             $<TARGET_FILE:char_calibration_lib> ${CHAR_CAL_DIR}/fixtures)
 set_tests_properties(char_calibration_lib PROPERTIES
-    LABELS characterization)
+    LABELS characterization TIMEOUT 60)
 
 # calibration_main.cpp itself is characterized only through the built calibration_service
 # (run.sh, service_run.py): the refactor splits that file, so nothing here compiles it.
