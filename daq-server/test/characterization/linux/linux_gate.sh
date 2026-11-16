@@ -23,7 +23,7 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 git -C "$REPO" archive "$REV" daq-server lib/daq-protocol | tar -x -C "$WORK"
 case "$CC_KIND" in gcc) CCS="CC=gcc-12 CXX=g++-12" ;; clang) CCS="CC=clang-18 CXX=clang++-18" ;; esac
 echo "linux_gate: $(git -C "$REPO" rev-parse --short "$REV") on $PLATFORM with $CC_KIND"
-docker run --rm --platform "$PLATFORM" -v "$WORK":/src -w /src/daq-server "$TAG" bash -c "
+docker run --rm --security-opt seccomp=unconfined --platform "$PLATFORM" -v "$WORK":/src -w /src/daq-server "$TAG" bash -c "
   set -uo pipefail; export $CCS
   fails=()
   step() { local n=\$1; shift; printf '── %-18s ' \$n; if \"\$@\" > /tmp/\$n.log 2>&1; then echo ok; else echo FAIL; tail -40 /tmp/\$n.log; fails+=(\$n); fi; }
