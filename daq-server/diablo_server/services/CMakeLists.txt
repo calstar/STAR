@@ -82,22 +82,6 @@ target_link_libraries(ota_service fsw_daq_lib Threads::Threads pthread ${RT_LIBR
 # LabJack T7 analog inputs over Ethernet -> Elodin (inputs only). See t7_bridge/CMakeLists.txt.
 add_subdirectory(t7_bridge)
 
-# ── uWebSockets (optional, for future fsw_web_bridge) ────────────────────────
-set(USOCKETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../external/uWebSockets")
-if(EXISTS "${USOCKETS_DIR}/uSockets/src")
-    file(GLOB USOCKETS_SOURCES
-        "${USOCKETS_DIR}/uSockets/src/*.c"
-        "${USOCKETS_DIR}/uSockets/src/eventing/*.c"
-        "${USOCKETS_DIR}/uSockets/src/crypto/*.c"
-    )
-    add_library(usockets STATIC ${USOCKETS_SOURCES})
-    target_include_directories(usockets PUBLIC ${USOCKETS_DIR}/uSockets/src)
-    target_compile_definitions(usockets PRIVATE LIBUS_USE_OPENSSL)
-    target_compile_options(usockets PRIVATE -Wno-deprecated-declarations)
-else()
-    message(STATUS "uWebSockets not found, skipping usockets")
-endif()
-
 install(TARGETS
     sequencer_service controller_service calibration_service
     heartbeat_service config_broadcast_service ota_service

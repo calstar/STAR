@@ -39,7 +39,6 @@ set(FSW_SOURCES
     src/control/ControllerLUT.cpp
     src/control/RobustDDPController.cpp
     src/control/ControllerService.cpp
-    # src/calibration/IMUCalibration.cpp  (disabled)
 )
 
 add_library(fsw_daq_lib SHARED ${FSW_SOURCES})
