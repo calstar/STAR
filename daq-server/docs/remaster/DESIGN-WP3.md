@@ -197,12 +197,12 @@ inline bool send_msg(ElodinClient& client, T msg, const char* encode_failure_lin
 }
 ```
 
-`DatabaseConfig.cpp`: delete 15-24, `#include "elodin/SendMsg.hpp"`, and give every call the text.
-To keep the ~45 call sites a one-token change, a file-static forwarding overload is **not** added
+`DatabaseConfig.cpp` (56 calls): delete 15-24, `#include "elodin/SendMsg.hpp"`, and give every call the text.
+To keep the 56 call sites a one-token change, a file-static forwarding overload is **not** added
 (it would be a second `send_msg` again); instead each call becomes
 `send_msg(client, X, kEncodeFailed)` with `static constexpr const char kEncodeFailed[] =
 "[DatabaseConfig] Failed to encode message";` at the top of the file. `ControllerService.cpp`:
-delete 921-927, include the header, calls become `fsw::elodin::send_msg(*elodin_client_, X,
+delete 921-927, include the header, the 15 calls become `fsw::elodin::send_msg(*elodin_client_, X,
 nullptr)` (qualified: `ControllerService.cpp` is in `fsw::control`; ADL on `ElodinClient` would
 find it too, but the qualification says where it lives).
 
