@@ -58,7 +58,8 @@ PT1_Cal.CH9.raw_adc_counts  value=1199500000
 
 ## self-test (P12): per board, the exact expected result | not-received (one-shot UDP self-test, defect)
 board 21 (PT): sensor_0, sensor_1, sensor_10, sensor_2, sensor_3, sensor_4, sensor_5, sensor_6, sensor_7, sensor_8, sensor_9 all 1 | not-received (one-shot UDP self-test, defect)
-self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet: ok
+paths checked: handshake A; history connect A
+self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet, (d) every replay/full-history path complete when quiet: ok
 
 ## timing bounds (from config, not observed; README T1)
 envelope spacing: fewer than 5 gaps in the history reply (0 points)
