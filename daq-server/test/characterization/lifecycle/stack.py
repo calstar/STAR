@@ -332,6 +332,7 @@ class Capture:
         # name -> the one source port accepted there (only_from); a process left over from an
         # earlier scenario, or another board on 127.0.0.1, can never be mistaken for the sender
         self.sources: dict[str, int] = {}
+        self.passes = 0  # capture-loop passes started (release() waits on it)
         self.lock = threading.Lock()
         self._stop = False
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -351,11 +352,34 @@ class Capture:
             else:
                 self.sources[name] = port
 
-    def release(self, name: str):
+    def release(self, name: str, port: int | None = None, timeout: float = 10.0):
+        """Stop listening on `name` and give its port back.
+
+        On Linux a socket closed while another thread sits in select() on it stays bound until
+        that select returns, so a simulator started right after the close can fail its bind
+        (EADDRINUSE -> board_simulator.py exits 1). Close only once the capture thread has
+        finished a full pass without this socket, then (with `port`) wait, bounded, until the
+        port can actually be bound."""
         with self.lock:
             s = self.socks.pop(name, None)
+            seen = self.passes
         if s:
+            end = time.monotonic() + timeout
+            while (
+                self.passes < seen + 2
+                and self.thread.is_alive()
+                and time.monotonic() < end
+            ):
+                time.sleep(0.01)
             s.close()
+        if port is not None:
+            end = time.monotonic() + timeout
+            while not port_free(port, udp=True) and time.monotonic() < end:
+                time.sleep(0.05)
+            if not port_free(port, udp=True):
+                raise RuntimeError(
+                    f"capture port {port} still bound {timeout}s after release"
+                )
 
     def sock(self, name: str) -> socket.socket:
         return self.socks[name]
@@ -363,6 +387,9 @@ class Capture:
     def _run(self):
         while not self._stop:
             with self.lock:
+                self.passes += (
+                    1  # a pass that starts here cannot see a socket popped before
+                )
                 items = list(self.socks.items())
             if not items:
                 time.sleep(0.01)
