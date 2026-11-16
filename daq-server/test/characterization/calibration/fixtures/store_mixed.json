@@ -1,0 +1,99 @@
+{
+  "sensor_type": "PT",
+  "unit": "PSI",
+  "framework": "cubic",
+  "generated_unix": 1757000000.25,
+  "calibration_polynomials": {},
+  "cubic_state": {
+    "2101": {
+      "role": "Fuel Upstream",
+      "active_model": "cubic",
+      "kind": "PT",
+      "rawUnit": "adc",
+      "points": [
+        {"adc": 215000000, "psi": 0, "t": 1757000000.5},
+        {"adc": 430000000, "psi": 251.5, "t": 1757000001.5},
+        {"adc": 645000000, "psi": 498, "t": 1757000002.5},
+        {"adc": 1074000000, "psi": 1003.2, "t": 1757000003.5}
+      ]
+    },
+    "2103": {
+      "points": [
+        {"adc": 300000000, "psi": 0, "t": 1757000004.5}
+      ]
+    },
+    "2109": {
+      "role": "Moved Role",
+      "active_model": "cubic",
+      "rawUnit": "adc",
+      "points": [
+        {"adc": 220000000, "psi": 0, "t": 1757000005.5},
+        {"adc": 1070000000, "psi": 1000, "t": 1757000006.5}
+      ]
+    },
+    "2201": {
+      "role": "GSE High",
+      "rawUnit": "uV",
+      "logicalCh": 11,
+      "points": [
+        {"adc": 1000000, "psi": 0, "t": 1757000007.5}
+      ]
+    },
+    "2203": {
+      "role": "GSE Mid",
+      "active_model": "cubic",
+      "rawUnit": "adc",
+      "points": [
+        {"adc": 412316860, "psi": 0, "t": 1757000008.5},
+        {"adc": 1236950581, "psi": 2500, "t": 1757000009.5},
+        {"adc": 2061584302, "psi": 5000, "t": 1757000010.5}
+      ]
+    },
+    "4101": {
+      "role": "Old LC",
+      "kind": "LC",
+      "active_model": "linear",
+      "rawUnit": "adc",
+      "points": [
+        {"adc": 50000, "psi": 0, "t": 1757000011.5}
+      ]
+    },
+    "4201": {
+      "role": "LC Ox",
+      "kind": "LC",
+      "active_model": "linear",
+      "rawUnit": "adc",
+      "points": [
+        {"adc": 100000, "psi": 0, "t": 1757000012.5},
+        {"adc": 2100000, "psi": 50, "t": 1757000013.5}
+      ]
+    },
+    "4202": {
+      "role": "LC Fuel",
+      "kind": "LC",
+      "active_model": "cubic",
+      "rawUnit": "adc",
+      "points": [
+        {"adc": 0, "psi": 0, "t": 1757000014.5},
+        {"adc": 1000000, "psi": 20, "t": 1757000015.5},
+        {"adc": 2000000, "psi": 41, "t": 1757000016.5}
+      ]
+    },
+    "6001": {
+      "role": "",
+      "active_model": "cubic",
+      "points": []
+    },
+    "8106": {
+      "role": "T7 PT Cubic",
+      "kind": "PT",
+      "active_model": "cubic",
+      "rawUnit": "uV",
+      "logicalCh": 134,
+      "points": [
+        {"adc": 500000, "psi": 0, "t": 1757000017.5},
+        {"adc": 4500000, "psi": 2000, "t": 1757000018.5}
+      ]
+    }
+  }
+}
