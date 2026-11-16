@@ -50,23 +50,78 @@ def is_board_health(msg):
     )
 
 
+# P1b. A status reset (session start/stop reloads every board from config) can make a board that
+# never stopped heartbeating read "connection lost" for one 1 Hz sweep: lost, then cleared and
+# "connected" on the next sweep. Whether the sweep beats the next heartbeat is a race, so such a
+# flap is not recorded at all. A board that really goes silent stays lost (or clears only after
+# FLAP_MS) and is recorded.
+FLAP_MS = 2500
+
+
+def flap_ids(frames):
+    """ids of the board-health frames that make up a reset flap, in one client's frame order."""
+    out, open_lost = set(), {}
+    for m in frames:
+        if not is_board_health(m):
+            continue
+        p = m.get("payload") or {}
+        key, t = str(p.get("key", "")), p.get("timestampMs", 0)
+        if key.startswith("board_lost_") and p.get("ongoing") is True:
+            open_lost[key] = m
+        elif (
+            key.startswith("board_lost_")
+            and p.get("ongoing") is False
+            and key in open_lost
+        ):
+            start = open_lost.pop(key)
+            if t - start["payload"].get("timestampMs", 0) <= FLAP_MS:
+                out.update({id(start), id(m)})
+                board = key[len("board_lost_") :]
+                for c in frames:  # the "connected" the same sweep raised
+                    cp = c.get("payload") or {}
+                    if (
+                        is_board_health(c)
+                        and "key" not in cp
+                        and cp.get("timestampMs") == t
+                        and f"Board {board} " in str(cp.get("message", ""))
+                    ):
+                        out.add(id(c))
+    return out
+
+
 def dumps(v):
     return json.dumps(v, sort_keys=True, ensure_ascii=False)
 
 
-def bucket_rate(n, seconds):
-    """P2. Rates in three wide classes. Event streams (self-test, controller state) sit well under
-    0.25/s; everything the GUI streams (1 Hz periodics, the 2-windows/s envelope after the outbox
-    has had its say, 10 Hz raw) sits in 0.25-5/s; only an unthrottled stream would exceed 5/s.
-    """
-    if n == 0:
-        return "none"
-    r = n / max(seconds, 1e-3)
-    return (
-        "event(<0.25/s)"
-        if r < 0.25
-        else ("stream(0.25-5/s)" if r <= 5 else "fast(>5/s)")
-    )
+def envelope_check(steps, pps):
+    """T1. The GUI envelope (gui-stream.ts) opens a window at a sample and closes it at the first
+    sample >= windowMs later, emitting one point per window for a constant stream at the window's
+    first sample time. So consecutive history points of a constant 10 Hz stream are spaced by at
+    least W = 2000 / points_per_second and, with samples every 100 ms, about W..W+100 ms. Checked on
+    sample timestamps (not delivery), so machine load cannot move it: median spacing within
+    [0.9 W, 2 W]. Halving the window (doubling the rate) lands at ~W/2 and fails."""
+    w = 2000.0 / pps
+    for st, frames in steps:
+        if st["name"] != "history":
+            continue
+        for m in frames.get("A", []):
+            if m["type"] != "historical_data":
+                continue
+            series = m["payload"].get("PT1.CH1.raw_adc_counts")
+            if not series or len(m["payload"]) != 1:
+                continue
+            t = series["time"]
+            gaps = sorted(b - a for a, b in zip(t, t[1:]))
+            if len(gaps) < 5:
+                return f"envelope spacing: too few points ({len(t)})"
+            med = gaps[len(gaps) // 2]
+            ok = 0.9 * w <= med <= 2 * w
+            return (
+                f"envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/{pps:g} pts/s"
+                f" = {w:g} ms): median within [0.9 W, 2 W]: {'yes' if ok else 'NO'}"
+                f"{'' if ok else f' (median {med} ms)'}; at least 5 gaps: yes"
+            )
+    return "envelope spacing: no single-series history reply"
 
 
 def schema_paths(v, prefix, out):
@@ -210,11 +265,16 @@ def main():
             if client not in first_frames:
                 first_frames[client] = (st["name"], fs)
     health = set()
+    flaps = set()
+    for client in first_frames:
+        seq = [m for _, frames in steps for m in frames.get(client, [])]
+        flaps |= flap_ids(seq)
     for client, (sname, fs) in first_frames.items():
         hs.append(f"## client {client} (connected in step {sname})")
         for m in handshake_frames(fs):
             if is_board_health(m):
-                health.add(dumps(n.value(m["payload"])))
+                if id(m) not in flaps:
+                    health.add(dumps(n.value(m["payload"])))
                 continue
             m = norm_event(n, m)
             if m["type"] == "board_status_update":
@@ -239,11 +299,14 @@ def main():
                 if id(m) in hs_ids or m["type"] in STREAM_TYPES:
                     continue
                 if is_board_health(m):
-                    health.add(dumps(n.value(m["payload"])))
+                    if id(m) not in flaps:
+                        health.add(dumps(n.value(m["payload"])))
                     continue
                 ev.append(f"< {client} {dumps(norm_event(n, m))}")
         ev.append("")
-    ev.append("## board-health notifications seen (any step, any client; P1)")
+    ev.append(
+        "## board-health notifications seen (any step, any client; P1, reset flaps P1b)"
+    )
     ev.extend(sorted(health))
     ev.append("")
     open(os.path.join(out_dir, "ws_events.txt"), "w").write("\n".join(ev))
@@ -282,7 +345,7 @@ def main():
                     periodic[(client, t)].add(dumps(p))
                     if client == "A":
                         periodic_n[t] += 1
-    out = ["## sensor_update (client A, whole session; P2 rate per stream, P7 values)"]
+    out = ["## sensor_update (client A, whole session; P7 values)"]
     for (ent, comp), s in sorted(sens.items()):
         vals = sorted(s["vals"])
         v = (
@@ -290,11 +353,10 @@ def main():
             if len(vals) == 1
             else ("{" + ", ".join(vals) + "}" if len(vals) <= 4 else "<varies>")
         )
-        out.append(f"{ent}.{comp}  rate={bucket_rate(s['n'], total_s)}  value={v}")
+        out.append(f"{ent}.{comp}  value={v}")
     out.append("")
-    out.append("## periodic types (client A, whole session; P2)")
-    for t in sorted(periodic_n):
-        out.append(f"{t}  rate={bucket_rate(periodic_n[t], total_s)}")
+    out.append("## timing bounds (from config, not observed; README T1)")
+    out.append(envelope_check(steps, ctx.get("gui_points_per_second", 4)))
     out.append("")
     for (client, t), ps in sorted(periodic.items()):
         out.append(f"## {t} distinct payloads, client {client}")

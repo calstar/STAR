@@ -182,7 +182,7 @@ CAPTURE="$FX/capture.json"
   > "$FX/logs/session.log" 2>&1 || { echo "pipeline: session failed" >&2; tail -30 "$FX/logs/session.log" >&2; tail -30 "$FX/logs/backend.log" >&2; exit 6; }
 
 cat > "$FX/context.json" <<EOF
-{"now_ms": $START_MS,
+{"now_ms": $START_MS, "gui_points_per_second": $(sed -n "/^\[gui\]/,/^\[/s/^points_per_second = \([0-9.]*\)/\1/p" "$CFG"),
  "paths": {"$FX/config": "<cfgdir>", "$FX/home": "<home>", "$FX": "<fx>",
            "$ROOT": "<daq>"},
  "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))')}
