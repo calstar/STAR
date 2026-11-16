@@ -1,0 +1,17 @@
+# session digital-twin/pressure/no-feed
+# pressure roles subscribed: GN2 High, High Press
+> TRANSITION:Armed
+  < OK
+> TRANSITION:Press Standby
+  < OK
+> SCRIPTS
+  < SCRIPT:15:Dynamic Test:OK:6:10000
+      SCRIPT:15:Dynamic Test:BLOCKED:GN2 High has produced no reading yet
+      END
+> TRANSITION:Dynamic Test
+  < ERR:GN2 High has produced no reading yet
+-- sequencer log (N6: load-time lines, then message counts)
+   [SequencerService] Fire state: (none) — fire timer disabled
+   [SequencerService] Flow hold: Flow Test 600 ms (max 10000) → Ready
+   [SequencerService] Flow gate: "Fuel Main" opens +1000 ms after entry, closes +0 ms after expiry; hold = requested + 1000 - 0 ms, so the requested duration is how long IT is open
+   [SequencerService] Dynamic state: Dynamic Test — 6 statement(s), timeout 10000 ms -> Press Standby, ends -> Press Standby, reads "GN2 High" "High Press"
