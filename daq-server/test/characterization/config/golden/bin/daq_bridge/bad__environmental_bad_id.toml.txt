@@ -1,0 +1,6 @@
+=== DAQ Bridge - DiabloAvionics Packet Receiver ===
+Config: config/config.toml
+Listening on: 0.0.0.0:5006
+
+FATAL: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+=== exit 1

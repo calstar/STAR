@@ -1,0 +1,16 @@
+== board_simulator.py stopped (SIGTERM) mid-session
+  sim exit 0
+  [4-7.5s (stale 5000 ms + 1 s sweep + 1 s heartbeat period)] notification error: 'Board 21 (PT) connection lost' ongoing=True key=board_lost_21
+  [4-7.5s (stale 5000 ms + 1 s sweep + 1 s heartbeat period)] board 21: connected=False boardState=2
+  PT1.* sensor updates on the WS after the stop (+1 s on): 0
+
+== board_simulator.py restarted (boots in SETUP again)
+  [0-3s] board 21: connected=True boardState=1
+  [0-3s] notification error: 'Board 21 (PT) connection lost' ongoing=False key=board_lost_21
+  [0-3s] notification info: 'Board 21 (PT) connected' ongoing=- key=-
+  [0-3s] board 21: connected=True boardState=2
+  sim log: [pt_board] SENSOR_CONFIG received from ('127.0.0.1', <port>), running self-test
+  sim log: [pt_board] SELF_TEST sent, transitioning to ACTIVE
+  PT1.* sensor updates resumed on the WS: True
+  SELF_TEST.BOARD_21 components re-delivered: ['sensor_0', 'sensor_1', 'sensor_2', 'sensor_3', 'sensor_4', 'sensor_5', 'sensor_6', 'sensor_7', 'sensor_8', 'sensor_9', 'sensor_10']
+  backend Elodin (re)subscription announcements over the session: 1

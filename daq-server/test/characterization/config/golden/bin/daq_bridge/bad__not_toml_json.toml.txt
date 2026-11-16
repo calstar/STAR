@@ -1,0 +1,12 @@
+=== DAQ Bridge - DiabloAvionics Packet Receiver ===
+Config: config/config.toml
+Listening on: 0.0.0.0:5006
+
+[Config] TOML parse error in config/config.toml: Error while parsing root table: expected keys, tables, whitespace or comments, saw '{'
+[TimeSync] mode=board-clock window=10s
+[Config] TOML parse error in config/config.toml: Error while parsing root table: expected keys, tables, whitespace or comments, saw '{'
+[DAQ] no local interface on the board subnet — board traffic is NOT pinned to a NIC (expected on a dev box; on the rig this means the 192.168.2.x NIC is missing)
+[Config] Loopback fallback (127.0.0.<host-octet>): 0 enabled boards
+[Config] Board routing table (from config/config.toml):
+[System] Mode: GROUND
+=== stopped
