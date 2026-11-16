@@ -10,6 +10,8 @@
 # Off the stand only: see daq-server/CLAUDE.md.
 
 set -uo pipefail
+# The gate is the merge queue: it jumps ordinary stack-lock waiters (see with_stack_lock.sh).
+export DAQ_STACK_LOCK_PRIORITY="${DAQ_STACK_LOCK_PRIORITY:-1}"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 REPO="$(cd "$ROOT/.." && pwd -P)"
