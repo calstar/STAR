@@ -5,14 +5,48 @@ been executed. Paths are relative to `daq-server/diablo_server/backend/src/` unl
 
 **Baseline.** Line numbers are `server.ts` on `backend-remastered` @ `b2599617` (1885 lines). WP6
 runs after WP5 (BLOAT-MAP DAG), which removes `server.ts:1409-1467` (the two `sendTo*Service`
-functions → `service-line-client.ts`), renames `legacy/` → `state-csv/` and adds one `boardSlot()`
+functions → `sequencer-client.ts` [A1]), renames `legacy/` → `state-csv/` and adds one `boardSlot()`
 helper to `sensor-config.ts`. Every line after 1467 then moves up by about 59. **Locate code by the
 section banners (`// ── … ──`) and symbol names given here; use line numbers only to orient.** Where
-this note says `sendToActuatorService` it means whatever `service-line-client.ts` exports for :9998
-after WP5.
+this note says `sendToActuatorService` it means `sendToSequencer` from `sequencer-client.ts` after
+WP5 [A1].
 
 **Prerequisites.** C1 merged on `backend-remastered`, and `npx tsc --noEmit` in
 `diablo_server/backend/` added to `gate.sh` as a merge-gate step (orchestrator). WP5 merged.
+
+**Amendments (design/ts2, 2026-11-16).** The deeper pass (alternatives, interface stubs,
+walkthroughs — sections at the end) and the research note `research/node-realtime-backend.md`
+changed the following; each changed place is marked with its tag.
+
+- **[A1]** WP5's client is `sequencer-client.ts` / `sendToSequencer` / `SEQUENCER_PORT`
+  (DESIGN-WP5 §2), not `service-line-client.ts`. `server/env.ts` no longer lists `ACT_SVC_PORT` or
+  `CTRL_SVC_PORT`. `commands` imports it too (the edge was missing from §2).
+- **[A2]** R1's evaluation-order argument was textual, and tsc/tsx/vitest **elide** an import whose
+  specifiers are unused as values (reproduced with this repo's tsx 4.21; already happens today for
+  `api-server.ts` → `elodin-query.ts`). Step 1 now (a) diffs the esbuild bundle's module order before
+  and after every commit, (b) turns an import that step 1 leaves without a used specifier into a bare
+  `import './x.js';` at the same position, which counts as a move-only edit, and (c) never enables
+  `verbatimModuleSyntax`. §6.1 R1, §6.3 item 6, §6.4 item 6.
+- **[A3]** Walkthrough (a) found two owners of "what state id N means" (`commands` and
+  `engine-state`): new step 2.9 moves the resolution into `engine-state`.
+- **[A4]** Walkthroughs (a)-(c) found the connect burst building other modules' messages
+  (`state_update` connect shape, commanded snapshot, self-test and notification replays): new step
+  2.8 gives each owner a `send…To(ws)` / `replay…(ws)` and leaves `ws-connection` only the order.
+- **[A5]** The three 1 s timers stay three `setInterval` calls, never one merged tick (a throw in one
+  must not skip the others). §8 R3.
+- **[A6]** D-SUB's liveness watchdog stays a PROPOSAL; the layering keeps room for it
+  (`elodin-link` may import `board-status`, a downward edge). §2.
+- **[A7]** LEDGER D42(d): `ingest.handleElodinPacket` keeps `notePairDelivered(high, low)` as its
+  **first** statement, before any family dispatch, through step 1 and step 2 (so per-pair delivery
+  times can later be one change in the registry — `research/subscription-robustness.md` Idea 4);
+  `elodin-link` is the one home of the resubscribe loop and the Elodin listeners, so a later
+  subscription-echo (D-ECHO, Idea 2) or liveness check attaches there (PROPOSALS, not WP6). The
+  "which pairs are due" decision becomes a pure `duePairs` in the registry — done by **WP5**
+  (DESIGN-WP5 commit 5.7), since WP6 does not touch the registry.
+
+Research cited: `docs/remaster/research/node-realtime-backend.md` (§1 elided imports, §2 timers,
+§3 backpressure, §4 D-SUB, §5 functional core) and `research/subscription-robustness.md` (Ideas
+2-5), merged at 963e81b9 (LEDGER D42).
 
 **Orchestrator decisions (design review, 2026-11-16), recorded here:**
 
@@ -191,7 +225,7 @@ evaluation, which is exactly the startup-order failure this split must not intro
 
 | layer | module | single responsibility | public interface |
 |---|---|---|---|
-| 0 | `server/env.ts` | the process's environment knobs, read once | `WS_PORT`, `GUI_PORT`, `ELODIN_HOST`, `ELODIN_PORT`, `ACT_SVC_PORT`, `THIN_VERBOSE_CONNECTION_LOG`, `THIN_HEARTBEAT_DIAG_LOG`, `THIN_STATS_LOG` (`CTRL_SVC_PORT` only if WP5 leaves a user) |
+| 0 | `server/env.ts` | the process's environment knobs, read once | `WS_PORT`, `GUI_PORT`, `ELODIN_HOST`, `ELODIN_PORT`, `THIN_VERBOSE_CONNECTION_LOG`, `THIN_HEARTBEAT_DIAG_LOG`, `THIN_STATS_LOG` **[A1]** (the :9998 port is `SEQUENCER_PORT`, owned by WP5's `sequencer-client.ts`; `CTRL_SVC_PORT` is deleted by WP5) |
 | 0 | `server/stats.ts` | ingest/broadcast counters served by `/stats` and `/api/debug` | `stats` |
 | 1 | `server/ws-clients.ts` | the browser-facing socket set: send, broadcast, per-client sensor outboxes, link status, keepalive reaping | `WsWithControl`, `ClientStream`, `wss` (live binding), `attachWebSocketServer(server)`, `broadcast(msg)`, `send(ws, msg)`, `clientStreams`, `clientStreamStatus(ws)`, `flushClientOutboxes()`, `resetOutboxStats()`, `reapUnresponsiveClients()`, `KEEPALIVE_MS` |
 | 2 | `server/notifications.ts` | operator notifications and their 5-minute replay buffer | `activeNotificationKeys`, `notificationBuffer`, `pruneNotificationBuffer(now)`, `broadcastNotification(payload)`; step 2 adds `raiseNotification`, `clearNotification` |
@@ -212,12 +246,21 @@ evaluation, which is exactly the startup-order failure this split must not intro
 Import edges (all downward): `ws-clients` → `client-outbox`, `shared/types`. `notifications`,
 `history`, `mission-time` → `ws-clients`. `sensor-stream` → `ws-clients`, `history`, `stats`.
 `calibration-state` → `ws-clients`. `board-status` → `ws-clients`, `notifications`, `stats`,
-`config-caches`, `env`. `engine-state` → `ws-clients`, `history`, `stats`, `service-line-client`.
+`config-caches`, `env`. `engine-state` → `ws-clients`, `history`, `stats`, `sequencer-client` [A1].
 `actuator-mismatch` → `engine-state`, `notifications`. `elodin-link` → `env`, `ws-clients`,
 `calibration-state`, `engine-state`. `ingest` → `elodin-link`, `board-status`, `engine-state`,
 `actuator-mismatch`, `sensor-stream`, `mission-time`, `calibration-state`, `config-caches`,
 `notifications`, `stats`, `env`. `commands` → `ws-clients`, `engine-state`, `mission-time`,
-`history`, `calibration-state`, `elodin-link`. `ws-connection` → everything above.
+`history`, `calibration-state`, `elodin-link`, `sequencer-client` [A1: `handleCommand` sends four of
+the five :9998 lines; the edge was missing]. `ws-connection` → everything above.
+
+**[A6] Room for the D-SUB watchdog (PROPOSAL only, not in WP6).** A future liveness check ("an
+accepted pair that has not delivered within T while its board heartbeats is re-subscribed") needs
+`board-status`'s liveness inside `elodin-link`'s resubscribe loop. `elodin-link` (layer 4) importing
+`board-status` (layer 3) is a downward edge, so the DAG allows it without restructuring; WP6 does not
+add it (D17(d)), and nobody should "simplify" the layers so that it would become a cycle.
+`elodin-link` keeps `scheduleResubscribe` and the four listeners verbatim so the watchdog has one
+home.
 **`server/*` never imports `api-server.ts` or `api/*`, and they never import `server/*`**: the HTTP
 side reaches the WS side only through the `createAPIHandler` options, which `server.ts` builds.
 
@@ -265,7 +308,7 @@ Why, from this codebase:
 3. `handleCommand` checks `CONTROL_COMMAND_TYPES` against the socket's `__daqControlAuthorized`
    (set by `CONTROL_UNLOCK`; `WsWithControl` from `ws-clients`), resolves the id through
    `engine-state.configStateName` and the config's `[[states]]`, validates `holdMs`, maps the name
-   through `STATE_TO_CSV_NAME`, and calls `sendToActuatorService('TRANSITION:<name>[:<ms>]\n')`.
+   through `STATE_TO_CSV_NAME`, and calls `sendToSequencer('TRANSITION:<name>[:<ms>]\n')` [A1].
 4. Reply: `ok` → log only; not ok → `send(ws, ERROR "State transition failed: <refusalText(reply)>")`
    to the requesting socket only. There is no optimistic update.
 5. The real state arrives later as Elodin `_SEQUENCER_STATE` (§3.3) and is broadcast to everyone.
@@ -335,7 +378,7 @@ owns this sequence; it reads the other modules' live bindings and never assigns 
 | unknown WS `type` | `Unknown message type` warned, no reply | `commands.handleMessage` |
 | unknown `commandType` | `ERROR "Command not supported in thin backend: <type>"` to the sender | `commands.handleCommand` |
 | control command while locked | `ERROR "Control locked: …"` to the sender | `commands.handleCommand` |
-| TCP :9998 refused / closed / 2 s timeout | the line client never rejects: resolves `{ok:false, reply: err.message \| 'connection closed' \| 'timeout'}` and warns `actuator_service connect error`. `state_transition`, `actuator`, `extend_fire` → `ERROR "<Action> failed: <refusalText(reply)>"` to the sender; `debug_mode` → log only, no reply, no state change; `SCRIPTS` poll → swallowed | WP5's `service-line-client.ts` + `commands`/`engine-state`, verbatim |
+| TCP :9998 refused / closed / 2 s timeout | the line client never rejects: resolves `{ok:false, reply: err.message \| 'connection closed' \| 'timeout'}` and warns `actuator_service connect error`. `state_transition`, `actuator`, `extend_fire` → `ERROR "<Action> failed: <refusalText(reply)>"` to the sender; `debug_mode` → log only, no reply, no state change; `SCRIPTS` poll → swallowed | WP5's `sequencer-client.ts` [A1] + `commands`/`engine-state`, verbatim |
 | TCP :9999 | no caller (`sendToControllerService` is dead) | — (see open question Q1) |
 | session start/stop/extend fails | `ConfigIssuesError` → `SESSION_START_BLOCKED` to the sender; else `ERROR "Session <verb> failed: <msg>"` | `commands` |
 | HTTP: API handler throws past WP7's own catch | 500 `{"error":"Internal server error"}` if headers unsent, logged | `server.ts` |
@@ -360,7 +403,7 @@ Errors are caught **at the boundary where input enters**, and nowhere else:
 | browser message | `ws-connection` | log `[ThinServer] Bad message:`, drop, no reply |
 | browser command | `commands` | reply `ERROR` to the sender only: `"<Action> failed: <reason>"` |
 | Elodin row | `ingest` | log `[ThinServer] Packet error:`, drop the packet |
-| sequencer line | `service-line-client` | never reject; `{ok, reply}` |
+| sequencer line | `sequencer-client` [A1] | never reject; `{ok, reply}` |
 | HTTP request | `api-server` (WP7), then `server.ts` | 500 JSON |
 | process | `server.ts` | crash guards |
 
@@ -411,17 +454,44 @@ Rules for every commit in step 1:
   (M1: no effects) add nothing to the sequence. **Import closure (DoD check):** every module a
   `server/*` file imports must already be in `server.ts`'s import list (directly), so no
   `server/*` import is ever the first import of anything. After WP5 the only permitted exception is
-  `service-line-client.ts`, and only while it stays effect-free. Check:
+  `sequencer-client.ts` [A1] (already imported by `server.ts` after WP5, so in practice none), and
+  only while it stays effect-free. Check:
 
   ```bash
   cd diablo_server/backend/src
   have=$(grep -oE "from '\./[^']+'" server.ts | sed "s/from '\.\///; s/'$//" | sort -u)
   need=$(grep -ohE "from '\.\./[^']+'" server/*.ts | sed "s/from '\.\.\///; s/'$//" | sort -u)
-  comm -13 <(echo "$have") <(echo "$need")   # prints nothing, or only service-line-client.js
+  comm -13 <(echo "$have") <(echo "$need")   # prints nothing
   ```
 
   (Imports of `../../shared/*` from `server/*` become `../../../shared/*`; compare those the same
   way against `server.ts`'s `../../shared/*` list.)
+
+  **[A2] R1 amended — the textual rule is necessary, not sufficient.** tsc, tsx/esbuild and vitest
+  delete an import declaration none of whose specifiers is used as a value
+  (`research/node-realtime-backend.md` §1, reproduced with this repo's tsx 4.21; it already
+  happens today: `api-server.ts` → `elodin-query.ts`, `calibration-handler.ts` → `calibration.ts`
+  and `ws`). "Today's evaluation order" is therefore the order of the imports that **survive emit**,
+  and a step-1 commit that moves the last value user of an import out of `server.ts` silently
+  moves that module's evaluation to wherever the first `server/*` file imports it, while the
+  import-closure grep above still passes. The live case is `server.ts:39` → `state-csv/state-actuators.ts`
+  (builds three config maps and can log **at import**; nothing else imports it): once
+  `engine-state`/`commands` hold every use, the line is elided. So, for every step-1 commit:
+
+  - **R1a (bare import).** When a commit leaves an import in `server.ts` with no specifier used as
+    a value, rewrite that declaration as a bare side-effect import **at the same position**
+    (`import './state-csv/state-actuators.js';`). A bare import is never elided. This is a
+    move-only edit (it is the textual form of "this module still evaluates here"); the review rule
+    of §6.3 accepts it. Do it **only** for a module the R1b list shows evaluating first at that
+    line *before* the commit; never for an import that is already elided today (type-only or
+    unused, e.g. `import type { StateActuatorMap }`): a bare import there would **add** a module
+    to the evaluation set — a behaviour change.
+  - **R1b (runtime order, the check that counts).** Diff the esbuild bundle's module order before
+    and after the commit; the only permitted difference is new `server/*` entries (effect-free by
+    M1). The command (§6.3 item 6) runs in under 1 s, binds no port and needs no stack lock.
+  - **R1c.** Never enable `verbatimModuleSyntax` (or `isolatedModules`-driven `import type`
+    rewrites) to "pin" imports: it would add `elodin-query.ts` to today's evaluation set and move
+    `calibration.ts` ahead of `calibration-handler.ts` (research §1, remedy 3) — a behaviour change.
 - **R2 (startup order).** Every row of §1.3 stays a statement in `server.ts`, in the same order:
   `setInterval(<named fn>, <same ms>)`, `<module>.init…()`, `elodin.on('<event>', <named fn>)`.
   Only pure steps (9, 14, 23) may sit at a module's top level.
@@ -518,6 +588,23 @@ imported bindings), `applyDeployedConfigChange` (body verbatim with 852-857 repl
    127.0.0.x boards, `SESSION_SERVICE_MODE=mock`, `GUI_PORT=0`, 264xx ports, no Elodin), and diff the
    first 60 lines of its output against the same run on `backend-remastered`. Identical after
    normalising timestamps and PIDs.
+6. **[A2] Module-evaluation-order diff** (R1b; replaces nothing above — it catches a reordered
+   module that happens not to log under the test config, which item 5 cannot see). esbuild's
+   bundle concatenates modules in evaluation order with a `// <path>` banner per module and this
+   graph has no lazy `__esm` wrappers, so the list is exact:
+
+   ```bash
+   cd diablo_server/backend
+   order() { npx esbuild src/server.ts --bundle --platform=node --format=esm --packages=external \
+     --log-level=error | grep -E '^// (src|\.\./)' \
+     | awk '{last[$2]=NR; o[NR]=$2} END{for(i=1;i<=NR;i++) if(last[o[i]]==i) print o[i]}'; }
+   order > /tmp/order-after.txt          # and the same on the parent commit → /tmp/order-before.txt
+   diff <(grep -v '^src/server/' /tmp/order-before.txt) <(grep -v '^src/server/' /tmp/order-after.txt)   # must print nothing
+   ```
+
+   It writes nothing to disk and starts nothing. Whether the list is frozen as a file (a de-facto
+   golden) or only diffed per commit is the orchestrator's call (research Q2); this note asks only
+   for the per-commit diff.
 
 **At checkpoints only** — after commits 1.7, 1.13 and 1.16 — under the stack lock, within AGENT-RULES
 rule 7's hold limit (≤ ~5-10 min per hold; split across holds if needed): `pipeline/run.sh pt`,
@@ -526,8 +613,9 @@ queue's full gate.
 
 Review with `git diff --color-moved=dimmed-zebra
 --color-moved-ws=allow-indentation-change backend-remastered -- diablo_server/backend/src`: every
-non-moved line must be an import, an `export` keyword, a function wrapper for a former inline arrow,
-a setter from §6.2, or a startup statement in `server.ts`.
+non-moved line must be an import (including an R1a bare import [A2]), an `export` keyword, a
+function wrapper for a former inline arrow, a setter from §6.2, or a startup statement in
+`server.ts`.
 
 ### 6.4 Step 2 — cleanup toward the target
 
@@ -554,12 +642,42 @@ Each is its own commit, each with the §6.3 checks. Order matters only where not
    from `readConfig()` or `t7Channels()` before the loop sets anything, so after either catch the map
    is empty and the lookup yields `undefined`, which both callers treat as "no board".
 5. **Renames** of §5.
-6. **Imports last.** Prune `server.ts` to what it uses (drops e.g. the unused `resetTareState`,
-   `setRunDir`). This can reorder import-time evaluation of pre-existing modules; diff the first 60
-   lines of `backend.log` from a pipeline run before and after — only import-time warnings from
-   `legacy/state-actuators` may move.
+6. **Imports last.** ~~Prune `server.ts` to what it uses … only import-time warnings from
+   `legacy/state-actuators` may move.~~ **[A2]** Mostly moot: an import with no used specifier is
+   already absent at runtime, so pruning a specifier (`resetTareState`, `setRunDir` from a line
+   that keeps `expandWithTare`) changes nothing, and R1a's bare imports **stay** (they are the
+   evaluation points). Prune only specifiers; never delete a bare import or turn one back into a
+   named import that a later edit could leave unused. Gate: §6.3 item 6 diff empty and the 60-line
+   log diff (item 5) identical — no warning may move.
 7. ~~Replace the `lc-tare.test.ts` source-text check with a real test.~~ **Moved out of WP6**
    (decision): a separate test-only package, after step 1 has merged.
+8. **[A4] Connect-burst replays move to their owners** (should; after G9 and G13 exist). Walkthroughs
+   (a)-(c) found `ws-connection` building other modules' messages from their live bindings. Each
+   owner gets a function that sends its part of the burst to one socket and returns the number of
+   frames it sent; the bodies are today's lines verbatim (same literals, same key order):
+   `engine-state.sendConnectStateUpdate(ws)` (the **connect** shape, no `allowedBitmask` /
+   `stateRefusalReasons` — kept distinct from `broadcastStateUpdate`),
+   `engine-state.sendCommandedSnapshot(ws)`, `board-status.sendBoardStatusTo(ws)` (0 when no board,
+   as today; no `dhcp`/`frequencyHz` recompute, as today), `board-status.replaySelfTests(ws)`,
+   `notifications.replayNotifications(ws)` (prunes first, as today),
+   `mission-time.sendMissionStartTime(ws)` and `mission-time.sendCountdownTarget(ws)`.
+   `ws-connection` keeps the order of §3.5, the `control_status` frame (identity is its own), the
+   `session_update` frame (`sessionManager` is not WP6's) and the `conn_open`/`conn_close`
+   counters: `outboundMessages += n` per call, and **no** increment for `mission_start_time` and
+   `session_update`, as today (D-WS quirk, kept). `lastOutboundAt` becomes `Date.now()` after each
+   call that sent ≥ 1 frame; today the notification replay stamps the time taken *before* its
+   sends and the commanded snapshot stamps after each frame, so the logged value can differ by
+   the milliseconds a burst takes — a log-only field that G13 normalises; if G13 is not added,
+   skip this step rather than ship an unguarded log change.
+9. **[A3] One owner for state-id resolution** (should). Walkthrough (a) found "what state id N
+   means" decided in two modules: `engine-state.configStateName` (the name shown in
+   `state_update` and the mismatch text) and `commands` (the `[[states]]`-declared check, the
+   `SystemState` enum fallback, `STATE_TO_CSV_NAME`). Move the second half into `engine-state` as
+   `resolveTransitionTarget(id)`, returning `{ ok: true, stateName, csvName }` or
+   `{ ok: false }` (id not declared by a config that declares states). Body verbatim, reads in
+   today's order (`configStateName(id)` — the deployed-config cache — then `readConfig().states`);
+   `STATE_TO_CSV_NAME` moves with it. `commands` keeps the warn line, the `ERROR` reply text, the
+   `holdMs` check (still after the id check, as today) and the line format.
 
 Step 2 is its own queue item, gated in full like step 1; each commit runs the per-commit checks of
 §6.3 and the checkpoint runs after 2.1 and at the end.
@@ -689,8 +807,12 @@ WP6's own per-commit scripts (§6.3).
 - **R2 Import cycles.** §2's DAG; the WS↔link near-cycle resolved by layering. A cycle check is
   cheap (`npx madge --circular src/server.ts`, or a grep that no `server/*` file imports
   `ws-connection`, `commands` or `ingest`). `server/*` and `api/*` never import each other.
-- **R3 Startup order.** R1 + R2 in §6.1. The three 1 s timers must stay in the order stale sweep →
-  board status → connection status. Row 11's CSV read must stay un-caught (a throw at startup kills
+- **R3 Startup order.** R1 (with R1a-c, [A2]) + R2 in §6.1. The three 1 s timers must stay in the
+  order stale sweep → board status → connection status, **as three separate `setInterval` calls
+  [A5]**: equal-period timers fire in registration order (Node's per-duration timer lists, research
+  §2), and a throw in one is caught by the `uncaughtException` guard while the other two still fire
+  that second. One merged 1 s `tick()` would skip the rest on a throw, and a try/catch per call
+  would change which guard logs: both are behaviour changes. Row 11's CSV read must stay un-caught (a throw at startup kills
   the process before the crash guards exist, as today). `sessionManager.init` → `syncElodinToSession`
   → `startBoardLogReceiver` stay inside the `listen` callback in that order.
 - **R4 The `legacy/` (`state-csv/` after WP5) loaders.** `engine-state` imports
@@ -744,3 +866,195 @@ priority table in §7. Q1 remains for WP5.
   G7 before 1.8/1.9/1.11)?
 - **Q5** Step 2.7 (replacing the `lc-tare` source-text test) changes a backend test's method;
   acceptable inside WP6, or a separate test-only package?
+
+---
+
+## Alternatives considered (design/ts2, 2026-11-16)
+
+Three genuinely different shapes were compared before keeping §2. "Lines" is the net change in
+`src/` over steps 1 and 2 (estimates from the line ranges of §1.1).
+
+### A. Modules split by what they own, module singletons, a layered DAG (§2 — chosen)
+
+16 `server/*` modules, one owner per piece of state (§1.2), state reached through live bindings
+and owner-exported setters, `server.ts` as the composition root that registers every timer and
+listener in today's order.
+
+### B. Service objects with explicit dependencies
+
+The same concerns as classes — `new BoardStatus(wsClients, notifications, stats)`,
+`new EngineState(wsClients, history, sequencer)`, … — constructed in `server.ts` in dependency
+order and passed to each other; the shared mutable state becomes instance fields. (BLOAT-MAP's
+"split by passing a context object" is the degenerate form: one object holding every field.)
+
+### C. A layered pipeline: ingest → state → broadcast
+
+Four or five files along the data's direction: `ingest.ts` (Elodin rows in), `state.ts` (all
+backend state and its mutators), `broadcast.ts` (ws clients, every `broadcast<Thing>`, the connect
+burst, the sensor stream), `commands.ts` (browser in), plus `server.ts`.
+
+### Comparison
+
+| | A (chosen) | B service objects | C pipeline |
+|---|---|---|---|
+| clarity | a reader finds a concern by name (`board-status`, `engine-state`); the import list says who touches what; §1.2's ownership table is the module map | constructors make dependencies explicit, but every method body grows `this.` and the 15-object construction order becomes a second startup sequence to read beside the timer sequence | the data direction is obvious, but `state.ts` (~650 lines, 8 concerns) is a new god file, and one concern is smeared across three files: board health is decided in `state`, worded in `broadcast`, fed by `ingest`, and the stale sweep (a timer that reads state and broadcasts) fits no stage |
+| lines (net) | step 1 ≈ +110 (imports/exports/wrappers); step 2 ≈ −70 (notification pairs, T7 lookup, slot copy, replays de-duplicated) | ≈ +250 over A (fields, constructors, `this.`, wiring) | ≈ +40 in step 1 (fewer files), no step-2 deletions beyond A's |
+| move-only feasibility (D17a, D39) | yes: bodies byte-identical except the 8 setters of §6.2 (tsc-checked) and R1a bare imports | **no**: every moved body changes (`boardsStatus` → `this.boards`), so `--color-moved` review and the move-only rule both fail; step 1 is a rewrite of ~1500 lines | mostly, but `state.ts` must export ~40 mutators to keep bodies verbatim, which is the context object again |
+| testability | M1 makes every module importable without effects; the pure decisions already extracted (`linkStatus`, `FlushPacer`, `planBackfillSlices`, research §5 "functional core") stay pure; G6 is a plain vitest | best in principle (fakes by constructor), but the gate is black-box goldens over HTTP/WS, which gain nothing; unit tests would be new code with a single user (D17d) | worst: `state.ts` cannot be imported for one concern without the others |
+| fit with characterization boundaries | goldens are black-box over :8081 (pipeline, lifecycle, `ws_data_flow_test`), untouched by any layout; the path-coupled pieces are `src/server.ts` (launched by `pipeline/run.sh:200`, `test_integration.sh:834`, `environmental-recovery.integration.ts:97`) — kept — and `lc-tare.test.ts`'s source-text anchors, re-pointed under D18 (§6.1 rows 1.3, 1.14) | same entry point; `lc-tare.test.ts` anchors break in more places (the parse site and drain loop change text, not just file) | same entry point; `lc-tare.test.ts` re-pointed once, to `ingest.ts`/`broadcast.ts` |
+| risk to the frozen contract / startup order | low and checked: R1a-c + R2 + the startup-order script + the module-order diff (§6.3 items 4, 6) + G12 | high: construction order is new code; a constructor that starts a timer reorders §1.3 rows, and nothing textual pins it | medium: `state.ts`'s initialisers run at its import (or need the same `init*` discipline as A), and the three 1 s timers live in two different files |
+
+**Why A.** It is the only shape that allows a true move-only pass (D17a): bodies keep their text,
+and every exception is either type-checked (setters, TS2632) or mechanically listed (R1a bare
+imports). It matches the precedent of every module already extracted from `server.ts`
+(`board-scan-rate`, `elodin-vtable-registry`, `lc-tare`, `countdown-state`, `sessionManager`), and
+it keeps each concern in one file, which the walkthroughs below confirm step by step. **B lost** on
+move-only feasibility and on D17(d) (fifteen single-instance classes, the "context object" the
+orchestrator already declined in D-c) — research §5 reaches the same verdict. **C lost** because
+its central file recreates the god file under a new name and splits board health, the most
+stateful concern, across three files.
+
+**No divergence from the reviewed design**; the deeper pass amends it in places ([A1]-[A7] at the
+top), none of which changes the module list or the layering.
+
+---
+
+## Walkthroughs (design/ts2, 2026-11-16)
+
+Each flow is traced through the target modules (after step 2 unless a step says "step 1"), with
+the one owner of each step. "Owner" means the module whose code decides or does that step; a
+module that only passes a value through is not an owner. Findings are at the end of each flow;
+fixes are the amendments [A3], [A4] (§6.4 steps 2.8, 2.9).
+
+### (a) A fire command from the GUI to the sequencer on :9998, and the `state_update` back
+
+1. The browser sends `{"type":"send_command","payload":{"commandType":"state_transition","data":{"state":16}}}`.
+   **`ws-connection`** (the socket's `message` listener): counts it, `JSON.parse`, calls
+   `commands.handleMessage(ws, msg)` inside its one try/catch (a throw → `Bad message`, no reply).
+2. **`commands.handleMessage`** switches on `type` → `handleCommand`.
+3. Control gate. **`commands`** owns the rule (`CONTROL_COMMAND_TYPES` vs the socket's
+   `__daqControlAuthorized`). The flag was set by `commands` on `CONTROL_UNLOCK` from
+   `__daqOperator`, which **`ws-connection`** computed at connect from `X-Auth-Email` (identity is
+   ws-connection's; arming is commands'). Locked → `ERROR "Control locked: …"` to this socket.
+4. State-id resolution: is 16 a state the config declares, and what is its sequencer name?
+   **`engine-state.resolveTransitionTarget(16)`** after step 2.9 [A3]. *Before 2.9 this step had
+   two owners* (`commands` read `[[states]]` and `STATE_TO_CSV_NAME`, `engine-state` named states
+   for `state_update` and the mismatch text) — fixed by 2.9.
+5. Hold validation and the line `TRANSITION:Fire[:<ms>]\n`: **`commands`**.
+6. The TCP exchange: **`sequencer-client.sendToSequencer`** (WP5). Logs `→ actuator_service`,
+   resolves `{ok, reply}`, never rejects.
+7. Reply: `ok` → log `State transition Fire → Fire: OK (…)`; not ok → `ERROR "State transition
+   failed: <refusalText(reply)>"` to the requester only. **`commands`**. No optimistic update.
+8. The sequencer runs Fire and itself sends `FIRE_START` to `controller_service` on :9999 (the
+   backend never does, §6.5). It publishes `_SEQUENCER_STATE` [0x50,0x00] to Elodin.
+9. The packet arrives: **`elodin-link`** owns the client (`elodin`), whose `packet` event
+   `server.ts` wired to **`ingest.handleElodinPacket`**. Its first statement is
+   `notePairDelivered(high, low)` [A7]; it parses, sees `_SEQUENCER_STATE`.
+10. **`engine-state.applySequencerState(rows)`**: assigns `allowedBitmask`, `currentState`,
+    `debugMode`, counts `stats.sequencerStatesReceived`, `broadcastStateUpdate()` (the broadcast
+    shape, with `allowedBitmask` and `stateRefusalReasons`), `broadcastCommandedActuatorsForState`.
+    Then **`ingest`** calls `actuator-mismatch.scheduleActuatorMismatchCheck(currentState)` and
+    returns (order frozen, §6.1 row 1.11).
+11. 5 s later **`actuator-mismatch`** compares `engine-state.getExpectedPositions(Fire)` with the
+    sensed positions it holds; raises or clears `actuator_mismatch` through
+    **`notifications.raiseNotification` / `clearNotification`** (step 2.2).
+12. Meanwhile `[0x31]`/`[0x34]` rows update the sensed positions (**`actuator-mismatch.noteSensedRow`**,
+    step 2.1), and every row goes to **`sensor-stream.publishSample`** (history, then outboxes;
+    `ws-clients` drains them every 100 ms).
+
+Owners per step: one each after [A3]. Two emitters of "a sensor sample goes to history and the
+browsers" remain by design — `sensor-stream` (Elodin rows) and `engine-state` (the CSV-derived
+commanded snapshot, `broadcastCommandedActuatorsForState`): they differ in the frame timestamp
+(`Date.now()` at send vs the snapshot's `epochNow`), so folding one into the other changes a
+field. Not a double owner of one step; recorded.
+
+### (b) An abort
+
+GUI abort: the same command with the abort state's id (e.g. `Engine Abort`, 17): steps 1-12 of
+(a). Three properties the trace makes explicit:
+
+- **The abort passes the control gate** (step 3). An unarmed browser's abort is refused with
+  `Control locked`. That is today's behaviour, frozen in `ws_events.txt` (locked/unlocked), not
+  WP6's to change; recorded so nobody "fixes" it in a refactor.
+- **A failed send is reported, never retried** (step 7). Sequencer stalled (e.g. C4-1's deadlock)
+  → `ERROR "State transition failed: timeout"` after 2 s; down → `…: connect ECONNREFUSED …`. G4
+  freezes both.
+- **A sequencer-initiated abort** (redline, abort thresholds) never touches `commands` or
+  `sequencer-client`: it arrives as `_SEQUENCER_STATE` at step 9 and follows 9-12. The backend's
+  only abort-specific behaviour is what `engine-state` and `actuator-mismatch` do for any state.
+  The abort's UDP batch, its double `triggerAbort` (C1-10) and the pending-stage race (C4-3) are
+  the sequencer's.
+
+Owners per step: as (a). No new finding.
+
+### (c) A board reconnect / board-status change
+
+1. **Heartbeats stop.** The 1 s stale sweep (registered in `server.ts`, row 13) runs
+   **`board-status.markStaleBoards`**: past 5 s it sets `connected = false`, raises `board_lost_<id>`
+   (**`notifications.raiseNotification`**), and calls `broadcastBoardStatus()` (**`board-status`**).
+2. Same second, in registration order [A5]: the 1 s `broadcastBoardStatus` (**`board-status`**),
+   then `broadcastConnectionStatus` (**`elodin-link`**). The order is on the wire (G11).
+3. **A heartbeat returns.** `[0x10, id]` → **`ingest`** (delivery note first) →
+   **`board-status.countHeartbeat` + `updateBoard`**: was disconnected → `broadcastBoardStatus()`
+   immediately. A T7 has no heartbeat: its data rows reach **`board-status.noteT7Alive`** via the
+   T7 slot lookup (**`config-caches.t7BoardIdForSlot`**, one owner after step 2.4).
+4. Next sweep: **`board-status`** clears `board_lost_<id>` (`clearNotification`, `ongoing:false`)
+   and emits the one-shot `"… connected"` info (`broadcastNotification`).
+5. A board config does not know: `updateBoard` creates it with `expected:false`; the sweep raises
+   `unrecognized_<id>`. **`board-status`**.
+6. Self-test rows `[0x60..0x6F, id]` → **`board-status.noteSelfTestResults`** (step 2.1): snapshot
+   for replay, first failure per board → `self_test_fail_<id>`. *In step 1 this has two owners*
+   (`ingest` writes `selfTestLatest` and the notification key, `board-status` owns them) — the
+   planned step 2.1 fixes it.
+7. **Session stop / start** (the C5-1 flash): `sessionManager` calls the callbacks `server.ts`
+   passed in its `listen` callback. Stop → `server.ts`'s arrow: `board-status.loadBoardsFromConfig()`,
+   `broadcastBoardStatus()`, `elodin.disconnect()` when no pipeline. Start → `applyDeployedConfigChange()`
+   (same reload) and the second arrow (`publishClearAllTares`, `elodin.connect()`). **`server.ts`**
+   owns the wiring; each callee owns its effect.
+8. **Elodin reconnects**: **`elodin-link.onElodinConnected`** — badge, `setCalibrationElodin`
+   (step 2.2), subscription pass via the registry (whose due-pair decision is WP5's pure
+   `duePairs`), resubscribe loop, script status.
+9. **A new browser** gets the board list in its connect burst: **`board-status.sendBoardStatusTo(ws)`**
+   after step 2.8 [A4]; self-test replay **`board-status.replaySelfTests(ws)`**; notification
+   replay **`notifications.replayNotifications(ws)`**. *Before 2.8 these frames were built inside
+   `ws-connection` from other modules' bindings* — two places knowing each message's shape —
+   fixed by 2.8.
+
+Owners per step: one each after steps 2.1 and 2.8. `loadBoardsFromConfig(); broadcastBoardStatus();`
+appears in two `server.ts` callbacks (session stop, deployed config): one owner (`board-status`)
+called from two triggers; a combined function would have two users but only saves one line, so it
+is not added.
+
+### (d) A calibration save via HTTP
+
+1. `POST /api/calibration_profiles/save` reaches **`server.ts`**'s HTTP handler → `apiHandler`
+   (WP7). Nothing in `server/*` runs: the save copies the live store into a profile and returns
+   the list (DESIGN-WP7 walkthrough (d)).
+2. `POST /api/calibration_profiles/load` (and `new_blank`) additionally call the
+   `onCalibrationReload` option, which **`server.ts`** built: `publishCalibrationReload(calibrationHost)`
+   (`calibration-handler.ts`, not WP6's) sends Elodin `[0x46,0x00]` cmd 7 through
+   `calibrationHost.elodin`.
+3. That host is owned by **`calibration-state`**; its `elodin` field is written once per
+   connection by `elodin-link.onElodinConnected`. *In step 1 that write is a cross-module object
+   mutation*; step 2.2's `calibration-state.setCalibrationElodin(client)` makes the owner the only
+   writer. Before the first connect the field is `null`, and `publishCalibrationReload` does
+   nothing (frozen, WP7 §3.3).
+4. The WS sibling — saving coefficients from the calibration panel — is `CALIBRATION_COMMAND` →
+   **`commands.handleMessage`** → `handleCalibrationCommand(calibrationHost, ws, payload)`
+   (`calibration-handler.ts`), which writes `calibration/calibration_<ts>.json` (one of the three
+   stores, C3-3; Parked) and reads `lastRawAdc`, filled by **`calibration-state.noteRawAdc`**
+   (step 2.1) from `ingest`.
+
+Owners per step: one each after step 2.2. No new finding.
+
+### Summary of ownership findings
+
+| step | owners before | fix |
+|---|---|---|
+| (a) 4 state-id resolution | `commands` + `engine-state` | [A3] step 2.9 |
+| (a)/(c) connect-burst frames of other modules | `ws-connection` + each owner | [A4] step 2.8 |
+| (a) :9998 port | `server.ts` + WP5 client | [A1] (WP5 owns `SEQUENCER_PORT`) |
+| (a) `commands` → sequencer edge | missing from §2 (zero) | [A1] edge added |
+| (c) 6 self-test snapshot + notification | `ingest` + `board-status` (step 1) | planned step 2.1 |
+| (d) 3 `calibrationHost.elodin` write | `elodin-link` + `calibration-state` (step 1) | planned step 2.2 |
+| (c) 3 T7 slot → board lookup | two lazy fillers (step 1) | planned step 2.4 |
