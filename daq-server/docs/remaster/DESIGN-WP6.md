@@ -11,6 +11,25 @@ section banners (`// ── … ──`) and symbol names given here; use line n
 this note says `sendToActuatorService` it means whatever `service-line-client.ts` exports for :9998
 after WP5.
 
+**Prerequisites.** C1 merged on `backend-remastered`, and `npx tsc --noEmit` in
+`diablo_server/backend/` added to `gate.sh` as a merge-gate step (orchestrator). WP5 merged.
+
+**Orchestrator decisions (design review, 2026-11-16), recorded here:**
+
+- D-a/D-d: the module list of §2 (more modules than BLOAT-MAP's WP6 row, `sensor-stream` in place of
+  `gui-stream-config`) is accepted; the orchestrator amends BLOAT-MAP's WP6 file list and DoD.
+- D-c: module singletons (§3.1) are accepted **on condition that `tsc --noEmit` is a gate step**. It is
+  the only thing that turns a missed setter into a build failure; without it, a missed one fails only
+  at runtime — e.g. an un-converted `countdownTargetMs = …` (today 1361) throws `TypeError: Assignment
+  to constant variable` inside the WS message try and surfaces only as a `Bad message` log with no
+  reply. `tsc --noEmit` exit 0 is required for every commit (§6.3) and at the merge gate.
+- `__tests__/lc-tare.test.ts` may be edited under D18's conditions by analogy: assertions unchanged
+  except anchors and file paths, its mutations re-run, the orchestrator reviews the diff (§6.1, rows
+  1.3 and 1.14).
+- Step 2.7 (replacing the source-text test with a real test) leaves WP6: it is a separate test-only
+  package.
+- Step 1 (the move-only pass) and step 2 (cleanup) are **separate queue items**, each fully gated.
+
 **Contract (frozen, D5/D17).** WS message types and payload field names (`shared/types.ts`, read-only),
 the order of the connect burst, event ordering inside one step, every period and delay listed in §6,
 TCP :9998 command lines and reply handling, Elodin subscriptions, `/stats`, the `src/server.ts`
@@ -154,9 +173,17 @@ New directory `src/server/`. `src/server.ts` stays the entrypoint (systemd `npm 
 **Rule M1 — no import-time effects in `server/*`.** A `server/*.ts` module's top level holds only
 imports, types, constants computed from `process.env` or literals, pure constructors (`new Map`,
 `new HistoryCache(…)`, `new ElodinClient(…)`) and function declarations. Every disk read, log line,
-timer, listener and socket open happens in a function that `server.ts` calls. Consequence: every
-`server/*` module can be imported by a vitest without starting anything (today nothing in
-`server.ts` can be, which is why `lc-tare.test.ts` and `refusal-text.ts` work around it).
+timer, listener and socket open happens in a function that `server.ts` calls.
+
+M1 is a rule about the **top level of `server/*` files only**; it does not make their transitive
+imports effect-free. `engine-state` and `commands` import `legacy/state-actuators.ts` (`state-csv/`
+after WP5), which reads config and can log **at import** (`state-actuators.ts:79-81`:
+`ACTUATOR_ABBREV_MAP`, `ACTUATOR_CHANNEL_BY_NAME`, `CSV_ACTUATOR_TO_ENTITY`). So a vitest that imports
+`server/*` starts no timer, socket or listener, but whatever imports those two modules (and
+`session-manager.ts`, which constructs `sessionManager` at import) reads the config named by the
+environment. Any such test — G6 included — supplies a config fixture through the environment
+(`CONFIG_PATH` pointing at a temp-dir `config.toml`, as `config-profile-create-calibration.test.ts`
+does), never the checkout's `config/config.toml`.
 
 **Rule M2 — the import graph is a DAG.** Each layer imports only from lower layers. ESM tolerates
 cycles at import, but a cycle turns into a TDZ `ReferenceError` the moment a `const` is read during
@@ -224,8 +251,10 @@ Why, from this codebase:
   `createAPIHandler(opts)` (HTTP → WS side) and `sessionManager.init(callbacks)` (session → backend).
   `CalibrationHost` stays as it is: it is `calibration-handler.ts`'s existing interface, with two
   users (the backend and the calibration characterization harness).
-- TypeScript enforces the write rule: assigning to an imported binding is a compile error
-  (`tsc --noEmit` is clean on the baseline, exit 0 — so it is a usable gate, §6.3).
+- TypeScript enforces the write rule: assigning to an imported binding is a compile error (TS2632).
+  `tsc --noEmit` is clean on the baseline (exit 0), and it is a **required gate step** (decision D-c):
+  the singleton design is accepted only with it, because esbuild/tsx do not type-check and a missed
+  setter would otherwise fail only when its line runs.
 - Testability comes from rule M1, not from injection.
 
 ### 3.2 A WS command (e.g. `state_transition`)
@@ -379,7 +408,20 @@ Rules for every commit in step 1:
   (unused ones included; `tsconfig` has no `noUnusedLocals`), and adds the `./server/*.js` imports
   **after** them. ESM evaluates each module once, at its first import, depth-first in source order;
   every pre-existing module therefore evaluates exactly when it does today, and the new modules
-  (M1: no effects) add nothing to the sequence.
+  (M1: no effects) add nothing to the sequence. **Import closure (DoD check):** every module a
+  `server/*` file imports must already be in `server.ts`'s import list (directly), so no
+  `server/*` import is ever the first import of anything. After WP5 the only permitted exception is
+  `service-line-client.ts`, and only while it stays effect-free. Check:
+
+  ```bash
+  cd diablo_server/backend/src
+  have=$(grep -oE "from '\./[^']+'" server.ts | sed "s/from '\.\///; s/'$//" | sort -u)
+  need=$(grep -ohE "from '\.\./[^']+'" server/*.ts | sed "s/from '\.\.\///; s/'$//" | sort -u)
+  comm -13 <(echo "$have") <(echo "$need")   # prints nothing, or only service-line-client.js
+  ```
+
+  (Imports of `../../shared/*` from `server/*` become `../../../shared/*`; compare those the same
+  way against `server.ts`'s `../../shared/*` list.)
 - **R2 (startup order).** Every row of §1.3 stays a statement in `server.ts`, in the same order:
   `setInterval(<named fn>, <same ms>)`, `<module>.init…()`, `elodin.on('<event>', <named fn>)`.
   Only pure steps (9, 14, 23) may sit at a module's top level.
@@ -393,16 +435,19 @@ Rules for every commit in step 1:
   `actuatorSensedState`, `lastRawAdc`, `clientStreams`, `broadcastLastTime`, `envelope`,
   `encoderEnvelope`, and `_t7SlotToBoardId` (which `noteT7Alive` in board-status fills until step
   2.4). `_ptSlotToBoardId` stays private to `config-caches`.
+- **R5 (no re-export copies).** Never `export const x = y` (or `export let x = y`) where `y` is an
+  imported `let`: that copies the value once and stops following the owner. Re-export with
+  `export { y } from './owner.js'`, which keeps the live binding.
 - **R4 (one commit per module)**, in the order below, each green on its own (§6.3).
 
 | # | commit: create | cut from `server.ts` (today's lines) | exports | notes |
 |---|---|---|---|---|
 | 1.1 | `server/env.ts` | 61, 73-79, 1858 (`GUI_PORT`) | env constants | `CONTROL_COMMAND_TYPES` and `WsWithControl` go elsewhere |
-| 1.2 | `server/stats.ts` | 740-754 (+ comment 726-733) | `stats` | `lastIngestMs`/`DATA_FRESH_MS` (734-738) go to 1.10 |
-| 1.3 | `server/ws-clients.ts` | 66-72 (`WsWithControl`), 187-209 (`ClientStream`, `clientStreams`), 233-274 body → `flushClientOutboxes`, 278-280 body → `resetOutboxStats`, 901 → `attachWebSocketServer(httpServer)` assigning `export let wss`, 904-917 (`broadcast`, `send`), 941-960 body → `reapUnresponsiveClients` + `KEEPALIVE_MS`, 1557-1562 (`clientStreamStatus`) | see §2 | `server.ts` keeps `setInterval(flushClientOutboxes, 100)` at row 3, `setInterval(resetOutboxStats, 10_000)` at row 4, `attachWebSocketServer(httpServer)` at row 18, `setInterval(reapUnresponsiveClients, KEEPALIVE_MS)` at row 21 |
+| 1.2 | `server/stats.ts` | 740-754 (+ comment 726-733) | `stats` | `lastIngestMs`/`DATA_FRESH_MS` (734-738) go to 1.13 |
+| 1.3 | `server/ws-clients.ts` | 66-72 (`WsWithControl`), 187-209 (`ClientStream`, `clientStreams`), 233-274 body → `flushClientOutboxes`, 278-280 body → `resetOutboxStats`, 901 → `attachWebSocketServer(httpServer)` assigning `export let wss`, 904-917 (`broadcast`, `send`), 941-960 body → `reapUnresponsiveClients` + `KEEPALIVE_MS`, 1557-1562 (`clientStreamStatus`) | see §2 | `server.ts` keeps `setInterval(flushClientOutboxes, 100)` at row 3, `setInterval(resetOutboxStats, 10_000)` at row 4, `attachWebSocketServer(httpServer)` at row 18, `setInterval(reapUnresponsiveClients, KEEPALIVE_MS)` at row 21. **Same commit: re-point the drain slice of `__tests__/lc-tare.test.ts:199-202`** to `server/ws-clients.ts`. From this commit on, `server.ts` no longer contains `cs.outbox.drain()`, both `indexOf` calls return -1, the slice is empty and the two `not.toContain` assertions pass vacuously — the test goes silent here, not red at 1.14. Add a non-vacuity assertion that both anchors are found (`indexOf(...) > -1` for `cs.outbox.drain()` and `cs.pacer.noteFlush`). Mutation to re-run: move the tare into the drain (subtract a `force_kg_tared` offset between the two anchors) → red |
 | 1.4 | `server/notifications.ts` | 627, 633-652 | see §2 | |
 | 1.5 | `server/history.ts` | 81-86, 122-126, 129 body → `pruneHistory`, 1148-1203 | `history`, `pruneHistory`, `sendHistoricalData` | `broadcastLastTime` (127) goes to 1.7 |
-| 1.6 | `server/mission-time.ts` | 297-299 → `export let` + `initMissionTime()` | + `setFirstPacketTimeMs`, `setCountdownTargetMs` | the `countdown-state.js` import moves with it |
+| 1.6 | `server/mission-time.ts` | 297-299 → `export let` + `initMissionTime()` | + `setFirstPacketTimeMs`, `setCountdownTargetMs` | `mission-time.ts` imports `countdown-state.js`; **`server.ts` keeps its own `countdown-state.js` import** (R1: it stays at its position, today line 298, so `countdown-state` still evaluates there) |
 | 1.7 | `server/sensor-stream.ts` | 90-118, 127, 133-141 → `initGuiStream()` (assigns `guiStreamConfig`, `envelope`, `encoderEnvelope`, logs), 163-185, 211-227, 285-293 body → `flushEnvelopes` | see §2 | 143-161 (`configStateName`) goes to 1.11 |
 | 1.8 | `server/config-caches.ts` | 327-373 (+ the T7 map 350-351); 329/331 initialisers → `initConfigCaches()`; 854-857 → `resetConfigCaches()` | see §2 | `noteT7Alive`'s own lazy fill (575-579) moves with `noteT7Alive` in 1.10, unchanged |
 | 1.9 | `server/calibration-state.ts` | 305-325 (load → `initCalibrationState()`), 375-384 (host built inside `initCalibrationState()`, after the load), 852-853 → `reloadCalibrationEntityMap()` | see §2 | the host must be built after `loadPTCalibration` (it copies the path by value; frozen in `ws_events.txt` `calibration_command`) |
@@ -410,9 +455,16 @@ Rules for every commit in step 1:
 | 1.11 | `server/engine-state.ts` | 143-161, 424-470 (430 → `reloadStateActuatorMap()`, called at row 11 and from the two callbacks), 756-775 (774 → `initEngineState()`), 1236-1265; **the body of 1697-1720 → `applySequencerState(parsedList)`** without its last two statements | see §2 | in `ingest`: `if (parsedList[0]?.entity === '_SEQUENCER_STATE') { applySequencerState(parsedList); scheduleActuatorMismatchCheck(currentState); return; }` — same order as today. `server.ts` keeps `setInterval(refreshScriptStatus, 15000)` at row 26 |
 | 1.12 | `server/actuator-mismatch.ts` | 472-517 | see §2 | |
 | 1.13 | `server/elodin-link.ts` | 734-738 (+ `noteIngest()` = `lastIngestMs = Date.now()`), 1471, 1486-1555, 1564-1576, 1583-1602 → `onElodinConnected`, 1610-1635 → `onElodinDbError`, `onElodinDisconnected`, `onElodinError`, 1831-1846 (`syncElodinToSession`) | see §2 | `server.ts` keeps `setInterval(broadcastConnectionStatus, 1000)` at row 24, then `elodin.on('connected', onElodinConnected)`, row 26, then the other `on`s in today's order. Keep the log text `Connected to Elodin, subscriptions sent.` |
-| 1.14 | `server/ingest.ts` | 1637-1816 → `handleElodinPacket(header, payload)` | | `server.ts`: `elodin.on('packet', handleElodinPacket)`. **Same commit:** re-point `__tests__/lc-tare.test.ts:192-203` — the `expandWithTare(parseElodinPacket(` assertion reads `server/ingest.ts`, the drain slice (`cs.outbox.drain()` … `cs.pacer.noteFlush`) reads `server/ws-clients.ts`; assertions unchanged; re-run its mutation (delete the `expandWithTare(` wrapper → red) |
+| 1.14 | `server/ingest.ts` | 1637-1816 → `handleElodinPacket(header, payload)` | | `server.ts`: `elodin.on('packet', handleElodinPacket)`. **Same commit:** re-point the parse-site assertion of `__tests__/lc-tare.test.ts:196-197` (`expect(src).toContain('expandWithTare(parseElodinPacket(')`) to `server/ingest.ts` (the drain slice was re-pointed in 1.3). Mutation to re-run: drop the `expandWithTare(` wrapper → red. Both lc-tare edits follow D18 by analogy: assertions unchanged except anchors and paths, mutations re-run, orchestrator reviews the diff |
 | 1.15 | `server/commands.ts` | 62-64, 1205-1234, 1267-1407, 1473-1484 (`STATE_TO_CSV_NAME`) | `handleMessage` | |
 | 1.16 | `server/ws-connection.ts` | 902, 962-1146 → `handleConnection(ws, req)` | | `server.ts` row 22: `wss.on('connection', handleConnection)` |
+
+**Call order for rows 7-9.** `server.ts` calls `initCalibrationState()` (PT load and its log,
+sensor-role map, then the host object) and **then** `initConfigCaches()` (`hpBoardNumbers()`,
+`t7CalFields()`). Today the host (375) is built after the two cache reads (329, 331); in this order it
+is built before them. That is harmless: building the host is pure (an object literal over values
+already loaded), and the two cache reads log nothing and do not read the host, so no observable
+effect moves. The I/O order — PT file, role map, HP set, T7 fields — is unchanged.
 
 What remains in `server.ts`: header comment, imports (R1), the startup sequence (rows 1-31 as
 statements), `video`, `createAPIHandler({…})` with its five options (bodies verbatim, now reading
@@ -438,10 +490,41 @@ imported bindings), `applyDeployedConfigChange` (body verbatim with 852-857 repl
 
 ### 6.3 Checks for every step-1 commit
 
-`npx tsc --noEmit` (exit 0), backend `npm test` with no failure outside
-`test/characterization/baseline_vitest_failures.txt`, then under the stack lock: `pipeline/run.sh pt`,
-`nocal`, `boards`; `lifecycle/run.sh`; at the end of the step, `test_integration.sh`
-(`ws_data_flow_test`). Review with `git diff --color-moved=dimmed-zebra
+**Every commit** (no ports, no lock unless stated):
+
+1. `npx tsc --noEmit` in `diablo_server/backend/` — exit 0 (required, decision D-c).
+2. Backend `npm test`, no failure outside `test/characterization/baseline_vitest_failures.txt`.
+3. Cycle grep: no `server/*` file imports `ws-connection`, `commands` or `ingest`, and none imports
+   `api-server` or `api/`; plus the import-closure check of R1.
+   `grep -lE "from '\./(ws-connection|commands|ingest)\.js'|api-server|\.\./api/" src/server/*.ts`
+   prints nothing.
+4. **Startup-order script.** Extract, in order, every startup statement in `server.ts`'s top level —
+   `setInterval(<fn>, <ms>)`, `elodin.on('<event>'`, `wss.on('<event>'`, `<name>()` calls of
+   `init*` / `load*` / `reload*` / `start*` / `attachWebSocketServer`, `video.start()`,
+   `httpServer.on` / `listen`, `process.on` — and compare with the expected list derived from §1.3:
+
+   ```bash
+   cd diablo_server/backend/src
+   grep -E "^(setInterval\(|elodin\.on\('|wss\.on\('|(init|load|reload|start)[A-Za-z]*\(|attachWebSocketServer\(|video\.start\(|httpServer\.(on|listen)\(|process\.on\()" server.ts \
+     | sed -E 's/\{.*$//' > /tmp/startup-order.txt
+   diff /tmp/startup-order.txt startup-order.expected   # must print nothing
+   ```
+
+   WP6's first commit adds `startup-order.expected` (§1.3 rows 1-31 in this form; kept with the
+   package's script, not under `src/`); every later step-1 commit must diff empty against it. This is
+   what guards G11 and the row order of §1.3; no golden does.
+5. **Startup log diff** (G12): start `src/server.ts` alone for 5 s under the stack lock (one short
+   hold), with the pipeline fixture's environment (`CONFIG_PATH` = a fixture config with
+   127.0.0.x boards, `SESSION_SERVICE_MODE=mock`, `GUI_PORT=0`, 264xx ports, no Elodin), and diff the
+   first 60 lines of its output against the same run on `backend-remastered`. Identical after
+   normalising timestamps and PIDs.
+
+**At checkpoints only** — after commits 1.7, 1.13 and 1.16 — under the stack lock, within AGENT-RULES
+rule 7's hold limit (≤ ~5-10 min per hold; split across holds if needed): `pipeline/run.sh pt`,
+`nocal`, `boards`, `lifecycle/run.sh`. `test_integration.sh` (`ws_data_flow_test`) runs in the merge
+queue's full gate.
+
+Review with `git diff --color-moved=dimmed-zebra
 --color-moved-ws=allow-indentation-change backend-remastered -- diablo_server/backend/src`: every
 non-moved line must be an import, an `export` keyword, a function wrapper for a former inline arrow,
 a setter from §6.2, or a startup statement in `server.ts`.
@@ -461,7 +544,11 @@ Each is its own commit, each with the §6.3 checks. Order matters only where not
    and 4 broadcast-then-`delete` (515, 681, 703, 716) pairs (broadcast first, as today); the one-shot `connected` info stays `broadcastNotification`.
    `calibration-state.setCalibrationElodin`.
 3. **Slot rule** (after G6 exists): `config-caches.ts`'s `bid % 10, 0 → 10` (today 344-345) →
-   WP5's `boardSlot()`; equivalent for every number `bid` (the `typeof` guard stays).
+   WP5's `boardSlot()`. Allowed only if **either** WP5's `boardSlot()` body is literally
+   `const m = id % 10; return m === 0 ? 10 : m;` (then it is the same expression for every number,
+   the `typeof bid === 'number'` guard staying in the caller), **or** G6 also freezes negative
+   (`-21`), non-integer (`21.5`) and `NaN` board_ids, so that any extra validation in `boardSlot()`
+   shows up.
 4. **One T7 slot lookup.** `t7BoardIdForSlot(slot)` replaces both lazy fillers (360 and 577). The
    two catches differ (`/* no T7 uid */` vs `return`), but they are equivalent: the only throws come
    from `readConfig()` or `t7Channels()` before the loop sets anything, so after either catch the map
@@ -471,8 +558,11 @@ Each is its own commit, each with the §6.3 checks. Order matters only where not
    `setRunDir`). This can reorder import-time evaluation of pre-existing modules; diff the first 60
    lines of `backend.log` from a pipeline run before and after — only import-time warnings from
    `legacy/state-actuators` may move.
-7. Optional, only with the owner's agreement: replace the `lc-tare.test.ts` source-text check with a
-   real test now that `server/ingest.ts` and `server/ws-clients.ts` import without side effects.
+7. ~~Replace the `lc-tare.test.ts` source-text check with a real test.~~ **Moved out of WP6**
+   (decision): a separate test-only package, after step 1 has merged.
+
+Step 2 is its own queue item, gated in full like step 1; each commit runs the per-commit checks of
+§6.3 and the checkpoint runs after 2.1 and at the end.
 
 ### 6.5 Deliberately NOT changed (observable)
 
@@ -514,16 +604,39 @@ Each is its own commit, each with the §6.3 checks. Order matters only where not
 
 ### Gaps — a move could change these and no golden would notice
 
-Each is a test to add **before** the step that touches it. G1-G5, G7, G9, G10 belong in
-`test/characterization/**` (C0-owned); G6 is a backend vitest that WP6 adds itself.
+Each is a test to add **before** the step that touches it. G1-G5, G7-G10 belong in
+`test/characterization/**` (C0-owned); G6 is a backend vitest that WP6 adds itself; G11 and G12 are
+WP6's own per-commit scripts (§6.3).
+
+| gap | priority (orchestrator) | must exist before |
+|---|---|---|
+| G7 + G8 | MUST | step 1 |
+| G1 | MUST | commits 1.11 / 1.12 (feasibility below) |
+| G10 | MUST | commits 1.15 / 1.16 |
+| G4 | MUST, owned by WP5 | WP5 lands |
+| G11, G12 | MUST (scripts, §6.3 items 4-5) | step 1, first commit |
+| G9 | should | step 2 |
+| G2, G3 | should | steps 2.1 / 2.2 |
+| G6 | should | step 2.3 |
+| G5, G13 | nice-to-have | — |
 
 - **G1 Actuator mismatch** never fires in any golden (`grep actuator_mismatch` → nothing in
   pipeline, lifecycle or `ws_data_flow_test.ts`). Its state moves across three modules
   (`actuator-mismatch`, `engine-state`, `notifications`) and step 2.1 moves the sensed-state blocks.
-  Script (boards session, actuator boards 12/14 simulated): unlock → `debug_mode` on → open a valve
-  the current state expects closed → `debug_mode` off (publishes state) → expect, ≥ 5 s later,
-  `notification actuator_mismatch ongoing=true "Actuator mismatch in <state>: <name> (expected
-  CLOSED, sensed OPEN)"` → close it → `"Actuator positions match expected" ongoing=false`.
+  **The script first proposed here is infeasible:** turning `debug_mode` off calls
+  `actuator_commander_.clearAllManualOverrides()` before it publishes state
+  (`SequencerService.cpp:949-952`), so the manually opened valve returns to the state's position
+  and nothing is left to mismatch. Two candidates, for C0 to confirm before choosing:
+  (a) stay in debug: unlock → `debug_mode` on → open a valve the current state expects closed →
+  `debug_mode` on **again** (`doSetDebugMode(true)` publishes state without clearing overrides, which
+  schedules the 5 s check) → expect `notification actuator_mismatch ongoing=true "Actuator mismatch
+  in <state>: <name> (expected CLOSED, sensed OPEN)"` ≥ 5 s later → close the valve (a sensed change
+  with the key active reschedules) → `"Actuator positions match expected" ongoing=false` → debug
+  off. Needs confirming that the second `DEBUG_MODE:1` reaches `publishState()` and that the
+  simulated actuator board reports the opened channel as sensed open. (b) a simulator-side
+  sensed-state fault: `board_simulator.py` reports one actuator channel's current-sense opposite to
+  its command, so any state publish yields a mismatch 5 s later. (b) does not depend on debug-mode
+  semantics but needs a simulator option.
 - **G2 `self_test_fail_<id>`** (one notification per board, `break` after the first failure): the
   simulators only pass. Needs a simulator option that fails one sensor.
 - **G3 `unrecognized_<id>`**: no board outside config ever heartbeats in a golden.
@@ -553,6 +666,17 @@ Each is a test to add **before** the step that touches it. G1-G5, G7, G9, G10 be
 - **G10 a JSON message whose handler throws** (e.g. `{"type":"send_command"}` with no payload →
   `TypeError` inside the same try → no reply): not exercised; add one line to `session.ts`'s
   `subscribe` step.
+- **G11 timer firing order.** The three 1 s timers (stale sweep → board status → connection status)
+  fire in registration order, and that order is on the wire (board-health notification before
+  `board_status_update` before `connection_status` within one second). No golden freezes it (P1 takes
+  board-health notifications as a set; `connection_status` is a periodic type). Guarded statically by
+  the startup-order script (§6.3 item 4).
+- **G12 startup log order.** The order of startup log lines (`GUI downsampling`, `Loaded N PT
+  calibrations`, `Loaded N boards`, import-time warnings of `state-actuators`, video, `listening on
+  port`) is in no golden. Guarded by the 60-line log diff (§6.3 item 5).
+- **G13 `[WS_BACKEND]` `conn_open` / `conn_close` lines** (fields, counters, `connId`): log only, not
+  frozen. Nice-to-have: a lifecycle line that records their keys and counter values for one scripted
+  client.
 
 ---
 
@@ -582,7 +706,8 @@ Each is a test to add **before** the step that touches it. G1-G5, G7, G9, G10 be
   `legacy/state-actuators.ts`, the frontend). WP5 does not own this file's copy; WP6 replaces it in
   step 2.3, after G6.
 - **R6 Live bindings.** `export let` reads are ESM semantics (tsx and vitest preserve them). Never
-  `const { currentState } = await import(…)` or copy one into a local that outlives the call.
+  `const { currentState } = await import(…)` or copy one into a local that outlives the call, and
+  never re-export an imported `let` as `export const x = y` (§6.1 R5); `export { y } from …` is fine.
 - **R7 Ingest hot path.** Moving the row blocks into other modules (step 2.1) adds function calls
   per row (~200+ streams). Measure `/stats` `sensorUpdatesBroadcast` against the simulator's sent
   count (`ws_data_flow_test` sample conservation) and the pipeline T1 bound; abandon 2.1 for any
@@ -591,14 +716,20 @@ Each is a test to add **before** the step that touches it. G1-G5, G7, G9, G10 be
   `lifecycle.py:1083`, frozen in `reconnect.txt`) moves with `onElodinConnected` unchanged.
   `VTableStream: sent` / `queued for the next pass` (`pipeline/run.sh:216`) come from
   `elodin-vtable-registry.ts`, which WP6 does not touch.
-- **R9 `lc-tare.test.ts`** is a source-text test of `server.ts` and goes red the moment the parse site
-  or the drain loop leaves the file. Re-pointing it is part of commit 1.14, with its mutation re-run.
+- **R9 `lc-tare.test.ts`** is a source-text test of `server.ts`. It fails in two different ways: the
+  parse-site assertion goes **red** when the parse site leaves (1.14), but the drain-slice assertions
+  go **silently vacuous** when the drain loop leaves (1.3), because both `indexOf`s return -1 and the
+  empty slice contains nothing. Hence the re-point in 1.3, the non-vacuity assertion, and both
+  mutations re-run (§6.1 rows 1.3 and 1.14).
 - **R10 `tsx watch` in production** (`npm run dev`, recorded defect): more files under `src/` are
   watched; behaviour unchanged.
 
 ---
 
 ## Open questions
+
+Q2, Q3 and Q5 are settled by the orchestrator's decisions at the top of this note; Q4 by the gap
+priority table in §7. Q1 remains for WP5.
 
 - **Q1** `sendToControllerService` (:9999) has no caller. WP5 plans one `sendLine(port, line, isOk)`
   "preserving both predicates"; with only one live user that is an abstraction with a single user
