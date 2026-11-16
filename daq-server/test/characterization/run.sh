@@ -12,6 +12,8 @@ fi
 [ -n "$BUILD" ] || { echo "run.sh: no build dir; run scripts/build.sh first" >&2; exit 2; }
 export CHAR_BUILD_DIR="$BUILD"
 fail=0
+echo "── stack lock self-test"
+bash "$HERE/test_stack_lock.sh" || fail=1
 echo "── ctest -L characterization ($BUILD)"
 (cd "$BUILD" && ctest -L characterization --output-on-failure) || fail=1
 for r in "$HERE"/*/run.sh; do
