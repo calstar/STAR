@@ -52,6 +52,16 @@ BACKEND="$ROOT/diablo_server/backend"
 TSX="$BACKEND/node_modules/.bin/tsx"
 [ -x "$TSX" ] || { echo "pipeline: $TSX missing — npm ci in diablo_server/backend" >&2; exit 2; }
 PY="$(command -v python3)"
+# The backend's state-CSV loaders try <daq-server>/config/<csv> (via __dirname) before the
+# fixture's. Those files are generated deploy artefacts (gitignored); if a checkout has them they
+# would silently replace the fixture's tables.
+for f in state_machine_actuators.csv state_transitions.csv state_machine_actuator_delays.csv; do
+  if [ -e "$ROOT/config/$f" ]; then
+    echo "pipeline: $ROOT/config/$f exists (a deployed profile) and would shadow the fixture's" >&2
+    echo "          state tables in the backend; move it aside to run this." >&2
+    exit 2
+  fi
+done
 
 # Private port range. 5008 is the one port daq_bridge hard-codes (FSWConfigManager); the stack
 # lock is what keeps it free.
@@ -84,7 +94,7 @@ cat > "$FX/ports.json" <<EOF
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
 "$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json"
-CFG="$FX/root/config/config.toml"
+CFG="$FX/config/config.toml"
 
 wait_port() {  # port name seconds
   local i=0
@@ -101,27 +111,30 @@ alive() {  # pid name
 "$ELODIN_DB" run "127.0.0.1:$P_ELODIN" "$FX/elodin_db" > "$FX/logs/elodin.log" 2>&1 &
 PIDS+=($!); wait_port $P_ELODIN elodin 15
 
-(cd "$FX/root" && exec "$BIN/sequencer_service" --config "$CFG" --port $P_SEQ) > "$FX/logs/sequencer.log" 2>&1 &
+(cd "$FX" && exec "$BIN/sequencer_service" --config "$CFG" --port $P_SEQ) > "$FX/logs/sequencer.log" 2>&1 &
 PIDS+=($!); wait_port $P_SEQ sequencer 15
 
-(cd "$FX/root" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
+(cd "$FX" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
 
-(cd "$BACKEND" && exec env -u USE_SIM -u RUNNING_CONFIG_PATH -u COUNTDOWN_STATE_PATH \
+# The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
+# legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
+# (diablo_server/backend) sees daq-server/config.
+(cd "$FX/char/backend" && exec env -u USE_SIM -u RUNNING_CONFIG_PATH -u COUNTDOWN_STATE_PATH \
   -u SESSION_STATE_PATH -u VIDEO_CONFIG_PATH -u VIDEO_SECRETS_PATH -u REPLAY_MODE -u ELODIN_DEBUG \
   -u THIN_VERBOSE_CONNECTION_LOG -u THIN_HEARTBEAT_DIAG_LOG -u THIN_STATS_LOG \
   -u SESSION_WARN_LEADS_MS -u SESSION_WARN_LEAD_MS \
   HOME="$FX/home" WS_PORT=$P_WS GUI_PORT=0 ELODIN_HOST=127.0.0.1 ELODIN_PORT=$P_ELODIN \
   ACTUATOR_SERVICE_PORT=$P_SEQ CONTROLLER_SERVICE_PORT=$P_CTRL OTA_SERVICE_PORT=$P_OTA \
   LOG_INGEST_PORT=$P_LOG_UDP CONFIG_PATH="$CFG" SESSION_SERVICE_MODE=mock \
-  DAQ_CALIBRATIONS_DIR="$FX/root/scripts/calibration/calibrations" \
+  DAQ_CALIBRATIONS_DIR="$FX/scripts/calibration/calibrations" \
   DAQ_OPERATORS_FILE="$FX/operators.txt" STAR_DHCP_HOSTS="$FX/no-dhcp-hosts" \
   VIDEO_GATEWAY_HOST=127.0.0.1 VIDEO_GATEWAY_API_PORT=$P_VID_API \
   VIDEO_GATEWAY_WEBRTC_PORT=$P_VID_RTC VIDEO_AGENT_PORT=$P_VID_AGENT \
-  "$TSX" src/server.ts) > "$FX/logs/backend.log" 2>&1 &
+  "$TSX" "$BACKEND/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
 PIDS+=($!); wait_port $P_WS backend 30
 
-(cd "$FX/root" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" --config "$CFG" \
+(cd "$FX" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" --config "$CFG" \
   --adjustments "$FX/adjustments.json" --elodin-host 127.0.0.1 --elodin-port $P_ELODIN) \
   > "$FX/logs/calibration.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" calibration
@@ -143,7 +156,7 @@ CAPTURE="$FX/capture.json"
 
 cat > "$FX/context.json" <<EOF
 {"now_ms": $START_MS,
- "paths": {"$FX/root/config": "<cfgdir>", "$FX/root": "<fxroot>", "$FX/home": "<home>", "$FX": "<fx>",
+ "paths": {"$FX/config": "<cfgdir>", "$FX/home": "<home>", "$FX": "<fx>",
            "$ROOT": "<daq>"},
  "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))')}
 EOF
