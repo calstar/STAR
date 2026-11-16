@@ -29,7 +29,7 @@ to DESIGN-WP8 §1.3.
    | call (file:line) | today on EINTR | effect of the signal landing on that thread |
    |---|---|---|
    | heartbeat main `usleep(100000)` (`services/heartbeat/heartbeat_service_main.cpp:292`) | loop re-checks `g_running` | exit ≤100 ms sooner |
-   | sequencer/controller `select` 10 ms (`services/sequencer/sequencer_main.cpp:310-311`, `services/controller/controller_main.cpp:174`) | `<= 0 → continue` | negligible |
+   | sequencer/controller `select` 10 ms (`services/sequencer/sequencer_main.cpp:310-311`, `services/controller/controller_main.cpp:178`) | `<= 0 → continue` | negligible |
    | ota `select` 1 s (`services/ota/ota_service_main.cpp:443-445`) | `<= 0 → continue` | exit up to 1 s sooner |
    | Elodin `read_exact` with `SO_RCVTIMEO` (`transport/src/transport/TCPClient.cpp:217-221`) | **retried** (`continue`) — a fresh `SO_RCVTIMEO` wait starts | none; follower still waits ≤3 s (heartbeat) / 500 ms (stacklight) |
    | Elodin `_write_all` (`TCPClient.cpp:146-149`) | retried | none |
