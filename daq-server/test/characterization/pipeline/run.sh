@@ -116,9 +116,13 @@ PIDS+=($!); wait_port $P_SEQ sequencer 15
 # At boot the sequencer publishes every valve de-energized (ActuatorCommander publishInitialState:
 # a normally-open valve reads 1) and then applies the boot state's column (Fuel Main → 0). Whether
 # the backend, subscribing a moment later, records that transient 1 in its history was a race
-# (macOS missed it, Linux caught it). Start the backend only once the boot state is applied.
+# (macOS missed it, Linux caught it). The initial publish happens on the sequencer's Elodin
+# connect, which on a loaded machine can come from its retry thread after the boot state was
+# applied; the 1 Hz republish then corrects it. So wait for the initial publish and a republish
+# after it before starting the backend.
 i=0
-until grep -q 'commands for state' "$FX/logs/sequencer.log" 2>/dev/null; do
+until awk '/Published initial state/ {seen=1; next} seen && /commands for state/ {found=1} END {exit !found}' \
+      "$FX/logs/sequencer.log" 2>/dev/null; do
   sleep 0.25; i=$((i + 1))
   [ $i -lt 120 ] || { echo "pipeline: sequencer never applied its boot state" >&2; tail -20 "$FX/logs/sequencer.log" >&2; exit 5; }
 done
