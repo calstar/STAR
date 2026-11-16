@@ -953,7 +953,7 @@ def session(r: Run):
     # Board 21 comes up: the PT board's listen_port goes to the simulator.
     r.emit(g)
     r.emit(g, "== board_simulator.py (PT board 21) joins the running stack")
-    cap.release("pt_board")
+    cap.release("pt_board", P["P_PT_LISTEN"])
     sim_argv = [
         sys.executable,
         os.path.join(ROOT, "sim", "board_simulator.py"),
@@ -1624,10 +1624,20 @@ def main() -> int:
         sim_board(r)
         ball_valve_heartbeat_loss(r)
     finally:
+        # The work dir is deleted on cleanup: keep the output of every process that exited
+        # non-zero on its own (not by our signal), to print if the run fails.
+        died = [
+            (pr.name, pr.p.returncode, pr.output()[-2000:])
+            for pr in r.procs
+            if pr.p.poll() is not None and pr.p.returncode > 0
+        ]
         r.cleanup()
     print(f"lifecycle: scenarios ran in {time.monotonic() - t0:.0f}s")
     fails = compare(r.out)
     print("LIFECYCLE: " + ("PASS" if fails == 0 else f"FAIL ({fails})"))
+    if fails:
+        for name, rc, tail in died:
+            print(f"── diagnostic: {name} exited {rc}; last output:\n{tail}")
     return 1 if fails else 0
 
 
