@@ -44,7 +44,10 @@ build_clean() {
   new="$(comm -13 "$CHAR/baseline_warnings.txt" "$LOG/warnings.txt")"
   [ -z "$new" ] || { echo "NEW WARNINGS:"; echo "$new"; return 1; }
 }
-ctest_all() { (cd "$ROOT/build-gate" && ctest --output-on-failure -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)"); }
+# ctest binds real UDP ports (BoardListener), so it shares the stack lock with the integration run.
+ctest_all() {
+  (cd "$ROOT/build-gate" && bash "$CHAR/with_stack_lock.sh" ctest --output-on-failure -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)")
+}
 backend_vitest() { (cd "$ROOT/diablo_server/backend" && npm test); }
 frontend_vitest() { (cd "$ROOT/diablo_server/frontend" && npm test); }
 frontend_lint() { (cd "$ROOT/diablo_server/frontend" && npm run lint); }
@@ -53,7 +56,7 @@ shared_types() {
   (cd "$ROOT/diablo_server/frontend" && npm run build:shared) &&
     git -C "$ROOT" diff --exit-code -- diablo_server/shared/
 }
-characterization() { bash "$CHAR/run.sh"; }
+characterization() { CHAR_BUILD_DIR="$ROOT/build-gate" bash "$CHAR/with_stack_lock.sh" bash "$CHAR/run.sh"; }
 integration() { bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"; }
 format_check() {
   local cf="${CLANG_FORMAT_19_DIR:-}"
