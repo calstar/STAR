@@ -237,6 +237,10 @@ It needs only public names: `op_name` (`StateScript.hpp:119`), the AST types, an
 `src/script/Printer.cpp` after `src/script/Parser.cpp` in `FSW_SOURCES`. Same directory convention
 as `Lexer.cpp`/`Parser.cpp`/`Validate.cpp`/`Slug.cpp`: one stage per TU.
 
+The move is proven self-contained by the build: any reference from the printer block into
+`Parser.cpp`'s first anonymous namespace (126-811) would be an undefined name or a link error in
+`Printer.cpp`, never a silent change.
+
 D22: `printExpr`'s `std::to_string(e.number)` is formatting, not arithmetic; no expression is
 contractible. The printer has no callers inside `Parser.cpp` (anonymous-namespace helpers used only
 by `print_canonical`), so `Parser.cpp` keeps no unused static (`-Wunused-function` would otherwise
@@ -299,8 +303,18 @@ Guard: the Elodin schema goldens print every registered `(hi, lo)` and entity na
 `config_base` and `profile_default`; `pipeline/` and `t7_integration` exercise T7Stream's ids;
 `config/golden/cpp/config/*` prints the `PtRoleRef` table bytes `SensorTables.cpp` derives.
 Mutation: make `table_id_for` add `0x11` instead of `0x10` → calibrated lines in `schema_*.txt` go
-red; revert. The wrap itself is frozen by the D41 fixture (board 60 → slot 10 → `0x31`) in
-`pipeline/`; a mutation that saturates instead of wrapping must go red there.
+red; revert. **The wrap itself needs its own guard.** Today the D41 fixture (board 60 → slot 10 →
+`0x31`) exercises it in `pipeline/`, but H2 (`fix/H2-startup-board-slot`, queued ahead of every WP)
+frees slot 10 and fails the harness on `[Config] ERROR`, after which no black-box run can configure
+slot > 8. So WP3 adds a small ctest on the pure function (D20 permits white-box for pure functions
+with stable signatures): `table_id_for(0x20, 10, 1, kCalibrated) == {0x20, 0x31}` (the wrap),
+`table_id_for(0x20, 1, 1, kRaw) == {0x20, 0x01}` and `(0x20, 2, 1, kCalibrated) == {0x20, 0x31}`
+(the collision D-SLOT names). Mutation: saturate at 0xFF instead of wrapping → red. Optional second
+layer (research subscription-robustness Idea 1): a characterization test that enumerates the shipped
+profiles' slots and asserts the id map is injective, red on `config_base` + board 60.
+
+`TableHalf::kRaw` (offset 0x00) is also what command tables use (`ball_valve_cmd_tables`, ACT_CMD
+0x32): integer-identical, but "raw" is a misnomer there; the WP10 adoption list says so.
 
 ### 2.6 Interfaces (stubs)
 

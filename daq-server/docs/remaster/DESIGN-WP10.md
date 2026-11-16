@@ -769,7 +769,8 @@ on CI when WP10 is queued, C is the fallback: it is a strict subset of A's steps
   `table_id_for` where the integer expression is the same — candidates, decided at cleanup review:
   `ActuatorCommander.cpp:36-41` `actuator_elodin_low_byte` (has no hi byte at hand),
   `ControllerService.cpp:773` (base only), daq_bridge's publish `board_offset` (`daq_bridge_main.cpp`
-  ~892-898, base only). None is required.
+  ~892-898, base only). None is required. For the command tables (ACT_CMD 0x32, BV_CMD 0x35)
+  the offset is `TableHalf::kRaw` (0x00): integer-identical, but the name reads wrong there.
 - **AMENDMENT (D42, D-PF):** WP10 does not move `PressureFeed.cpp` (it is only named in the
   `SEQUENCER_SOURCES` list). The suspected re-subscribe accumulation (`PressureFeed.cpp:118-146`,
   LEDGER D-PF) must be reproduced, and its result recorded, **before** WP10's move-only item is
@@ -821,7 +822,7 @@ the PWM roles), the controller's gate enabled, Elodin up, no previous abort pend
 | 16 | 1 Hz republish of Fire's settled column (`allow_delays = false`) | `ActuatorCommander::startContinuousLoop` (core) | loop thread |
 | 17 | `current_state_ = Fire`; not an abort → no second `triggerAbort` | `doTransitionTo` | worker |
 | 18 | publish `[0x43,0x00]` transition and `[0x50,0x00]` state (lock taken and released before I/O) | `publishStateTransition`/`publishState` (`_elodin.cpp`) | worker |
-| 19 | controller subscriber sees `[0x50]` = fire id → `setFireActive(true)` again → `exchange` returns true → **no second edge** | `ControllerService` subscriber (`_elodin.cpp`) → `setFireActive` | controller subscriber |
+| 19 | controller subscriber sees `[0x50]` = fire id → `setFireActive(true)` again → `exchange` returns true → **no second edge**: `if (was_active == active) return;` before any log, PWM or `[0x44]` publish (`ControllerService.cpp:258-259`) | `ControllerService` subscriber (`_elodin.cpp`) → `setFireActive` | controller subscriber |
 | 20 | heartbeat/stacklight follow the new state | `follow_sequencer_state` + their mains (WP8 C.3) | follower threads |
 | 21 | log `Armed → Fire`, return true → `OK` | `doTransitionTo` → `handleCommandLine` | worker → conn |
 | 22 | hold expires: `on_active(false)` → FIRE_STOP (steps 10-14 with `false`, zero-duty close) **on the timer thread**; then `on_expire` → `enqueueDetached(doTransitionTo(return_state))` | `HoldTimer::runTimer` (trigger), `notifyControllerFire`, `setFireActive` | timer → worker |
