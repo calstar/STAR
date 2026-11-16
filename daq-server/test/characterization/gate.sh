@@ -105,11 +105,12 @@ format_check() {
 }
 
 # Tests must not write tracked files (H-1: test_integration.sh used to rewrite the live
-# abort_thresholds.txt). Files already dirty when the gate starts (work in progress) are ignored.
+# abort_thresholds.txt). Files already dirty when the gate starts (work in progress) are ignored,
+# and so is docs/remaster/ (the orchestrator's ledger, edited while gates run).
 git -C "$ROOT" diff --name-only > "$LOG/dirty-before.txt"
 tree_unchanged() {
   local new
-  new="$(git -C "$ROOT" diff --name-only | comm -13 <(sort "$LOG/dirty-before.txt") <(git -C "$ROOT" diff --name-only | sort))"
+  new="$(comm -13 <(sort "$LOG/dirty-before.txt") <(git -C "$ROOT" diff --name-only | sort) | grep -v '^daq-server/docs/remaster/' || true)"
   [ -z "$new" ] || { echo "the gate's runs modified tracked files:"; echo "$new"; git -C "$ROOT" diff --stat -- $new; return 1; }
 }
 

@@ -1,0 +1,307 @@
+## sensor_update (client A, whole session; P2 rate per stream, P7 values)
+ACT_CMD.B2.CH1.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B2.CH2.actuator_state_commanded  rate=stream(0.25-5/s)  value={0, 1}
+ACT_CMD.B2.CH3.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B2.CH5.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B2.CH6.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B2.CH7.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B2.CH8.actuator_state_commanded  rate=stream(0.25-5/s)  value={0, 1}
+ACT_CMD.B4.CH1.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B4.CH10.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B4.CH2.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B4.CH3.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B4.CH4.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B4.CH5.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B4.CH6.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B4.CH7.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+ACT_CMD.B4.CH8.actuator_state_commanded  rate=stream(0.25-5/s)  value=0
+CONTROLLER.state.from_state  rate=event(<0.25/s)  value={1, 2}
+CONTROLLER.state.reason  rate=event(<0.25/s)  value=0
+CONTROLLER.state.to_state  rate=event(<0.25/s)  value={1, 2}
+PT1.CH1.raw_adc_counts  rate=stream(0.25-5/s)  value=1463500000
+PT1.CH10.raw_adc_counts  rate=stream(0.25-5/s)  value=1199500000
+PT1.CH2.raw_adc_counts  rate=stream(0.25-5/s)  value=1353500000
+PT1.CH3.raw_adc_counts  rate=stream(0.25-5/s)  value=1419500000
+PT1.CH4.raw_adc_counts  rate=stream(0.25-5/s)  value=1243500000
+PT1.CH5.raw_adc_counts  rate=stream(0.25-5/s)  value=1463500000
+PT1.CH6.raw_adc_counts  rate=stream(0.25-5/s)  value=2147483647
+PT1.CH7.raw_adc_counts  rate=stream(0.25-5/s)  value=1419500000
+PT1.CH8.raw_adc_counts  rate=stream(0.25-5/s)  value=1243500000
+PT1.CH9.raw_adc_counts  rate=stream(0.25-5/s)  value=1199500000
+PT1_Cal.CH1.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH1.raw_adc  rate=stream(0.25-5/s)  value=1463500000
+PT1_Cal.CH1.raw_adc_counts  rate=stream(0.25-5/s)  value=1463500000
+PT1_Cal.CH10.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH10.raw_adc  rate=stream(0.25-5/s)  value=1199500000
+PT1_Cal.CH10.raw_adc_counts  rate=stream(0.25-5/s)  value=1199500000
+PT1_Cal.CH2.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH2.raw_adc  rate=stream(0.25-5/s)  value=1353500000
+PT1_Cal.CH2.raw_adc_counts  rate=stream(0.25-5/s)  value=1353500000
+PT1_Cal.CH3.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH3.raw_adc  rate=stream(0.25-5/s)  value=1419500000
+PT1_Cal.CH3.raw_adc_counts  rate=stream(0.25-5/s)  value=1419500000
+PT1_Cal.CH4.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH4.raw_adc  rate=stream(0.25-5/s)  value=1243500000
+PT1_Cal.CH4.raw_adc_counts  rate=stream(0.25-5/s)  value=1243500000
+PT1_Cal.CH5.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH5.raw_adc  rate=stream(0.25-5/s)  value=1463500000
+PT1_Cal.CH5.raw_adc_counts  rate=stream(0.25-5/s)  value=1463500000
+PT1_Cal.CH6.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH6.raw_adc  rate=stream(0.25-5/s)  value=2147483647
+PT1_Cal.CH6.raw_adc_counts  rate=stream(0.25-5/s)  value=2147483647
+PT1_Cal.CH7.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH7.raw_adc  rate=stream(0.25-5/s)  value=1419500000
+PT1_Cal.CH7.raw_adc_counts  rate=stream(0.25-5/s)  value=1419500000
+PT1_Cal.CH8.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH8.raw_adc  rate=stream(0.25-5/s)  value=1243500000
+PT1_Cal.CH8.raw_adc_counts  rate=stream(0.25-5/s)  value=1243500000
+PT1_Cal.CH9.pressure_psi  rate=stream(0.25-5/s)  value=0
+PT1_Cal.CH9.raw_adc  rate=stream(0.25-5/s)  value=1199500000
+PT1_Cal.CH9.raw_adc_counts  rate=stream(0.25-5/s)  value=1199500000
+SELF_TEST.BOARD_21.sensor_0  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_1  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_10  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_2  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_3  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_4  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_5  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_6  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_7  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_8  rate=event(<0.25/s)  value=1
+SELF_TEST.BOARD_21.sensor_9  rate=event(<0.25/s)  value=1
+
+## periodic types (client A, whole session; P2)
+board_log  rate=stream(0.25-5/s)
+board_status_update  rate=stream(0.25-5/s)
+connection_status  rate=stream(0.25-5/s)
+
+## board_log distinct payloads, client A
+{"boardId": 21, "lines": ["[SIM] board 21 PT alive #<n>"], "totals": {"received": "<n>", "truncated": "<n>"}, "truncated": false, "ts": "<ts>"}
+
+## board_status_update distinct payloads, client A
+{"boards": [{"boardNumber": 21, "boardState": 2, "connected": true, "engineState": 0, "expected": true, "frequencyHz": "<hz>", "heartbeatTimes": "<ts[]>", "id": 21, "ip": "127.0.0.1", "lastHeartbeatMs": "<ts>", "type": "PT"}, {"boardNumber": 22, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 22, "ip": "127.0.0.22", "lastHeartbeatMs": null, "type": "PT"}, {"boardNumber": 12, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 12, "ip": "127.0.0.12", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 14, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 14, "ip": "127.0.0.14", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 42, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 42, "ip": "127.0.0.42", "lastHeartbeatMs": null, "type": "LC"}, {"boardNumber": 51, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 51, "ip": "127.0.0.51", "lastHeartbeatMs": null, "type": "TC"}, {"boardNumber": 31, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 31, "ip": "127.0.0.31", "lastHeartbeatMs": null, "type": "RTD"}, {"boardNumber": 25, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 25, "ip": "127.0.0.25", "lastHeartbeatMs": null, "type": "ENVIRONMENTAL"}, {"boardNumber": 61, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 61, "ip": "127.0.0.61", "lastHeartbeatMs": null, "type": "ENCODER"}, {"boardNumber": 81, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 81, "ip": "127.0.0.81", "lastHeartbeatMs": null, "type": "T7"}, {"boardNumber": 71, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 71, "ip": "127.0.0.71", "lastHeartbeatMs": null, "type": "BALL_VALVE"}]}
+{"boards": [{"boardNumber": 21, "boardState": 2, "connected": true, "engineState": 0, "expected": true, "heartbeatTimes": "<ts[]>", "id": 21, "ip": "127.0.0.1", "lastHeartbeatMs": "<ts>", "type": "PT"}, {"boardNumber": 22, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 22, "ip": "127.0.0.22", "lastHeartbeatMs": null, "type": "PT"}, {"boardNumber": 12, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 12, "ip": "127.0.0.12", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 14, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 14, "ip": "127.0.0.14", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 42, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 42, "ip": "127.0.0.42", "lastHeartbeatMs": null, "type": "LC"}, {"boardNumber": 51, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 51, "ip": "127.0.0.51", "lastHeartbeatMs": null, "type": "TC"}, {"boardNumber": 31, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 31, "ip": "127.0.0.31", "lastHeartbeatMs": null, "type": "RTD"}, {"boardNumber": 25, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 25, "ip": "127.0.0.25", "lastHeartbeatMs": null, "type": "ENVIRONMENTAL"}, {"boardNumber": 61, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 61, "ip": "127.0.0.61", "lastHeartbeatMs": null, "type": "ENCODER"}, {"boardNumber": 81, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 81, "ip": "127.0.0.81", "lastHeartbeatMs": null, "type": "T7"}, {"boardNumber": 71, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 71, "ip": "127.0.0.71", "lastHeartbeatMs": null, "type": "BALL_VALVE"}]}
+{"boards": [{"boardNumber": 21, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 21, "ip": "127.0.0.1", "lastHeartbeatMs": null, "type": "PT"}, {"boardNumber": 22, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 22, "ip": "127.0.0.22", "lastHeartbeatMs": null, "type": "PT"}, {"boardNumber": 12, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 12, "ip": "127.0.0.12", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 14, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 14, "ip": "127.0.0.14", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 42, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 42, "ip": "127.0.0.42", "lastHeartbeatMs": null, "type": "LC"}, {"boardNumber": 51, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 51, "ip": "127.0.0.51", "lastHeartbeatMs": null, "type": "TC"}, {"boardNumber": 31, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 31, "ip": "127.0.0.31", "lastHeartbeatMs": null, "type": "RTD"}, {"boardNumber": 25, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 25, "ip": "127.0.0.25", "lastHeartbeatMs": null, "type": "ENVIRONMENTAL"}, {"boardNumber": 61, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 61, "ip": "127.0.0.61", "lastHeartbeatMs": null, "type": "ENCODER"}, {"boardNumber": 81, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 81, "ip": "127.0.0.81", "lastHeartbeatMs": null, "type": "T7"}, {"boardNumber": 71, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 71, "ip": "127.0.0.71", "lastHeartbeatMs": null, "type": "BALL_VALVE"}]}
+
+## connection_status distinct payloads, client A
+{"connId": "c2", "connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
+{"connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
+
+## board_log distinct payloads, client B
+{"boardId": 21, "lines": ["[SIM] board 21 PT alive #<n>"], "totals": {"received": "<n>", "truncated": "<n>"}, "truncated": false, "ts": "<ts>"}
+
+## board_status_update distinct payloads, client B
+{"boards": [{"boardNumber": 21, "boardState": 2, "connected": true, "engineState": 0, "expected": true, "frequencyHz": "<hz>", "heartbeatTimes": "<ts[]>", "id": 21, "ip": "127.0.0.1", "lastHeartbeatMs": "<ts>", "type": "PT"}, {"boardNumber": 22, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 22, "ip": "127.0.0.22", "lastHeartbeatMs": null, "type": "PT"}, {"boardNumber": 12, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 12, "ip": "127.0.0.12", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 14, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 14, "ip": "127.0.0.14", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 42, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 42, "ip": "127.0.0.42", "lastHeartbeatMs": null, "type": "LC"}, {"boardNumber": 51, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 51, "ip": "127.0.0.51", "lastHeartbeatMs": null, "type": "TC"}, {"boardNumber": 31, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 31, "ip": "127.0.0.31", "lastHeartbeatMs": null, "type": "RTD"}, {"boardNumber": 25, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 25, "ip": "127.0.0.25", "lastHeartbeatMs": null, "type": "ENVIRONMENTAL"}, {"boardNumber": 61, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 61, "ip": "127.0.0.61", "lastHeartbeatMs": null, "type": "ENCODER"}, {"boardNumber": 81, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 81, "ip": "127.0.0.81", "lastHeartbeatMs": null, "type": "T7"}, {"boardNumber": 71, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 71, "ip": "127.0.0.71", "lastHeartbeatMs": null, "type": "BALL_VALVE"}]}
+
+## connection_status distinct payloads, client B
+{"connId": "c3", "connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
+{"connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
+
+## historical_data (P8: series keys per step, the distinct values each carries)
+# connect client A: 67 series
+  ACT_CMD.B2.CH1.actuator_state_commanded {0}
+  ACT_CMD.B2.CH2.actuator_state_commanded {0}
+  ACT_CMD.B2.CH3.actuator_state_commanded {0}
+  ACT_CMD.B2.CH5.actuator_state_commanded {0}
+  ACT_CMD.B2.CH6.actuator_state_commanded {0}
+  ACT_CMD.B2.CH7.actuator_state_commanded {0}
+  ACT_CMD.B2.CH8.actuator_state_commanded {1}
+  ACT_CMD.B4.CH1.actuator_state_commanded {0}
+  ACT_CMD.B4.CH10.actuator_state_commanded {0}
+  ACT_CMD.B4.CH2.actuator_state_commanded {0}
+  ACT_CMD.B4.CH3.actuator_state_commanded {0}
+  ACT_CMD.B4.CH4.actuator_state_commanded {0}
+  ACT_CMD.B4.CH5.actuator_state_commanded {0}
+  ACT_CMD.B4.CH6.actuator_state_commanded {0}
+  ACT_CMD.B4.CH7.actuator_state_commanded {0}
+  ACT_CMD.B4.CH8.actuator_state_commanded {0}
+  PT1.CH1.raw_adc_counts {1463500000}
+  PT1.CH10.raw_adc_counts {1199500000}
+  PT1.CH2.raw_adc_counts {1353500000}
+  PT1.CH3.raw_adc_counts {1419500000}
+  PT1.CH4.raw_adc_counts {1243500000}
+  PT1.CH5.raw_adc_counts {1463500000}
+  PT1.CH6.raw_adc_counts {2147483647}
+  PT1.CH7.raw_adc_counts {1419500000}
+  PT1.CH8.raw_adc_counts {1243500000}
+  PT1.CH9.raw_adc_counts {1199500000}
+  PT1_Cal.CH1.pressure_psi {0}
+  PT1_Cal.CH1.raw_adc {1463500000}
+  PT1_Cal.CH1.raw_adc_counts {1463500000}
+  PT1_Cal.CH10.pressure_psi {0}
+  PT1_Cal.CH10.raw_adc {1199500000}
+  PT1_Cal.CH10.raw_adc_counts {1199500000}
+  PT1_Cal.CH2.pressure_psi {0}
+  PT1_Cal.CH2.raw_adc {1353500000}
+  PT1_Cal.CH2.raw_adc_counts {1353500000}
+  PT1_Cal.CH3.pressure_psi {0}
+  PT1_Cal.CH3.raw_adc {1419500000}
+  PT1_Cal.CH3.raw_adc_counts {1419500000}
+  PT1_Cal.CH4.pressure_psi {0}
+  PT1_Cal.CH4.raw_adc {1243500000}
+  PT1_Cal.CH4.raw_adc_counts {1243500000}
+  PT1_Cal.CH5.pressure_psi {0}
+  PT1_Cal.CH5.raw_adc {1463500000}
+  PT1_Cal.CH5.raw_adc_counts {1463500000}
+  PT1_Cal.CH6.pressure_psi {0}
+  PT1_Cal.CH6.raw_adc {2147483647}
+  PT1_Cal.CH6.raw_adc_counts {2147483647}
+  PT1_Cal.CH7.pressure_psi {0}
+  PT1_Cal.CH7.raw_adc {1419500000}
+  PT1_Cal.CH7.raw_adc_counts {1419500000}
+  PT1_Cal.CH8.pressure_psi {0}
+  PT1_Cal.CH8.raw_adc {1243500000}
+  PT1_Cal.CH8.raw_adc_counts {1243500000}
+  PT1_Cal.CH9.pressure_psi {0}
+  PT1_Cal.CH9.raw_adc {1199500000}
+  PT1_Cal.CH9.raw_adc_counts {1199500000}
+  SELF_TEST.BOARD_21.sensor_0 {1}
+  SELF_TEST.BOARD_21.sensor_1 {1}
+  SELF_TEST.BOARD_21.sensor_10 {1}
+  SELF_TEST.BOARD_21.sensor_2 {1}
+  SELF_TEST.BOARD_21.sensor_3 {1}
+  SELF_TEST.BOARD_21.sensor_4 {1}
+  SELF_TEST.BOARD_21.sensor_5 {1}
+  SELF_TEST.BOARD_21.sensor_6 {1}
+  SELF_TEST.BOARD_21.sensor_7 {1}
+  SELF_TEST.BOARD_21.sensor_8 {1}
+  SELF_TEST.BOARD_21.sensor_9 {1}
+# history client A: 67 series
+  ACT_CMD.B2.CH1.actuator_state_commanded {0}
+  ACT_CMD.B2.CH2.actuator_state_commanded {0}
+  ACT_CMD.B2.CH3.actuator_state_commanded {0}
+  ACT_CMD.B2.CH5.actuator_state_commanded {0}
+  ACT_CMD.B2.CH6.actuator_state_commanded {0}
+  ACT_CMD.B2.CH7.actuator_state_commanded {0}
+  ACT_CMD.B2.CH8.actuator_state_commanded {1}
+  ACT_CMD.B4.CH1.actuator_state_commanded {0}
+  ACT_CMD.B4.CH10.actuator_state_commanded {0}
+  ACT_CMD.B4.CH2.actuator_state_commanded {0}
+  ACT_CMD.B4.CH3.actuator_state_commanded {0}
+  ACT_CMD.B4.CH4.actuator_state_commanded {0}
+  ACT_CMD.B4.CH5.actuator_state_commanded {0}
+  ACT_CMD.B4.CH6.actuator_state_commanded {0}
+  ACT_CMD.B4.CH7.actuator_state_commanded {0}
+  ACT_CMD.B4.CH8.actuator_state_commanded {0}
+  PT1.CH1.raw_adc_counts {1463500000}
+  PT1.CH10.raw_adc_counts {1199500000}
+  PT1.CH2.raw_adc_counts {1353500000}
+  PT1.CH3.raw_adc_counts {1419500000}
+  PT1.CH4.raw_adc_counts {1243500000}
+  PT1.CH5.raw_adc_counts {1463500000}
+  PT1.CH6.raw_adc_counts {2147483647}
+  PT1.CH7.raw_adc_counts {1419500000}
+  PT1.CH8.raw_adc_counts {1243500000}
+  PT1.CH9.raw_adc_counts {1199500000}
+  PT1_Cal.CH1.pressure_psi {0}
+  PT1_Cal.CH1.raw_adc {1463500000}
+  PT1_Cal.CH1.raw_adc_counts {1463500000}
+  PT1_Cal.CH10.pressure_psi {0}
+  PT1_Cal.CH10.raw_adc {1199500000}
+  PT1_Cal.CH10.raw_adc_counts {1199500000}
+  PT1_Cal.CH2.pressure_psi {0}
+  PT1_Cal.CH2.raw_adc {1353500000}
+  PT1_Cal.CH2.raw_adc_counts {1353500000}
+  PT1_Cal.CH3.pressure_psi {0}
+  PT1_Cal.CH3.raw_adc {1419500000}
+  PT1_Cal.CH3.raw_adc_counts {1419500000}
+  PT1_Cal.CH4.pressure_psi {0}
+  PT1_Cal.CH4.raw_adc {1243500000}
+  PT1_Cal.CH4.raw_adc_counts {1243500000}
+  PT1_Cal.CH5.pressure_psi {0}
+  PT1_Cal.CH5.raw_adc {1463500000}
+  PT1_Cal.CH5.raw_adc_counts {1463500000}
+  PT1_Cal.CH6.pressure_psi {0}
+  PT1_Cal.CH6.raw_adc {2147483647}
+  PT1_Cal.CH6.raw_adc_counts {2147483647}
+  PT1_Cal.CH7.pressure_psi {0}
+  PT1_Cal.CH7.raw_adc {1419500000}
+  PT1_Cal.CH7.raw_adc_counts {1419500000}
+  PT1_Cal.CH8.pressure_psi {0}
+  PT1_Cal.CH8.raw_adc {1243500000}
+  PT1_Cal.CH8.raw_adc_counts {1243500000}
+  PT1_Cal.CH9.pressure_psi {0}
+  PT1_Cal.CH9.raw_adc {1199500000}
+  PT1_Cal.CH9.raw_adc_counts {1199500000}
+  SELF_TEST.BOARD_21.sensor_0 {1}
+  SELF_TEST.BOARD_21.sensor_1 {1}
+  SELF_TEST.BOARD_21.sensor_10 {1}
+  SELF_TEST.BOARD_21.sensor_2 {1}
+  SELF_TEST.BOARD_21.sensor_3 {1}
+  SELF_TEST.BOARD_21.sensor_4 {1}
+  SELF_TEST.BOARD_21.sensor_5 {1}
+  SELF_TEST.BOARD_21.sensor_6 {1}
+  SELF_TEST.BOARD_21.sensor_7 {1}
+  SELF_TEST.BOARD_21.sensor_8 {1}
+  SELF_TEST.BOARD_21.sensor_9 {1}
+# viewer_client client B: 70 series
+  ACT_CMD.B2.CH1.actuator_state_commanded {0}
+  ACT_CMD.B2.CH2.actuator_state_commanded {0, 1}
+  ACT_CMD.B2.CH3.actuator_state_commanded {0}
+  ACT_CMD.B2.CH5.actuator_state_commanded {0}
+  ACT_CMD.B2.CH6.actuator_state_commanded {0}
+  ACT_CMD.B2.CH7.actuator_state_commanded {0}
+  ACT_CMD.B2.CH8.actuator_state_commanded {0, 1}
+  ACT_CMD.B4.CH1.actuator_state_commanded {0}
+  ACT_CMD.B4.CH10.actuator_state_commanded {0}
+  ACT_CMD.B4.CH2.actuator_state_commanded {0}
+  ACT_CMD.B4.CH3.actuator_state_commanded {0}
+  ACT_CMD.B4.CH4.actuator_state_commanded {0}
+  ACT_CMD.B4.CH5.actuator_state_commanded {0}
+  ACT_CMD.B4.CH6.actuator_state_commanded {0}
+  ACT_CMD.B4.CH7.actuator_state_commanded {0}
+  ACT_CMD.B4.CH8.actuator_state_commanded {0}
+  CONTROLLER.state.from_state {1, 2}
+  CONTROLLER.state.reason {0}
+  CONTROLLER.state.to_state {1, 2}
+  PT1.CH1.raw_adc_counts {1463500000}
+  PT1.CH10.raw_adc_counts {1199500000}
+  PT1.CH2.raw_adc_counts {1353500000}
+  PT1.CH3.raw_adc_counts {1419500000}
+  PT1.CH4.raw_adc_counts {1243500000}
+  PT1.CH5.raw_adc_counts {1463500000}
+  PT1.CH6.raw_adc_counts {2147483647}
+  PT1.CH7.raw_adc_counts {1419500000}
+  PT1.CH8.raw_adc_counts {1243500000}
+  PT1.CH9.raw_adc_counts {1199500000}
+  PT1_Cal.CH1.pressure_psi {0}
+  PT1_Cal.CH1.raw_adc {1463500000}
+  PT1_Cal.CH1.raw_adc_counts {1463500000}
+  PT1_Cal.CH10.pressure_psi {0}
+  PT1_Cal.CH10.raw_adc {1199500000}
+  PT1_Cal.CH10.raw_adc_counts {1199500000}
+  PT1_Cal.CH2.pressure_psi {0}
+  PT1_Cal.CH2.raw_adc {1353500000}
+  PT1_Cal.CH2.raw_adc_counts {1353500000}
+  PT1_Cal.CH3.pressure_psi {0}
+  PT1_Cal.CH3.raw_adc {1419500000}
+  PT1_Cal.CH3.raw_adc_counts {1419500000}
+  PT1_Cal.CH4.pressure_psi {0}
+  PT1_Cal.CH4.raw_adc {1243500000}
+  PT1_Cal.CH4.raw_adc_counts {1243500000}
+  PT1_Cal.CH5.pressure_psi {0}
+  PT1_Cal.CH5.raw_adc {1463500000}
+  PT1_Cal.CH5.raw_adc_counts {1463500000}
+  PT1_Cal.CH6.pressure_psi {0}
+  PT1_Cal.CH6.raw_adc {2147483647}
+  PT1_Cal.CH6.raw_adc_counts {2147483647}
+  PT1_Cal.CH7.pressure_psi {0}
+  PT1_Cal.CH7.raw_adc {1419500000}
+  PT1_Cal.CH7.raw_adc_counts {1419500000}
+  PT1_Cal.CH8.pressure_psi {0}
+  PT1_Cal.CH8.raw_adc {1243500000}
+  PT1_Cal.CH8.raw_adc_counts {1243500000}
+  PT1_Cal.CH9.pressure_psi {0}
+  PT1_Cal.CH9.raw_adc {1199500000}
+  PT1_Cal.CH9.raw_adc_counts {1199500000}
+  SELF_TEST.BOARD_21.sensor_0 {1}
+  SELF_TEST.BOARD_21.sensor_1 {1}
+  SELF_TEST.BOARD_21.sensor_10 {1}
+  SELF_TEST.BOARD_21.sensor_2 {1}
+  SELF_TEST.BOARD_21.sensor_3 {1}
+  SELF_TEST.BOARD_21.sensor_4 {1}
+  SELF_TEST.BOARD_21.sensor_5 {1}
+  SELF_TEST.BOARD_21.sensor_6 {1}
+  SELF_TEST.BOARD_21.sensor_7 {1}
+  SELF_TEST.BOARD_21.sensor_8 {1}
+  SELF_TEST.BOARD_21.sensor_9 {1}
