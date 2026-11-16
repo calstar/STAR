@@ -1,0 +1,6 @@
+{
+  "error": "Error: Invalid TOML document: incomplete key-value: cannot find end of key\n\n1:  # A section header that never closes, then a value with no quotes.\n2:  [network\n     ^\n3:  bind_ip = 0.0.0.0\n",
+  "logs": [
+    "error: Failed to read config: \"Error: Invalid TOML document: incomplete key-value: cannot find end of key\\n\\n1:  # A section header that never closes, then a value with no quotes.\\n2:  [network\\n     ^\\n3:  bind_ip = 0.0.0.0\\n\""
+  ]
+}

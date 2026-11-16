@@ -1,0 +1,34 @@
+{
+  "carets": [
+    "0: command \"\" 0-0 => 0-0 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "1: command \"z\" 0-1 => null",
+    "2: null => null",
+    "3: expr \"\" 3-3 => 3-3 z | pressure(+ | elapsed() | not ",
+    "4: expr \"\" 4-4 => 4-4 z | pressure(+ | elapsed() | not ",
+    "5: null => null",
+    "6: null => null",
+    "7: expr \"\" 7-7 => 7-7 z | pressure(+ | elapsed() | not ",
+    "8: expr \"\" 8-8 => 8-8 z | pressure(+ | elapsed() | not ",
+    "9: null => null",
+    "10: command \"\" 10-10 => 10-10 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while "
+  ],
+  "checkScriptNames_DynamicTest": [],
+  "checkScriptNames_Idle": [],
+  "renameActuator": "z = 5 / 0\n",
+  "renameState": "z = 5 / 0\n",
+  "scanScriptNames": [],
+  "tokenize": [
+    "0-1 variable \"z\"",
+    "2-3 op \"=\"",
+    "4-5 number \"5\"",
+    "6-7 op \"/\"",
+    "8-9 number \"0\""
+  ],
+  "tokenizeNoTables": [
+    "0-1 variable \"z\"",
+    "2-3 op \"=\"",
+    "4-5 number \"5\"",
+    "6-7 op \"/\"",
+    "8-9 number \"0\""
+  ]
+}

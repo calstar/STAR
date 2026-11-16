@@ -1,0 +1,15 @@
+{
+  "ballValveBoardIds": {
+    "logs": [],
+    "value": []
+  },
+  "perBoard": {},
+  "t7Channels": {
+    "logs": [],
+    "value": []
+  },
+  "t7RoleClashes": {
+    "logs": [],
+    "value": []
+  }
+}

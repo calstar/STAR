@@ -1,0 +1,81 @@
+{
+  "logs": [],
+  "value": {
+    "abort_pts": {
+      "COPV": "900"
+    },
+    "boards": {
+      "pt_board": {
+        "active_connectors": [
+          "1",
+          2,
+          3
+        ],
+        "adc_ref_voltage": 5,
+        "board_id": 21,
+        "enable_serial_printing": true,
+        "enabled": 1,
+        "ip": "192.168.2.21",
+        "type": "PT"
+      }
+    },
+    "calibration_model_pt_board": {
+      "COPV": "cubic",
+      "Fuel Upstream": "cubic",
+      "Ox Upstream": "cubic"
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    },
+    "database": {
+      "host": "127.0.0.1",
+      "port": true
+    },
+    "heartbeat_service": {
+      "enabled": "yes"
+    },
+    "network": {
+      "actuator_cmd_port": 5005,
+      "bind_ip": 127,
+      "sensor_port": "5006"
+    },
+    "sensor_roles_pt_board": {
+      "COPV": 3,
+      "Fuel Upstream": "1",
+      "Ox Upstream": 2
+    },
+    "states": [
+      {
+        "id": "1",
+        "name": "Idle"
+      },
+      {
+        "id": 2,
+        "is_boot": "true",
+        "name": 42
+      }
+    ]
+  }
+}

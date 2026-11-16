@@ -1,0 +1,6 @@
+=== args --bogus x
+=== stdout
+=== stderr
+unknown option --bogus
+usage: state_script_check --config <config.toml> --state <name> [--transitions <state_transitions.csv>] <script-file>
+=== exit 2

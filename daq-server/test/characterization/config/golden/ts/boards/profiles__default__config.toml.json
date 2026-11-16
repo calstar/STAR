@@ -1,0 +1,608 @@
+{
+  "ballValveBoardIds": {
+    "logs": [],
+    "value": [
+      71
+    ]
+  },
+  "perBoard": {
+    "actuator_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Actuator Board #1"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.58.93"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "actuator_board_2": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Actuator Board #2"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.33.157"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "actuator_board_3": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Actuator Board #3"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "actuator_board_4": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Actuator Board #4"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.1.181"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "ball_valve_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Ball Valve Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.208.99"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "encoder_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Encoder Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "environmental_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Environmental Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "labjack_1": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "LabJack T7 Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.37.241"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "lc_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "LC Board #1"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.7.237"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "lc_board_2": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "LC Board #2"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.254.49"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "pt_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "PT Board #1"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.214.73"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "pt_board_2": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "PT Board #2"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": true
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.252.109"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "rtd_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "RTD Board #1"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": "169.254.174.113"
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "rtd_board_2": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "RTD Board #2"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "tc_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "TC Board #1"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "tc_board_2": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "TC Board #2"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    }
+  },
+  "t7Channels": {
+    "logs": [],
+    "value": [
+      {
+        "ain": 1,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": "T71_Cal.AIN1",
+        "calField": "pressure_psi",
+        "calLow": 17,
+        "enabled": false,
+        "entity": "T71.AIN1",
+        "kind": "PT",
+        "rawLow": 1,
+        "role": "Placeholder PT",
+        "slot": 1
+      },
+      {
+        "ain": 2,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": "T71_Cal.AIN2",
+        "calField": "temperature_c",
+        "calLow": 18,
+        "enabled": false,
+        "entity": "T71.AIN2",
+        "kind": "TC",
+        "rawLow": 2,
+        "role": "Placeholder TC",
+        "slot": 1
+      },
+      {
+        "ain": 14,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": null,
+        "calField": null,
+        "calLow": null,
+        "enabled": false,
+        "entity": "T71.AIN14",
+        "kind": "CJC",
+        "rawLow": 14,
+        "role": "",
+        "slot": 1
+      }
+    ]
+  },
+  "t7RoleClashes": {
+    "logs": [],
+    "value": []
+  }
+}

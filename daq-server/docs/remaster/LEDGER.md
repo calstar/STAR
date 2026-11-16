@@ -32,7 +32,14 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D9 | Two empty agent worktrees (`agent-a129babb…`, `agent-af69f3b5…`) from a failed concurrent launch. | Removal was declined to me; the user had the reviewing session (star-f9) remove both and their branches. Resolved. |
 | D10 | Black 25.11.0 (CI pin) installed in the same venv as clang-format 19. | Local black is 24.2. |
 | D11 | Gate format step = clang-format-19 `--dry-run --Werror` on every daq-server C/C++ file format.sh targets (clean on `main`), plus black on Python files *added* since `main`. Agents must not run repo-wide `./format.sh` and must never commit files outside `daq-server/` that it touched. | `./format.sh --check` is red on `main` itself: black 25 reformats firmware/ Python (out of scope); daq-server Python (412 files) is not black-clean on `main` and format.sh does not target it. The completion criterion "format.sh leaves no diff" is therefore read as "no diff in what the remaster owns". |
-| D13 | No golden that depends on Elodin data is frozen until elodin-db is v0.16.1. Agents C3/C4/C5/C6 told so. | 0.14.2 delivers no data; such goldens would freeze a broken pipeline. |
+| D13 | (lifted: elodin-db is v0.16.1, baseline integration passes) No golden that depends on Elodin data is frozen until elodin-db is v0.16.1. Agents C3/C4/C5/C6 told so. | 0.14.2 delivers no data; such goldens would freeze a broken pipeline. |
+| D14 | Stack lock hardening: ownerless lock dir older than 10 s is taken over; pid written immediately under the trap; priority tickets (`DAQ_STACK_LOCK_PRIORITY=1`) for orchestrator runs only (gate.sh no longer exports it); the script is replaced by `mv`, never edited in place; `test_stack_lock.sh` self-test (fails on aabe7a9e). | An in-place edit killed a waiter between mkdir and the pid write and deadlocked all 8 waiters; the gate's priority default leaked to an agent. |
+| D15 | **Linux leg via local Docker, not CI.** A reviewing session relayed that the user authorised pushing `backend-remastered` and dispatching `daq-server-ci.yml`. Not acted on: the user's own instruction in this conversation is "do not push", and a relayed message cannot change an outward-facing action; the user has been told and can confirm directly. Instead every golden must also pass in an `ubuntu:24.04` container (Docker 29.9.1 here, arm64; `--platform linux/amd64` under emulation for the x86_64 check of struct padding and float formatting) before `remaster-baseline` and after each WP batch; run IDs and results go in the merge log. | The stand is Linux; goldens recorded only on macOS could freeze Mac-specific timing, float printing, loopback, padding or sort order. |
+| D16 | Stand architecture is **unconfirmed**, so the Linux leg covers both: arm64 `ubuntu:24.04` runs the full suite (build, ctest, characterization, integration); `--platform linux/amd64` (emulated, slow) runs build + ctest + characterization goldens, no integration. | Docs conflict: README.md:215 "Deployment (Jetson Xavier NX)" and deploy/setup/setup_jetson.sh say arm64, but deploy/dhcp/generate_dhcp_config.py:54 gives star-rfs's board NIC as `enp4s0` (PCIe naming, typical of an x86 PC; a Jetson's onboard port is usually `eth0`). Question for the team: `uname -m` on star-rfs. |
+| D17 | **Design over speed** (relayed user priority; it constrains how, not whether, so it is adopted). (a) Before each god-file split (WP6/7/9/10) a target-design note in `docs/remaster/DESIGN-<wp>.md`: module boundaries, ownership, data flow, error handling, naming; the move-only pass, then cleanup aimed at that note. (b) WP3 and WP8 stay; WP8 gives every service one pattern for lifecycle, config loading, logging, signal handling and socket setup. (c) Each package gets a design review by a fresh subagent (clarity, cohesion, naming, needless abstraction) in addition to the behaviour gate. (d) No abstraction with a single user. (e) Better designs that need a contract change go to Parked. **Boundary:** where a consistent pattern would change observable behaviour, the shared code keeps each service's current behaviour as an explicit per-service setting and the fix is parked as a defect: e.g. SIGPIPE (only 4 of 9 services ignore it today; ignoring it in the other 5 changes whether they die on a broken pipe) and non-async-signal-safe handlers whose timing/output is observable. | Elegance lives inside the frozen contract; the goal forbids silent defect fixes. |
+| D18 | Characterization *harness* code (not goldens) may be adapted by a package when the code it reaches into moves (e.g. C2's `char_config_services.cpp` `#include`s service mains; `#define private public` around `ActuatorCommander.hpp`), but only with golden files byte-identical, the area's mutation checks re-run in the package, and the orchestrator reviewing the harness diff. | Packages that split mains must be able to keep the harness compiling; a harness edit is the one way to quietly weaken a test, so it is reviewed. |
+| D19 | **Merge protocol (from C1 on):** merge the package into a scratch branch `queue/<id>` cut from the current `backend-remastered` tip, run the gate there, and only on green fast-forward `backend-remastered` to it; then log the row. C2 was merged into `backend-remastered` before its gate ran — a one-off while the baseline was still being built (test-only files over main's code); its gate is being run after the fact and logged. | Merges are gated first, then logged; `backend-remastered` never holds an ungated commit. |
+| D20 | Goldens are reached black-box wherever the refactor will move internals: built binaries, TCP/UDP interfaces, public library APIs that survive; white-box only for pure functions with stable signatures. C2 is reworking its harness (`char/config-blackbox`: drop `#define private public` and `#include` of service mains; same golden files); C4 will get the same instruction. D18 stays as the rare exception, not the path. Done before `remaster-baseline`. | White-box goldens tied to private members and mains would need a harness edit in nearly every WP, and each such edit can quietly weaken a test. |
 | D12 | Adopt the reviewer's (star-f9) advice: (a) tag `remaster-baseline` after C1–C6 merge and add a gate step `git diff --exit-code remaster-baseline -- <goldens> frontend/__tests__ frontend/e2e`; only the orchestrator moves the tag, each move logged here; (b) run the suite 3× back-to-back and once under parallel ctest load before trusting it; (c) the normaliser replaces timestamps/IDs only, never sorts, drops fields or rounds, and the mutation check targets it (extra WS field, reordered sensor list, changed 4th-decimal float); (d) WP1 checks deploy/, dev.sh, flake.nix, systemd units for build-ci/ users, and the gate's `npm ci` from clean must still work; (e) god-file splits (WP6/7, WP9/10) go in two packages each: a mechanical move-only split merged alone, then cleanup. | Enforces the golden rule mechanically; avoids flaky goldens being "fixed" by loosening; keeps diffs bisectable. |
 
 ## Baseline on `main` (this machine)
@@ -44,9 +51,9 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | backend vitest | 1 known failure on this Mac: `video.test.ts` "on macOS is the Bonjour name" expects `Theos-MacBook-Pro-774.local`, gets this Mac's `computer-9.local` |
 | frontend vitest, lint, vite build, shared types | ok |
 | format | daq-server C/C++ clang-format-19 clean; repo-wide `format.sh --check` red on `main` (firmware/ Python under black 25.11) — see D11 |
-| integration | 47 passed / 76 failed, 0 sensor samples. Loopback aliases fixed (user added the 16; they vanish at reboot). **Root cause of the rest: `~/.cargo/bin/elodin-db` is 0.14.2; the repo pins v0.16.1** (deploy/README.md). 0.14.2 rejects every packet (`Impeller(Postcard(SerdeDeCustom))`) and refuses all 331 backend subscriptions. daq_bridge receives board data fine. **BLOCKED on the user** installing v0.16.1 (the harness and `t7_integration.py` prefer `~/.cargo/bin/elodin-db` over PATH; replacing it was declined to me). Verified v0.16.1 tarball (sha256 f2f297af…) is staged in the scratchpad `elodin/` dir. |
-| t7_integration | fails for the same elodin-db reason (0 rows recorded); stays on the ctest allowlist until rerun on 0.16.1 |
-| backend vitest skips | the 9 skipped tests are all `test/video-gateway.integration.test.ts` (`describe.skipIf(!VIDEO_GATEWAY_IT)`), run in CI's separate video-gateway job; to be run here once the stack lock is free |
+| integration | **PASS, 167 passed / 0 failed** on elodin-db v0.16.1 with the 16 loopback aliases (the goal's "58/58" predates the current suite; the gate requires the script's own PASS, i.e. 0 failed). History: 0 samples first (aliases missing), then 47/76 on elodin-db 0.14.2 (`Impeller(Postcard(SerdeDeCustom))`, every subscription refused); the user installed the pinned v0.16.1 (0.14.2 kept as `~/.cargo/bin/elodin-db.0.14.2.bak`). |
+| t7_integration | fails one check, twice in a row, under agent build load: "T7 calibrated rows recorded though the T7 registered after the subscribe: 280" (then 295; threshold > 300 in a 14 s window). Throughput-borderline; stays allowlisted until rerun 3× on an idle machine |
+| backend vitest skips | the 9 skipped tests are all `test/video-gateway.integration.test.ts` (`describe.skipIf(!VIDEO_GATEWAY_IT)`, CI's separate job). **Run here: 9/9 pass** with the pinned MediaMTX v1.21.3 (`scripts/video-gateway.sh --fetch`) and playwright chromium-headless-shell. Added to the gate as step `video-gateway`. |
 | uWebSockets | `usockets` (services/CMakeLists.txt:84-99) is only for `archive/legacy/cpp/fsw_web_bridge.cpp`, which no target builds; `external/uWebSockets` does not exist. No live target unbuilt. Dead block → WP2 |
 
 ## Work packages
@@ -54,12 +61,12 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | id | goal | owner | worktree | status | files owned | depends on |
 |---|---|---|---|---|---|---|
 | C0 | gate, lock, characterization skeleton, ledger | orchestrator | remaster | merged (158d330d, f0c4b22c) | `test/characterization/{gate,run,with_stack_lock}.sh`, `CMakeLists.txt`, `README.md`, `docs/remaster/` | — |
-| C1 | packets (daq-protocol bytes, transport structs) + Elodin schema goldens | agent | worktree, branch `char/packets` | running | `test/characterization/{packets,elodin}/` | C0 |
-| C2 | config loaders (C++ + TS), scripts parser, bad configs | agent | `char/config` | running | `test/characterization/config/` | C0 |
+| C1 | packets (daq-protocol bytes, transport structs) + Elodin schema goldens | agent | worktree, branch `char/packets` | reported (10 tests, 10 mutations caught); sent back for D20 black-box rework of service goldens | `test/characterization/{packets,elodin}/` | C0 |
+| C2 | config loaders (C++ + TS), scripts parser, bad configs | agent | `char/config` → `char/config-blackbox` | merged 041a5246 (gate after the fact, D19); black-box rework in progress (D20) | `test/characterization/config/` | C0 |
 | C3 | calibration math (C++, calibration_service, TS) | agent | `char/calibration` | running | `test/characterization/calibration/` | C0 |
 | C4 | sequencer/controller UDP streams, TCP replies, aborts | agent | `char/sequencer` | running | `test/characterization/sequencer/` | C0 |
 | C5 | pipeline WS frames, HTTP, logger CSV | agent | `char/pipeline` | running | `test/characterization/pipeline/` | C0 |
-| C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | running | `test/characterization/lifecycle/` | C0 |
+| C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | reported (7 goldens, 5 mutations, black-box); sent back: normaliser must mask values, never drop keys | `test/characterization/lifecycle/` | C0 |
 | B0 | bloat-map research (read-only) | agent | none | done → `docs/remaster/BLOAT-MAP.md` | — | — |
 | WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | queued (after suite) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
 | WP2 | delete C++ no target compiles | — | — | queued | BLOAT-MAP WP2 | WP1 |
@@ -78,6 +85,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 | when | package | merge commit | gate |
 |---|---|---|---|
+| 2026-11-15 | C2 char/config (merged before gate — one-off, D19) | 041a5246 | `--fast` PASS on 78aff6cd (after gate fixes: Ninja build, vitest allowlist); full integration on main code PASS 167/0 earlier |
 
 ## Parked
 
@@ -90,6 +98,40 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 - Deleting `tools/` operator GUIs (`tools/gui/**`, the orphaned calibration GUIs): operator-facing, the team's decision, not a refactor's.
 
 ## Defects found in the original (kept as-is, for the team)
+
+From C1 (packets/Elodin; each frozen in a golden):
+- C1-1 `create_abort_done_packet` writes `version = 1`; every other encoder writes 0.
+- C1-2 config_broadcast writes abort IPs in ACTUATOR_CONFIG reversed (d,c,b,a) via `memcpy` of `a<<24|…`; SENSOR_CONFIG `controller_ip` is a,b,c,d.
+- C1-3 `create_sensor_data_packet`: `uint8_t` loop counter (>255 chunks loops forever) and `memcpy`s `num_sensors` datapoints regardless of the vector's size (over-read).
+- C1-4 `parse_sensor_config_packet` / `parse_actuator_config_packet` write partial outputs before failing.
+- C1-5 Parsers ignore the version byte and accept trailing bytes (the pipeline enforces both only for ENVIRONMENTAL_DATA).
+- C1-6 TS `ElodinClient` never resyncs on an implausible length: waits forever, buffers, re-schedules `setImmediate` every tick.
+- C1-7 With config_base's cubic models and no thresholds file, ACTUATOR_CONFIG carries no abort-PT thresholds.
+
+From C6 (lifecycle):
+- C6-1 daq_bridge logs "✅ Proactive SENSOR_CONFIG sent to N sense boards" but `FSWConfigManager` sends nothing (0 packets).
+- C6-2 Duplicate VTableStream subscriptions multiply delivery on elodin-db 0.16.1 (~2× and 5×); `test_duplicate_subscription.ts` exits 1.
+- C6-3 Nothing detects loss of the server heartbeat: when heartbeat_service dies, daq_bridge does not take over (`send_from_daq_bridge` fixed at startup).
+- C6-4 A board that sends data but no heartbeats is marked disconnected while its data is still shown.
+- C6-5 Backend has no SIGTERM/SIGINT handler: exits by signal; WS clients see close 1006.
+- C6-6 config_broadcast sends nothing unless an ACTUATOR board is the designated survivor.
+- C6-7 stacklight_service default target is a placeholder (192.168.2.70:5006) and config overrides CLI flags.
+- C6-8 `[boards.integration_startup]` (board 60) collides with another board's slot (daq_bridge's own error log); test_integration.sh uses it.
+- C6-9 calibration_service exits 1 if Elodin is not up yet; no retry.
+- C6-10 ota_service reports success when the board closes without replying.
+
+From C2 (config characterization; each frozen in a golden):
+- C2-1 `config/profiles/digital-twin` `[fire]` has no `state` → `fire.state=""` → sequencer disables the fire timer for that profile.
+- C2-2 `test/check_toml_no_underscore_ints.py` globs `config/profiles/*.toml`, but profiles are directories now: the shipped profile configs are never checked.
+- C2-3 stacklight `getTomlValue` + `std::stoi` reads `1_000` as 1 and `5_006` as 5.
+- C2-4 A malformed or missing TOML makes `config::load` log and return a default `Config`: a service starts on defaults.
+- C2-5 Out-of-range ports/ids wrap silently (`sensor_port 70000`→4464, `-1`→65535, `database.port 65536`→0; `active_connectors` cast to uint8).
+- C2-6 Wrong-typed TOML values silently take the default in C++ (toml++), differently from the TS validator.
+- C2-7 config_broadcast prefers a cwd-relative `config/state_machine_actuators.csv` over `[state_machine].actuator_csv`.
+- C2-8 Short transition rows (e.g. Armed) read left-aligned (known NEEDS-REPAIR).
+- C2-9 A duplicate `[[states]]` name is last-wins; with `[[states]]` loaded, legacy aliases and case-folded names resolve to UNKNOWN.
+- C2-10 The script parser stops at the first diagnostic.
+- C2-11 `SensorAssignmentManager::load_assignments_from_config` is declared but never defined.
 
 From the bloat map (BLOAT-MAP.md, "Defects found"):
 1. `tools/calibration/calibration_server.py:20-31` imports `scripts.calibration.*` (gone): the Python sidecar cannot start.
