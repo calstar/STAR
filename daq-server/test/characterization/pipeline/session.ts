@@ -188,6 +188,16 @@ async function main(): Promise<void> {
   step('live');
   await sleep(3000);
 
+  step('viewer_client');
+  await openClient('B', VIEWER);
+  await settle(1500);
+  send('B', { type: 'control_unlock', payload: {} });
+  await settle(400);
+  command('B', 'state_transition', { state: 2 });
+  await settle(600);
+  await closeClient('B');
+  await settle(300);
+
   step('subscribe');
   // The thin backend has no subscription protocol: every client gets everything. An unknown
   // message type is logged and dropped, with no reply.
@@ -251,16 +261,6 @@ async function main(): Promise<void> {
   step('transition_idle');
   command('A', 'state_transition', { state: 1 });
   await settle(2500);
-
-  step('viewer_client');
-  await openClient('B', VIEWER);
-  await settle(1500);
-  send('B', { type: 'control_unlock', payload: {} });
-  await settle(400);
-  command('B', 'state_transition', { state: 2 });
-  await settle(600);
-  await closeClient('B');
-  await settle(300);
 
   step('countdown');
   command('A', 'set_countdown_target', { targetTimeMs: 4102444000000 });
