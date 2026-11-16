@@ -1,1141 +1,532 @@
 # DESIGN-WP10 — split the sequencer, actuator, controller and bridge god files
 
-Target-design note required by D17(a) before WP10's move-only pass. Scope: four files under
-`daq-server/diablo_server/`:
+The "as decided" execution note for WP10 (D17(a)): what an implementer does, in what order, and
+why. Decisions: D39 (review), D45, D47 (debate), D49 (simplicity review round 1). How it got here
+— the reviewed text, its amendments, the alternatives (B collaborator objects, C minimal), the
+walkthroughs C(a)-(c), the collaborator tiers and the closed questions — is preserved verbatim in
+[`debates/WP10/history.md`](debates/WP10/history.md). The collaborator tier table and admission
+rule for later fix packages are LEDGER **D47** (WP10 introduces no collaborator object).
 
-| file | lines | class / unit |
+**Baseline.** Every line number below is from `git show backend-remastered:daq-server/<path>` at
+`backend-remastered` @ **`fbc4ad70`**, whose `diablo_server/` is byte-identical to `main` @
+`15b5a0c5`. If WP3/WP8/WP9 land first (the DAG says they do), re-anchor with
+`grep -n '^[A-Za-z].*<Class>::\|^static\|^// ─\|^// ═' <file>`: the function names, not the
+numbers, are the contract.
+
+| file | lines | unit |
 |---|---|---|
-| `services/sequencer/SequencerService.cpp` | 1295 | `sequencer::SequencerService` (header `lib/include/control/SequencerService.hpp`, 342) |
-| `services/sequencer/ActuatorCommander.cpp` | 829 | `sequencer::ActuatorCommander` (header `lib/include/control/ActuatorCommander.hpp`, 237) |
-| `lib/src/control/ControllerService.cpp` | 1160 | `fsw::control::ControllerService` (header `lib/include/control/ControllerService.hpp`, 244) |
-| `daq_bridge/daq_bridge_main.cpp` | 1074 | the `daq_bridge` executable's `main` and its file-scope helpers |
+| `diablo_server/services/sequencer/SequencerService.cpp` | 1295 | `sequencer::SequencerService` (`lib/include/control/SequencerService.hpp`, 342) |
+| `diablo_server/services/sequencer/ActuatorCommander.cpp` | 829 | `sequencer::ActuatorCommander` (`lib/include/control/ActuatorCommander.hpp`, 237) |
+| `diablo_server/lib/src/control/ControllerService.cpp` | 1160 | `fsw::control::ControllerService` (`lib/include/control/ControllerService.hpp`, 244) |
+| `diablo_server/daq_bridge/daq_bridge_main.cpp` | 1074 | daq_bridge's `main` and its file-scope helpers |
 
-All line numbers below were re-anchored on `backend-remastered` @ `b2599617` (product code there is
-`main` @ `15b5a0c5`). If WP3/WP8/WP9 land first (the DAG says they do), re-anchor with the `grep -n`
-anchors given in each step; the function names, not the numbers, are the contract of this note.
+**Prerequisites:** WP8 and WP9 merged (DAG); DESIGN-WP8 gap 2 (sequencer/controller/t7
+SIGTERM/SIGINT exit code and latency) merged. C1 (`packets/`, `elodin/`) is already on the tip.
 
-**Prerequisites:** C1 (`packets/`, `elodin/`) merged into `backend-remastered`; WP8 and WP9 merged
-(DAG); DESIGN-WP8 gap 2 (sequencer/controller/t7 SIGTERM/SIGINT exit code and latency) merged.
+**Ownership:** WP10 owns `diablo_server/CMakeLists.txt` (D39). D18 is extended for WP10 to
+`test/characterization/config/CMakeLists.txt`, for exactly two edits (§7.2, §7.3), landing in
+commit 1 with the code they follow.
 
-**Orchestrator decisions recorded here (design review):**
-- WP10 **owns `diablo_server/CMakeLists.txt`** (for `SEQUENCER_SOURCES` /
-  `ACTUATOR_COMMANDER_SOURCES`).
-- `char_config_services.cpp`'s daq_bridge branch is re-pointed to `BoardMap.hpp` (accepted).
-- **D18 is extended for WP10:** besides the two harness `.cpp` files, WP10 may edit
-  `test/characterization/config/CMakeLists.txt`, only to add `ActuatorCommander_load.cpp` and
-  `ActuatorCommander_udp.cpp` to `char_config_dump` and `target_sources(char_cfg_daq_bridge PRIVATE
-  …/daq_bridge/BoardMap.cpp)`. **That CMake edit, the BoardMap split and the include change land
-  in ONE commit** (§6.1 step 4). Goldens byte-identical; the area's mutations re-run; the
-  orchestrator reviews the harness diff.
-- The move-only pass and the cleanup pass are **separate queue items, each fully gated**.
-  **AMENDMENT (debate verdict):** the move-only pass is itself two queue items (item 1, then item 2
-  cut from item 1's tip), then the cleanup item (§6.1).
+**Rules applied:** D5, D12(e), D17, D18/D20, D22, D25, D31/D34; STYLE-S1, S7, S12, S15, S27,
+S33, S34, S38; the Parked SIGPIPE entry; the C1-10 / C4-x defects stay as they are (§1.3).
 
-Rules this note applies: D5 (contract frozen), D12(e) (move-only package merged alone, then
-cleanup), D17 (design over speed, behaviour bit for bit, per-service settings, no single-user
-abstractions), D18/D20 (harness re-pointing), D22 (float), D31/D34 (timing tests), the Parked
-SIGPIPE entry, and the C4-x / C1-10 defects, which stay exactly as they are.
+**Abstraction (STYLE-S34, D17(d)).** No new class, interface, template, callback type or knob.
+Moving member functions to another TU of the same class is not an abstraction. Extracting a block
+of daq_bridge's `main` into a named free function with one call site is allowed only where §4.3
+lists it, in cleanup.
 
-**What "no single-user abstraction" means here.** No new class, interface, template, callback type
-or configuration knob with one user. Moving existing member functions into another TU of the same
-class is not an abstraction. Extracting a block of `main()` into a named free function with one call
-site (cleanup pass, daq_bridge only) is a split of a god function, not an abstraction; it is allowed
-only where listed below.
+**The cut rule (D47).** A TU is cut where (i) it runs in a different phase or thread set
+(`SequencerService_config`, `SequencerService_controller_notify`, `ActuatorCommander_load`), or
+(ii) it is a wire format or transport a different reader reviews (`SequencerService_elodin`,
+`ControllerService_pwm`, `ControllerService_elodin`). The abort path is never cut (D42 binding 1):
+both `triggerAbort` sites, the 716-730 block and the 835 call stay in `doTransitionTo` in core
+`SequencerService.cpp`; `schedule_gen_`, `pending_roles_`, `applyForState`, `emit`, the stage
+thread **and the send path it calls (`sendBatch`, `sendUDP`)** stay in core
+`ActuatorCommander.cpp` (D49: no `ActuatorCommander_udp.cpp`).
 
 ---
 
 ## 0. Boundary with WP8 (lands first)
 
-WP8 owns process plumbing in the mains (`DESIGN-WP8.md`, committed beside this note): the stop
-flag and `installStopHandlers` with the per-service SIGPIPE setting, `openTcpListener` +
-`serveTcpClients` replacing the `:9998` accept loop in `sequencer_main.cpp` and the `:9999` loop
-in `controller_main.cpp`, `openUdpSocket` + `ipv4Destination` (functions, not an owning
-`UdpSender` class), and `followSequencerState` for heartbeat/stacklight only. DESIGN-WP8 §0
-**rejects** a generic `SubscriberLoop` and a shared argv parser, so every Elodin loop below stays
-its owner's code. WP10 does not touch `sequencer_main.cpp` or `controller_main.cpp`; it
-designs the class splits assuming WP8 has landed. Per call site:
+WP8 owns process plumbing in the mains (stop flag, `installStopHandlers` with the per-service
+SIGPIPE setting, `openTcpListener`/`serveTcpClients`, `openUdpSocket`/`ipv4Destination`,
+`follow_sequencer_state`). It rejects a generic `SubscriberLoop` and a shared argv parser, so every
+Elodin loop below stays its owner's code. WP10 does not touch `sequencer_main.cpp` or
+`controller_main.cpp`.
 
-| BLOAT-MAP site | in WP10's files | WP8 adoption list (BLOAT-MAP WP8) | WP10 action |
-|---|---|---|---|
-| B1 `ActuatorCommander.cpp:343-371` (socket per batch, `SO_SNDTIMEO` 100 ms, hand `bind()` to `bind_addr_`) | yes | not listed | **moves as-is** to `ActuatorCommander_udp.cpp`. Not adopted: a per-batch socket with an explicit `bind()` (including to `0.0.0.0`) and its own failure log `[ActuatorCommander] bind(<addr>) failed: <strerror>` differ from `fsw::net::bindToDaqInterface`; adopting would change the log and possibly the source port lifetime. It may adopt `fsw::net::openUdpSocket(false)` in cleanup (same statement); the bind stays its own. |
-| B1 `ControllerService.cpp:92-98` (one socket for the process, `bindToDaqInterface`), sends at `:434-439`, `:498-506` | yes | not listed (WP8's "controller" is `controller_main.cpp`) | **moves as-is** (`initialize` stays in the core TU, sends go to `ControllerService_pwm.cpp`). Cleanup may adopt `openUdpSocket(false)` and `ipv4Destination` where the statements are identical (DESIGN-WP8 §2.2). |
-| B1 `daq_bridge_main.cpp:57-83` `BackendLogForwarder` | yes | not listed | **moves as-is** to `daq_bridge/BackendLogForwarder.hpp`. |
-| B1 TCP client `SequencerService.cpp:1023-1114` `notifyControllerFireOnce` | yes | TCP clients are listed in B1 but no WP8 helper is named | **moves as-is** to `SequencerService_controller_notify.cpp`. Adopt a WP8 helper in cleanup only if it keeps: non-blocking connect + `poll` 300 ms, `SO_SNDTIMEO` 1 s, blocking restore before `send`, `SO_RCVTIMEO` 300 ms, one `recv` of at most 15 bytes, prefix test `"OK"`, every log text below. |
-| B3 `SequencerService.cpp:1253-1293` (`tryConnectElodin`, retry thread) | yes | none (a publisher re-registration loop; DESIGN-WP8 shares no Elodin loop) | **moves as-is** to `SequencerService_elodin.cpp`; no WP8 helper applies. |
-| B3 `ControllerService.cpp:754-915` (connect+subscribe, 2 s retry, read loop) | yes | not listed | **moves as-is** to `ControllerService_elodin.cpp`. DESIGN-WP8 has no `SubscriberLoop`, so this stays; for the record it keeps: subscribe failure drops the connection with the same log; retry = 20 x 100 ms slices checking `running_`; read loop sleeps 1 ms on no header and on `packet_len < 4 || > 65536`; `read_bytes_exact` for the payload; the reconnect log lines. |
-| B3 `daq_bridge_main.cpp:574-606` and `:745-776` (publisher connect + 5 s reconnect inside the single-threaded loop) | yes | not listed | **not** a subscriber; becomes `registerAllTables()` in cleanup (§4.6). |
-| B5 signals `daq_bridge_main.cpp:106-111, 341-344` | yes | WP8 | WP8 does not adopt daq_bridge; WP10's **cleanup** applies DESIGN-WP8 §2.1's setting `installStopHandlers(kStopThenPrint, "\n[DAQ Bridge] Shutting down...", Sigpipe::kIgnore)` at 341-344 and replaces `running` (106) with `fsw::service::running()`. Move-only leaves them in `daq_bridge_main.cpp`. |
+| site in WP10's files | WP10 action |
+|---|---|
+| `ActuatorCommander.cpp:343-371` socket per batch, `SO_SNDTIMEO` 100 ms, `bind(bind_addr_)` | stays in core (`sendBatch`). Cleanup may adopt `fsw::net::openUdpSocket(false)` where the statement is identical; the explicit `bind()` and its `[ActuatorCommander] bind(<addr>) failed` log stay. |
+| `ControllerService.cpp:92-98` (one socket, `bindToDaqInterface`), sends 434-439, 498-506 | `initialize` stays in core; the sends go to `_pwm`. Cleanup may adopt `openUdpSocket(false)`/`ipv4Destination` where statement-identical (DESIGN-WP8 §2.2). |
+| `daq_bridge_main.cpp:49-90` `BackendLogForwarder` | moves as-is to `daq_bridge/BackendLogForwarder.hpp`. |
+| `SequencerService.cpp:1023-1114` TCP client; `:1253-1293` Elodin retry; `ControllerService.cpp:754-915` subscriber | move as-is to `_controller_notify` / the `_elodin` TUs; no WP8 helper applies. |
+| `daq_bridge_main.cpp:574-606` and `:745-776` publisher connect + 5 s reconnect | **stay in `main`, two separate sites** (§4.2). |
+| `daq_bridge_main.cpp:106-111, 341-344` signals | cleanup applies DESIGN-WP8 §2.1: `installStopHandlers(kStopThenPrint, "\n[DAQ Bridge] Shutting down...", Sigpipe::kIgnore)` at 341-344, `running` (106) → `fsw::service::running()`. |
 
-SIGPIPE (Parked entry): `sequencer_service` and `daq_bridge` ignore it; `controller_service` dies on
-it. WP10 code depends on that, so it is listed here as a cross-check for WP8: the sequencer's
-`notifyControllerFireOnce` calls `send()` without `MSG_NOSIGNAL` (`SequencerService.cpp:1075`), and
-`ElodinClient::write_all` uses no `MSG_NOSIGNAL` anywhere in `lib/`, so daq_bridge surviving an
-elodin-db restart (`lifecycle/golden/shutdown.txt`: "daq_bridge still running: True") and the
-controller dying on one both come from the process-level disposition, not from the code WP10
-moves.
+SIGPIPE: `sequencer_service` and `daq_bridge` ignore it, `controller_service` dies on it. The
+sequencer's `send()` at `SequencerService.cpp:1075` has no `MSG_NOSIGNAL`, nor has
+`ElodinClient::write_all`; both depend on the process disposition, which WP10 does not touch.
 
 ---
 
 ## 1. SequencerService
 
-### 1.1 Current responsibilities (`SequencerService.cpp`)
+### 1.1 Responsibilities (`SequencerService.cpp`)
 
 | lines | what |
 |---|---|
 | 1-25 | includes, `namespace sequencer {` |
-| 27-33 | Elodin ids `VTABLE_SEQUENCER_STATE = 0x5000`, `VTABLE_STATE_TRANSITION = 0x4300` (file-static) |
-| 35-39 | `kControllerConnectTimeoutMs = 300` (file-static) |
-| 41-47 | `SequencerStateMsg` (17 bytes), `StateTransitionMsg` aliases |
-| 49-53 | `static now_ns()` (steady clock) |
-| 55-71 | destructor: stop worker (`cmd_mutex_`, `cmd_stop_`), join, `stopElodinRetry`, `stopContinuousLoop`, `hold_timer_.stop()` — in that order |
-| 73-137 | command queue: `commandLoop`, `enqueueAndWait` (10 s), `enqueueDetached` |
-| 139-147 | `static readFile` |
-| 149-187 | `loadConfig` (fallbacks `config/`, `../config/`, `../../config/`), `configDir` |
-| 189-204 | `static resolveDataPath` (prefixes `""`, `../`, `../../`) |
-| 206-567 | `applyConfig`: `[[states]]` 218, transitions CSV 220-227, actuator + delays CSV 229-239, NIC 241-250, abort broadcaster 252-262, `[fire]` 264-324, hold rules 326-371, `[flow]` 373-481, dynamic states + `pressure_feed_.start` 483-549, publish `hold_rules_` 551-554, controller endpoint 556-566 |
-| 569-623 | `init` (order below) |
-| 625-631 | `isAbortState` |
-| 633-664 | public `transitionTo` overloads (enqueue) |
-| 666-938 | `doTransitionTo` |
-| 940-993 | `setDebugMode`/`doSetDebugMode`, `manualActuator`/`doManualActuator`, `extendFire`/`doExtendFire` |
-| 995-1114 | `notifyControllerFire` (one retry), `notifyControllerFireOnce` (TCP client) |
-| 1116-1168 | `publishState` ([0x50,0x00]) |
-| 1170-1204 | `makeScriptEnv` |
-| 1206-1243 | `scriptStatusReport` (`SCRIPTS` reply body) |
-| 1245-1251 | `publishStateTransition` ([0x43,0x00]) |
-| 1253-1293 | `tryConnectElodin`, `startElodinRetry`, `stopElodinRetry` |
+| 27-53 | file-statics: `VTABLE_*` ids (27-33), `kControllerConnectTimeoutMs` (35-39), `SequencerStateMsg` (17 bytes) and `StateTransitionMsg` (41-47), `now_ns()` (49-53) |
+| 55-137 | destructor (stop worker, join, `stopElodinRetry`, `stopContinuousLoop`, `hold_timer_.stop()`); command queue `commandLoop`, `enqueueAndWait` (10 s), `enqueueDetached` |
+| 139-567 | `readFile`, `loadConfig`, `configDir`, `resolveDataPath`, `applyConfig` (states, CSVs, NIC, abort, `[fire]` 264, holds 326, `[flow]` 373, scripts + `pressure_feed_.start` 483-549, controller endpoint 556-566) |
+| 569-993 | `init`, `isAbortState`, `transitionTo` x4, `doTransitionTo` (666-938), debug/manual/extend and their `do*` bodies |
+| 995-1114 | "Elodin publishing" banner (995-997), `notifyControllerFire` (one retry), `notifyControllerFireOnce` |
+| 1116-1293 | `publishState` (1116-1168), `makeScriptEnv` + `scriptStatusReport` (1170-1243), `publishStateTransition`, `tryConnectElodin`, `start/stopElodinRetry` (1245-1293) |
 
-`init` order (observable: load-time log lines frozen by sequencer N6, schema order frozen by
-`elodin/golden/schema_*.txt` section `sequencer`, first datagrams frozen by every
-`sequencer/golden/*__entry__*` session): `loadConfig` → `load_from_string` → `applyConfig`
-(states, CSVs, NIC, abort, fire, holds, flow, scripts and `PressureFeed` thread, controller
-endpoint, "Fire valve ownership" log) → `load_active_boards` snapshot (580-588) →
-`tryConnectElodin` (non-sensor tables, BV_CMD tables, `setElodinClient`, `publishInitialState`) →
-`startElodinRetry` → `current_state_ = bootState()` → `publishState` →
-`applyForState(boot, true)` → `startContinuousLoop(boot, false)` → worker thread → "Initialized".
+`init` order (frozen by sequencer N6 load-time lines, `elodin/golden/schema_*.txt` section
+`sequencer`, every `sequencer/golden/*__entry__*` first datagram): `loadConfig` →
+`load_from_string` → `applyConfig` → `load_active_boards` snapshot (580-588) → `tryConnectElodin`
+→ `startElodinRetry` → boot state → `publishState` → `applyForState(boot, true)` →
+`startContinuousLoop` → worker thread (616) → "Initialized". All of it stays in core.
 
-### 1.2 Threads and shared state (sequencer process)
+### 1.2 Threads and locks (unchanged by the split)
 
-| thread | created at | runs |
-|---|---|---|
-| main | `sequencer_main.cpp` | accept loop (WP8) |
-| connection threads (<= 64) | `sequencer_main.cpp` | parse a line, call a public method, block in `enqueueAndWait` <= 10 s |
-| `cmd_thread_` worker | `init` 616 | every `do*` body; the only thread inside the state machine |
-| `elodin_retry_thread_` | `startElodinRetry` 1278 | every 5 s (100 ms slices): `tryConnectElodin` if disconnected |
-| `ActuatorCommander::loop_thread_` | `startContinuousLoop` | republish |
-| stage threads (detached) | `ActuatorCommander::applyForState` 592 | delayed stages |
-| `HoldTimer::timer_thread_` | `HoldTimer::start` | expiry: `on_active(false)` → `notifyControllerFire(false)` on this thread, then `on_expire` → `enqueueDetached` |
-| `ScriptRunner::thread_` | `ScriptRunner::start` | script; `set_valve` → commander, `transition` → `enqueueDetached` |
-| `AbortBroadcaster::done_thread_` | `triggerAbort` | ABORT_DONE after 60 x 50 ms |
-| `PressureFeed::thread_` | `pressure_feed_.start` | its own Elodin subscription |
+The `cmd_thread_` worker runs every `do*` body; connection threads block in `enqueueAndWait`
+(<= 10 s); the hold-timer and script threads re-enter only through `enqueueDetached` (879, 1187);
+the hold-timer thread also runs `notifyControllerFire`. `config_mutex_` (`SequencerService.hpp:255`,
+non-recursive) is taken at 546, 552, 673, 717, 740, 904, 925, 1130 (`publishState`), 1217. Lock
+order (must not change): `config_mutex_` → `ScriptRunner::mtx_` (924-929) and →
+`PressureFeed::mtx_` (1217-1240). After the split `doTransitionTo` (core) calls `publishState`
+(`_elodin`) at 705, 727, 759, 776, 933, and `doSetDebugMode` at 952: same call, same member mutex,
+now across TUs.
 
-| primitive | type (header line) | guards |
-|---|---|---|
-| `cmd_mutex_` + `cmd_cv_` | `std::mutex`, `std::condition_variable` (hpp 167-168) | `cmd_queue_`, `cmd_stop_` writes |
-| `cmd_stop_` | `std::atomic<bool>` (170) | shutdown |
-| `config_mutex_` | `mutable std::mutex`, **non-recursive** (255) | `hold_rules_`, `dynamic_states_`, `refused_states_` |
-| `current_state_`, `debug_mode_` | `std::atomic` (235-236) | — |
-| `elodin_retry_stop_` | `std::atomic<bool>` (283) | retry thread |
-| unguarded, written only in `applyConfig`/`init` before the worker starts | — | `fire_state_`, `fire_expiry_state_`, `fire_duration_ms_`, `fire_extended_ms_`, `controller_host_/port_`, `sequencer_owns_valves_`, `daq_bind_address_`, `actuator_boards_`, `ball_valve_boards_`, `elodin_host_/port_`, `config_path_/content_` |
-| `elodin_` (`ElodinClient`) | internal `publish_mutex_` (`ElodinClient.hpp:191`) | used by worker, retry thread, loop and stage threads (through the commander's pointer) |
+### 1.3 Defects that stay exactly as they are
 
-Lock order today (must not change): `config_mutex_` → `ScriptRunner::mtx_` (`doTransitionTo`
-924-929 holds `config_mutex_` across `script_runner_.start(...)` and `makeScriptEnv`);
-`config_mutex_` → `PressureFeed::mtx_` (`scriptStatusReport` 1217-1240 holds it across
-`pressure_feed_.read`). `publishState` takes `config_mutex_` (1130-1139) and releases it before
-`pressure_feed_.read` and `elodin_.publish`. `cmd_mutex_` is never held while running a command.
-Cross-thread re-entry is avoided by `enqueueDetached` from the hold-timer and script threads
-(864-882, 1186-1190).
-
-### 1.3 Known defects that must stay exactly as they are
-
-- **C4-1 deadlock.** `doTransitionTo` 716-730: `std::lock_guard<std::mutex> lk(config_mutex_)` at
-  717, then, for a state in `refused_states_`, `publishState()` at 727 *inside that scope*.
-  `publishState` returns early at 1117-1118 when `!elodin_.is_connected()`; otherwise it locks
-  `config_mutex_` again at 1130 → self-deadlock on a non-recursive mutex. The worker never returns;
-  every later command times out after `kCommandTimeoutSeconds` (10 s) with "command timed out
-  after 10s waiting for the worker — reporting failure (it may still run)"; the destructor's
-  `cmd_thread_.join()` (65-66) never returns, so SIGTERM does not exit. Frozen by
-  `sequencer/golden/digital-twin__scripts-load.txt`. After the split `doTransitionTo` stays in
-  `SequencerService.cpp` and `publishState` moves to `SequencerService_elodin.cpp`: the re-entry
-  becomes cross-TU but is the same call on the same member mutex. Forbidden in both passes:
-  changing `config_mutex_` to `recursive_mutex`, moving the `publishState()` call out of the
-  scope, adding an unlocked `publishState` variant, or reordering the 716-730 block.
-- **C4-2 double timeout.** A dynamic state's timeout is both a hold rule (`applyConfig` 514-520,
-  armed by `hold_timer_.start` 863) and `ScriptRunner`'s own deadline (`ScriptRunner.cpp:489`,
-  `env.transition(ds.timeout_target)` 528); both post `doTransitionTo(timeout_target)` via
-  `enqueueDetached`. Keep both.
-- **C4-3 abort does not cancel a pending stage.** `doTransitionTo` 835 calls
-  `applyForState(to, /*is_transition=*/!isAbortState(to))`; for an abort that is `false`, so
-  `ActuatorCommander::applyForState` 462 does not bump `schedule_gen_` and a stage of the state
-  being left still lands after the abort batch. Frozen by `default__aborts` (Fuel Press +0.2 s
-  after Engine Abort).
-- **C1-10 `triggerAbort` twice.** 794-795 (before anything else) and 915-917 (after
-  `current_state_ = to`): 8 ABORTs, then 4 ABORT_DONEs (the second call cancels and reschedules
-  the first's ABORT_DONE). Frozen by `packets/golden/service_abort.txt` and sequencer N3a `xK`.
-- **C4-4.** With `sequencer_owns_valves = true` (`applyConfig` 560) the hold has no notifier (862)
-  and `ActuatorCommander::applyForState` 434 still skips `is_pwm` roles in the fire state: nobody
-  commands them. Frozen by `default__fire-sequencer-owns-valves`.
-- **C4-6.** `RELOAD_CONFIG` → `ERR:unknown command` (reply built in `sequencer_main.cpp:177`,
-  WP8's file). Frozen by `default__malformed`.
+- **C4-1.** `doTransitionTo` 716-730 locks `config_mutex_` (717) and, for a refused state, calls
+  `publishState()` (727) inside that scope; `publishState` locks it again at 1130 unless Elodin is
+  down (1117-1118). The worker wedges; every later command times out after 10 s; SIGTERM does not
+  exit. Frozen by `sequencer/golden/digital-twin__scripts-load.txt`. Forbidden: a
+  `recursive_mutex`, moving the call out of the scope, an unlocked `publishState` variant,
+  reordering 716-730.
+- **C4-2.** A dynamic state's timeout is both a hold rule (`applyConfig` 514-520) and
+  `ScriptRunner`'s deadline; both post the timeout transition. Keep both.
+- **C4-3.** 835 calls `applyForState(to, !isAbortState(to))`; an abort does not bump
+  `schedule_gen_` (`ActuatorCommander.cpp:462`), so a pending stage of the left state lands after
+  the abort batch. Frozen by `default__aborts`.
+- **C1-10.** `triggerAbort` at 794-795 and again at 915-917: 8 ABORTs, then 4 ABORT_DONEs. Frozen
+  by `packets/golden/service_abort.txt` and sequencer N3a.
+- **C4-4.** With `sequencer_owns_valves` the hold has no notifier (862) and
+  `ActuatorCommander.cpp:434` still skips `is_pwm` roles in Fire. Frozen by
+  `default__fire-sequencer-owns-valves`.
+- **C4-6.** `RELOAD_CONFIG` → `ERR:unknown command` (`sequencer_main.cpp:177`, WP8's file).
 
 ### 1.4 Target TUs
 
-The header `SequencerService.hpp` is **not edited** in either pass (layout, member order and
-therefore construction/destruction order unchanged). All four TUs define members of the one class.
+`SequencerService.hpp` is not edited (member order, construction and destruction order unchanged).
 
-| TU | contents (current lines) | approx. lines |
+| TU | source lines | size after move-only |
 |---|---|---|
-| `SequencerService.cpp` | 1-25, 55-137, 569-993, 1170-1243, closing namespace | ~610 |
-| `SequencerService_config.cpp` | 139-567 (`readFile`, `loadConfig`, `configDir`, `resolveDataPath`, `applyConfig`) | ~455 |
-| `SequencerService_controller_notify.cpp` | 35-39, 995-1114 (`notifyControllerFire`, `notifyControllerFireOnce`) | ~150 |
-| `SequencerService_elodin.cpp` | 27-33, 41-53, 1116-1168, 1245-1293 (`publishState`, `publishStateTransition`, `tryConnectElodin`, `start/stopElodinRetry`) | ~150 |
+| `SequencerService.cpp` (core) | 1-25, 55-137, 569-993, 1170-1243, 1295 | 612 |
+| `SequencerService_config.cpp` | 139-567 | 457 |
+| `SequencerService_controller_notify.cpp` | 35-39, 995-1114 | 154 |
+| `SequencerService_elodin.cpp` | 27-33, 41-53, 1116-1168, 1245-1293 | 153 |
 
-Public interface: unchanged (`init`, `transitionTo` x4, `setDebugMode`, `manualActuator`,
-`extendFire`, `scriptStatusReport`, `currentState`, `isDebugMode`). No new types.
-
-**AMENDMENT (debate verdict, `debates/WP10/verdict.md` §2):** the `_elodin` cut above stands
-(not a retry-only `_elodin`, not none) under the cut criterion's part (ii), §A "Why C lost": it
-keeps the 17-byte `[0x50,0x00]` layout and the `VTABLE_*` ids with their publisher, keeps core at
-~610 rather than ~690, and is what §1.3, §1.5, D42(c) and research structural choice 4
-presuppose. STYLE-S27 is met by it: `now_ns` (49) has exactly two users, both publishers
-(`publishState` 1164, `publishStateTransition` 1249), and `tryConnectElodin` (1253-1293) uses none
-of `now_ns`, `VTABLE_*` or the message aliases. Keeping `publishState` beside `doTransitionTo` never
-guarded C4-1 (all three debaters conceded it); the re-entry is the same call on the same member
-mutex either way (§1.3).
-
-File-statics each have exactly one using TU, so no shared internal header is needed:
-`now_ns`, `VTABLE_*`, `SequencerStateMsg`, `StateTransitionMsg` → `_elodin`;
-`kControllerConnectTimeoutMs` → `_controller_notify`; `readFile`, `resolveDataPath` → `_config`.
-**Move, never copy**: a `static` function or `static constexpr` left in a TU that no longer uses it
-is a `-Wunused-function` / `-Wunused-const-variable` warning, which the gate's warning baseline
-(D4) turns red.
-
-### 1.5 Ownership and data flow after the split
-
-Unchanged: all state stays on the one object; which thread runs which member is identical. The
-only new fact is that some lock-holding call chains cross TUs: `doTransitionTo` (core) →
-`publishState` (`_elodin`) at 705, 727 (C4-1), 759, 776, 933; `doSetDebugMode` (core) →
-`publishState` 952; `init` (core) → `tryConnectElodin`, `startElodinRetry`, `publishState`;
-`HoldTimer` on the worker or the timer thread → `notifyControllerFire` (`_controller_notify`);
-`applyConfig` (`_config`) writes the fields `doTransitionTo` and `notifyControllerFireOnce` read,
-before the worker exists.
-
-**AMENDMENT (debate verdict, facts 5 and 7):** the timer and script threads run core code too, not
-only `_controller_notify`: `enqueueDetached` (core, 129-137) is called on the `HoldTimer` thread
-from the `on_expire` lambda (864-882, call at 879) and on the `ScriptRunner` thread from
-`makeScriptEnv`'s `env.transition` (1186-1190, call at 1187). `_controller_notify` is the only
-I/O on the timer thread. No WP8 TCP helper lands in `_controller_notify` (§0 row B1, open
-question 2). `config_mutex_` is taken at 546 and 552 (`applyConfig`, before the worker starts at
-616), 673, 717, 740, 904, 925 (`doTransitionTo`), 1130 (`publishState`) and 1217
-(`scriptStatusReport`); `notifyControllerFire`/`notifyControllerFireOnce` (995-1114) take none, so
-the mutex does not thread through all four TUs.
-
-### 1.6 Error handling as today
-
-`init` returns false (sequencer_main prints "[Sequencer] Initialization failed", exits 1) on: a
-transitions CSV that does not load (223-226), an actuator CSV that does not load (236-238), an
-unresolvable DAQ NIC (246-247), an invalid `[server_heartbeat].broadcast_ip` (259-261). A missing
-config is non-fatal (171-176). Elodin down is non-fatal (593-596). Refusals return false with a
-`refusal_reason` the TCP layer prints verbatim after `ERR:`: `unknown state`, `state is not
-holdable`, `duration not permitted for this state`, `duration exceeds max (<max_ms> ms)`, the
-stored `refused_states_` text, `PressureFeed::explain(role, status)`, `transition rejected`,
-`debug mode required`. Commands that throw are logged ("command threw: …" / "an unknown
-exception") and the promise is still fulfilled (94-105). Every refusal republishes state
-(705, 727, 759, 776). `notifyControllerFire`: one retry, then the "❌ controller_service did not
-acknowledge …" line; never blocks the transition beyond 2 x (300 ms connect + 300 ms recv).
-
-All of this moves verbatim; the split adds no error path.
+File-statics have exactly one using TU, so no internal header: `now_ns` (users 1164, 1249),
+`VTABLE_*`, the two message aliases → `_elodin`; `kControllerConnectTimeoutMs` →
+`_controller_notify`; `readFile`, `resolveDataPath` → `_config`. **Move, never copy** (STYLE-S27):
+a left-behind `static` is a `-Wunused-*` warning, which the D4 baseline turns red. The banner at
+995-997 says "Elodin publishing" but heads `notifyControllerFire`; it moves with it (STYLE-S38)
+and cleanup re-homes it above `publishState`.
 
 ---
 
 ## 2. ActuatorCommander
 
-### 2.1 Current responsibilities (`ActuatorCommander.cpp`)
+Today: 1-26 includes, namespace; 28-41 `ActuatorCommandedMsg`, `static actuator_elodin_low_byte`
+(36-41; slot `board_id % 10`, 0 → 10); 43-55 "Helpers" banner, `static trimVal` (46-50), `static
+toLower` (52-55); 57-257 "load()" banner, `setDefaultBindAddress`, `load`; 259-274
+`findStateActuators`; 276-390 `sendUDP`, `sendBatch` (socket per batch, `SO_SNDTIMEO` 100 ms at
+354, 3 rounds, `usleep(1000)` at 386); 392-611 `applyForState` (generation bump 462, `emit` 504,
+detached stage thread 592); 613-829 republish loop (100 x 10 ms, 656), overrides, script
+positions, `publishCommandedState`, `publishInitialState`.
 
-| lines | what |
-|---|---|
-| 1-26 | includes (incl. `DiabloPacketUtils.h`), `namespace sequencer {` |
-| 28-41 | `ActuatorCommandedMsg`; `static actuator_elodin_low_byte` (slot rule `board_id % 10`, 0 → 10) |
-| 43-50 | `static trimVal` |
-| 52-55 | `static toLower` |
-| 57-64 | `setDefaultBindAddress` |
-| 66-257 | `load`: config, bind address/port, board IP map with `192.168.2.N` fallback, roles, positions CSV (fallback list 122-129), delays CSV (188-251) |
-| 259-274 | `findStateActuators` (case-insensitive) |
-| 276-390 | `sendUDP`, `sendBatch`: serialize per board, socket, `SO_SNDTIMEO` 100 ms, `bind(bind_addr_)`, 3 interleaved rounds with `usleep(1000)` between |
-| 392-611 | `applyForState`: snapshot script positions, resolve under `overrides_mutex_`, generation bump on transition, stage split, `emit` lambda, stage 0 inline, detached stage thread with 1 ms polling |
-| 613-666 | `startContinuousLoop` (republish: 100 x 10 ms slices, 655-656), `stopContinuousLoop` |
-| 668-716 | `delayForRole`, `positionsForState`, `sendSingleActuator` |
-| 718-792 | overrides, `logOverrideShadowingScript` (function-local static mutex + set), script positions |
-| 794-827 | `publishCommandedState` ([0x32/0x35, ch]), `publishInitialState` |
+`overrides_mutex_`, `script_positions_mutex_`, `pending_roles_mutex_` are never held together
+(header 202-206). The `elodin_` pointer is written by `setElodinClient` while loop/stage threads
+read it: an existing unsynchronised write, reported, not fixed.
 
-### 2.2 Shared state
-
-| primitive | guards |
-|---|---|
-| `overrides_mutex_` | `manual_overrides_` |
-| `script_positions_mutex_` | `script_positions_` |
-| `pending_roles_mutex_` | `pending_roles_` |
-| `schedule_gen_` atomic | stage cancellation |
-| `loop_running_` atomic | republish loop |
-| `logOverrideShadowingScript`'s local `static std::mutex mtx` | its `said` set |
-| unguarded, set before threads | `roles_`, `state_actuators_`, `state_actuator_delays_`, `bind_addr_`, `actuator_port_`, `fire_state_`, `loop_state_` (written before the loop thread starts) |
-| `elodin_` raw pointer | set by `setElodinClient` (from `init` or the sequencer's retry thread) while loop/stage threads read it — an existing unsynchronised write; keep, report only |
-
-No two of the three mutexes are ever held together (header 202-206; `applyForState` 423-458,
-`emit` 513-522, `setScriptPosition` 769-781). Keep it that way.
-
-### 2.3 Target TUs
-
-Header unchanged in both passes (see §7: `char_ac_private.cpp` reads its private members).
-
-| TU | contents | approx. lines |
+| TU | source lines | size after move-only |
 |---|---|---|
-| `ActuatorCommander.cpp` | 1-41, 43-45 banner, 52-55 (`toLower`), 259-274, 392-829 | ~505 |
-| `ActuatorCommander_load.cpp` | 46-50 (`trimVal`), 57-257 | ~225 |
-| `ActuatorCommander_udp.cpp` | 276-390 (`sendUDP`, `sendBatch`) | ~130 |
+| `ActuatorCommander.cpp` (core) | 1-45, 52-55, 259-829 | 622 |
+| `ActuatorCommander_load.cpp` | 46-50 (`trimVal`), 57-257 | 236 |
 
-`toLower` is used by `findStateActuators`, `sendSingleActuator`, `setManualOverride` (all core) and
-not by `load`; `trimVal` only by `load`; `actuator_elodin_low_byte` only by core functions. One TU
-each, no shared header.
-
-### 2.4 Error handling and observables
-
-`load` returns false for an unopenable positions CSV ("Cannot open state_machine_actuators.csv") or
-an empty one; missing delays file means no delays; a non-numeric delay cell is ignored. `sendBatch`
-logs `create_actuator_command_packet returned 0 for <ip>`, `bad board IP <ip>`, `socket() failed`,
-`bind(<addr>) failed`, `sendto(<ip>:<port>) round <n> failed` and returns false; `emit` logs `Sent
-<n> commands for state <s>[ (+<d>s)]` or `UDP send failed for state <s>`. Unchanged by the move.
-
-Must not change: packet bytes (via `daq::create_actuator_command_packet`), 3 rounds with the
-interleaving order "round 1 to all boards, then 2, then 3", `usleep(1000)` between rounds,
-`SO_SNDTIMEO` 100 ms, one socket per batch, map iteration order (by board IP string), the republish
-period (100 x 10 ms; D34 is about this loop), stage poll 1 ms, the staging/generation logic, the
-precedence manual > script > CSV, `is_fire && is_pwm` skip (C4-4).
+`ActuatorCommander.hpp` is not edited (`char_ac_private.cpp` reads its privates, §7.2). `trimVal`
+is used only by `load`; `toLower` only by core (268, 692, 726); `actuator_elodin_low_byte` only by
+core. Also unchanged: one socket per batch, iteration by board IP string, 1 ms stage poll,
+precedence manual > script > CSV (§6.4 lists the frozen surfaces).
 
 ---
 
 ## 3. ControllerService
 
-### 3.1 Current responsibilities (`ControllerService.cpp`)
+Today: 1-12 file comment; 13-39 includes (incl. `db.hpp`), `using namespace vtable;
+using namespace vtable::builder;` (35-36), namespaces; 41-62 PWM wire format and constants (type
+10, version 0, 20/33 bytes); 64-381 lifecycle, setters, `setFireActive` (250), getters; 383-530
+PWM senders (`sendActuationPWM` 509); 532-752 `controllerLoop`; 754-915 subscriber; 917-1107
+`static send_msg<T>` (921-927), `registerControllerTables`, `write*ToDB`; 1109-1160 thrust curve.
 
-| lines | what |
-|---|---|
-| 1-39 | includes (incl. `db.hpp`), `using namespace vtable; using namespace vtable::builder;` (35-36), namespaces |
-| 41-62 | PWM wire format comment and constants (`PACKET_TYPE_PWM 10`, `COMMS_VERSION 0`, sizes 20/33) |
-| 64-183 | ctor, dtor (`stop`, close socket), `initialize` (socket + `bindToDaqInterface`, logs, Elodin publisher + `registerControllerTables`, `connectSubscriber`, DDP init, LUT, thrust curve, default measurement) |
-| 185-228 | `start` (controller thread, then subscriber thread), `stop` |
-| 230-381 | setters, `setFireActive` (gate check, `fire_active_.exchange`, open command via test duty / LUT / DDP, close command, [0x44] publish), `setTestDuty`, getters |
-| 383-530 | `sendPWMCommand`, `sendPWMCommands`, `sendActuationPWM` (one packet if same board) |
-| 532-752 | `controllerLoop` |
-| 754-915 | `connectSubscriber`, `elodinSubscriberLoop`, `subscriberReadLoop` (parity fallback on [0x50,0x00], calibrated PT → measurement) |
-| 917-1107 | `static send_msg<T>` (921-927), `registerControllerTables`, `writeActuationToDB`, `writeDiagnosticsToDB`, `writeMeasurementToDB` |
-| 1109-1157 | `loadThrustCurve`, `interpolateThrustCurve` |
-
-### 3.2 Threads and shared state (controller process)
-
-| thread | runs |
-|---|---|
-| main | control server (`controller_main.cpp`, WP8) |
-| connection threads (<= 64) | `setFireActive` on `FIRE_START`/`FIRE_STOP` |
-| `controller_thread_` | `controllerLoop` at `loop_rate_hz` |
-| `elodin_subscriber_thread_` | reconnecting subscriber; calls `setFireActive` (parity) and writes the measurement |
-
-| primitive | guards |
-|---|---|
-| `input_mutex_` | `current_meas_`, `current_cmd_`, `current_nav_`, `has_measurement_` |
-| `output_mutex_` | `last_actuation_`, `last_diagnostics_` — **AMENDMENT (debate verdict): dead; removed in cleanup** (§6.2 commit c2) |
-| atomics | `running_`, `fire_active_`, `fire_gate_enabled_`, `test_duty_fuel_/ox_` |
-| unguarded | `fire_start_time_` (written by `setFireActive` on a TCP or subscriber thread, read by `controllerLoop`: an existing data race, keep and report); `elodin_client_` used by the loop and by `setFireActive` (relies on `ElodinClient::publish_mutex_`); `udp_socket_fd_` (`sendto` from two threads); `elodin_connected_` (set once in `initialize`, never on reconnect) |
-
-`input_mutex_` and `output_mutex_` are never nested; `setFireActive` releases `input_mutex_` before
-`sendActuationPWM` and before the [0x44] publish (353-358).
-
-**AMENDMENT (debate verdict, fact 1):** `output_mutex_`, `last_actuation_`, `last_diagnostics_`,
-their only writer (the store block in `controllerLoop`, cpp 703-708) and their only readers
-(`getLastActuation`/`getLastDiagnostics`, cpp 373-381) have no other reference in the repository,
-archive included; nor has `setNavState` (cpp 245-248), the only writer of `current_nav_`.
-`current_nav_` is read at 322 and 558 and stays. All of it is deleted in cleanup (§6.2).
-
-Known defect C4-5 (keep): the loop reads `fire_active_` at 699 and can send one more test-duty PWM
-after `setFireActive(false)` sent its zero (N7b drops it from the golden). The CR, wrong-cause reply
-and >3 s SIGTERM exit parts of C4-5 live in `controller_main.cpp` (WP8) and in the blocking
-subscriber read the move does not touch.
-
-### 3.3 Target TUs
-
-~~Header unchanged.~~ **AMENDMENT (debate verdict): header unchanged in move-only; cleanup deletes
-hpp:92, 138-140, 220-223** (`setNavState`, the two getters with their doc comment, `output_mutex_`
-and `last_*` with their comment; §6.2). That is WP10's one header edit. All three TUs go into
-`fsw_daq_lib` (`lib/CMakeLists.txt` `FSW_SOURCES`, after `src/control/ControllerService.cpp` at
-line 41).
-
-| TU | contents | approx. lines |
+| TU | source lines | size after move-only |
 |---|---|---|
-| `ControllerService.cpp` | 1-39, 64-381, 532-752, 1109-1160 | ~630 |
-| `ControllerService_pwm.cpp` | 41-62, 383-530 | ~190 |
-| `ControllerService_elodin.cpp` | 754-1107 (incl. `send_msg`) | ~390 |
+| `ControllerService.cpp` (core) | 1-39, 64-381, 532-752, 1109-1160 | 633 |
+| `ControllerService_pwm.cpp` | 13-39 (include block), 41-62, 383-530, 1159-1160 | 202 |
+| `ControllerService_elodin.cpp` | 13-39 (include block), 754-1107 (incl. `send_msg`), 1159-1160 | 385 |
 
-`interpolateThrustCurve` and every double-precision step of the control path stay in the core TU
-with their callers (`setFireActive`, `controllerLoop`), so inlining and FMA contraction (D22) see
-the same code. `sendActuationPWM`'s clamp-and-cast moves with the senders; it has no fused
-operation. The PWM duty floats are on the wire (`packets/golden/service_pwm.txt`).
+All three go into `fsw_daq_lib` (`lib/CMakeLists.txt` `FSW_SOURCES`). The header is unchanged in
+move-only; cleanup's dead-code commit is WP10's one header edit (§6.2). `interpolateThrustCurve`
+and every double-precision control step stay in core with their callers (`setFireActive`,
+`controllerLoop`), so inlining and FMA contraction see the same code (D22); `sendActuationPWM` is
+clamp-and-cast, nothing fusable. The two `using namespace` lines are copied into both core and
+`_elodin` in move-only (name lookup unchanged) and dropped from core in cleanup. If WP3 has
+replaced `send_msg` with `elodin/SendMsg.hpp`, the include moves instead of the template.
 
-`using namespace vtable; using namespace vtable::builder;` is copied into **both** the core and
-`_elodin` TU in the move-only pass (so name lookup in the core TU is unchanged), and removed from
-the core TU in cleanup after a clean build proves it unused. If WP3 has already replaced `send_msg`
-with `lib/include/elodin/SendMsg.hpp`, the include moves instead of the template.
-
-### 3.4 Observables
-
-PWM bytes (type 10, version 0 hard-coded — B4 is parked; system-clock ms timestamp; 20/33-byte
-layouts; one packet when both targets share a board), the gate funnel, the [0x40]-[0x44] VTables,
-component and entity names and their registration order (`elodin/golden` section
-`controller_service`), the subscribe set (100 calibrated-PT tables then [0x50,0x00]),
-`setFireActive` log lines including "FIRE close command sent (duty=0)" (CTL_FACTS), loop log
-sampling (`tick % 10/50/100`), subscriber retry 20 x 100 ms, 1 ms read back-off.
-
-### 3.5 Ownership and data flow after the split — AMENDMENT (debate verdict, fact 4)
-
-Mirrors §1.5. Unchanged: all state stays on the one object; which thread runs which member is
-identical. Which thread enters which new TU:
-
-| thread | enters `_pwm` | enters `_elodin` |
-|---|---|---|
-| `controller_thread_` (`controllerLoop`, core) | `sendActuationPWM` at 700 | `writeActuationToDB`, `writeDiagnosticsToDB`, `writeMeasurementToDB` at 728-731 |
-| connection threads (`FIRE_START`/`FIRE_STOP`) | `setFireActive` (core) → `sendActuationPWM` at 329 (open) and 341 (close) | — |
-| `elodin_subscriber_thread_` | `setFireActive` (parity, called from `_elodin`) → `sendActuationPWM` at 329, 341 | `elodinSubscriberLoop`, `subscriberReadLoop` |
-
-So "partition by thread" is true only for `SequencerService_{config,controller_notify}` and
-`ActuatorCommander_load`; `_pwm` and `ControllerService_elodin` are each entered from more than one
-thread and are cut under criterion (ii) (wire format / transport), §A "Why C lost". `_pwm` is
-lock-free: `setFireActive` takes `input_mutex_` only in inner blocks and releases it before
-`sendActuationPWM`. `sendActuationPWM` (509-530) is clamp and cast, nothing fusable; D22 holds.
+Threads entering the new TUs: `controller_thread_` → `sendActuationPWM` (700) and `write*ToDB`
+(728-731); connection threads → `setFireActive` → `sendActuationPWM` (329 open, 341 close);
+`elodin_subscriber_thread_` → the subscriber loop and, via parity, `setFireActive`. `_pwm` is
+lock-free (`setFireActive` releases `input_mutex_` before sending). Kept races, reported only:
+`fire_start_time_` (written on a TCP/subscriber thread, read by the loop); `udp_socket_fd_` sent
+from two threads. C4-5's straggler PWM (the loop reads `fire_active_` at 699) stays.
 
 ---
 
 ## 4. daq_bridge_main.cpp
 
-### 4.1 Current responsibilities
+### 4.1 Responsibilities
 
-| lines | what |
-|---|---|
-| 1-28 | includes |
-| 30-47 | anonymous namespace: `SERVER_HEARTBEAT_PACKET_TYPE`, `build_server_heartbeat_packet` (7 bytes, `DIABLO_COMMS_VERSION`) |
-| 49-90 | anonymous namespace: `class BackendLogForwarder` (all members inline) |
-| 91 | close namespace |
-| 92-104 | more includes |
-| 106-111 | `std::atomic<bool> running`, `signal_handler` (prints from the handler) — WP8 |
-| 113-149 | `BoardType` alias, `struct BoardConfig`, `struct ServerHeartbeatConfig`, `BoardByOctet`, `static ipv4_host_octet` |
-| 151-232 | `static load_board_map_from_config` (default args; prints `[Config] WARN: loopback host octet …` to stderr) |
-| 234-280 | `static discovery_board_type_to_enum`, `static config_board_type_to_wire_u8` |
-| 282-305 | `static resolve_board_config_by_source_ip` |
-| 307-339 | `main`: positional argv (`config bind_address bind_port`), banner, hard-fail on missing config (exit 1) |
-| 341-344 | signals, `SIGPIPE` ignored — WP8 |
-| 346-424 | board map load (C2-12: `std::invalid_argument` → "FATAL: …", exit 1), C1-12 port override, NIC resolve (exit 1), routing-table print 383-418, system mode |
-| 426-551 | FSW config manager (UDP 5008; exit 1 on failure), discovery (`popen` of `ip`), sensor pipeline (exit 1 if not ready), log forwarder, broadcast, proactive SENSOR_CONFIG (C6-1), router + inline calibration |
-| 553-606 | Elodin connect + first registration (578-592) + 1500 ms drain |
-| 608-1067 | single-threaded main loop: SERVER_HEARTBEAT 629-640, idle path 642-778 (environmental, heartbeat/discovery/config push, logs, 500 µs sleep, drain, 5 s reconnect + re-registration 749-775), routing 780-814, self-test publish 816-883, raw batch 885-989, time-sync log 993-1008, stats 1010-1066 |
-| 1069-1074 | shutdown log, `return 0` |
+1-28 includes; 30-47 and 91 anonymous namespace with the SERVER_HEARTBEAT builder; 49-90
+`class BackendLogForwarder` (all inline, inside that namespace); 92-104 more includes; 106-111
+`running`, `signal_handler`; 113-137 `BoardType`, `BoardConfig`, `ServerHeartbeatConfig`,
+`BoardByOctet`; 139-305 the five `static` board-map functions (`load_board_map_from_config`
+151-232, `resolve_board_config_by_source_ip` 282-305); 307-1074 `main` (signals 341-344, routing
+print 383-418, log forwarder 486-490, proactive SENSOR_CONFIG 502-527, Elodin connect and
+registration 574-606, loop 608-1067 with SERVER_HEARTBEAT 629, reconnect 749-776, self-test
+publish 816-883, raw batch 885-989). One thread, no mutex; the library objects start no threads.
 
-Threads: one (plus the signal handler). No mutex. Library objects it drives
-(`BoardDiscovery`, `FSWConfigManager`, `SensorFramePipeline`, `HeartbeatRouter`) start no threads.
+### 4.2 The two registration sites stay separate
 
-### 4.2 Registration duplicate (cleanup target, not move-only)
-
-| step | first connect 578-592 | reconnect 759-773 |
-|---|---|---|
-| `register_tables` | return checked, logs "⚠️  RAW VTable registration failed" | ignored |
-| `register_calibrated_tables` | — | — |
-| `register_ball_valve_tables` (if `bv_boards` non-empty) | return checked, logs "⚠️  Ball valve RAW VTable registration failed" | ignored |
-| `register_heartbeat_tables`, `register_environmental_tables`, `register_self_test_tables` | — | — |
-| before | "✅ Connected to Elodin database" | `elodin_connected = true`, "✅ Reconnected to Elodin — re-registering VTables" |
-| after | 1500 ms drain (20 ms sleeps), "[Elodin] Drain complete, ready for TABLE data" | nothing |
+First connect (578-592) checks two returns and prints `⚠️  RAW VTable registration failed` and
+`⚠️  Ball valve RAW VTable registration failed`, then drains 1500 ms; reconnect (759-773) ignores
+every return and does not drain. They differ observably, so they stay two blocks of `main`
+(STYLE-S34; D49). Re-registration after an Elodin restart is not characterized (§7.4 gap 1);
+freezing it and any shared registration helper belong to a future D-SLOT/D-SUB fix package.
 
 ### 4.3 Target files
 
-Move-only:
+| file | contents | size after move-only | after cleanup |
+|---|---|---|---|
+| `daq_bridge/daq_bridge_main.cpp` | 1-47, 91-111, 307-1074, plus `#include "BackendLogForwarder.hpp"`, `"BoardMap.hpp"` | ~841 | ~640 |
+| `daq_bridge/BackendLogForwarder.hpp` | 49-90 verbatim, `#pragma once`, its includes (`<arpa/inet.h>`, `<netinet/in.h>`, `<sys/socket.h>`, `<unistd.h>`, `<cstring>`, `<cstdint>`, `<string>`, `<vector>`); global namespace; header-only (splitting it would be an edit) | ~55 | ~55 |
+| `daq_bridge/BoardMap.hpp` | 113-137 types; declarations of the five functions, `load_board_map_from_config`'s default arguments here; includes `<cstdint>`, `<map>`, `<string>`, `config/LoadActiveBoards.hpp`, `time/BoardClockSync.hpp` | ~60 | ~63 |
+| `daq_bridge/BoardMap.cpp` | 139-305 bodies, `static` removed, defaults removed from the definition; includes `<cstdlib>`, `<fstream>`, `<iostream>`, `config/Config.hpp`, `fsw/BoardTypeWire.hpp`, `"BoardMap.hpp"` | ~180 | ~220 |
+| `daq_bridge/ElodinPublish.{hpp,cpp}` (cleanup) | `publish_self_tests` (816-883), `publish_raw_batch` (885-989) | — | ~45 / ~195 |
 
-| file | contents |
-|---|---|
-| `daq_bridge/daq_bridge_main.cpp` | 1-47, 91 (anonymous namespace now holds only the heartbeat builder), 92-111, 307-1074 (~835 lines) |
-| `daq_bridge/BackendLogForwarder.hpp` (header-only) | 49-90 verbatim, `#pragma once`, its includes (`<arpa/inet.h>`, `<netinet/in.h>`, `<sys/socket.h>`, `<unistd.h>`, `<cstring>`, `<cstdint>`, `<string>`, `<vector>`). Leaves the anonymous namespace; global namespace like today's other daq_bridge types. No `.cpp`: the class is all inline today, and splitting it would be an edit, not a move. |
-| `daq_bridge/BoardMap.hpp` | `BoardType` alias, `BoardConfig`, `ServerHeartbeatConfig`, `BoardByOctet`, declarations of the five functions with `load_board_map_from_config`'s default arguments. Includes `<cstdint>`, `<map>`, `<string>`, `config/LoadActiveBoards.hpp`, `time/BoardClockSync.hpp`. |
-| `daq_bridge/BoardMap.cpp` | 139-305 bodies, `static` removed (external linkage), defaults removed from the definition. Includes `<cstdlib>`, `<fstream>`, `<iostream>`, `config/Config.hpp`, `fsw/BoardTypeWire.hpp`, `"BoardMap.hpp"`. |
-
-Global names `BoardConfig` / `ServerHeartbeatConfig` coexist with `fsw::config::BoardConfig` /
-`fsw::config::ServerHeartbeatConfig` (`Config.hpp:35, 222`) only because nothing in daq_bridge
-says `using namespace fsw::config`; keep it so. Putting them in a `daq_bridge` namespace is not
-done (it would need a second harness edit, §7.3, for no behaviour).
-
-Cleanup (brings `daq_bridge_main.cpp` under 700):
-
-| new | from | users |
-|---|---|---|
-| `daq_bridge/TableRegistration.{hpp,cpp}`: `void registerAllTables(fsw::elodin::ElodinClient&, const ActiveBoards&…, const std::vector<uint8_t>& config_board_ids, bool report_failures)` | 578-592, 759-773 | 2 |
-| `print_board_routing_table(...)` in `BoardMap.cpp` | 383-418 | 1 (split of `main`) |
-| `daq_bridge/ElodinPublish.{hpp,cpp}`: `publish_self_tests(...)`, `publish_raw_batch(...)` | 816-883, 885-989 | 1 each (split of `main`) |
-
-`registerAllTables` calls the six registrations in the order above and, when `report_failures`,
-prints the two warnings **at the point each registration returns**, as today (logging after all six
-would move the warning relative to the `DatabaseConfig` functions' own output). The connect/reconnect
-logs, `elodin_connected = true`, and the drain stay at their call sites. The extracted publish
-functions take every local they use by reference (`elodin_client`, `publishing`, `effective_cfg`,
-`board_map`, `discovery`, `source_ip`, `receive_timestamp_ns`, `clock_sync`, counters) and keep the
-statement order, the `begin_batch`/`flush_batch`/drain sequence and the counter increments exactly.
-Nothing else in `main` moves.
-
-### 4.4 Observables
-
-Exit codes: 1 for missing config, `std::invalid_argument` from the config (C2-12), NIC resolution
-failure, FSW manager init failure, pipeline not ready; 0 after the loop. Startup log up to
-`[System] Mode` byte for byte (`config/golden/bin/daq_bridge`); "Listening for DiabloAvionics
-packets", "Proactive SENSOR_CONFIG sent to N sense boards" (C6-1), "[DAQ Bridge] Shutdown complete"
-(lifecycle). SERVER_HEARTBEAT bytes and `interval_ms` gating; log envelope bytes
-(`packets/golden/service_daq_bridge.txt`); raw table ids (`0x20 PT, 0x30 ACT, 0x23 LC, 0x21 TC,
-0x22 RTD, 0x24 ENC, 0x33 BV`, low byte `(slot-1)*0x20 + ch`), [0x25, board] environmental,
-[0x60+sensor, board] self-test with the board-id fallback ladder, unknown IP treated as PT; the
-registration stream (`elodin/golden` section `daq_bridge`, 1559 packets on config_base); 500 µs idle
-sleep, 5 s reconnect, 1500 ms drain, 2 s stats; port 5008; C1-12 and C6-3 (`send_from_daq_bridge`
-fixed at startup) unchanged.
+Global `BoardConfig`/`ServerHeartbeatConfig` coexist with `fsw::config`'s (`Config.hpp:35, 222`)
+only because nothing here says `using namespace fsw::config`; keep it so, and no `daq_bridge`
+namespace (it would need a second harness edit). Cleanup extractions (one call site each, D43(3)):
+`print_board_routing_table` (383-418) into `BoardMap.cpp`; `publish_self_tests`,
+`publish_raw_batch` into `ElodinPublish.cpp`. The guards stay at the call sites; every local is
+passed by reference (`elodin_client`, `publishing`, `effective_cfg`, `board_map`, `discovery`,
+`source_ip`, `receive_timestamp_ns`, `clock_sync`, counters); statement order, `begin_batch` /
+`flush_batch` / drain and counter increments exactly as today. Nothing else in `main` moves. Stub
+declarations: `design-stubs/cpp/daq_bridge/{BoardMap,BackendLogForwarder,ElodinPublish}.hpp`.
 
 ---
 
 ## 5. Naming
 
-- New TUs use `<Class>_<aspect>.cpp` as BLOAT-MAP WP10 names them:
-  `SequencerService_config.cpp`, `SequencerService_controller_notify.cpp`,
-  `SequencerService_elodin.cpp`, `ActuatorCommander_load.cpp`, `ActuatorCommander_udp.cpp`,
-  `ControllerService_pwm.cpp`, `ControllerService_elodin.cpp`. daq_bridge files are named for what
-  they hold: `BoardMap`, `BackendLogForwarder`, `TableRegistration`, `ElodinPublish`.
-- No identifier is renamed in the move-only pass. In cleanup, the only new identifiers are
-  `registerAllTables`, `print_board_routing_table`, `publish_self_tests`, `publish_raw_batch`
-  (snake_case like the file's other free functions except `registerAllTables`, which BLOAT-MAP and
-  the LEDGER already name).
-- Private members of `ActuatorCommander` (`bind_addr_`, `bind_addr_explicit_`, `actuator_port_`,
-  `roles_`) and the `ActuatorRole` fields are not renamed in either pass (§7.2).
+New TUs are `<Class>_<aspect>.cpp` (§1.4, §2, §3); daq_bridge files are named for what they hold.
+Move-only renames nothing; cleanup's only new identifiers are `print_board_routing_table`,
+`publish_self_tests`, `publish_raw_batch` (snake_case, STYLE-S1). The harness-read
+`ActuatorCommander` privates and `ActuatorRole` fields are never renamed (STYLE-S7).
 
 ---
 
-## 6. The move-only pass (~~one package, merged alone~~ **AMENDMENT (debate verdict): two queue items, each merged alone**, §6.1), then cleanup
+## 6. Execution
 
-### 6.1 Move-only steps
+### 6.0 Rules for every move-only commit
 
-**AMENDMENT (debate verdict §2, "Queue"; D25, D-PF, D31, D45(3)).** The move-only work is **two
-queue items**, each fully gated, merged in order; the steps below are assigned to them as follows.
+1. Cut whole top-level definitions with their leading comment blocks and section banners; paste
+   them in the same relative order; open and close the same namespace.
+2. Copy the source file's **entire include block** verbatim into each new TU, pruning nothing
+   (ControllerService: lines 13-39, the two `using` lines included). File-statics move to their
+   one user (§1.4, §2).
+3. `SequencerService.hpp`, `ActuatorCommander.hpp`, `ControllerService.hpp` untouched. No comment
+   line added or edited (STYLE-S38), except the two new daq_bridge headers' STYLE-S36 header
+   comment and declaration doc lines, as the stubs give them.
+4. `export PATH=/Users/roshantaneja/Downloads/STAR/.git/remaster-tools/fmtvenv/bin:$PATH;
+   clang-format -i <new and edited files only>` (19.1.7).
+5. Review with `git diff -M --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change
+   HEAD~1`: every non-dimmed line is an include, a namespace line, a removed `static` or default
+   argument (daq_bridge only), the new headers' S36/doc comments, CMake, or clang-format's include
+   regrouping/rewrap (D43(6)).
+6. String literals (STYLE-S15): `grep -oh '"[^"]*"' <files> | sort` over the touched sources is
+   identical before and after the commit, except the include paths of copied include blocks.
 
-- **Item 1** = step 4 verbatim (BoardMap, BackendLogForwarder, the ActuatorCommander split into
-  `ActuatorCommander_{load,udp}`, the §7.2 and §7.3 harness edits; one commit) plus **all** the
-  CMake restructuring of step 5: define `ACTUATOR_COMMANDER_SOURCES` and `SEQUENCER_SOURCES` (step
-  5's list **minus** the three new `SequencerService_*` TUs) and use them in the 6 + 4 test targets
-  and `sequencer_service`. `FSW_SOURCES` is not touched in item 1. **Before item 1 is queued**, D-PF
-  is reproduced and its result recorded (§A amendment): item 1 runs `CHAR_AREAS=sequencer`, so it is
-  the item D-PF gates. Verify: step 6 in full; full gate, Linux leg, CI (D34). (`controller_pwm_roles`
-  and `robust_ddp` test `fsw_daq_lib`, which item 1 leaves alone; they can move only in item 2.)
-- **Item 2**, cut from item 1's tip after item 1 merges: commit **a** = step 1
-  (`SequencerService_{config,controller_notify,elodin}.cpp`) and three lines appended to
-  `SEQUENCER_SOURCES`; commit **b** = step 3 (`ControllerService_{pwm,elodin}.cpp`) and the two
-  `FSW_SOURCES` lines. Verify: step 6 in full (item 2 is the one that changes `fsw_daq_lib`, which
-  `controller_pwm_roles`, `robust_ddp` and `t7_integration` link). **D31's 10× comparison runs
-  against item 1's tip**, not the pre-WP tip.
-- **Fallback** (D45(3), replacing alternative C as the fallback): if CI cannot judge the D34 timing
-  tests when item 2 would be queued, **item 2 is not queued**, with a LEDGER entry at that time.
-  Item 1 alone is already alternative C's file set plus `ActuatorCommander_load`.
-- A failed queue branch of either item is deleted and re-cut from the then-current tip with a full
-  re-gate (D25); "truncate after commit 1" is not an option, it is a re-cut.
-- The **cleanup item** (§6.2) follows item 2 (or item 1, if the fallback is taken).
+### 6.1 Move-only queue item (one item, three commits; D49)
 
-General rules for every step: cut whole top-level definitions with their leading comment blocks and
-section banners; paste them in the same relative order; open/close the same namespace; copy the
-source file's **entire include block** (and, for ControllerService, the two `using namespace`
-lines) verbatim into each new TU, pruning nothing; move file-statics to the one TU that uses them;
-headers `SequencerService.hpp`, `ActuatorCommander.hpp`, `ControllerService.hpp` untouched; run
-`clang-format -i` (19.1.7) on new and edited files only. Review with
-`git diff -M --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change`: every non-dimmed
-line must be an include, a namespace line, a removed `static`/default argument (daq_bridge only) or
-CMake.
+Branch from the tip; one queue item; each commit builds with no new warning. A failed queue
+branch is deleted and the item re-cut from the then-current tip with a full re-gate (D25).
 
-1. **SequencerService.** Create `services/sequencer/SequencerService_config.cpp` (lines 139-567),
-   `SequencerService_controller_notify.cpp` (35-39, 995-1114), `SequencerService_elodin.cpp`
-   (27-33, 41-53, 1116-1168, 1245-1293). Anchors: `grep -n '^static\|^bool SequencerService::\|^void SequencerService::\|^std::string SequencerService::\|^ScriptEnv' SequencerService.cpp`.
-2. **ActuatorCommander.** Create `services/sequencer/ActuatorCommander_load.cpp` (46-50, 57-257)
-   and `ActuatorCommander_udp.cpp` (276-390).
-3. **ControllerService.** Create `lib/src/control/ControllerService_pwm.cpp` (41-62, 383-530) and
-   `ControllerService_elodin.cpp` (754-1107; `using` lines copied).
-4. **daq_bridge + harness, one commit.** Create `BackendLogForwarder.hpp`, `BoardMap.hpp`,
-   `BoardMap.cpp` as §4.3; `daq_bridge_main.cpp` includes `"BackendLogForwarder.hpp"` and
-   `"BoardMap.hpp"`. In the **same commit**: the `char_config_services.cpp` include change (§7.3)
-   and the `test/characterization/config/CMakeLists.txt` edit (§7.2 `char_config_dump` sources and
-   §7.3 `target_sources(char_cfg_daq_bridge …)`). Because that CMake edit also names the
-   ActuatorCommander TUs, step 2's ActuatorCommander split is part of this same commit (otherwise
-   `char_config_dump` does not build in between). No other commit touches harness files.
-5. **CMake.**
-   - `diablo_server/CMakeLists.txt` (not in BLOAT-MAP's WP10 file list; the package claims it),
-     before `add_subdirectory(lib)`:
-     ```cmake
-     set(SEQ_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/services/sequencer)
-     set(ACTUATOR_COMMANDER_SOURCES
-         ${SEQ_SRC_DIR}/ActuatorCommander.cpp
-         ${SEQ_SRC_DIR}/ActuatorCommander_load.cpp
-         ${SEQ_SRC_DIR}/ActuatorCommander_udp.cpp)
-     set(SEQUENCER_SOURCES
-         ${SEQ_SRC_DIR}/SequencerService.cpp
-         ${SEQ_SRC_DIR}/SequencerService_config.cpp
-         ${SEQ_SRC_DIR}/SequencerService_controller_notify.cpp
-         ${SEQ_SRC_DIR}/SequencerService_elodin.cpp
-         ${SEQ_SRC_DIR}/StateMachine.cpp
-         ${ACTUATOR_COMMANDER_SOURCES}
-         ${SEQ_SRC_DIR}/AbortBroadcaster.cpp
-         ${SEQ_SRC_DIR}/HoldTimer.cpp
-         ${SEQ_SRC_DIR}/ScriptStates.cpp
-         ${SEQ_SRC_DIR}/ScriptRunner.cpp
-         ${SEQ_SRC_DIR}/PressureFeed.cpp)
-     ```
-     (same order the targets list today). **AMENDMENT (debate verdict):** item 1 defines this list
-     without the three `SequencerService_{config,controller_notify,elodin}.cpp` lines; item 2
-     commit a appends them after `SequencerService.cpp`.
-   - `services/CMakeLists.txt` `sequencer_service` (14-24): `sequencer/sequencer_main.cpp
-     ${SEQUENCER_SOURCES}`.
-   - `lib/CMakeLists.txt`. Users, correctly counted: **6 SequencerService test executables plus 4
-     ActuatorCommander-only test executables, plus the `sequencer_service` executable** (the
-     LEDGER's "8 targets" is wrong). The SequencerService users —
-     `test_sequencer_elodin` (254), `test_hold_rules` (276), `test_script_states` (299),
-     `test_script_runtime` (325), and the `foreach` pair `test_sequencer_concurrency` /
-     `test_abort_ordering` (406-424): replace their eight sequencer source lines with
-     `${SEQUENCER_SOURCES}`. The ActuatorCommander-only users — `test_fire_lifecycle` (149),
-     `test_actuator_delays` (203), `test_script_positions` (223), `test_ball_valve_commander`
-     (239) — replace their `ActuatorCommander.cpp` line with `${ACTUATOR_COMMANDER_SOURCES}`.
-     `FSW_SOURCES`: add `src/control/ControllerService_pwm.cpp` and
-     `src/control/ControllerService_elodin.cpp` after line 41 (**AMENDMENT (debate verdict):** in
-     item 2 commit b only).
-   - `daq_bridge/CMakeLists.txt`: `add_executable(daq_bridge daq_bridge_main.cpp BoardMap.cpp)`.
-   - Harness CMake (`test/characterization/config/CMakeLists.txt`), §7.2/§7.3: in step 4's commit
-     only (D18 extension above).
-6. **Verify** (all port-binding runs under `with_stack_lock.sh`, subsets only, D23/D36): clean build,
-   no new warning vs `baseline_warnings.txt`; `ctest -R
-   'actuator_delays|script_positions|ball_valve_commander|fire_lifecycle|hold_rules|script_states|script_runtime|sequencer_concurrency|abort_ordering|controller_pwm_roles|robust_ddp|characterization_config_cpp'`;
-   `CHAR_AREAS=sequencer,config,lifecycle,packets,elodin,pipeline`;
-   `linux_gate.sh --areas sequencer,config,lifecycle,packets,elodin,pipeline <rev>`; a CI run
-   (D34: required for any WP touching the sequencer). `t7_integration` is in the verify list too,
-   **judged on CI only** (D34: the local Linux leg inherits this Mac's timer overshoot); it runs
-   the stack against `fsw_daq_lib`, which gains the two ControllerService TUs. `actuator_delays`,
-   `script_positions` and `script_runtime` are likewise CI-only (D34), and D31's 10× rule applies
-   to any of them that needs a retry. The full gate is the orchestrator's.
+**Commit 1 — daq_bridge, `ActuatorCommander_load`, both harness edits, all CMake restructuring.**
 
-### 6.2 Cleanup pass (second package)
+- [ ] `daq_bridge/BackendLogForwarder.hpp`, `BoardMap.hpp`, `BoardMap.cpp` as §4.3;
+      `daq_bridge_main.cpp` keeps 1-47, 91-111, 307-1074 and includes the two headers.
+- [ ] `services/sequencer/ActuatorCommander_load.cpp`: lines 46-50, 57-257, with the include block
+      1-26 and the closing `}  // namespace sequencer`. Core keeps 1-45, 52-55, 259-829.
+- [ ] Harness, `test/characterization/config/char_config_services.cpp:24`:
+      `#include "../../../diablo_server/daq_bridge/daq_bridge_main.cpp"` →
+      `#include "../../../diablo_server/daq_bridge/BoardMap.hpp"` (the `#elif
+      CHAR_SERVICE_DAQ_BRIDGE` branch, 23-24; the other two branches untouched).
+- [ ] Harness, `test/characterization/config/CMakeLists.txt`: after line 19 add
+      `${_DS}/services/sequencer/ActuatorCommander_load.cpp`; after the `endforeach()` (41) add
+      `target_sources(char_cfg_daq_bridge PRIVATE ${_DS}/daq_bridge/BoardMap.cpp)`. (That scope
+      does not see `ACTUATOR_COMMANDER_SOURCES`, so the list stays explicit.)
+- [ ] `diablo_server/CMakeLists.txt`, before `add_subdirectory(lib)` (line 2):
+  ```cmake
+  set(SEQ_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/services/sequencer)
+  set(ACTUATOR_COMMANDER_SOURCES
+      ${SEQ_SRC_DIR}/ActuatorCommander.cpp
+      ${SEQ_SRC_DIR}/ActuatorCommander_load.cpp)
+  set(SEQUENCER_SOURCES
+      ${SEQ_SRC_DIR}/SequencerService.cpp
+      ${SEQ_SRC_DIR}/StateMachine.cpp
+      ${ACTUATOR_COMMANDER_SOURCES}
+      ${SEQ_SRC_DIR}/AbortBroadcaster.cpp
+      ${SEQ_SRC_DIR}/HoldTimer.cpp
+      ${SEQ_SRC_DIR}/ScriptStates.cpp
+      ${SEQ_SRC_DIR}/ScriptRunner.cpp
+      ${SEQ_SRC_DIR}/PressureFeed.cpp)
+  ```
+  (the order every target lists today).
+- [ ] `services/CMakeLists.txt` 14-24: `add_executable(sequencer_service
+      sequencer/sequencer_main.cpp ${SEQUENCER_SOURCES})`.
+- [ ] `lib/CMakeLists.txt`, the 6 SequencerService test executables — `test_sequencer_elodin`
+      (256-263), `test_hold_rules` (278-285), `test_script_states` (301-308), `test_script_runtime`
+      (327-334), the `foreach` pair `test_sequencer_concurrency`/`test_abort_ordering` (409-416):
+      replace the eight sequencer source lines with `${SEQUENCER_SOURCES}`. The 4
+      ActuatorCommander-only executables — `test_fire_lifecycle` (156), `test_actuator_delays`
+      (205), `test_script_positions` (225), `test_ball_valve_commander` (241): replace the
+      `ActuatorCommander.cpp` line with `${ACTUATOR_COMMANDER_SOURCES}`.
+- [ ] `daq_bridge/CMakeLists.txt:3`: `add_executable(daq_bridge daq_bridge_main.cpp BoardMap.cpp)`.
+- [ ] Harness proof (D18): `config/golden/cpp/*` and `config/golden/bin/daq_bridge/*`
+      byte-identical; the config area's recorded mutations re-run; two new mutations, each red
+      then reverted: in `ActuatorCommander_load.cpp` `role.is_pwm = !r.controller_role.empty();` →
+      `= false;` (the `role … is_pwm=` lines go red); in `BoardMap.cpp`,
+      `load_board_map_from_config`'s `if (octet >= 2)` (baseline 218, not the one at 298) →
+      `>= 3` (the `board_by_octet[…]` and `resolve("127.0.0.2…")` lines go red). The orchestrator
+      reviews the harness diff.
 
-- Prune each new TU's includes to what it uses; drop `using namespace vtable…` from the core
-  ControllerService TU.
-- daq_bridge: `registerAllTables`, `print_board_routing_table`, `publish_self_tests`,
-  `publish_raw_batch` (§4.3). Only after the reconnect characterization in §7.4 exists.
-- Optional adoptions of WP8 helpers only under the conditions in §0.
-- **AMENDMENT (debate verdict §2, "Cleanup item"):** the cleanup item is, in this order of
-  content: include pruning; `using namespace vtable…` out of the core TU; the `// Kept:` tags and
-  the `publishState` lock-contract comment (§A amendments; D45(2) stands, STYLE-S12/S38: a
-  move-only pass adds no comment line); `register_all_tables` (after §7.4 gap 1),
-  `print_board_routing_table`, `publish_self_tests`, `publish_raw_batch`; and the dead
-  `ControllerService` code (§3.2 amendment), **27 lines in two commits**:
-  - **c1:** `setNavState` and both getters — hpp:92, 138-140; cpp:245-248, 373-381.
-  - **c2:** `output_mutex_`, `last_actuation_`, `last_diagnostics_` and the store block —
-    hpp:220-223; cpp:703-708. Separate from c1 because it edits `controllerLoop`, the D22 TU.
-  - **Proof:** `nm -C` on `fsw_daq_lib` loses exactly three symbols after c1
-    (`ControllerService::setNavState`, `getLastActuation`, `getLastDiagnostics`) and none after
-    c2; `packets/golden/service_pwm.txt`, `sequencer/golden/controller__*` and the config goldens
-    byte-identical. `current_nav_` stays (read at cpp 322, 558; open question 8).
-  - These hpp lines are **WP10's one header edit**; it needs no harness file edit but recompiles
-    the harness binary `char_config_dump` (§7.2 amendment).
-- **AMENDMENT (debate verdict §2): no STYLE-S33 waiver.** `daq_bridge_main.cpp` is ~835 lines
-  between item 1 and cleanup: interim, not a waiver (STYLE.md item 9). The three extractions not
-  gated by §7.4 gap 1 (383-418, 816-883, 885-989) bring it to ~626; `register_all_tables` takes it
-  lower. Without `_pwm`, core `ControllerService.cpp` would be ~790 and need a waiver; with the cuts
-  in §3.3 every TU is ≤ 700.
-- Not in cleanup (parked or forbidden): fixing C4-1/C4-2/C4-3/C1-10/C4-4/C4-5/C6-1/C6-3/C1-12;
-  replacing the republish 10 ms slices with a condition variable (comment at
-  `ActuatorCommander.cpp:652-654` already defers it; it changes timing); B4 encoders; unifying
-  `toLower`/`trimVal`/`trim` across files; the `fire_start_time_` and `elodin_` pointer races.
+**Commit a — SequencerService TUs.**
 
-### 6.3 Must not change (both passes)
+- [ ] `services/sequencer/SequencerService_config.cpp` (139-567),
+      `SequencerService_controller_notify.cpp` (35-39, 995-1114), `SequencerService_elodin.cpp`
+      (27-33, 41-53, 1116-1168, 1245-1293); each with include block 1-25 and line 1295. Core keeps
+      1-25, 55-137, 569-993, 1170-1243, 1295.
+- [ ] `diablo_server/CMakeLists.txt`: append `${SEQ_SRC_DIR}/SequencerService_config.cpp`,
+      `…_controller_notify.cpp`, `…_elodin.cpp` to `SEQUENCER_SOURCES` right after
+      `SequencerService.cpp`.
 
-| surface | where frozen |
+**Commit b — ControllerService TUs.**
+
+- [ ] `lib/src/control/ControllerService_pwm.cpp` (41-62, 383-530) and
+      `ControllerService_elodin.cpp` (754-1107), each with lines 13-39 and 1159-1160. Core keeps
+      1-39, 64-381, 532-752, 1109-1160.
+- [ ] `lib/CMakeLists.txt` `FSW_SOURCES`: after line 41 add `src/control/ControllerService_pwm.cpp`
+      and `src/control/ControllerService_elodin.cpp`.
+
+"All CMake in commit 1" means the restructuring: CMake cannot list a file that does not exist yet,
+so commits a and b each append their own source lines and nothing else.
+
+**Verify** (port-binding runs under `bash daq-server/test/characterization/with_stack_lock.sh`,
+subsets only, D23/D36). Build and warnings after every commit; the rest on the item's tip:
+
+- [ ] Clean build; warnings vs `test/characterization/baseline_warnings.txt` unchanged (D4).
+- [ ] `ctest -R 'actuator_delays|script_positions|ball_valve_commander|fire_lifecycle|hold_rules|script_states|script_runtime|sequencer_concurrency|abort_ordering|sequencer_elodin|controller_pwm_roles|robust_ddp|characterization_config_cpp'`.
+- [ ] `CHAR_AREAS=sequencer,config,lifecycle,packets,elodin,pipeline` (iterate with
+      `CHAR_SEQ_ONLY=<regex>`).
+- [ ] `bash daq-server/test/characterization/linux/linux_gate.sh --areas sequencer,config,lifecycle,packets,elodin,pipeline <tip>`.
+- [ ] **CI run, required** (D34: any WP touching the sequencer). `actuator_delays`,
+      `script_positions`, `script_runtime` and `t7_integration` (which links `fsw_daq_lib`, changed
+      by commit b) are judged on CI only; this Mac and the local Docker leg inherit the host's
+      timer overshoot. If CI cannot judge them, the item waits; there is no partial fallback.
+- [ ] D31: if any of `actuator_delays`, `script_positions`, `script_runtime`,
+      `sequencer_concurrency` needed a retry, run it 10x alone (Linux) on the item's tip and on
+      **the pre-WP tip**; the item is not done unless its pass rate is no worse.
+- [ ] A red sequencer session that is only a republish interval or a multiplied PressureFeed
+      stream is re-run on the pre-WP tip before WP10 is blamed (§8; D-PF does not gate WP10).
+
+### 6.2 Cleanup queue item
+
+Cut from the tip after the move-only item merges; fully gated like it (same verify list; D31
+baseline: the pre-WP tip, as for the move-only item). Content:
+
+- [ ] **Dead ControllerService code, one commit.** Delete `setNavState` (hpp 92; cpp 245-248 and
+      blank 249), `getLastActuation`/`getLastDiagnostics` with their doc comment (hpp 138-140 and
+      blank 141; cpp 373-381 and blank 382), `output_mutex_`/`last_actuation_`/`last_diagnostics_`
+      with their comment (hpp 220-223 and blank 224) and the store block in `controllerLoop` (cpp
+      703-708 and blank 709): 27 lines plus 5 blanks; the cpp lines are in core after move-only.
+      Proof: clean build (it recompiles `fsw_daq_lib`'s ControllerService TUs,
+      `controller_service`, `test_controller_pwm_roles` and, through `PWMTargets.hpp:29`,
+      `char_config_dump`, without editing any of them); then
+      `git grep -n 'setNavState\|getLastActuation\|getLastDiagnostics\|output_mutex_\|last_actuation_\|last_diagnostics_' -- daq-server ':!daq-server/docs'`
+      prints nothing (before: only `ControllerService.{hpp,cpp}`); `packets/golden/service_pwm.txt`,
+      `sequencer/golden/controller__*` and the config goldens byte-identical. `current_nav_` stays
+      (read at cpp 322, 558; §9).
+- [ ] **Include pruning** in every new and touched TU, to what it uses; a clean build is the
+      proof.
+- [ ] **`using namespace vtable; using namespace vtable::builder;`** out of core
+      `ControllerService.cpp` (they stay in `_elodin`).
+- [ ] **`// Kept:` tags** at every frozen-defect site, long form (STYLE-S12, D46):
+      `// Kept: <id> (D17) — <class>/<phase>: <rule>; loud half: <surface>`. Proposed text,
+      settled in the cleanup review; `grep -rn 'Kept: C4-\|Kept: C1-\|Kept: C6-'` is the fix
+      packages' index.
+
+| id | site (move-only file; baseline anchor) | class/phase | rule | loud half |
+|---|---|---|---|---|
+| C4-1 | `SequencerService.cpp`, refused-state block (716-730) | control/duty | a refusal leaves the rig commandable | `ERR:` after the 10 s worker timeout on :9998 (`digital-twin__scripts-load`) |
+| C1-10 | `SequencerService.cpp`, both `triggerAbort()` calls (794-795, 915-917) | safety/duty | one ABORT broadcast per abort entry | boards: 8 ABORT, ABORT_DONE re-timed (`service_abort.txt`) |
+| C4-3 | `SequencerService.cpp` 835; `ActuatorCommander.cpp` 462 | safety/duty | abort entry cancels pending stages | actuator UDP (`default__aborts`) |
+| C4-2 | `SequencerService_config.cpp`, dynamic-state hold rule (514-520) | control/duty | one timeout transition per entry | `[HoldTimer]` log |
+| C4-4 | `ActuatorCommander.cpp` 434; `SequencerService.cpp` 862 | control/duty | every Fire role has an owner | controller `ERR:fire gate disabled …` (`default__fire-sequencer-owns-valves`) |
+| C4-5 | `ControllerService.cpp`, `fire_active_` read in `controllerLoop` (699) | safety/duty | no PWM after the zero-duty close | PWM UDP (dropped by N7b) |
+| C1-12 | `daq_bridge_main.cpp` 368-369 | observation/startup | argv's bind port is the port bound | startup log (`config/golden/bin/daq_bridge`) |
+| C6-1 | `daq_bridge_main.cpp` 525-527 | observation/startup | a log line states what was sent | "Proactive SENSOR_CONFIG sent to N" (lifecycle `startup`) |
+| C6-3 | `daq_bridge_main.cpp` 629 | safety/duty | SERVER_HEARTBEAT loss is taken over | none (boards abort 15 s later; lifecycle `hbloss`) |
+
+- [ ] **`publishState` lock contract**, above `publishState` in `SequencerService_elodin.cpp`:
+      `// Lock contract: acquires config_mutex_ and releases it before pressure_feed_.read and
+      elodin_.publish. Callers must not hold config_mutex_, except doTransitionTo's refused-state
+      block (Kept: C4-1 (D17)).` Re-home the "Elodin publishing" banner (995-997) above it.
+- [ ] **daq_bridge extractions** (§4.3): `print_board_routing_table`, `publish_self_tests`,
+      `publish_raw_batch`; `ElodinPublish.cpp` added to `daq_bridge/CMakeLists.txt`. The harness
+      does not call them.
+- [ ] **daq_bridge signals** (§0): `installStopHandlers(kStopThenPrint, "\n[DAQ Bridge] Shutting
+      down...", Sigpipe::kIgnore)`, `fsw::service::running()`.
+- [ ] Optional: `openUdpSocket(false)` where the statements are identical (§0).
+
+Not in cleanup (parked or forbidden): fixing C4-1/C4-2/C4-3/C1-10/C4-4/C4-5/C6-1/C6-3/C1-12; a
+shared registration helper for daq_bridge (§4.2); replacing the republish 10 ms slices with a
+condition variable (`ActuatorCommander.cpp:652-654` defers it; it changes timing); B4 encoders;
+unifying `toLower`/`trimVal`/`trim`; the `fire_start_time_` and `elodin_` pointer races; adopting
+WP3's `table_id_for` (none required; candidates in history).
+
+### 6.3 Sizes (STYLE-S33: C++ TU ≤ 700; no waiver)
+
+Move-only figures are range arithmetic on the baseline (copied include block + moved ranges +
+namespace lines, ±3 for clang-format); cleanup figures are estimates.
+
+| file | today | after commit 1 | after a | after b | after cleanup |
+|---|---|---|---|---|---|
+| `SequencerService.cpp` | 1295 | 1295 | 612 | 612 | ~612 (+tags, −includes) |
+| `SequencerService_config.cpp` | — | — | 457 | 457 | ~450 |
+| `SequencerService_controller_notify.cpp` | — | — | 154 | 154 | ~140 |
+| `SequencerService_elodin.cpp` | — | — | 153 | 153 | ~150 |
+| `ActuatorCommander.cpp` | 829 | 622 | 622 | 622 | ~622 |
+| `ActuatorCommander_load.cpp` | — | 236 | 236 | 236 | ~228 |
+| `ControllerService.cpp` | 1160 | 1160 | 1160 | 633 | ~600 (−32 dead, −2 `using`, +tag) |
+| `ControllerService_pwm.cpp` | — | — | — | 202 | ~190 |
+| `ControllerService_elodin.cpp` | — | — | — | 385 | ~380 |
+| `ControllerService.hpp` | 244 | 244 | 244 | 244 | 234 |
+| `daq_bridge_main.cpp` | 1074 | ~841 | ~841 | ~841 | ~640 |
+| `BoardMap.{hpp,cpp}` | — | ~60 / ~180 | | | ~63 / ~220 |
+| `BackendLogForwarder.hpp` | — | ~55 | | | ~55 |
+| `ElodinPublish.{hpp,cpp}` | — | — | | | ~45 / ~195 |
+
+`daq_bridge_main.cpp` is over 700 between move-only and cleanup: interim, not a waiver (STYLE.md conflict
+9, D43(9): size targets are per WP). Its cleanup no longer relies on a registration helper: the
+three extractions alone remove 209 lines. Without `_pwm`, core `ControllerService.cpp` would be
+~805 and need a waiver.
+
+### 6.4 Must not change (both items)
+
+| surface | frozen by |
 |---|---|
-| actuator UDP bytes, order, destination board, retransmit count 3, `usleep(1000)` rounds | `sequencer/golden/*` (N2, board per line), `actuator_delays`, `ball_valve_commander` |
-| abort broadcast: ABORT first, 2 x 4 repeats, ABORT_DONE after 3000 ms (60 x 50 ms), CLEAR_ABORT never sent | `packets/golden/service_abort.txt`, sequencer `first datagram:` |
-| stage delays from the CSV, generation semantics incl. C4-3 | sequencer N4 bounds, `default__aborts`, `actuator_delays` |
-| republish period 100 x 10 ms and `defer_first_pass` | sequencer N5 `[0.8, 1.5] x 1 s`, `script_positions`, `script_runtime` |
+| actuator UDP bytes, order, board, 3 rounds, `usleep(1000)` | `sequencer/golden/*` (N2), `actuator_delays`, `ball_valve_commander` |
+| abort: ABORT first, 2 x 4 repeats, ABORT_DONE after 3000 ms (60 x 50 ms), no CLEAR_ABORT | `packets/golden/service_abort.txt`, sequencer `first datagram:` |
+| stage delays, generation semantics incl. C4-3 | sequencer N4, `default__aborts`, `actuator_delays` |
+| republish 100 x 10 ms, `defer_first_pass` | sequencer N5 `[0.8, 1.5] x 1 s`, `script_positions`, `script_runtime` |
 | PWM bytes, version 0, same-board single packet | `packets/golden/service_pwm.txt`, `sequencer/golden/controller__*`, `default__fire-*` |
-| TCP replies (built in mains, reasons from SequencerService): `OK\n`, `OK:<ms>\n`, `ERR:<reason>\n`, `ERR:unknown command\n`, `ERR:too many connections\n`, `ERR:not in FIRE state\n`, `SCRIPT:<id>:<name>:OK:<n>:<ms>` / `:REFUSED:<why>` / `:BLOCKED:<why>`, `END\n`; controller `OK\n`, `ERR\n`, `ERR:fire gate disabled (sequencer owns the valves)\n` | `default__malformed`, `default__holds`, `digital-twin__scripts-load`, `controller__*` |
-| timing constants: `kCommandTimeoutSeconds` 10, `kControllerConnectTimeoutMs` 300, `SO_SNDTIMEO` 1 s (sequencer TCP) and 100 ms (actuator UDP), `kElodinRetrySeconds` 5 in 100 ms slices, `kAbortDoneDelayMs` 3000, hold rounding `d*1000+0.5`, controller retry 20 x 100 ms, 1 ms read back-off, daq_bridge 500 µs / 5 s / 1500 ms / 2 s | sequencer N4/N5, `hold_rules`, lifecycle bounds; constants not all individually frozen (gap §7.4) |
-| Elodin: [0x50,0x00] 17-byte layout, [0x43,0x00], ACT_CMD [0x32/0x35, slot-encoded ch], controller [0x40]-[0x44], daq_bridge raw/calibrated/heartbeat/env/self-test tables, registration order | `elodin/golden/schema_*.txt` (startup only), `pipeline/golden/*` |
-| SERVER_HEARTBEAT bytes, log envelope, SENSOR_CONFIG push (C6-1: none) | `packets/golden/service_daq_bridge.txt`, lifecycle `startup`, `hbloss` |
-| exit codes: sequencer 1 on init failure / 0 on stop; daq_bridge as §4.4; controller as `controller_main.cpp` | lifecycle `shutdown` (daq_bridge only; gap for the other two) |
-| startup order (§1.1, §3.1, §4.1) | sequencer N6 load-time lines, `config/golden/bin/daq_bridge`, schema order |
-| log lines read by tests: SEQ_LOAD prefixes and SEQ_FACTS / CTL_FACTS phrases (`char_sequencer.py:349-372`), daq_bridge "Listening for DiabloAvionics packets", "Proactive SENSOR_CONFIG sent to", "[DAQ Bridge] Shutdown complete", startup log to `[System] Mode` | sequencer, lifecycle, config/bin |
-| SIGPIPE: sequencer ignore, daq_bridge ignore, controller default | WP8's per-service setting; lifecycle `shutdown` for daq_bridge |
+| TCP replies (`OK`, `OK:<ms>`, `ERR:<reason>`, `ERR:unknown command`, `ERR:too many connections`, `ERR:not in FIRE state`, `SCRIPT:…`, `END`; controller `OK`, `ERR`, `ERR:fire gate disabled (sequencer owns the valves)`) | `default__malformed`, `default__holds`, `digital-twin__scripts-load`, `controller__*` |
+| timing: 10 s command timeout, 300 ms connect, `SO_SNDTIMEO` 1 s / 100 ms, Elodin retry 5 s in 100 ms slices, 3000 ms abort done, hold rounding `d*1000+0.5`, controller 20 x 100 ms and 1 ms, daq_bridge 500 µs / 5 s / 1500 ms / 2 s | sequencer N4/N5, `hold_rules`, lifecycle bounds (§7.4 gap 2) |
+| Elodin tables and registration order | `elodin/golden/schema_*.txt` (startup), `pipeline/golden/*` |
+| SERVER_HEARTBEAT, log envelope, SENSOR_CONFIG push (C6-1: none) | `packets/golden/service_daq_bridge.txt`, lifecycle `startup`, `hbloss` |
+| exit codes (daq_bridge: 1 for missing config, C2-12, NIC, FSW manager, pipeline; 0 after the loop); startup order; startup log through `[System] Mode` | lifecycle `shutdown`, sequencer N6, `config/golden/bin/daq_bridge` |
+| log lines read by tests: SEQ_LOAD, SEQ_FACTS, CTL_FACTS (`char_sequencer.py:349-372`); daq_bridge "Listening for DiabloAvionics packets", "Proactive SENSOR_CONFIG sent to", "[DAQ Bridge] Shutdown complete" | sequencer, lifecycle |
+| controller tables [0x40]-[0x44] and order, subscribe set, loop log sampling `tick % 10/50/100`; daq_bridge raw/env/self-test table ids and fallback ladder | `elodin/golden`, `pipeline/golden/*` |
+| SIGPIPE: sequencer ignore, daq_bridge ignore, controller default | WP8's per-service setting |
 
 ---
 
 ## 7. Guarding characterization
 
-### 7.1 Coverage per part
+### 7.1 Coverage
 
-| part | black-box goldens | ctests |
-|---|---|---|
-| SequencerService transitions, holds, scripts, refusals, controller notify | `sequencer/` 64 sessions (incl. C4-1, C4-3, C4-4, C4-6), `packets/service_abort.txt`, `elodin` section `sequencer`, `pipeline` (state frames) | `hold_rules`, `script_states`, `script_runtime`, `sequencer_concurrency`, `abort_ordering`, `sequencer_elodin` (integration only) |
-| ActuatorCommander | `sequencer/` (bytes, board, staging, republish), `config/golden/cpp/config` section `=== ActuatorCommander` (white box, §7.2) | `actuator_delays`, `script_positions`, `ball_valve_commander`, `fire_lifecycle` |
-| ControllerService | `sequencer/golden/controller__*`, `default__fire-*`, `packets/service_pwm.txt`, `elodin` section `controller_service` | `controller_pwm_roles` (resolution only), `robust_ddp` (DDP only) |
-| daq_bridge | `config/golden/bin/daq_bridge`, `config/golden/cpp/daq_bridge` (white box, §7.3), `packets/service_daq_bridge.txt`, `elodin` section `daq_bridge`, `lifecycle/*`, `pipeline/*` | `test_integration.sh` |
+Black box: `sequencer/` (64 sessions, incl. C4-1, C4-3, C4-4, C4-6), `packets/` (`service_abort`,
+`service_pwm`, `service_daq_bridge`), `elodin/` (sections `sequencer`, `controller_service`,
+`daq_bridge`), `lifecycle/`, `pipeline/`, `config/golden/bin/daq_bridge`, `test_integration.sh`.
+White box: `config/golden/cpp/config` `=== ActuatorCommander` (§7.2), `config/golden/cpp/daq_bridge`
+(§7.3). Ctests: the §6.1 verify list.
 
-`packets/` and `elodin/` are on `queue/C1` (f872c788), **not yet merged** on `backend-remastered` @
-b2599617; WP10 depends on them being merged first (they are queued ahead of every WP).
+### 7.2 `char_ac_private.cpp` (`#define private public`, line 23)
 
-### 7.2 `char_ac_private.cpp` (`#define private public` around `ActuatorCommander.hpp`)
+It reads `bind_addr_`, `bind_addr_explicit_`, `actuator_port_`, `roles_` and the `ActuatorRole`
+fields. `ActuatorCommander.hpp` is unchanged, so the file needs no edit; its target
+`char_config_dump` (`config/CMakeLists.txt:15-21`) gains `ActuatorCommander_load.cpp` (commit 1).
+It is the only `#define private public` in the tree; no harness reaches a private of
+`SequencerService.hpp` or `ControllerService.hpp`. `char_config_dump.cpp:38` includes
+`PWMTargets.hpp`, which includes `ControllerService.hpp` (`PWMTargets.hpp:29`): cleanup's header
+edit recompiles it without editing it. `ActuatorCommander.cpp:101` names `PWMTargets.hpp` in a
+comment only.
 
-Reaches: `ac.bind_addr_`, `ac.bind_addr_explicit_`, `ac.actuator_port_`, `ac.roles_` and
-`ActuatorRole::{channel, board_id, board_ip, is_no, is_pwm, cmd_table_hi}`. The header is unchanged
-in both passes, so the file itself needs **no edit**. Its CMake target does: `char_config_dump`
-(`test/characterization/config/CMakeLists.txt:15-21`) lists
-`${_DS}/services/sequencer/ActuatorCommander.cpp`; add `ActuatorCommander_load.cpp` and
-`ActuatorCommander_udp.cpp` beside it (the top-level `test/characterization` scope does not see
-`ACTUATOR_COMMANDER_SOURCES`, so the list stays explicit). D18 proof: `golden/cpp/config/*`
-byte-identical; mutation — in `ActuatorCommander_load.cpp` change `role.is_pwm =
-!r.controller_role.empty();` to `= false;` → the `role … is_pwm=` lines go red; revert. Any later
-change to those member names is a harness change and out of WP10's scope.
+### 7.3 `char_config_services.cpp` (`#include` of `daq_bridge_main.cpp`)
 
-**AMENDMENT (debate verdict, facts 2 and 9).** (a) The only `#define private public` in the tree is
-`char_ac_private.cpp:23`; no harness reaches a private of `SequencerService.hpp` or
-`ControllerService.hpp`. (b) Transitive include: `char_config_dump.cpp:38` includes
-`control/PWMTargets.hpp`, which includes `control/ControllerService.hpp` (`PWMTargets.hpp:29`). So
-cleanup's header edit (§6.2 c1/c2) needs **no harness file edit** but **recompiles the harness
-binary `char_config_dump`**; its config goldens must stay byte-identical. The other includers of
-`ControllerService.hpp` are `ControllerService.cpp` and `controller_main.cpp:36`; `PWMTargets.hpp`
-is also included by `controller_main.cpp:37` and `lib/test/test_controller_pwm_roles.cpp:25`. The
-verdict's fact 2 also lists `ActuatorCommander.cpp` as an includer of `PWMTargets.hpp`, so that the
-header edit would recompile the 10 ActuatorCommander ctests and `sequencer_service`. Checked with
-`git show backend-remastered:…`, that is not so: `ActuatorCommander.cpp:101` names `PWMTargets.hpp`
-in a comment only, and neither its include block nor `ActuatorCommander.hpp`'s includes it. The
-recompile set of the header edit is `fsw_daq_lib`'s ControllerService TUs, `controller_service`,
-`test_controller_pwm_roles` and `char_config_dump`. (c) Moving `sendBatch` to
-`ActuatorCommander_udp.cpp` needs this §7.2 CMake edit in every variant that moves it, alternative
-C included (fact 9).
+It reaches, all from 113-305: `BoardType`, `BoardConfig`, `BoardByOctet`, `ServerHeartbeatConfig`,
+`load_board_map_from_config`, `ipv4_host_octet`, `resolve_board_config_by_source_ip`,
+`config_board_type_to_wire_u8`, and `fsw::time::TimeSyncConfig` (via `time/BoardClockSync.hpp`,
+which `BoardMap.hpp` includes); it captures stdout/stderr around the call, so the `[Config] WARN`
+line is golden. After commit 1 it compiles no `main` for daq_bridge (closer to D20). The stacklight
+and config_broadcast branches need no edit. `print_board_routing_table` in `BoardMap.cpp` (cleanup)
+does not affect it.
 
-### 7.3 `char_config_services.cpp` (`#include` of `daq_bridge_main.cpp`, `CHAR_SERVICE_DAQ_BRIDGE`)
+### 7.4 Gaps (none gates WP10)
 
-Reaches, all from `daq_bridge_main.cpp` 113-305: `BoardType`, `BoardConfig`, `BoardByOctet`,
-`ServerHeartbeatConfig`, `load_board_map_from_config` (all out-parameters),
-`ipv4_host_octet`, `resolve_board_config_by_source_ip`, `config_board_type_to_wire_u8`, plus
-`fsw::time::TimeSyncConfig` through the main's includes; it captures stdout/stderr around the call
-(so the `[Config] WARN` line is part of the golden).
-
-Re-pointing (move-only package, D18): in the `#elif CHAR_SERVICE_DAQ_BRIDGE` branch replace
-`#include "../../../diablo_server/daq_bridge/daq_bridge_main.cpp"` with
-`#include "../../../diablo_server/daq_bridge/BoardMap.hpp"`, and add after the `foreach`
-`target_sources(char_cfg_daq_bridge PRIVATE ${_DS}/daq_bridge/BoardMap.cpp)`. The harness then no
-longer compiles a main at all for daq_bridge (closer to D20). The stacklight and config_broadcast
-branches need no edit (DESIGN-WP8 §7.3). Proof: `golden/cpp/daq_bridge/*` and `golden/bin/daq_bridge/*` byte-identical;
-the area's recorded mutations re-run; one new mutation — in `BoardMap.cpp` change `if (octet >= 2)`
-in `load_board_map_from_config` to `>= 3` → `board_by_octet[…]` and `resolve("127.0.0.2…")` lines
-go red; revert. Orchestrator reviews the harness diff. If the cleanup moves
-`print_board_routing_table` into `BoardMap.cpp`, the harness is unaffected (it does not call it).
-
-### 7.4 Gaps
-
-1. **Re-registration after an Elodin restart is not frozen** for daq_bridge (759-773), the
-   sequencer (`tryConnectElodin` on the retry thread) or the controller (`connectSubscriber` in the
-   loop). `elodin/` captures startup only; lifecycle `shutdown` only checks "still running". The
-   cleanup's `registerAllTables` merges exactly this path, so a characterization case must exist
-   first: restart the stand-in Elodin (`packets/bb.py FakeElodin`) and record each service's second
-   registration stream (a golden that only grows, D20). This gap gates **only cleanup's
-   `registerAllTables`**; the move-only pass does not depend on it (the reconnect code moves
-   verbatim).
-2. Sequencer and controller **exit codes and SIGTERM latency**: **closed by DESIGN-WP8 gap 2**,
-   which must merge before WP8 pass 1 and therefore before WP10. C4-1's "SIGTERM does not exit"
-   stays documented (the gap 2 case runs without a refused dynamic state); C4-5's ">3 s exit" is
-   asserted as a bound there.
-3. Controller TABLE rows ([0x40]-[0x44] data), LUT- and DDP-driven duties and the thrust curve are
-   not characterized; only test duty and FIRE_START/STOP are. A float change there would not go red.
-4. C4-2's double fire is avoided, not frozen (the session lands where the second transition is
-   refused; only `[HoldTimer]` counts are frozen). C4-5's straggler is dropped by N7b.
-5. ActuatorCommander failure paths (bind failure, bad board IP, short send) have no golden.
-6. daq_bridge stats/time-sync log text and the discovery fallback (unknown IP → PT, discovered
-   type) are not frozen; pipeline C5b covers board types via configured IPs only.
-7. Timing constants are frozen only as bounds (N4/N5, lifecycle); a constant changed within its
-   bound is not caught. The move-only pass changes none, by construction.
+1. Re-registration after an Elodin restart is not frozen for daq_bridge (759-773), the sequencer
+   (`tryConnectElodin`) or the controller (`connectSubscriber`). WP10 keeps that code verbatim;
+   freezing it belongs to a future D-SLOT/D-SUB fix package (D49).
+2. Not characterized: controller TABLE rows, LUT/DDP duties and the thrust curve (hence D22's
+   "control math stays in core"); ActuatorCommander failure paths; daq_bridge stats/time-sync text
+   and the discovery fallback; C4-2's double fire (avoided) and C4-5's straggler (dropped by N7b).
+   Timing constants are frozen only as bounds; move-only changes none. Sequencer/controller exit
+   codes and SIGTERM latency are closed by DESIGN-WP8 gap 2 (a prerequisite).
 
 ---
 
 ## 8. Risks
 
 - **Concurrency.** The split changes no thread, lock or call order; the risk is an "obvious" fix
-  slipping in. Specifically forbidden: touching the C4-1 scope (716-730) or `publishState`'s lock;
-  merging the two `triggerAbort` calls (C1-10); changing `is_transition=!isAbortState(to)` (C4-3);
-  removing either timeout of C4-2; nesting any two ActuatorCommander mutexes; moving
-  `notifyControllerFire` off the thread that calls it today. TSan (CI job) must stay green with no
-  new suppressions; the pre-existing unsynchronised `fire_start_time_` and `ActuatorCommander::elodin_`
-  are reported, not fixed.
-- **Static initialization.** None of the moved TUs has a namespace-scope object with dynamic
-  initialization (`daq_bridge`'s `running` is constant-initialized; `logOverrideShadowingScript`'s
-  statics are function-local and stay in one TU). No static-init-order hazard is introduced; keep it
-  so (no namespace-scope `std::string`/`std::map` constants in new TUs).
-- **ODR and linkage.** File-statics move, never copy (also the warning gate). daq_bridge's helpers
-  gain external linkage in the global namespace; they are linked only into `daq_bridge` and
-  `char_cfg_daq_bridge`. `BackendLogForwarder` leaves its anonymous namespace; no other definition
-  of that name exists in the tree. ControllerService's new TUs are in the shared `fsw_daq_lib`;
-  their symbols are members already declared in the header, so the library exports the same set
-(**AMENDMENT (debate verdict):** in move-only; after cleanup it exports **three fewer symbols**,
-`setNavState`, `getLastActuation`, `getLastDiagnostics`, checked with `nm -C`, §6.2).
-- **Float/inlining (D22).** All control-path arithmetic stays in the TU with its callers (§3.3).
-- **Timing tests (D31, D34).** On this Mac `sleep_for(10 ms)` overshoots ~3.5 ms, so the
-  republish (100 x 10 ms) runs ~1.35 s: `actuator_delays` and `script_positions` fail
-  deterministically here, and the local Docker Linux leg fails `script_runtime`; those three are
-  judged on CI only. `sequencer_concurrency` is on the Darwin baseline (passes on Linux). The
-  sequencer characterization's republish bound is 1.5 x 1 s, uncomfortably close to 1.35 s: a red
-  sequencer session whose only diff is a republish interval is checked against the same run on the
-  pre-WP tip before it is blamed on WP10. D31: if any of `actuator_delays`, `script_positions`,
-  `script_runtime`, `sequencer_concurrency` needed a retry, run it 10x alone (Linux) on the WP and
-  on the pre-WP tip; WP10 is not done unless its pass rate is no worse. **AMENDMENT (debate
-  verdict):** the baseline is per queue item: item 1 against the pre-WP tip, **item 2 against item
-  1's tip** (§6.1).
-- **Harness drift.** Two harness edits (§7.2 CMake, §7.3 include + CMake), each with goldens
-  byte-identical and a mutation that goes red; nothing else under `test/characterization/` changes,
-  and no golden line is removed. **AMENDMENT (debate verdict):** both land in item 1; cleanup's
-  header edit recompiles `char_config_dump` without editing it (§7.2 amendment).
+  slipping in: everything §1.3 forbids, nesting two ActuatorCommander mutexes, or moving
+  `notifyControllerFire` off the thread that calls it. TSan (CI) stays green with no new
+  suppressions.
+- **Static init and linkage.** No moved TU has a namespace-scope object with dynamic
+  initialization; add none. File-statics move, never copy. daq_bridge's helpers gain external
+  linkage (linked only into `daq_bridge` and `char_cfg_daq_bridge`); `BackendLogForwarder` leaves
+  its anonymous namespace (no other definition of the name exists). `fsw_daq_lib` exports the same
+  symbols after move-only and three fewer after cleanup.
+- **Timing (D31, D34).** On this Mac `sleep_for(10 ms)` overshoots ~3.5 ms, so the republish runs
+  ~1.35 s against the sequencer bound of 1.5 x 1 s. A red sequencer session whose only diff is a
+  republish interval, or a multiplied PressureFeed stream, is checked against the same run on the
+  pre-WP tip before WP10 is blamed. D-PF (`PressureFeed.cpp:118-146`) is its own investigation
+  item and does not gate WP10; WP10 does not move `PressureFeed.cpp`.
+## 9. Open question
 
-## Open questions
-
-1. (Decided: WP10 owns `diablo_server/CMakeLists.txt`.)
-2. Answered by `DESIGN-WP8.md`: it gives only `openUdpSocket`/`ipv4Destination` (statement-identical
-   socket creation and address fill) and no TCP-client or Elodin-loop helper. So the sequencer's
-   controller-notify client and the B3 sites in these four files stay hand-written after WP10;
-   only the optional `openUdpSocket` adoption in cleanup remains.
-3. Who adds the Elodin-reconnect characterization (§7.4 gap 1)? It gates only cleanup's
-   `registerAllTables`, so it can land any time before WP10's cleanup item. (**AMENDMENT (debate
-   verdict):** still open.)
-4. The LEDGER's "8 CMake test targets" should read: 6 SequencerService test executables plus 4
-   ActuatorCommander-only test executables, plus the `sequencer_service` executable.
-
----
-
-# Amendments (design/cpp2, 2026-11-16) — alternatives, interfaces, walkthroughs
-
-Added after the review (D39), with D42's research (`docs/remaster/research/abort-statemachines.md`,
-`teststand-architecture.md`, `subscription-robustness.md`, `cpp-service-plumbing.md`) and its
-binding constraints, and STYLE.md (D43, cited `STYLE-S<n>`). Nothing above is deleted; changes to
-the reviewed text are marked **AMENDMENT**.
-
-## A. Alternatives considered
-
-| | **A. Same-class TUs by concern (§1-§6, chosen)** | B. Collaborator objects with explicit interfaces | C. Minimal: daq_bridge (+ `ActuatorCommander_udp`) only |
-|---|---|---|---|
-| shape | `SequencerService_{config,controller_notify,elodin}.cpp`, `ActuatorCommander_{load,udp}.cpp`, `ControllerService_{pwm,elodin}.cpp` define members of the unchanged classes; daq_bridge gets `BoardMap`, `BackendLogForwarder`, then (cleanup) `TableRegistration`, `ElodinPublish` | `SequencerConfigLoader` (returns a value), `ControllerNotifier`, `SequencerPublisher`, `ActuatorUdpLink`, `PwmLink`, `ControllerTables`, a daq_bridge `BoardRouter` class; the god classes hold them as members and call through interfaces | only `daq_bridge_main.cpp` (the one god *function*) is split; `SequencerService.cpp` (1295) and `ControllerService.cpp` (1160) stay whole; `ActuatorCommander` loses only `sendBatch` |
-| clarity | concern per file; class layout, lock members and call graph unchanged; a reader still sees one class | each collaborator is small and nameable; but the C4-1 chain (`doTransitionTo` holds `config_mutex_` → `publishState` locks it again) would cross an object boundary: the publisher needs the service's private mutex or the state it guards | nothing moves in the two classes, so nothing to learn; but a 430-line `applyConfig` keeps sitting between the command queue and `doTransitionTo` |
-| lines deleted | ~~\~0 in move-only (a split); cleanup: the duplicated registration (~15), `using namespace` in the core TU~~ **AMENDMENT (debate verdict): ~0 / ≈ 42 (15 registration, 27 dead `ControllerService` lines, 2 `using`)** | ~0, plus ~150 of interface/plumbing | ~0 / ~15 (same daq_bridge cleanup) |
-| testability | unchanged; black-box goldens and the existing ctests (§7) | interfaces invite fakes, but D20 keeps goldens black-box and no ctest would be rewritten in a refactor | unchanged |
-| fit with characterization | two reviewed harness edits (§7.2 CMake, §7.3 include), one commit (D18 extension) | `char_ac_private.cpp` reads `ActuatorCommander`'s private members (`bind_addr_`, `roles_`, …, §7.2) — moving them into a link object is a harness rewrite; ~~**fails by construction** … `SequencerService.hpp`'s member order is its destruction order, which the shutdown goldens see (worker joined before the retry thread, loop and hold timer, §1.1); new members change it~~ **AMENDMENT (debate verdict, fact 8): wrong — `lifecycle/golden/shutdown.txt` has no sequencer or controller row; the destructor body (56-71) stops the worker, retry thread, loop and hold timer explicitly, and only `PressureFeed` and `ScriptRunner` stop in their own destructors (`PressureFeed.cpp:33`, `ScriptRunner.cpp:61`), so member order matters only for those two (hpp:227-229). The tiers in "Collaborator objects" below replace this claim.** | ~~smallest harness exposure (only §7.3)~~ **AMENDMENT (debate verdict, fact 9): §7.3 and §7.2 — moving `sendBatch` to `_udp` puts `ActuatorCommander_udp.cpp` in `char_config_dump`'s sources, as in A** |
-| abort paths (D42 binding 1; research abort-statemachines "Structural choices" 1-5) | both `triggerAbort` sites, the 716-730 block, the 835 call and every `publishState` call site stay in `doTransitionTo` in core `SequencerService.cpp`; `schedule_gen_`, `pending_roles_`, `applyForState`, the stage thread and `emit` stay in core `ActuatorCommander.cpp` (only `sendBatch` moves); `enqueueAndWait`/`enqueueDetached` stay together in core | an `AbortPath` collaborator is the research's own idea (teststand-architecture Idea 3(b): "make abort its own path… fixes C1-10 by construction") — which is exactly why it is a **PROPOSAL**: it changes ABORT counts and timing (`service_abort.txt`, N3a) | untouched by construction |
-| float path (D22) | `interpolateThrustCurve` and every control-path double stay in the core TU with `setFireActive`/`controllerLoop` (§3.3); `sendActuationPWM`'s clamp-and-cast has no fused operation | the DDP/LUT/thrust math behind an interface → different inlining context | none |
-| thread/lock risk | none: same members, same threads, same lock order; the only new fact is cross-TU call chains (§1.5) | the C4-1 re-entry and `config_mutex_ → ScriptRunner::mtx_ / PressureFeed::mtx_` order would have to be re-expressed across objects (S23: no new nesting; forbidden in §8) | none |
-| timing tests (D31/D34) | every sequencer/actuator ctest recompiles; CI-only judgement for three of them | same plus behaviour risk | `ActuatorCommander_udp` alone still recompiles them; much smaller blast radius |
-
-**Why B lost.** Two independent reasons, each sufficient: ~~the headers cannot change (harness reads
-privates; member order is destruction order)~~ **AMENDMENT (debate verdict): (1) D17(d) / STYLE-S34
-— each collaborator would have one user, and a refactor pass introduces none — plus the harness's
-four `ActuatorCommander` members (`bind_addr_`, `bind_addr_explicit_`, `actuator_port_`, `roles_`,
-§7.2) that a link object would move; not goldens (the shutdown golden sees no member order, fact
-8)**, and (2) the one place where a collaborator would help a reader — the abort — is the place D42
-binds to stay together and every improvement there is a proposal (research abort-statemachines
-Ideas 1-4 all change goldens). ~~Also STYLE-S34: each collaborator would have one user.~~ (folded
-into reason 1). What B won — the tier taxonomy — is kept for fix packages in "Collaborator objects"
-below.
-
-**Why C lost (narrowly).** C is the safest and fully meets D42 binding 1. It loses on the one thing
-WP10 exists for: `SequencerService.cpp` mixes four concerns ~~with different threads and different
-reviewers~~ (config parsing before the worker exists; the worker's transitions; a TCP client that
-runs on the hold-timer thread; an Elodin publisher shared by worker, retry thread and loop).
-
-**AMENDMENT (debate verdict §2) — the cut criterion actually applied**, replacing "different
-threads and different reviewers" (true by thread for three TUs only, fact 4). A TU is cut where
-**(i)** it runs in a different phase or thread set — `SequencerService_config` (before the worker
-exists), `ActuatorCommander_load`, `SequencerService_controller_notify` (worker and timer thread,
-TCP client) — **or (ii)** it is a wire format or transport a different reader reviews —
-`ActuatorCommander_udp`, `ControllerService_pwm`, `SequencerService_elodin`,
-`ControllerService_elodin`. `_pwm` has `_udp`'s exact shape (codec + `sendto`, several callers,
-lock-free, bytes frozen), so C's moving `_udp` and keeping `_pwm` has no distinguishing fact; and
-without `_pwm` core `ControllerService.cpp` is ~790, a STYLE-S33 waiver. Both `_elodin` TUs are
-criterion (ii) (§1.4 amendment, §3.5).
-
-A separates exactly those, moves none of the abort ordering, and its move-only diff is checked by
-`--color-moved` (every non-dimmed line is an include, a namespace line or CMake; D43(6): include
-regrouping by clang-format is an expected non-dimmed line). ~~If the D34 timing tests cannot be
-judged on CI when WP10 is queued, C is the fallback: it is a strict subset of A's steps (§6.1
-steps 2 and 4 only).~~ **AMENDMENT (debate verdict, D45(3)): the fallback is "item 2 not queued",
-with a LEDGER entry (§6.1); item 1 is already C's file set.**
-
-**Decision: A, as reviewed**, with these amendments:
-
-- **AMENDMENT (debate verdict §2, `debates/WP10/verdict.md`):** A's file list as reviewed (§1.4,
-  §2.3, §3.3, §4.3), including `ControllerService_pwm` and A's `SequencerService_elodin` cut, by the
-  two-part criterion above; C's 27-line dead-code deletion (cleanup, §6.2); two move-only queue
-  items then cleanup (§6.1); B's tiers for fix packages with `StageScheduler` re-tiered (§A.1).
-  Headers untouched in move-only. Core `SequencerService.cpp` keeps the destructor, the queue,
-  `init`, the `do*` bodies and `doTransitionTo` with both `triggerAbort` sites, the 716-730 block
-  and the 835 call; core `ActuatorCommander.cpp` keeps `applyForState`, `emit`, the stage thread,
-  `schedule_gen_` and `pending_roles_`; only `sendBatch` (with `sendUDP`) goes to `_udp` (D42
-  binding 1). No STYLE-S33 waiver (§6.2).
-
-- **AMENDMENT (D42 binding 1, research structural choice 4):** cleanup step 1 (not move-only,
-  STYLE-S12/S38: a move adds no comment lines) adds above `publishState` in
-  `SequencerService_elodin.cpp`:
-  `// Lock contract: acquires config_mutex_ (and releases it before pressure_feed_.read and
-  elodin_.publish). Callers must not hold config_mutex_ — except doTransitionTo's refused-state
-  block (Kept: C4-1 (D17)).`
-- **AMENDMENT (D42 binding 1, research structural choice 5; STYLE-S12):** cleanup step 1 tags every
-  frozen defect site with `// Kept: <id> (D17)` and one line on why. D42 spells the tag
-  `// FROZEN C4-1`; D43(4) ratified S12's `// Kept:` for WP8. One spelling for the whole tree, so
-  this note uses S12's; `grep -rn 'Kept: C4-'` is the fix PR's index. Sites: C4-1
-  (`doTransitionTo` refused-state block), C1-10 (both `triggerAbort` calls), C4-3 (the
-  `applyForState(to, !isAbortState(to))` call; `++schedule_gen_` only on `is_transition` in
-  `ActuatorCommander::applyForState`), C4-2 (the dynamic-state hold rule in `applyConfig`), C4-4
-  (`is_fire && role.is_pwm` skip; `notify_controller` gate), C4-5 (`controllerLoop`'s `fire_active_`
-  read), C1-12 (daq_bridge `sensor_port` override), C6-1 (proactive SENSOR_CONFIG log), C6-3
-  (`send_from_daq_bridge` fixed at start-up). ~~Open question 5 if the orchestrator wants the
-  literal `FROZEN`.~~ **AMENDMENT (debate verdict):** settled by D45(1); open question 5 closed.
-- **AMENDMENT (D42 binding 1):** the single enqueue entry point is structural and stays so: every
-  `do*` member is `private` (`SequencerService.hpp:187-191`), the public commands are the only
-  callers of `enqueueAndWait`, and `enqueueDetached` is used only from the hold-timer and script
-  threads. WP8's `serveTcpClients` reaches the service only through `handleCommandLine` →
-  public methods (DESIGN-WP8 amendment A).
-- **AMENDMENT (D43(2), STYLE-S1):** `registerAllTables` → `register_all_tables` (daq_bridge is
-  snake_case, 0:13).
-- **AMENDMENT (D42 binding 3, DESIGN-WP3 §2.5):** `register_all_tables` is the one daq_bridge
-  registration site a later D-SLOT injectivity check lands in; the ids themselves come from WP3's
-  `fsw::elodin::table_id_for` inside `DatabaseConfig`. Honest limit: calibration_service registers
-  the calibrated tables too (`calibration_main.cpp:1483`, its own `register_calibrated` lambda, WP9
-  keeps it in `main`), so a D-SLOT fix has two registration call sites across two processes, both
-  through `DatabaseConfig` and therefore through one `table_id_for`. Cleanup may also adopt
-  `table_id_for` where the integer expression is the same — candidates, decided at cleanup review:
-  `ActuatorCommander.cpp:36-41` `actuator_elodin_low_byte` (has no hi byte at hand),
-  `ControllerService.cpp:773` (base only), daq_bridge's publish `board_offset` (`daq_bridge_main.cpp`
-  ~892-898, base only). None is required. For the command tables (ACT_CMD 0x32, BV_CMD 0x35)
-  the offset is `TableHalf::kRaw` (0x00): integer-identical, but the name reads wrong there.
-- **AMENDMENT (D42, D-PF):** WP10 does not move `PressureFeed.cpp` (it is only named in the
-  `SEQUENCER_SOURCES` list). The suspected re-subscribe accumulation (`PressureFeed.cpp:118-146`,
-  LEDGER D-PF) must be reproduced, and its result recorded, **before** ~~WP10's move-only item is
-  queued~~ **item 1 is queued (AMENDMENT (debate verdict, fact 10): item 1 runs
-  `CHAR_AREAS=sequencer`, so it is the item D-PF gates)**, so a multiplied PressureFeed stream on the
-  WP10 tip is not blamed on the move.
-- **AMENDMENT (debate verdict §2):** the `publishState` lock-contract comment stays in cleanup
-  (D45(2) stands; STYLE-S12 "a move-only pass adds no such line"; §6.1's list of permitted
-  non-dimmed lines is what lets a reviewer trust the dimmed ones). Until then the header's "Guarded
-  by config_mutex_" and §1.3 say it. Open question 6 closed.
-
-### A.1 Collaborator objects — AMENDMENT (debate verdict §4)
-
-**WP10's passes introduce no collaborator object** (STYLE-S34, D17(d)). The tiers and the admission
-rule below govern later **team fix packages**; the orchestrator records them as a LEDGER Decision
-row pointing at `debates/WP10/verdict.md` §4.
-
-| tier | what qualifies | where it may appear |
-|---|---|---|
-| **Tier 0** | free functions, carrier structs; header untouched | WP10 passes 1-2 (daq_bridge only, §4.3) |
-| **Tier 1** | plain data; no mutex another member function takes; a thread only if the destructor's first statements already stop it; not placed between `script_runner_` and `pressure_feed_` (`SequencerService.hpp:227-229`, the two members that stop in their own destructors); an appended member or a dead member removed | fix packages only |
-| **Tier 2** | a thread or fd the destructor body does not stop, `config_mutex_`'s guarded state, any of the four `char_ac_private.cpp` members (§7.2), or a path captured by `emit` | never |
-
-Rulings:
-
-- **`StageScheduler`: Tier 2** (fact 6). The stage thread (`ActuatorCommander.cpp:592`) captures
-  `emit` (504), which captures `this` and takes `script_positions_mutex_` (515) and
-  `overrides_mutex_` (520); `pending_roles_mutex_` is taken by `applyForState` (464, 493, 499), the
-  stage thread (605) and `setScriptPosition` (780). C4-3's fix is therefore
-  `cancelPendingStages()` on `ActuatorCommander` plus the call at `doTransitionTo` 835, as research
-  Idea 3 words it, not a new object.
-- **`CommandQueue`: Tier 1** while the destructor's 56-66 block stays first.
-- **`ControllerNotifier`: Tier 1, not worth it** — its observable lines are SEQ_FACTS
-  (`char_sequencer.py:357-364`), already frozen as they are.
-- **Publisher, `ActuatorUdpLink`, `PwmLink`, `SequencerConfigLoader`: Tier 2.**
-
-**Admission rule.** A collaborator enters only in the fix package whose fix is its reason to
-exist; that package's LEDGER row names its single user (the S34 exception); its header edit is
-judged on CI there. The publisher waits for the C4-1 hoist and a const snapshot replacing
-`config_mutex_`.
-
-## B. Interfaces
-
-Declaration-only stubs in `docs/remaster/design-stubs/cpp/daq_bridge/` (not built). The three
-class splits add **no header** (headers unchanged, §1.4, §2.3, §3.3).
-
-| stub | pass | from |
-|---|---|---|
-| `daq_bridge/BoardMap.hpp` | move-only (one commit with the harness edit, §6.1 step 4) | §4.3 |
-| `daq_bridge/BackendLogForwarder.hpp` | move-only; header-only today (the stub shows the class without bodies) | §4.3 |
-| `daq_bridge/TableRegistration.hpp` | cleanup (after §7.4 gap 1) | §4.3, renamed per D43 |
-| `daq_bridge/ElodinPublish.hpp` | cleanup | §4.3 |
-
-`print_board_routing_table` is declared in `BoardMap.hpp` (cleanup addition, one call site).
-
-**AMENDMENT (debate verdict):** the class splits still add no header; cleanup *removes* 8 lines
-from `ControllerService.hpp` (hpp:92, 138-140, 220-223; §6.2), WP10's one header edit.
-
-## C. Walkthroughs
-
-"Owner" = the module whose code performs the step and whose state or output it produces; a caller
-that only causes it is a *trigger*. A step with two owners, or none, is a design smell and is
-either fixed below or shown to be frozen behaviour (then it is named, not changed). Files are as
-after both passes; steps 1-7 of every TCP command are DESIGN-WP8 walkthrough C.1.
-
-### (a) A fire: sequencer state change → controller notify → actuator commands → abort broadcaster idle
-
-Scenario: default profile, `Armed → Fire`, `sequencer_owns_valves = false` (the controller owns
-the PWM roles), the controller's gate enabled, Elodin up, no previous abort pending.
-
-| # | step | owner (file) | thread |
-|---|---|---|---|
-| 1 | `TRANSITION:Fire` read, parsed, `transitionTo(Fire)` → `enqueueAndWait` | `sequencer_main` / `SequencerService` core (WP8 C.1) | conn → worker |
-| 2 | read the hold rule for Fire under `config_mutex_` | `doTransitionTo` (core `SequencerService.cpp`) | worker |
-| 3 | validations: requested hold, refused state (the C4-1 block, not taken), script pressure roles via `PressureFeed::read`, `isAllowed` | `doTransitionTo`; `PressureFeed` (sequencer, unmoved) answers reads | worker |
-| 4 | `isAbortState(Fire)` is false → **no `triggerAbort`**; AbortBroadcaster stays idle (its done thread, if a previous abort left one, keeps counting untouched) | `AbortBroadcaster` (idle) | — |
-| 5 | stop script, clear manual overrides and script positions, stop the republish loop, stop any hold | `ScriptRunner`, `ActuatorCommander` core, `HoldTimer` (triggered by `doTransitionTo`) | worker |
-| 6 | resolve Fire's column (manual > script > CSV), **skip `is_pwm` roles** in the fire state, bump `schedule_gen_` (`is_transition = true`), split by delay, stage 0 now | `ActuatorCommander::applyForState` (core) | worker |
-| 7 | serialize per board, socket per batch, `SO_SNDTIMEO` 100 ms, bind, 3 interleaved rounds, `usleep(1000)` | `ActuatorCommander::sendBatch` (`_udp.cpp`) via `emit` (core) | worker; later stages on the detached stage thread |
-| 8 | arm the hold: `hold_ms = requested + open delay − close delay`; `notify_controller = (to == fire_state_) && !sequencer_owns_valves_` | `doTransitionTo` | worker |
-| 9 | `HoldTimer::start` calls `on_active(true)` **before** the clock starts | `HoldTimer` (trigger) → `notifyControllerFire(true)` | worker |
-| 10 | FIRE_START over TCP: non-blocking connect + `poll` 300 ms, `SO_SNDTIMEO` 1 s, send without `MSG_NOSIGNAL` (D-SEQ; harmless, SIGPIPE ignored), `recv` ≤ 15 bytes, prefix `OK`; one retry, then the `❌ … did not acknowledge` line | `SequencerService::notifyControllerFire[Once]` (`_controller_notify.cpp`) | worker |
-| 11 | controller accepts and reads the line | `serveTcpClients` + `handleControlClient` (WP8 C.2) | controller conn |
-| 12 | **the PWM gate edge**: gate check, `fire_active_.exchange(true)`; on the edge compute the open command (test duty / LUT / DDP) and send it | `ControllerService::setFireActive` (core) → `sendActuationPWM` (`_pwm.cpp`) | controller conn |
-| 13 | publish `[0x44,0x00]` fire state | `setFireActive` (core) through `ElodinClient` | controller conn |
-| 14 | reply `OK\n` | `handleControlClient` | controller conn |
-| 15 | timer thread starts counting the hold | `HoldTimer` | timer |
-| 16 | 1 Hz republish of Fire's settled column (`allow_delays = false`) | `ActuatorCommander::startContinuousLoop` (core) | loop thread |
-| 17 | `current_state_ = Fire`; not an abort → no second `triggerAbort` | `doTransitionTo` | worker |
-| 18 | publish `[0x43,0x00]` transition and `[0x50,0x00]` state (lock taken and released before I/O) | `publishStateTransition`/`publishState` (`_elodin.cpp`) | worker |
-| 19 | controller subscriber sees `[0x50]` = fire id → `setFireActive(true)` again → `exchange` returns true → **no second edge**: `if (was_active == active) return;` before any log, PWM or `[0x44]` publish (`ControllerService.cpp:258-259`) | `ControllerService` subscriber (`_elodin.cpp`) → `setFireActive` | controller subscriber |
-| 20 | heartbeat/stacklight follow the new state | `follow_sequencer_state` + their mains (WP8 C.3) | follower threads |
-| 21 | log `Armed → Fire`, return true → `OK` | `doTransitionTo` → `handleCommandLine` | worker → conn |
-| 22 | hold expires: `on_active(false)` → FIRE_STOP (steps 10-14 with `false`, zero-duty close) **on the timer thread**; then `on_expire` → `enqueueDetached(doTransitionTo(return_state))` | `HoldTimer::runTimer` (trigger), `notifyControllerFire`, `setFireActive` | timer → worker |
-
-Ownership check:
-
-- **The PWM gate edge (12) has one owner, `setFireActive`, and two triggers** — the sequencer's TCP
-  notify (10) and the controller's own `[0x50]` parity path (19). `exchange` makes the second a
-  no-op; whichever arrives first sends the open command. This is the design today ("parity
-  fallback for a missed TCP edge"), kept; the walkthrough names it so nobody removes either trigger
-  thinking it is a duplicate owner.
-- **Zero owner, frozen (C4-4):** with `sequencer_owns_valves = true` the PWM roles have no owner in
-  Fire: step 6 still skips them, step 8 arms no notifier, and the controller refuses
-  (`ERR:fire gate disabled …`). Kept and tagged (amendment above); it is
-  `default__fire-sequencer-owns-valves`.
-- Step 4: the abort broadcaster is idle because nothing triggers it, not because something stops
-  it; it needs no owner in a fire.
-- Steps 7 and 16 both send actuator UDP for Fire, from different threads, with one owner
-  (`ActuatorCommander`): the first is the transition batch, the second the republish; the stage
-  generation keeps the republish from cancelling pending stages (§2.4).
-
-### (b) An abort (C1-10's double `triggerAbort` preserved)
-
-Scenario: during the Fire hold of (a), the operator sends `TRANSITION:Engine Abort`.
-
-| # | step | owner (file) | thread |
-|---|---|---|---|
-| 1 | read, parse, `transitionTo(Engine Abort)` → `enqueueAndWait` — **FIFO behind anything already queued**; no priority lane (research abort-statemachines Idea 2: a PROPOSAL) | WP8 C.1; `SequencerService` core | conn → worker |
-| 2 | validations (no hold rule; not refused; allowed) | `doTransitionTo` (core) | worker |
-| 3 | `entering_abort` → **`triggerAbort()` #1**: 4 × ABORT at once on a per-send socket (`openUdpSocket(true)` after WP8, `SO_SNDTIMEO` 100 ms), then under `done_thread_mutex_` cancel any old done thread and start one (3000 ms in 50 ms slices) | `AbortBroadcaster` (trigger: `doTransitionTo`, `// Kept: C1-10`) | worker; done thread |
-| 4 | stop script, clear overrides, stop republish loop | as (a) 5 | worker |
-| 5 | `hold_timer_.stop()`: the fire hold is active → `on_active(false)` → **FIRE_STOP** to the controller (zero-duty close, `[0x44]`) — on the worker, delaying the valve batch, not the ABORT packet | `HoldTimer` (trigger) → `notifyControllerFire(false)` → `setFireActive(false)` | worker; controller conn |
-| 6 | `applyForState(Engine Abort, is_transition = false)`: **no `schedule_gen_` bump**, so a pending stage of the left state still lands, and the abort batch skips that role (`// Kept: C4-3`) | `ActuatorCommander` core → `sendBatch` (`_udp.cpp`) | worker; stage thread |
-| 7 | republish loop for the abort state | `ActuatorCommander` core | loop thread |
-| 8 | `current_state_ = Engine Abort` | `doTransitionTo` | worker |
-| 9 | **`triggerAbort()` #2**: 4 more ABORTs; then joins #1's done thread (≤ 50 ms on the worker) and starts its own → **4 × ABORT_DONE 3 s after #2** | `AbortBroadcaster` (`// Kept: C1-10`) | worker; done thread |
-| 10 | publish `[0x43]`, `[0x50]` | `_elodin.cpp` | worker |
-| 11 | controller parity sees a non-fire state → `setFireActive(false)` → no edge (already closed at 5); if step 5's TCP notify failed, **this** is what closes the gate | `ControllerService` subscriber → `setFireActive` | controller subscriber |
-| 12 | log, `OK` | as (a) 21 | |
-
-Ownership check:
-
-- **ABORT has one owner (`AbortBroadcaster::sendPacket`) and two triggers in one transition** (3
-  and 9): C1-10, kept, both tagged. Both sites stay in `doTransitionTo` in core
-  `SequencerService.cpp` (D42 binding 1); a reviewer reading one sees the other.
-- **ABORT_DONE has one owner**, the done thread of the *last* `triggerAbort`; #2 cancels #1's.
-- **CLEAR_ABORT has no trigger at all** (C1-9): `sendClearAbort` exists, nothing calls it. Frozen,
-  not "fixed" by WP10.
-- **The fire gate close has one owner (`setFireActive`) and two triggers** (5, 11), as in (a).
-- **If C4-1 has wedged the worker, no step from 2 on has a running owner**: the command waits
-  10 s, the reply is `ERR` ("timed out … it may still run"), and **zero** ABORT datagrams leave the
-  sequencer; the boards' own thresholds and heartbeat watchdog are the only stop (research
-  abort-statemachines Idea 1, teststand-architecture Idea 3: SERVER_HEARTBEAT keeps flowing, so the
-  boards' NO_CONNECTION_ABORT never trips). Frozen (`digital-twin__scripts-load.txt`); the PROPOSALS
-  are in the research.
-- EINTR (research cpp-service-plumbing §0.2): a SIGTERM landing on the worker during step 3 or 9
-  can fail one ABORT repeat; frozen with the `SO_SNDTIMEO` sockets.
-
-### (c) A board reconnect in daq_bridge (registration; D-SUB's race preserved)
-
-Two different events are called "reconnect", and only the second registers anything.
-
-**(c1) A board power-cycles** (e.g. PT board 21). daq_bridge is single-threaded; every step is on
-the main loop.
-
-| # | step | owner (file) |
-|---|---|---|
-| 1 | receive and classify the BOARD_HEARTBEAT | `SensorFramePipeline::poll` / `get_last_heartbeat` (lib) |
-| 2 | record the board in memory | `BoardDiscovery::process_board_announcement` (lib) |
-| 3 | map source IP → configured board (config IP, then the 127.0.0.<octet> fallback) | `resolve_board_config_by_source_ip` (`BoardMap.cpp`) |
-| 4 | assignment bookkeeping; **sends nothing** although start-up logs "Proactive SENSOR_CONFIG sent" (C6-1) | `FSWConfigManager::process_board_heartbeat` (lib) |
-| 5 | publish the `[0x10, board_id]` heartbeat row | `HeartbeatRouter::process_heartbeat` (lib) |
-| 6 | data resumes: route by source IP; an unknown IP gets the discovered type (and is inserted into `board_map`) or is treated as PT | `main` (routing block), `discovery_board_type_to_enum` (`BoardMap.cpp`) |
-| 7 | self-test rows `[0x60+s, board_id]` with the board-id fallback ladder | `publish_self_tests` (`ElodinPublish.cpp`, cleanup) |
-| 8 | raw rows, timestamps from per-board clock sync (reboot/wrap handling) | `publish_raw_batch` (`ElodinPublish.cpp`, cleanup); `BoardClockSync` (lib) |
-| 9 | the board receives its SENSOR_CONFIG/ACTUATOR_CONFIG | **not daq_bridge**: `config_broadcast_service`'s periodic broadcast (C6-6 restricts it) |
-
-No VTable registration happens on a board reconnect: the tables were registered for every
-*configured* board at Elodin connect time, whether or not the board was up.
-
-Ownership check: step 9 has **no owner inside daq_bridge**, by design today; `FSWConfigManager`
-looks like the owner (and its log says so, C6-1) but is not. The design keeps it so and says it in
-`TableRegistration.hpp`/`BoardMap.hpp`'s "must not" lines, so nobody adds a push in a refactor.
-
-**(c2) Elodin restarts.** This is where registration, and D-SUB, live.
-
-| # | step | owner (file) |
-|---|---|---|
-| 1 | publishes start failing; `is_connected()` false; every 5 s on the idle path try `reconnect()` | `main` loop (idle path) |
-| 2 | on success: log `✅ Reconnected to Elodin — re-registering VTables`, `elodin_connected = true` | `main` (stays at the call site, §4.3) |
-| 3 | re-register, in order: raw, calibrated, ball valve (if any), heartbeat, environmental, self-test; **no return checks, no drain** | move-only: inline in `main` (759-773); cleanup: **`register_all_tables(…, report_failures = false)`** (`TableRegistration.cpp`) |
-| 4 | ids and entity names for every table | `DatabaseConfig` registrars → `table_id_for` (WP3) |
-| 5 | meanwhile calibration_service reconnects on its own 2 s cadence and re-registers **the same calibrated tables** | calibration_service `main` (WP9 keeps it there) |
-| 6 | the backend reconnects and re-subscribes; a subscribe accepted **inside** a re-registration that changes an id's content (the D-SLOT collision: slot 10 vs PT2.CH1) binds to stale components and delivers nothing, forever (D-SUB) | the backend registry (WP5/WP6); elodin-db 0.16.1 (research subscription-robustness §0) |
-| 7 | rows resume for every other table | `publish_raw_batch` etc. |
-
-Ownership check:
-
-- **Fixed by the cleanup:** step 3 has two copies in move-only (first connect 578-592 with checks
-  and the 1.5 s drain; reconnect 759-773 without). After cleanup it has **one owner**,
-  `register_all_tables`; the differences (checks, drain, logs, flag) are the `report_failures`
-  argument and the call sites (§4.3).
-- **Two owners across processes, frozen:** the calibrated tables are registered by daq_bridge
-  (step 3) and by calibration_service (step 5). Both sections are in `elodin/golden`; whether their
-  `VTableMsg` bytes are identical for every shared id is research question 1 (subscription-
-  robustness). Recorded with D-SLOT; not WP10's to change.
-- **Zero owner, frozen:** nothing detects a subscription that was accepted and never delivers
-  (D-SUB). WP10 preserves the race exactly: no barrier, no ack wait, no reordering of the six
-  registrations, no change to the 5 s cadence. The proposals (echo check, liveness, reconnect
-  remedy) are in the research and are the team's.
-
-## D. Open questions (added)
-
-5. Tag spelling: D42(c) says `// FROZEN C4-1`; STYLE-S12 and D43(4) say `// Kept: <id> (D17)`. This
-   note uses S12's so one grep finds every kept defect in every WP. Orchestrator to confirm.
-6. Should the `publishState` lock-contract comment land in the move-only commit (D42(c): "where that
-   code moves") rather than in cleanup step 1? This note follows STYLE-S12/S38 (a move adds no
-   comment lines); either is behaviour-neutral.
-7. If CI cannot judge the D34 timing tests when WP10 is queued, is alternative C (daq_bridge +
-   `ActuatorCommander_udp` only) the accepted fallback?
-
-**AMENDMENT (debate verdict §5 edit 10):** 5 **closed** by D45(1) (`// Kept: <id> (D17)`). 6
-**closed** by D45(2) and verdict §2: cleanup. 7 **closed** by D45(3) and the item structure: the
-fallback is "item 2 not queued", with a LEDGER entry (§6.1). 3 (who records the Elodin-reconnect
-characterization, §7.4 gap 1) **stays open**. Added from verdict §6:
-
-8. After cleanup deletes `setNavState`, `current_nav_` is never written (it is read at
-   `ControllerService.cpp:322, 558`): a planned input or a dead member? WP10 keeps it either way.
-
-The verdict's other team questions (§6 items 1-4: the abort stop path and priority lane, C4-3's
-precedence, C1-10/C1-9, the C4-1 hoist) are the research's PROPOSALS, not WP10's.
+1. After cleanup deletes `setNavState`, `current_nav_` is never written (read at
+   `ControllerService.cpp:322, 558`): a planned input or a dead member? WP10 keeps it either way;
+   the team decides.
