@@ -548,7 +548,10 @@ void cubic_store() {
         s.register_channel(2101, 21, 1, 1, "", "cubic");
         for (uint16_t u : s.uids())
             print_channel(s, u);
-        std::printf("save=%d load_failed=%d\n", s.save() ? 1 : 0, s.load_failed() ? 1 : 0);
+        // Each call sequenced on its own: printf's argument evaluation order is unspecified
+        // (gcc on x86_64 evaluates right to left).
+        const bool saved = s.save();
+        std::printf("save=%d load_failed=%d\n", saved ? 1 : 0, s.load_failed() ? 1 : 0);
         charcal::dump_file("live-save", path);
         s.clear_channel(2101);
         s.clear_channel(9999);
@@ -560,7 +563,8 @@ void cubic_store() {
         CubicCalibrationStore r(path);
         r.register_channel(2101, 21, 1, 1, "Fuel Upstream", "cubic");
         r.register_channel(4201, 42, 1, 11, "LC Ox", "linear", SensorKind::LC);
-        std::printf("reload n=%zu failed=%d\n", r.load(), r.load_failed() ? 1 : 0);
+        const size_t reloaded = r.load();
+        std::printf("reload n=%zu failed=%d\n", reloaded, r.load_failed() ? 1 : 0);
         for (uint16_t u : r.uids())
             print_channel(r, u);
         std::printf("resave=%d\n", r.save() ? 1 : 0);
@@ -601,8 +605,9 @@ void cubic_store() {
                 for (const auto& r : regs)
                     s.register_channel(r.uid, r.board, r.conn, r.log, r.role, r.model, r.kind,
                                        r.unit);
-            std::printf("[%s registered=%d] load n=%zu failed=%d\n", f, registered ? 1 : 0,
-                        s.load(), s.load_failed() ? 1 : 0);
+            const size_t n = s.load();
+            std::printf("[%s registered=%d] load n=%zu failed=%d\n", f, registered ? 1 : 0, n,
+                        s.load_failed() ? 1 : 0);
             for (uint16_t u : s.uids())
                 print_channel(s, u);
             std::printf("save=%d\n", s.save() ? 1 : 0);
@@ -616,12 +621,15 @@ void cubic_store() {
             charcal::write_file(path, text);
             CubicCalibrationStore s(path);
             s.register_channel(2101, 21, 1, 1, "Fuel Upstream", "cubic");
-            std::printf("bad '%s': n=%zu failed=%d save=%d file='%s'\n", text, s.load(),
-                        s.load_failed() ? 1 : 0, s.save() ? 1 : 0,
-                        charcal::read_file(path).c_str());
+            const size_t n = s.load();
+            const bool failed = s.load_failed();
+            const bool saved = s.save();
+            std::printf("bad '%s': n=%zu failed=%d save=%d file='%s'\n", text, n, failed ? 1 : 0,
+                        saved ? 1 : 0, charcal::read_file(path).c_str());
         }
         CubicCalibrationStore none(g_tmp + "/absent/cubic_calibration.json");
-        std::printf("absent: n=%zu failed=%d\n", none.load(), none.load_failed() ? 1 : 0);
+        const size_t n = none.load();
+        std::printf("absent: n=%zu failed=%d\n", n, none.load_failed() ? 1 : 0);
     }
 }
 
@@ -724,8 +732,10 @@ void lc_tare() {
     for (const char* text : {"{", "{\"version\": 1}", "{\"tares\": {}}"}) {
         charcal::write_file(fx, text);
         LcTareStore b(fx);
-        std::printf("bad '%s': n=%zu failed=%d save=%d\n", text, b.load(), b.load_failed() ? 1 : 0,
-                    b.save() ? 1 : 0);
+        const size_t n = b.load();
+        const bool failed = b.load_failed();
+        const bool saved = b.save();
+        std::printf("bad '%s': n=%zu failed=%d save=%d\n", text, n, failed ? 1 : 0, saved ? 1 : 0);
     }
 }
 

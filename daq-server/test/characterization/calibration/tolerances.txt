@@ -1,7 +1,8 @@
 # Families of values that may differ by more than 4 ULP between builds and platforms
 # (golden_compare.py; the first rule that matches a value wins; everything not named here is
 # 4 ULP, integers and text exact). Each limit is the smallest round number that passes on macOS
-# arm64 clang -O0 and Release, and Linux arm64 gcc-12 Release, gcc-12 -O0 and clang-18 Release,
+# arm64 clang -O0 and Release, Linux arm64 gcc-12 Release, gcc-12 -O0 and clang-18 Release, and
+# Linux amd64 gcc-12 Release,
 # against goldens generated from macOS Release; the measured worst case is in each comment and in
 # README.md, with the mutation that proves the limit still bites.
 
@@ -24,25 +25,26 @@ family=curve-fp-hash block=scripts/calibration/calibrations/lc_tare.json line='"
 #     recognised by its size and given a power-of-two absolute floor just above the largest
 #     residue difference measured:
 #       psi-valued (D, rmse, the normalised poly, and the bare numbers of the JSON arrays): abs
-#         2^-38 (3.6e-12; measured 2.2e-12, a near-linear 4-20 mA fit's quadratic/cubic terms)
+#         2^-35 (2.9e-11; measured 1.6e-11 on Linux amd64 gcc, 2.2e-12 on arm64: a near-linear
+#         4-20 mA fit's quadratic/cubic terms, 4e-6 psi, move 3.9e-6 rel)
 #       B (psi/adc^2): |v| < 1e-24, abs 2^-83 (1.0e-25; measured 5.4e-26)
-#       A (psi/adc^3): |v| < 1e-30, abs 2^-130 (7.3e-40; measured 5.0e-40)
-#       B of a fit whose data is nearly linear (a 4-20 mA fit's B = 2.7e-23, 5.9e-8 rel on Linux
-#         gcc, abs 1.6e-30, i.e. 2e-12 psi at its codes): abs 2^-98 (3.2e-30) at any size
+#       A (psi/adc^3): |v| < 1e-30, abs 2^-127 (5.9e-39; measured 3.5e-39 on amd64, 5.0e-40 arm64)
+#       B of a fit whose data is nearly linear (a 4-20 mA fit's B, ~1e-23): abs 2^-96 (1.3e-29)
+#         at any size (measured 1.1e-29 on amd64 gcc, 1.6e-30 on arm64; ~1e-11 psi at its codes)
 #   - what the fit DOES, psi at five codes across its span (`eval:`), is cancellation-limited
 #     (|terms| ~ 1e3 psi): abs 2^-39 (1.8e-12; measured 1.1e-12, 20 ULP at 480 psi).
 # The bare numbers in the JSON's calibration_polynomials arrays include the raw A/B/C, which fall
 # under the psi floor there; the same values are checked keyed ("A": ...), in `eval:`, and in the
 # stack golden through every published PT / LC value.
 family=cubic-fit-eval section="CubicCalibrationStore.*" line="eval:" abs=1.8189894035458565e-12
-family=cubic-fit-residue-A section="CubicCalibrationStore.*" key='(^| |")A(=|": )$' below=1e-30 abs=7.346839692639297e-40
-family=cubic-fit-residue-A block=scripts/calibration/calibrations/cubic_calibration.json key='"A": $' below=1e-30 abs=7.346839692639297e-40
+family=cubic-fit-residue-A section="CubicCalibrationStore.*" key='(^| |")A(=|": )$' below=1e-30 abs=5.877471754111438e-39
+family=cubic-fit-residue-A block=scripts/calibration/calibrations/cubic_calibration.json key='"A": $' below=1e-30 abs=5.877471754111438e-39
 family=cubic-fit-residue-B section="CubicCalibrationStore.*" key='(^| |")B(=|": )$' below=1e-24 abs=1.0339757656912846e-25
 family=cubic-fit-residue-B block=scripts/calibration/calibrations/cubic_calibration.json key='"B": $' below=1e-24 abs=1.0339757656912846e-25
-family=cubic-fit-B section="CubicCalibrationStore.*" key='(^| |")B(=|": )$' ulps=2048 abs=3.1554436208840472e-30
-family=cubic-fit-B block=scripts/calibration/calibrations/cubic_calibration.json key='"B": $' ulps=2048 abs=3.1554436208840472e-30
-family=cubic-fit-psi section="CubicCalibrationStore.*" line='valid=|"(D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' key='(^| |")(D|rmse)(=|": )$|poly=$|^ $|^\s*$' ulps=2048 abs=3.637978807091713e-12
-family=cubic-fit-psi block=scripts/calibration/calibrations/cubic_calibration.json key='"(D|rmse)": $|^\s*$' ulps=2048 abs=3.637978807091713e-12
+family=cubic-fit-B section="CubicCalibrationStore.*" key='(^| |")B(=|": )$' ulps=2048 abs=1.262177448353619e-29
+family=cubic-fit-B block=scripts/calibration/calibrations/cubic_calibration.json key='"B": $' ulps=2048 abs=1.262177448353619e-29
+family=cubic-fit-psi section="CubicCalibrationStore.*" line='valid=|"(D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' key='(^| |")(D|rmse)(=|": )$|poly=$|^ $|^\s*$' ulps=2048 abs=2.9103830456733704e-11
+family=cubic-fit-psi block=scripts/calibration/calibrations/cubic_calibration.json key='"(D|rmse)": $|^\s*$' ulps=2048 abs=2.9103830456733704e-11
 family=cubic-fit section="CubicCalibrationStore.*" line='valid=|"(A|B|C|D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' ulps=2048
 family=cubic-fit block=scripts/calibration/calibrations/cubic_calibration.json line='"(A|B|C|D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' ulps=2048
 
