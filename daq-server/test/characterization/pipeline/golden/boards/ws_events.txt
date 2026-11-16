@@ -14,7 +14,7 @@
 
 ## disconnect
 
-## board-health notifications seen (any step, any client; P1)
+## board-health notifications seen (any step, any client; P1, reset flaps P1b)
 {"category": "error", "key": "board_lost_60", "message": "Board 60 (PT) connection lost", "ongoing": true, "timestampMs": "<ts>"}
 {"category": "info", "message": "Board 12 (ACTUATOR) connected", "timestampMs": "<ts>"}
 {"category": "info", "message": "Board 14 (ACTUATOR) connected", "timestampMs": "<ts>"}
