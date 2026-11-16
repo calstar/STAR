@@ -183,6 +183,13 @@ def make_cwd(path: str):
         ).stdout.split()
     except (OSError, subprocess.CalledProcessError):
         files = []
+    if not files:
+        # Not a git checkout (a `git archive` export, as the Linux gate runs): the directory then
+        # holds exactly the tracked files, so take all of them.
+        base = os.path.join(ROOT, "scripts", "calibration", "calibrations")
+        for d, _dirs, names in os.walk(base):
+            for n in names:
+                files.append(os.path.relpath(os.path.join(d, n), ROOT))
     for rel in files:
         dst = os.path.join(path, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
