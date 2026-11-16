@@ -23,6 +23,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(cd "$HERE/../../.." && pwd -P)"   # daq-server/
 
 if [ "${DAQ_STACK_LOCK_HELD:-}" = "" ]; then
+  # with_stack_lock.sh puts the lock in the repository's common git dir. An export with no .git
+  # (the Linux leg's `git archive`, a deployed stand) has none, so name the lock outright rather
+  # than let it ask git. Nothing else in this harness or the stack it runs calls git.
+  if ! git -C "$ROOT" rev-parse --git-common-dir > /dev/null 2>&1; then
+    export DAQ_STACK_LOCK="${DAQ_STACK_LOCK:-${TMPDIR:-/tmp}/daq-stack.lock}"
+  fi
   exec bash "$ROOT/test/characterization/with_stack_lock.sh" bash "$HERE/run.sh" "$@"
 fi
 
