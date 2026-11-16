@@ -39,6 +39,38 @@ function step(name: string): void {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const STREAM_TYPES = new Set([
+  'sensor_update', 'historical_data', 'connection_status', 'board_status_update', 'board_log',
+]);
+/** Event-like frames are what a step's golden records in order; streams are summarised. */
+function isEvent(raw: string): boolean {
+  try {
+    const m = JSON.parse(raw);
+    if (STREAM_TYPES.has(m.type)) return false;
+    // Board-health notifications come from a 1 Hz sweep, not from the step (README P1).
+    const key = String(m.payload?.key ?? '');
+    if (m.type === 'notification' && (key.startsWith('board_lost_') || key.startsWith('setup_stuck_')
+      || (!m.payload?.key && String(m.payload?.message ?? '').endsWith(' connected')))) return false;
+    return true;
+  } catch { return true; }
+}
+/** QUIET_MS: how long the event stream must be silent before a step may end. The slowest reply a
+ *  step waits for is the sequencer's (TCP reply and its Elodin publish); 1.5 s is several times
+ *  what it takes on an idle machine, so a loaded one still finishes the step inside the step. */
+const QUIET_MS = 1500;
+const SETTLE_CAP_MS = 20000;
+async function settle(minMs: number): Promise<void> {
+  const t0 = Date.now();
+  await sleep(minMs);
+  for (;;) {
+    const evs = cur!.frames.filter((f) => isEvent(f.raw));
+    const last = Math.max(t0, ...evs.map((f) => f.t), ...cur!.sent.map((x) => x.t));
+    if (Date.now() - last >= QUIET_MS) return;
+    if (Date.now() - t0 > SETTLE_CAP_MS) throw new Error(`step ${cur!.name} never went quiet`);
+    await sleep(100);
+  }
+}
+
 function openClient(name: string, headers: Record<string, string> = {}): Promise<WebSocket> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}`, { headers });
@@ -151,7 +183,7 @@ async function main(): Promise<void> {
 
   step('connect');
   await openClient('A');
-  await sleep(2500);
+  await settle(2500);
 
   step('live');
   await sleep(3000);
@@ -162,89 +194,99 @@ async function main(): Promise<void> {
   send('A', { type: 'subscribe', payload: { keys: ['PT1.CH1.raw_adc_counts'] } });
   send('A', 'not json');
   send('A', { type: 'get_state_transitions' });
-  await sleep(1000);
+  await settle(1000);
 
   step('history');
-  send('A', { type: 'query_historical', payload: { keys: ['PT1.CH1.raw_adc_counts'], sinceMs: Date.now() - 2000 } });
-  await sleep(700);
+  send('A', { type: 'query_historical', payload: { keys: ['PT1.CH1.raw_adc_counts'], sinceMs: Date.now() - 10000 } });
+  await settle(700);
   send('A', { type: 'query_historical', payload: { keys: ['NO_SUCH.KEY.value'] } });
-  await sleep(700);
+  await settle(700);
   send('A', { type: 'query_historical', payload: { sinceMs: Date.now() + 3_600_000 } });
-  await sleep(700);
+  await settle(700);
   send('A', { type: 'query_historical', payload: {} });
-  await sleep(1500);
+  await settle(1500);
 
   step('control_locked');
   command('A', 'state_transition', { state: 2 });
   command('A', 'actuator', { actuatorName: 'Fuel Vent', actuatorState: 1 });
-  await sleep(600);
+  await settle(600);
 
   step('unlock');
   send('A', { type: 'control_unlock', payload: {} });
-  await sleep(600);
+  await settle(600);
 
   step('transition_rejected_locally');
   command('A', 'state_transition', { state: 99 });
   command('A', 'state_transition', { state: 2, holdMs: -5 });
-  await sleep(800);
+  await settle(800);
 
   step('transition_refused_by_sequencer');
   command('A', 'state_transition', { state: 16 });
-  await sleep(1500);
+  await settle(1500);
 
   step('transition_armed');
   command('A', 'state_transition', { state: 2 });
-  await sleep(2500);
+  await settle(2500);
 
   step('debug_on');
   command('A', 'debug_mode', { debugMode: true });
-  await sleep(1200);
+  await settle(1200);
 
   step('actuator_open_close');
   command('A', 'actuator', { actuatorName: 'Fuel Vent', actuatorState: 1 });
-  await sleep(1200);
+  await settle(1200);
   command('A', 'actuator', { actuatorName: 'Fuel Vent', actuatorState: 0 });
-  await sleep(1200);
+  await settle(1200);
   command('A', 'actuator', { actuatorName: 'No Such Valve', actuatorState: 1 });
-  await sleep(1000);
+  await settle(1000);
 
   step('debug_off');
   command('A', 'debug_mode', { debugMode: false });
-  await sleep(1200);
+  await settle(1200);
 
   step('extend_fire_not_firing');
   command('A', 'extend_fire');
-  await sleep(1000);
+  await settle(1000);
 
   step('transition_idle');
   command('A', 'state_transition', { state: 1 });
-  await sleep(2500);
+  await settle(2500);
+
+  step('viewer_client');
+  await openClient('B', VIEWER);
+  await settle(1500);
+  send('B', { type: 'control_unlock', payload: {} });
+  await settle(400);
+  command('B', 'state_transition', { state: 2 });
+  await settle(600);
+  await closeClient('B');
+  await settle(300);
 
   step('countdown');
   command('A', 'set_countdown_target', { targetTimeMs: 4102444000000 });
-  await sleep(500);
+  await settle(500);
   command('A', 'set_countdown_target', { targetTimeMs: null });
-  await sleep(500);
+  await settle(500);
 
   step('calibration_command');
   send('A', { type: 'calibration_command', payload: { commandType: 'char_probe' } });
-  await sleep(600);
+  await settle(600);
 
   step('unsupported_command');
   command('A', 'controller_frequency', { frequency: 10 });
-  await sleep(600);
+  await settle(600);
 
   step('session_start_blocked');
   command('A', 'session_start', { keepData: true, durationMs: 600000 });
-  await sleep(2000);
+  await settle(2000);
 
   step('session_start_forced');
   command('A', 'session_start', { keepData: true, durationMs: 600000, force: true });
-  await sleep(3000);
+  await settle(3000);
 
   step('session_start_again');
   command('A', 'session_start', { keepData: true, durationMs: 600000, force: true });
-  await sleep(800);
+  await settle(800);
 
   step('http_during_session');
   await getSweep();
@@ -253,28 +295,18 @@ async function main(): Promise<void> {
 
   step('session_extend');
   command('A', 'session_extend', { addMs: 60000 });
-  await sleep(600);
+  await settle(600);
   command('A', 'session_extend', { addMs: -1 });
-  await sleep(600);
+  await settle(600);
 
   step('session_stop');
   command('A', 'session_stop');
-  await sleep(2500);
+  await settle(2500);
 
   step('session_stop_idle');
   command('A', 'session_stop');
   command('A', 'session_extend', { addMs: 1000 });
-  await sleep(800);
-
-  step('viewer_client');
-  await openClient('B', VIEWER);
-  await sleep(1500);
-  send('B', { type: 'control_unlock', payload: {} });
-  await sleep(400);
-  command('B', 'state_transition', { state: 2 });
-  await sleep(600);
-  await closeClient('B');
-  await sleep(300);
+  await settle(800);
 
   step('http_errors');
   await request('GET', '/nope');
@@ -309,7 +341,7 @@ async function main(): Promise<void> {
 
   step('disconnect');
   await closeClient('A');
-  await sleep(500);
+  await settle(500);
   cur!.t1 = Date.now();
 
   fs.writeFileSync(OUT, JSON.stringify(capture));
