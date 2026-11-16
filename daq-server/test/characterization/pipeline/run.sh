@@ -30,10 +30,11 @@ MODE="${1:-all}"
 if [ "$MODE" = all ]; then
   rc=0
   bash "$HERE/run.sh" pt || rc=1
+  bash "$HERE/run.sh" nocal || rc=1
   bash "$HERE/run.sh" boards || rc=1
   exit $rc
 fi
-case "$MODE" in pt|boards) ;; *) echo "usage: run.sh [pt|boards]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards) ;; *) echo "usage: run.sh [pt|nocal|boards]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -81,16 +82,6 @@ BACKEND="$ROOT/diablo_server/backend"
 TSX="$BACKEND/node_modules/.bin/tsx"
 [ -x "$TSX" ] || { echo "pipeline: $TSX missing — npm ci in diablo_server/backend" >&2; exit 2; }
 PY="$(command -v python3)"
-# The backend's state-CSV loaders try <daq-server>/config/<csv> (via __dirname) before the
-# fixture's. Those files are generated deploy artefacts (gitignored); if a checkout has them they
-# would silently replace the fixture's tables.
-for f in state_machine_actuators.csv state_transitions.csv state_machine_actuator_delays.csv; do
-  if [ -e "$ROOT/config/$f" ]; then
-    echo "pipeline: $ROOT/config/$f exists (a deployed profile) and would shadow the fixture's" >&2
-    echo "          state tables in the backend; move it aside to run this." >&2
-    exit 2
-  fi
-done
 
 # Private port range. 5008 is the one port daq_bridge hard-codes (FSWConfigManager); the stack
 # lock is what keeps it free.
@@ -124,7 +115,26 @@ cat > "$FX/ports.json" <<EOF
  "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-"$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$MODE"
+FXMODE="$MODE"; [ "$MODE" = nocal ] && FXMODE=pt
+"$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$FXMODE"
+
+# The backend runs from a copy of its own source under the fixture (srv/, the same layout as
+# daq-server/), so everything it resolves relative to its own file lands in the fixture rather
+# than in the checkout: its PT calibration (calibration.ts: <srv>/calibration/*.json, newest by
+# mtime -- in a checkout every committed file shares one mtime, so the pick was filesystem order:
+# macOS got one dated file, a Linux export another with no coefficients), /api/cubic_calibration
+# (<srv>/scripts/calibration/calibrations), the legacy state-CSV loaders (<srv>/../config = the
+# fixture's), the state-script checker (<srv>/build). The source is copied unchanged from this
+# checkout at every run, so a change to it is what runs. pt: one calibration file, chosen by name;
+# nocal: none.
+SRV="$FX/srv"
+mkdir -p "$SRV/diablo_server/backend" "$SRV/calibration" "$SRV/scripts/calibration"
+cp -R "$BACKEND/src" "$BACKEND/package.json" "$SRV/diablo_server/backend/"
+ln -s "$BACKEND/node_modules" "$SRV/diablo_server/backend/node_modules"
+cp -R "$ROOT/diablo_server/shared" "$SRV/diablo_server/shared"
+ln -s "$FX/scripts/calibration/calibrations" "$SRV/scripts/calibration/calibrations"
+ln -s "$BUILD" "$SRV/build"
+[ "$MODE" = nocal ] || cp "$ROOT/calibration/calibration_2026-02-25T03-44-09.json" "$SRV/calibration/"
 CFG="$FX/config/config.toml"
 
 wait_port() {  # port name seconds
@@ -162,21 +172,6 @@ done
 (cd "$FX" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
 
-# The backend loads its own PT calibration (calibration.ts loadPTCalibration) from the newest
-# daq-server/calibration/calibration*.json BY MTIME. A checkout, and a `git archive` export even
-# more so, gives those committed files equal mtimes; the tie then falls to directory order, which
-# differs by filesystem: macOS picked calibration_2026-02-25T03-44-09.json, Linux a file with no
-# coefficients, so calibrationFilePath came out null. Pin the order the file names state: each
-# file's mtime becomes the timestamp in its name. Content is untouched (git sees no change).
-"$PY" - "$ROOT/calibration" <<'PYEOF'
-import os, re, sys, calendar
-d = sys.argv[1]
-for name in os.listdir(d):
-    m = re.fullmatch(r"calibration_(\d{4})-(\d\d)-(\d\d)T(\d\d)-(\d\d)-(\d\d)\.json", name)
-    if m:
-        t = calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0, 0))
-        os.utime(os.path.join(d, name), (t, t))
-PYEOF
 
 # The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
 # legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
@@ -192,7 +187,7 @@ PYEOF
   DAQ_OPERATORS_FILE="$FX/operators.txt" STAR_DHCP_HOSTS="$FX/no-dhcp-hosts" \
   VIDEO_GATEWAY_HOST=127.0.0.1 VIDEO_GATEWAY_API_PORT=$P_VID_API \
   VIDEO_GATEWAY_WEBRTC_PORT=$P_VID_RTC VIDEO_AGENT_PORT=$P_VID_AGENT \
-  "$TSX" "$BACKEND/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
+  "$TSX" "$SRV/diablo_server/backend/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
 PIDS+=($!); wait_port $P_WS backend 30
 
 (cd "$FX" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" --config "$CFG" \
@@ -244,12 +239,13 @@ fi
 OUT="$FX/out"
 "$PY" "$HERE/characterize.py" "$CAPTURE" "$FX/context.json" "$OUT"
 GOLD="$HERE/golden"; [ "$MODE" = boards ] && GOLD="$HERE/golden/boards"
+[ "$MODE" = nocal ] && GOLD="$HERE/golden/nocal"
 if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   mkdir -p "$GOLD"; rm -f "$GOLD"/*.txt; cp "$OUT"/* "$GOLD/"
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
