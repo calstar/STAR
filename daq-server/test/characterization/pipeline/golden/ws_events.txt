@@ -6,6 +6,12 @@
 
 ## live
 
+## viewer_client
+> B {"type":"control_unlock","payload":{}}
+> B {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
+< B {"payload": {"ok": false, "reason": "not_operator"}, "timestamp": "<ts>", "type": "control_unlock_result"}
+< B {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
+
 ## subscribe
 > A {"type":"subscribe","payload":{"keys":["PT1.CH1.raw_adc_counts"]}}
 > A not json
@@ -66,12 +72,6 @@
 ## transition_idle
 > A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":1}}}
 < A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": false, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
-
-## viewer_client
-> B {"type":"control_unlock","payload":{}}
-> B {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
-< B {"payload": {"ok": false, "reason": "not_operator"}, "timestamp": "<ts>", "type": "control_unlock_result"}
-< B {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
 
 ## countdown
 > A {"type":"send_command","payload":{"commandType":"set_countdown_target","data":{"targetTimeMs":4102444000000}}}
