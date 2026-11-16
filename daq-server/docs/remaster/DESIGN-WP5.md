@@ -32,6 +32,7 @@ G-W5 (§6) exists before commit 5.5.
 | `legacy/` | `state-actuators.ts`, `state-transitions.ts`, `state-ids.ts`: live (server.ts:39-41), misnamed | BLOAT-MAP §3 |
 | unused exports | `state-actuators.ts` `getActuatorChannel`, `getNumActuatorsFromCSV`; `state-transitions.ts` `buildTransitionMap`, `isTransitionAllowed`; `calibration.ts` `calculatePressure`, `inversePressureToAdc` | BLOAT-MAP §2a — **two of these are not unused, see §1.1** |
 | a stale C++ comment | `services/ota/ota_service_main.cpp:13` "Protocol (matches ota-flash.ts)" | BLOAT-MAP WP5 row |
+| the "which pairs are due" decision | inline in `elodin-vtable-registry.ts:383-401` (`subscribeVTables`), mixed with I/O, logging and the fence | LEDGER D42(d), `research/subscription-robustness.md` Idea 5 |
 
 ### 1.1 Corrections to BLOAT-MAP found while designing
 
@@ -49,6 +50,11 @@ G-W5 (§6) exists before commit 5.5.
   `buildSensorConfig` in WP7 step 1 and is replaced in WP7 step 2.2 (after H4); `server.ts:344`
   moves to `server/config-caches.ts` in WP6 step 1 and is replaced in WP6 step 2.3 (after G6). Both
   notes already say so; WP5 only provides the helper they call.
+- **WP5 owns the registry, so it owns the `duePairs` extraction** (D42(d)). DESIGN-WP6 states that
+  WP6 does not touch `elodin-vtable-registry.ts`; BLOAT-MAP lists the file under WP5. The extraction
+  is behaviour-preserving (§6, commit 5.7) and gives a later D-SUB/D-ECHO fix one pure function to
+  extend instead of the 120-line I/O pass. `test/test_duplicate_subscription.ts` (the only C6-2
+  reproducer, parked — not deleted — by WP4, D42(e)) is not touched by WP5.
 - **The registry's copy carries a second rule.** `elodin-vtable-registry.ts:249-251` computes the
   slot and then folds it with `((n - 1) % 8) + 1` (the D-SLOT wrap). WP5 replaces only the slot
   expression; the fold stays where it is, as a separate line, untouched (defect, reported).
@@ -81,6 +87,13 @@ WP5 deletes the dead files and the dead `:9999` client and renames `legacy/`; th
 created by whichever of WP6/WP7 needs it first, and the `:9998` client moves into WP6's
 `server/engine-state.ts` with the other sequencer-facing code.
 
+Outside practice consulted (LEDGER D42): `research/node-realtime-backend.md` §5 (keep decisions in
+pure functions, I/O at the edge — the backend already does this in `client-outbox.ts` and
+`history-backfill.ts`; no DI container, no `ServerContext`) and §1 (elided imports, which decides
+whether a new import edge can move a module's evaluation); `research/subscription-robustness.md`
+Idea 1 (one `boardSlot()` home is the remaster half of making the table-id map injective later)
+and Idea 5 (`duePairs` as a pure function of desired and observed state).
+
 ### Comparison
 
 | | A | B | C |
@@ -89,7 +102,7 @@ created by whichever of WP6/WP7 needs it first, and the `:9998` client moves int
 | lines deleted (net, `src/`) | ≈ −430 (321 dead files, 25 `:9999` client, ≈80 uncalled exports, ≈4 slot lines) | ≈ −400 (as A, minus new module headers and the generic client's parameters) | ≈ −430, but the slot copies stay until WP6/WP7 |
 | testability | `boardSlot` pure, importable without effects; `sendToSequencer` reachable black-box through G4 (it has no white-box test today and needs none) | same, plus a generic client invites a unit test of a predicate parameter nobody else passes | same as A, later |
 | fit with characterization | no harness imports any moved file; `ts_dump.ts` imports `sensor-config.js` by path and only gains an export; `ts_harness.mts`'s `calibration.ts` exports kept | **breaks** `config/ts_dump.ts`, which imports `isCurrentLoopBoard` from `sensor-config.js` by path (D18/D20: a harness edit to make a refactor fit) unless re-exported, which recreates two homes | as A |
-| contract / startup-order risk | none: `sensor-config.ts` is already evaluated at `server.ts:31`, before the registry (`:32`) and the state-CSV loaders (`:39`) that start importing it; `sequencer-client.ts` imports only `net` | same; `lib/http-json.ts` pre-empts WP7's `sendJson` decision, which D39 restricts to literal bodies — a shared `sendJson` invites the silent headers-sent fix | WP6 and WP7 run in parallel; both need `boardSlot`, so C makes them race to create it or serialises them |
+| contract / startup-order risk | none: `sensor-config.ts` is already evaluated at `server.ts:31` (a value import, so it survives emit — research §1), before the registry (`:32`) and the state-CSV loaders (`:39`) that start importing it; `sequencer-client.ts` imports only `net`; checked per commit by the module-order diff (§6) | same; `lib/http-json.ts` pre-empts WP7's `sendJson` decision, which D39 restricts to literal bodies — a shared `sendJson` invites the silent headers-sent fix | WP6 and WP7 run in parallel; both need `boardSlot`, so C makes them race to create it or serialises them |
 | D17(d) single-user abstraction | none: two functions, each with ≥2 users (`boardSlot` 6, `sendToSequencer` 5 call sites in 2 future modules) | `sendLine(…, isOk)` has one live caller (the `:9999` caller is dead), exactly what D39 rejected | none |
 
 **Why A.** It deletes as much as B with no new abstraction, keeps every harness path import valid,
@@ -249,8 +262,17 @@ order, each green on its own:
 | 5.5 | add `boardSlot` to `sensor-config.ts`; replace `sensor-config.ts:59`, `:116`, `elodin-vtable-registry.ts:249-250`, `state-csv/state-actuators.ts:122-123` | each replacement is `<name> = boardSlot(<expr>)`, guards untouched; the registry's fold line untouched |
 | 5.6 | create `sequencer-client.ts` from `server.ts:1409-1441` (body verbatim, function renamed `sendToSequencer`, `ACT_SVC_PORT` → `SEQUENCER_PORT` defined there from the same `process.env.ACTUATOR_SERVICE_PORT ?? '9998'`); delete `server.ts:1443-1467` and `:74-75`; `server.ts` imports `{ sendToSequencer, SEQUENCER_PORT }` after its last existing import and uses `SEQUENCER_PORT` in the `Actuator service: localhost:` log | **G4 must exist first.** The five call sites change name only; the dead `.catch(() => {})` on `debug_mode` and the SCRIPTS poll stay (DESIGN-WP6 §4.2: promise shapes unchanged) |
 
+| 5.7 | extract `duePairs(desired, state, now)` from `subscribeVTables` (`elodin-vtable-registry.ts:386-401`): the loop body verbatim, the three clauses in today's order (subscribed or parked → skip; rejected with `nextAttemptMs > now` → skip; else due), `now` still taken from `nowFn()` once by the caller; `subscribeVTables` calls it with its module sets | D42(d). Pure, exported for tests, no new user. `vtable-subscriptions.test.ts`, `subscription-fence.test.ts`, `elodin-reconnect.test.ts` run **unedited**. Mutation: drop the `subscribedVTableStreamPairs.has` clause → `vtable-subscriptions.test.ts` red. Log lines (`📡 VTableStream: sent …`) unchanged: `skipped` is returned, not recounted |
+
 **Checks for every commit** (no ports): `npx tsc --noEmit` exit 0 (D40); backend `npm test` with no
-failure outside `baseline_vitest_failures.txt`; `grep -rn "legacy/\|server-types\|ota-flash'\|calibration-sidecar" src` prints nothing after 5.3.
+failure outside `baseline_vitest_failures.txt`; `grep -rn "legacy/\|server-types\|ota-flash'\|calibration-sidecar" src` prints nothing after 5.3;
+**the esbuild module-order diff** of DESIGN-WP6 §6.3 item 6 (D42(a)): the only permitted changes
+are the deleted files leaving the list (5.1 — they are unreachable, so in practice none),
+`legacy/*` → `state-csv/*` renamed in place (5.3), and `sequencer-client.ts` appearing (5.6). Two
+WP5 edits interact with import elision, both harmlessly: 5.6 leaves `server.ts`'s `import * as net`
+without a user (a Node builtin; its evaluation is not observable), and 5.5's new
+`sensor-config.js` imports in the registry and the loaders are value imports of a module that is
+already evaluated earlier (`server.ts:31`).
 
 **Mutations** (each must go red, then be reverted):
 - 5.3: point `ball-valve.test.ts`'s import at a stub `state-csv/state-actuators.js` whose
@@ -283,6 +305,12 @@ failure outside `baseline_vitest_failures.txt`; `grep -rn "legacy/\|server-types
 - The frontend's two slot copies (`frontend/lib/sensor-info-entities.ts:13`, `frontend/lib/store.ts:209,279`):
   frontend out of scope; listed so WP12's docs do not claim "one slot rule".
 - The registry's `((n - 1) % 8) + 1` fold (D-SLOT) stays.
+- Making `state-csv/state-actuators.ts`'s three import-time maps lazy (research
+  `node-realtime-backend.md` Q3): it would move a config read and its log lines out of the import
+  and into the first call — a startup-log change. Not in WP5; it is why DESIGN-WP6 needs R1a's bare
+  import.
+- `duePairs` is the place a stale-binding or no-delivery clause would go (D-SUB, D-ECHO;
+  `research/subscription-robustness.md` Ideas 2, 4): PROPOSALS for the team, not WP5.
 
 ## 8. Choices to check against STYLE.md
 

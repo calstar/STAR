@@ -31,7 +31,8 @@ changed the following; each changed place is marked with its tag.
   `engine-state`): new step 2.9 moves the resolution into `engine-state`.
 - **[A4]** Walkthroughs (a)-(c) found the connect burst building other modules' messages
   (`state_update` connect shape, commanded snapshot, self-test and notification replays): new step
-  2.8 gives each owner a `send…To(ws)` / `replay…(ws)` and leaves `ws-connection` only the order.
+  2.8 gives each owner a `send…(ws)` (STYLE-S6: `send` = one socket) and leaves `ws-connection`
+  only the order.
 - **[A5]** The three 1 s timers stay three `setInterval` calls, never one merged tick (a throw in one
   must not skip the others). §8 R3.
 - **[A6]** D-SUB's liveness watchdog stays a PROPOSAL; the layering keeps room for it
@@ -43,6 +44,14 @@ changed the following; each changed place is marked with its tag.
   subscription-echo (D-ECHO, Idea 2) or liveness check attaches there (PROPOSALS, not WP6). The
   "which pairs are due" decision becomes a pure `duePairs` in the registry — done by **WP5**
   (DESIGN-WP5 commit 5.7), since WP6 does not touch the registry.
+
+- **[A8]** STYLE.md (55d140ef) and LEDGER D43: M1 also allows top-level constants derived from
+  `import.meta.url` (STYLE-S30; WP7-S3's `SRC_DIR`); §4.3's "browser message → log, drop, no reply"
+  row is relabelled **today, kept** (STYLE-S10: the direction is one answer per request, after a
+  golden and a team decision); in the move-only review (§6.3) lines that only re-indent or rewrap a
+  moved statement are expected non-dimmed lines; the size targets (`server.ts` < 400, modules
+  ~200-300) are per WP, not per pass (STYLE-S33). Rules are cited as `STYLE-S<n>`, `WP6-R1`,
+  `WP7-S1`.
 
 Research cited: `docs/remaster/research/node-realtime-backend.md` (§1 elided imports, §2 timers,
 §3 backpressure, §4 D-SUB, §5 functional core) and `research/subscription-robustness.md` (Ideas
@@ -205,7 +214,8 @@ New directory `src/server/`. `src/server.ts` stays the entrypoint (systemd `npm 
 `pipeline/run.sh:200`, `test_integration.sh:834`, `test/environmental-recovery.integration.ts:97`).
 
 **Rule M1 — no import-time effects in `server/*`.** A `server/*.ts` module's top level holds only
-imports, types, constants computed from `process.env` or literals, pure constructors (`new Map`,
+imports, types, constants computed from `process.env`, literals or `import.meta.url` [A8,
+STYLE-S30], pure constructors (`new Map`,
 `new HistoryCache(…)`, `new ElodinClient(…)`) and function declarations. Every disk read, log line,
 timer, listener and socket open happens in a function that `server.ts` calls.
 
@@ -400,7 +410,7 @@ Errors are caught **at the boundary where input enters**, and nowhere else:
 
 | boundary | module | on error |
 |---|---|---|
-| browser message | `ws-connection` | log `[ThinServer] Bad message:`, drop, no reply |
+| browser message | `ws-connection` | **today, kept** [A8, STYLE-S10]: log `[ThinServer] Bad message:`, drop, no reply. Not a pattern for new code; the direction is one `ERROR` per failed request, once G10 freezes today's silence and the team approves |
 | browser command | `commands` | reply `ERROR` to the sender only: `"<Action> failed: <reason>"` |
 | Elodin row | `ingest` | log `[ThinServer] Packet error:`, drop the packet |
 | sequencer line | `sequencer-client` [A1] | never reject; `{ok, reply}` |
@@ -615,7 +625,8 @@ Review with `git diff --color-moved=dimmed-zebra
 --color-moved-ws=allow-indentation-change backend-remastered -- diablo_server/backend/src`: every
 non-moved line must be an import (including an R1a bare import [A2]), an `export` keyword, a
 function wrapper for a former inline arrow, a setter from §6.2, or a startup statement in
-`server.ts`.
+`server.ts`. A line that only re-indents or rewraps a moved statement (a timer arrow's body
+becoming a named function's body) is an expected non-dimmed line, not a stop [A8, D43(6)].
 
 ### 6.4 Step 2 — cleanup toward the target
 
@@ -657,9 +668,9 @@ Each is its own commit, each with the §6.3 checks. Order matters only where not
    frames it sent; the bodies are today's lines verbatim (same literals, same key order):
    `engine-state.sendConnectStateUpdate(ws)` (the **connect** shape, no `allowedBitmask` /
    `stateRefusalReasons` — kept distinct from `broadcastStateUpdate`),
-   `engine-state.sendCommandedSnapshot(ws)`, `board-status.sendBoardStatusTo(ws)` (0 when no board,
-   as today; no `dhcp`/`frequencyHz` recompute, as today), `board-status.replaySelfTests(ws)`,
-   `notifications.replayNotifications(ws)` (prunes first, as today),
+   `engine-state.sendCommandedSnapshot(ws)`, `board-status.sendBoardStatus(ws)` (0 when no board,
+   as today; no `dhcp`/`frequencyHz` recompute, as today), `board-status.sendSelfTestReplay(ws)`,
+   `notifications.sendNotificationReplay(ws)` (prunes first, as today),
    `mission-time.sendMissionStartTime(ws)` and `mission-time.sendCountdownTarget(ws)`.
    `ws-connection` keeps the order of §3.5, the `control_status` frame (identity is its own), the
    `session_update` frame (`sessionManager` is not WP6's) and the `conn_open`/`conn_close`
@@ -1014,9 +1025,9 @@ Owners per step: as (a). No new finding.
 8. **Elodin reconnects**: **`elodin-link.onElodinConnected`** — badge, `setCalibrationElodin`
    (step 2.2), subscription pass via the registry (whose due-pair decision is WP5's pure
    `duePairs`), resubscribe loop, script status.
-9. **A new browser** gets the board list in its connect burst: **`board-status.sendBoardStatusTo(ws)`**
-   after step 2.8 [A4]; self-test replay **`board-status.replaySelfTests(ws)`**; notification
-   replay **`notifications.replayNotifications(ws)`**. *Before 2.8 these frames were built inside
+9. **A new browser** gets the board list in its connect burst: **`board-status.sendBoardStatus(ws)`**
+   after step 2.8 [A4]; self-test replay **`board-status.sendSelfTestReplay(ws)`**; notification
+   replay **`notifications.sendNotificationReplay(ws)`**. *Before 2.8 these frames were built inside
    `ws-connection` from other modules' bindings* — two places knowing each message's shape —
    fixed by 2.8.
 
