@@ -87,8 +87,25 @@ shared_types() {
 # The 9 tests vitest skips by default (CI's separate video-gateway job). Needs
 # `scripts/video-gateway.sh --fetch` and `npx playwright-core install chromium` once.
 video_gateway() { (cd "$ROOT/diablo_server/backend" && bash "$CHAR/with_stack_lock.sh" npm run test:video-gateway); }
-characterization() { CHAR_BUILD_DIR="$ROOT/build-gate" bash "$CHAR/with_stack_lock.sh" bash "$CHAR/run.sh"; }
-integration() { bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"; }
+# Timing-sensitive steps (characterization, integration) wait until the 1-minute load average is
+# below the core count: at 2-3x oversubscription the lifecycle and pipeline goldens see real timing
+# drift that the stand never does (2026-11-16: load 33 on 14 cores). Gives up after 30 min.
+wait_for_load() {
+  local ncpu deadline=$((SECONDS + 1800)) load
+  ncpu="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
+  while :; do
+    load="$(uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/')"
+    awk -v l="$load" -v n="$ncpu" 'BEGIN{exit !(l < n)}' && return 0
+    [ "$SECONDS" -lt "$deadline" ] || { echo "load ${load} still >= ${ncpu} cores after 30 min"; return 1; }
+    echo "gate: load ${load} >= ${ncpu} cores, waiting" >&2
+    sleep 30
+  done
+}
+characterization() {
+  wait_for_load || return 1
+  CHAR_BUILD_DIR="$ROOT/build-gate" bash "$CHAR/with_stack_lock.sh" bash "$CHAR/run.sh"
+}
+integration() { wait_for_load && bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"; }
 # format.sh --check is red on main in firmware/ Python (out of scope), so the gate checks what this
 # refactor owns: every daq-server C/C++ file format.sh targets must be clang-format-19 clean (it is
 # on main), and every Python file added since main must be black-clean.

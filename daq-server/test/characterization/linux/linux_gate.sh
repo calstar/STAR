@@ -24,6 +24,13 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 # /api/firmware), so a partial export changes what it serves.
 git -C "$REPO" archive "$REV" | tar -x -C "$WORK"
 case "$CC_KIND" in gcc) CCS="CC=gcc-12 CXX=g++-12" ;; clang) CCS="CC=clang-18 CXX=clang++-18" ;; esac
+# Same load guard as gate.sh: the container shares the host's cores.
+NCPU="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"; deadline=$((SECONDS + 1800))
+while load="$(uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/')" &&
+  ! awk -v l="$load" -v n="$NCPU" 'BEGIN{exit !(l < n)}'; do
+  [ "$SECONDS" -lt "$deadline" ] || { echo "linux_gate: load $load still >= $NCPU after 30 min" >&2; exit 1; }
+  echo "linux_gate: load $load >= $NCPU cores, waiting" >&2; sleep 30
+done
 echo "linux_gate: $(git -C "$REPO" rev-parse --short "$REV") on $PLATFORM with $CC_KIND"
 docker run --rm --security-opt seccomp=unconfined --platform "$PLATFORM" -v "$WORK":/src -w /src/daq-server "$TAG" bash -c "
   set -uo pipefail; export $CCS
