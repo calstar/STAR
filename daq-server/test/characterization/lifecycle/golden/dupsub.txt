@@ -1,6 +1,13 @@
 == test/test_duplicate_subscription.ts against the running stack (PT1.CH1 [0x20,0x01])
   exit 1
+  ✅ Connected to Elodin DB
+  Received <count> packets in 4s (<rate> pkt/s)
   ✅ Baseline: <rate> pkt/s
+  Received <count> packets in 4s (<rate> pkt/s)
+  Received <count> packets in 4s (<rate> pkt/s)
+  Rates:  baseline=<rate>  after-2x=<rate>  after-5x=<rate> pkt/s
   ❌ 2 subscriptions: DUPLICATES DETECTED (ratio ~2x)
   ❌ 5 subscriptions: DUPLICATES DETECTED (ratio ~5x)
+  <burst-verdict> after-2x: max burst <count> packets/ms (avg <rate>/ms) — <burst-verdict>
+  <burst-verdict> after-5x: max burst <count> packets/ms (avg <rate>/ms) — <burst-verdict>
   0 passed, 2 failed
