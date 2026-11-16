@@ -49,7 +49,19 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | C4 | sequencer/controller UDP streams, TCP replies, aborts | agent | `char/sequencer` | running | `test/characterization/sequencer/` | C0 |
 | C5 | pipeline WS frames, HTTP, logger CSV | agent | `char/pipeline` | running | `test/characterization/pipeline/` | C0 |
 | C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | running | `test/characterization/lifecycle/` | C0 |
-| B0 | bloat-map research (read-only) | agent | none | running | scratchpad draft only | — |
+| B0 | bloat-map research (read-only) | agent | none | done → `docs/remaster/BLOAT-MAP.md` | — | — |
+| WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | queued (after suite) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
+| WP2 | delete C++ no target compiles | — | — | queued | BLOAT-MAP WP2 | WP1 |
+| WP3 | lib hygiene: PressureStateMachine, move db.hpp, split Parser/DatabaseConfig | — | — | queued | BLOAT-MAP WP3 | WP2 |
+| WP4 | dead launchers + superseded test scripts, `--legacy` branch | — | — | queued | BLOAT-MAP WP4 | WP1 |
+| WP5 | backend dead TS + line client + slot helper | — | — | queued | BLOAT-MAP WP5 | WP1 |
+| WP6 | split server.ts | — | — | queued | BLOAT-MAP WP6 | WP5 |
+| WP7 | split api-server.ts | — | — | queued | BLOAT-MAP WP7 | WP5 |
+| WP8 | shared C++ service plumbing | — | — | queued | BLOAT-MAP WP8 | WP3 |
+| WP9 | split calibration_main.cpp | — | — | queued | BLOAT-MAP WP9 | WP8 |
+| WP10 | split sequencer/controller/actuator/bridge god files | — | — | queued | BLOAT-MAP WP10 | WP9 |
+| WP11 | tools/: fix broken documented paths only; GUI deletions parked (operator-facing, team decision) | — | — | queued | BLOAT-MAP WP11 (narrowed) | WP4 |
+| WP12 | docs | — | — | queued | BLOAT-MAP WP12 | WP2, WP4, WP5, WP11 |
 
 ## Merge log
 
@@ -58,8 +70,22 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 ## Parked
 
-_none yet_
+- Untracking `scripts/calibration/calibrations/{cubic_calibration.json,abort_thresholds.txt}`: tracked but gitignored live stores; untracking deletes them on every other checkout (the stand included) at the next pull.
+- `calibration/*.json`: the backend's live PT-coefficient store (`calibration.ts:348`).
+- `elodin-relay.ts` + `npm run relay`: no consumer found, but tools may connect to ws :9090.
+- `archive/legacy/python-services/{heartbeat,config_broadcast}_service.py`: systemd/launcher fallbacks.
+- B4, replacing hand-rolled PWM/config/abort encoders with `daq::create_*`: the version byte may change on the wire (contract).
+- `backend/package.json` `main`/`start` → missing `dist/server.js`: fixing it changes `npm start`.
+- Deleting `tools/` operator GUIs (`tools/gui/**`, the orphaned calibration GUIs): operator-facing, the team's decision, not a refactor's.
 
 ## Defects found in the original (kept as-is, for the team)
 
-_none yet_
+From the bloat map (BLOAT-MAP.md, "Defects found"):
+1. `tools/calibration/calibration_server.py:20-31` imports `scripts.calibration.*` (gone): the Python sidecar cannot start.
+2. Several launchers pass `--relay-host/--relay-port`, which `calibration_service` rejects or ignores.
+3. `test_integration.sh --legacy` launches the missing `src/server-legacy.ts`.
+4. `start_tmux_dev.sh:371` starts the Python heartbeat even when the C++ binary exists.
+5. Three separate PT calibration stores (backend `calibration/`, C++ `scripts/calibration/calibrations/`, Python `tools/calibration/calibrations/`).
+6. Only 4 of 9 services ignore SIGPIPE; most signal handlers do non-async-signal-safe I/O.
+7. Controller PWM and abort packets hard-code protocol version 0 rather than `DIABLO_COMMS_VERSION`.
+8. `tools/controller_lut/*.sh` invoke `python -m scripts.controller_lut.*` (moved): the documented LUT regeneration fails.
