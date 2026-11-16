@@ -250,6 +250,18 @@ def dump(out: list[str], title: str, conns: list[bytes]) -> None:
     del tails
 
 
+def wait_connected(db, svc, cap_s: float) -> bool:
+    import time
+
+    end = time.monotonic() + cap_s
+    while time.monotonic() < end:
+        if db.wait_conn(1, 0.2):
+            return True
+        if not svc.alive():
+            return db.wait_conn(1, 0.5)
+    return False
+
+
 def wait_msgs_quiet(db, quiet: float, max_s: float) -> list[bytes]:
     """Connection streams once no new MSG packet has arrived for `quiet` s (TABLE rows, which
     some services publish continuously, do not count)."""
@@ -361,11 +373,14 @@ def main(binp: Path, src: Path, work: Path, which: str) -> int:
                 argv_of(binp, "config/config.toml", bb.free_port(), db.port),
                 d,
                 d / "service.log",
-            ):
-                if not db.wait_conn(1, 15):
+            ) as svc:
+                # Generous windows: under emulation (amd64 on arm64) calibration_service takes
+                # well over 15 s to reach its first connect. A service that exits (t7_bridge with
+                # no T7) stops the wait at once; one dialling another port waits out the cap.
+                if not wait_connected(db, svc, 60.0):
                     out.append(f"\n## {title}: never connected")
                     continue
-                conns = wait_msgs_quiet(db, 1.5, 20)
+                conns = wait_msgs_quiet(db, 3.0, 120)
         finally:
             db.close()
         # Independent clients of one service connect in a racy order; order them by content.

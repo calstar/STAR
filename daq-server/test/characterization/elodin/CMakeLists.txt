@@ -13,5 +13,5 @@ foreach(cfg config_base profile_default)
                      $<TARGET_FILE_DIR:daq_bridge> ${CMAKE_SOURCE_DIR} ${CHAR_ELODIN_WORK} ${cfg}
              WORKING_DIRECTORY ${CHAR_ELODIN_WORK})
     set_tests_properties(char_elodin_schema_${cfg} PROPERTIES
-        LABELS characterization RUN_SERIAL TRUE TIMEOUT 300)
+        LABELS characterization RUN_SERIAL TRUE TIMEOUT 1200)
 endforeach()
