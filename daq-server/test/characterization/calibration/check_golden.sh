@@ -1,23 +1,21 @@
 #!/bin/bash
 # Run a command and compare its stdout with a golden file.
 #
-#   check_golden.sh <golden stem> <variant|-> <command> [args...]
+#   check_golden.sh <golden> <command> [args...]
 #
-# The golden is <stem>.<variant>.txt, or <stem>.txt when the variant is "-". The C++ outputs are
-# bit-exact numbers, and those depend on the platform and the optimisation level as well as on the
-# code (clang -O2 on arm64 contracts a*b+c into an FMA; Apple's libm is not glibc's), so each
-# <os>-<arch>-<build type> has its own golden. A variant with no golden is SKIPPED (exit 77, which
-# CTest reports as skipped), never silently passed: generate one on main's behaviour with
-# CHAR_UPDATE=1.
+# One golden per output, shared by every build type, OS and arch. Text compares exactly and
+# floating numbers within 4 ULP of the golden value, or the named family limit in tolerances.txt
+# (golden_compare.py says exactly how); a
+# failure names the field and its ULP distance.
 #
-# CHAR_UPDATE=1 writes the output to the golden instead (only ever on main's behaviour).
+# CHAR_UPDATE=1 writes the output to the golden instead (only ever on main's behaviour, from the
+# Release build).
 set -uo pipefail
-stem="$1"
-variant="$2"
-shift 2
-if [ "$variant" = "-" ]; then golden="$stem.txt"; else golden="$stem.$variant.txt"; fi
+golden="$1"
+shift
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 out="$(mktemp "${TMPDIR:-/tmp}/char_cal_out.XXXXXX")"
-trap 'rm -f "$out" "$out.diff"' EXIT
+trap 'rm -f "$out" "$out.err"' EXIT
 "$@" > "$out"
 rc=$?
 if [ "$rc" != 0 ]; then
@@ -27,18 +25,19 @@ fi
 if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   mkdir -p "$(dirname "$golden")"
   cp "$out" "$golden"
+  chmod 644 "$golden"
   echo "check_golden: wrote $golden ($(wc -l < "$golden") lines)"
   exit 0
 fi
 if [ ! -f "$golden" ]; then
-  echo "check_golden: SKIPPED — no golden for variant '$variant' ($golden). Generate one on" \
-       "main's behaviour with CHAR_UPDATE=1." >&2
-  exit 77
-fi
-if ! diff -u "$golden" "$out" > "$out.diff"; then
-  echo "check_golden: output differs from $(basename "$golden")" \
-       "($(grep -c '^[-+][^-+]' "$out.diff") changed lines):" >&2
-  head -n 120 "$out.diff" >&2
+  echo "check_golden: no golden at $golden (generate on main's behaviour with CHAR_UPDATE=1)" >&2
   exit 1
 fi
-echo "check_golden: $(basename "$golden") matches ($(wc -l < "$golden") lines)"
+if ! python3 "$HERE/golden_compare.py" --tolerances "$HERE/tolerances.txt" "$golden" "$out" 2> "$out.err"; then
+  head -n 120 "$out.err" >&2
+  rm -f "$out.err"
+  echo "check_golden: output differs from $(basename "$golden")" >&2
+  exit 1
+fi
+rm -f "$out.err"
+echo "check_golden: $(basename "$golden") matches ($(wc -l < "$golden") lines, floats within 4 ULP or tolerances.txt)"

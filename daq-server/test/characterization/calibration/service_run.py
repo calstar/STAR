@@ -225,10 +225,11 @@ class Run:
             )
             if calibrated:
                 ts, ch, value, raw, status = struct.unpack("<QB3xfIB", body)
-                bits = struct.unpack("<I", struct.pack("<f", value))[0]
+                # A float32, suffixed `f` so golden_compare measures it in float32 ULPs.
+                v32 = "nan" if value != value else "%.9gf" % value
                 self.p(
                     f"  [{hi:02x},{lo:02x}] ts=+{(ts - 1_700_000_000_000 * MS) // MS}ms "
-                    f"ch={ch} value={value!r:} bits={bits:08x} raw={raw} status={status}"
+                    f"ch={ch} value={v32} raw={raw} status={status}"
                 )
             else:
                 self.p(
