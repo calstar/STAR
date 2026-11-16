@@ -21,6 +21,7 @@
 #include <functional>
 #include <iostream>
 #include <map>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -40,22 +41,14 @@
 #include "script/ScriptConfig.hpp"
 #include "script/StateScript.hpp"
 
-// ActuatorCommander keeps what it parsed (roles, both tables, the bind address) private, and its
-// public accessors are lookups that cannot enumerate. Open it up for this TU only; everything it
-// includes is included above first so the macro reaches nothing but this one class.
-#include <atomic>
-#include <map>
-#include <mutex>
-#include <set>
-#include <string>
-#include <thread>
-#include <vector>
-
-#include "control/StateMachine.hpp"
-#include "elodin/ElodinClient.hpp"
-#define private public
 #include "control/ActuatorCommander.hpp"
-#undef private
+
+// The one private view that remains (char_ac_private.cpp): the resolved actuator roles and the
+// bind address, which no public method reports and whose only observable effect is a UDP send to
+// a board address. Everything else this dump prints about ActuatorCommander comes through its
+// public lookups.
+void char_dump_actuator_commander_private(const sequencer::ActuatorCommander& ac,
+                                          std::ostream& out);
 
 namespace {
 
@@ -525,20 +518,49 @@ void dump_sequencer(const std::string& config_text, const fsw::config::Config& c
     section("ActuatorCommander", [&] {
         const bool ok = ac.load(config_text, actuators, delays);
         OUT << "load = " << b(ok) << " isLoaded=" << b(ac.isLoaded()) << "\n";
-        OUT << "bind_addr_ = " << q(ac.bind_addr_) << " explicit=" << b(ac.bind_addr_explicit_)
-            << " actuator_port_ = " << ac.actuator_port_ << "\n";
-        for (const auto& [n, r] : ac.roles_)
-            OUT << "role " << q(n) << " = {channel=" << r.channel << " board_id=" << r.board_id
-                << " board_ip=" << q(r.board_ip) << " is_no=" << b(r.is_no)
-                << " is_pwm=" << b(r.is_pwm) << " cmd_table_hi=" << hex2(r.cmd_table_hi) << "}\n";
-        for (const auto& [st, m] : ac.state_actuators_) {
+        char_dump_actuator_commander_private(ac, OUT);
+        // Both tables through the public lookups, keyed by what the CSVs name. A key is the cell
+        // trimmed exactly as ActuatorCommander trims it; the values are whatever the commander
+        // answers, so a parsing change shows up here, not in this enumeration.
+        auto trim = [](const std::string& x) {
+            const size_t a = x.find_first_not_of(" \t\r\n\"");
+            const size_t z = x.find_last_not_of(" \t\r\n\"");
+            return a == std::string::npos ? std::string() : x.substr(a, z - a + 1);
+        };
+        auto keys = [&](const std::string& path, std::set<std::string>& cols,
+                        std::set<std::string>& rows) {
+            std::ifstream f(path);
+            std::string line;
+            if (!f.is_open() || !std::getline(f, line))
+                return;
+            std::istringstream hs(line);
+            std::string cell;
+            for (bool first = true; std::getline(hs, cell, ','); first = false)
+                if (!first && !trim(cell).empty())
+                    cols.insert(trim(cell));
+            while (std::getline(f, line)) {
+                std::istringstream rs(line);
+                if (std::getline(rs, cell, ',') && !trim(cell).empty())
+                    rows.insert(trim(cell));
+            }
+        };
+        std::set<std::string> pos_states, pos_rows, del_states, del_rows;
+        keys(actuators, pos_states, pos_rows);
+        keys(delays, del_states, del_rows);
+        for (const auto& st : pos_states) {
+            const auto m = ac.positionsForState(st);
+            if (m.empty())
+                continue;
             OUT << "positions " << q(st) << " (" << m.size() << ")\n";
             for (const auto& [role, p] : m)
                 OUT << "  " << q(role) << " = " << p << "\n";
         }
-        for (const auto& [st, m] : ac.state_actuator_delays_)
-            for (const auto& [role, d] : m)
-                OUT << "delay " << q(st) << " " << q(role) << " = " << num(d) << "\n";
+        for (const auto& st : del_states)
+            for (const auto& role : del_rows) {
+                const double d = ac.delayForRole(st, role);
+                if (d > 0.0)
+                    OUT << "delay " << q(st) << " " << q(role) << " = " << num(d) << "\n";
+            }
         // The lookups callers actually use: exact, case-folded, and unknown.
         for (const auto& s : cfg.states) {
             std::string lower = s.name;
