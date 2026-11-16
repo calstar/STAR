@@ -250,7 +250,12 @@ def dump(out: list[str], title: str, conns: list[bytes]) -> None:
     del tails
 
 
-def wait_connected(db, svc, cap_s: float) -> bool:
+def wait_connected(db, svc, log: Path, cap_s: float) -> bool:
+    """True once the service has connected to the stand-in. False at once if it exits, or if its
+    log shows it dialling some other Elodin port (a config value that beats the CLI); otherwise
+    wait up to cap_s, which is long because emulated (amd64 on arm64) start-up is slow.
+    """
+    import re
     import time
 
     end = time.monotonic() + cap_s
@@ -258,6 +263,13 @@ def wait_connected(db, svc, cap_s: float) -> bool:
         if db.wait_conn(1, 0.2):
             return True
         if not svc.alive():
+            return db.wait_conn(1, 0.5)
+        try:
+            text = log.read_text(errors="replace")
+        except OSError:
+            text = ""
+        ports = re.findall(r"Connecting to Elodin database at [0-9.]+:(\d+)", text)
+        if any(int(p) != db.port for p in ports):
             return db.wait_conn(1, 0.5)
     return False
 
@@ -375,12 +387,12 @@ def main(binp: Path, src: Path, work: Path, which: str) -> int:
                 d / "service.log",
             ) as svc:
                 # Generous windows: under emulation (amd64 on arm64) calibration_service takes
-                # well over 15 s to reach its first connect. A service that exits (t7_bridge with
-                # no T7) stops the wait at once; one dialling another port waits out the cap.
-                if not wait_connected(db, svc, 60.0):
+                # minutes to reach its first connect. A service that exits (t7_bridge with no T7),
+                # or whose log shows it dialling another port, stops the wait at once.
+                if not wait_connected(db, svc, d / "service.log", 300.0):
                     out.append(f"\n## {title}: never connected")
                     continue
-                conns = wait_msgs_quiet(db, 3.0, 120)
+                conns = wait_msgs_quiet(db, 5.0, 300)
         finally:
             db.close()
         # Independent clients of one service connect in a racy order; order them by content.
