@@ -1,0 +1,6 @@
+{
+  "error": "Error: Invalid TOML document: trying to redefine an already defined table or value\n\n2:  sensor_port = 5006\n3:  sensor_port = 5007\n    ^\n",
+  "logs": [
+    "error: Failed to read config: \"Error: Invalid TOML document: trying to redefine an already defined table or value\\n\\n2:  sensor_port = 5006\\n3:  sensor_port = 5007\\n    ^\\n\""
+  ]
+}

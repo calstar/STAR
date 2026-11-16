@@ -1,0 +1,5 @@
+=== args --config ../../../config/profiles/digital-twin/config.toml --state Idle fixtures/bad/scripts/no_such.script
+=== stdout
+=== stderr
+cannot read script: fixtures/bad/scripts/no_such.script
+=== exit 2

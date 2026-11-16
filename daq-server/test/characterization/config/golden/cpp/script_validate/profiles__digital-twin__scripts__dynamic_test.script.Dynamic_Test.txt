@@ -1,0 +1,40 @@
+=== script ../../../config/profiles/digital-twin/scripts/dynamic_test.script as state "Dynamic Test"
+parse.ok = true
+parse.diag.count = 0
+top = [4, 6) empty=false max_depth=1
+stmt[0] Assign @1:1 var=0 expr=0 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[1] OpenValve @3:5 var=-1 expr=-1 slug=2 body=[-1, -1) else=[-1, -1)
+stmt[2] Delay @4:5 var=-1 expr=6 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[3] CloseValve @5:5 var=-1 expr=-1 slug=3 body=[-1, -1) else=[-1, -1)
+stmt[4] Delay @6:5 var=-1 expr=7 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[5] While @2:1 var=-1 expr=5 slug=-1 body=[0, 4) else=[-1, -1)
+expr[0] Pressure @1:9 number=0 var=-1 slug=0 op=+ lhs=-1 rhs=-1
+expr[1] Pressure @2:7 number=0 var=-1 slug=1 op=+ lhs=-1 rhs=-1
+expr[2] Var @2:28 number=0 var=0 slug=-1 op=+ lhs=-1 rhs=-1
+expr[3] Number @2:36 number=0.7 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[4] Binary @2:34 number=0 var=-1 slug=-1 op=* lhs=2 rhs=3
+expr[5] Binary @2:26 number=0 var=-1 slug=-1 op=< lhs=1 rhs=4
+expr[6] Number @4:11 number=0.4 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[7] Number @6:11 number=2.5 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+block_items = [1, 2, 3, 4, 0, 5]
+slug[0] HIGH_PRESS ns=sensor @1:18 len=10
+slug[1] GN2_HIGH ns=sensor @2:16 len=8
+slug[2] HIGH_PRESS_CTRL ns=actuator @3:16 len=15
+slug[3] HIGH_PRESS_CTRL ns=actuator @5:17 len=15
+variable[0] start
+canonical:
+(seq (set start (pressure HIGH_PRESS)) (while (< (pressure GN2_HIGH) (* start 0.7)) (seq (open HIGH_PRESS_CTRL) (delay 0.4) (close HIGH_PRESS_CTRL) (delay 2.5))))
+validate.diag.count = 0
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 13 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0

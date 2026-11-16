@@ -1,0 +1,38 @@
+# [fire] names a state that does not exist; [flow] returns into the flow state itself;
+# two states carry is_flow; no state is the boot state.
+[fire]
+state = "Blast"
+expiry_target = "Nowhere"
+duration_ms = 6000
+gate_actuator = "Not A Valve"
+
+[flow]
+return_target = "Flow Test"
+duration_ms = 0
+max_ms = 500
+
+[[states]]
+id = 1
+name = "Idle"
+
+[[states]]
+id = 13
+name = "Flow Test"
+is_flow = true
+
+[[states]]
+id = 14
+name = "Flow Test 2"
+is_flow = true
+
+[[states]]
+id = 300
+name = "Out Of Range"
+
+[[states]]
+id = 5
+name = ""
+
+[[states]]
+id = 6
+name = "Idle"

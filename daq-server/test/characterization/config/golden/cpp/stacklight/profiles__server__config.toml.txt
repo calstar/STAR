@@ -1,0 +1,15 @@
+getTomlValue(stacklight_service, interval_ms) = "1000" stoi=1000
+getTomlValue(stacklight_service, target_ip) = "192.168.2.70"
+getTomlValue(stacklight_service, target_port) = "5005" stoi=5005
+getTomlValue(stacklight_service, elodin_host) = "127.0.0.1"
+getTomlValue(stacklight_service, elodin_port) = "2240" stoi=2240
+getTomlValue(database, port) = "2240"
+getTomlValue(network, sensor_port) = "5006"
+getTomlValue(server_heartbeat, broadcast_ip) = "192.168.2.255"
+getTomlValue(no_such_section, x) = "<fallback>"
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

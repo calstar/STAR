@@ -1,0 +1,6 @@
+{
+  "error": "Error: ENOENT: no such file or directory, open '<AREA>/fixtures/bad/does_not_exist.toml'",
+  "logs": [
+    "error: Failed to read config: \"Error: ENOENT: no such file or directory, open '<AREA>/fixtures/bad/does_not_exist.toml'\""
+  ]
+}

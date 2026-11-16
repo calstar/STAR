@@ -1,0 +1,1018 @@
+{
+  "actuators": {
+    "logs": [],
+    "value": ",Idle,Armed,Press Standby,Dome Press,COPV Fill,Fuel Press,LOX Press,Vent,Dome Vent,High Press Vent,Fuel Tank Vent,Ready,Fire,Flow Test,Dynamic Test\nFuel Upstream,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE\nHigh Press CTRL,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nDome CTRL,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nFuel Main,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE\nfuel vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE\nlox vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nOx Upstream,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE\nFuel Fill Press,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nHigh Press Vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nFuel Fill Vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nLow Press Vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nOx Main,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE\nDome CTRL Vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\n"
+  },
+  "delays": {
+    "logs": [],
+    "value": ",Idle,Armed,Press Standby,Dome Press,COPV Fill,Fuel Press,LOX Press,Vent,Dome Vent,High Press Vent,Fuel Tank Vent,Ready,Fire,Flow Test,Dynamic Test\nFuel Upstream,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nHigh Press CTRL,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nDome CTRL,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nFuel Main,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0\nfuel vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nlox vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nOx Upstream,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nFuel Fill Press,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nHigh Press Vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nFuel Fill Vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nLow Press Vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\nOx Main,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0\nDome CTRL Vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+  },
+  "getActiveProfileName": {
+    "logs": [],
+    "value": "digital-twin"
+  },
+  "listStateScripts": {
+    "logs": [],
+    "value": [
+      "dynamic_test.script"
+    ]
+  },
+  "readActiveProfile": {
+    "logs": [
+      "log: 🌱 Materialized scripts/dynamic_test.script from profile \"digital-twin\""
+    ],
+    "value": {
+      "abort_pts": {
+        "Fuel Upstream": 400,
+        "Ox Upstream": 400
+      },
+      "actuator_abbrev": {
+        "FF": "Fuel Fill",
+        "FM": "Fuel Main",
+        "FP": "Fuel Press",
+        "FV": "Fuel Vent",
+        "OM": "LOX Main",
+        "OP": "LOX Press",
+        "OV": "LOX Vent"
+      },
+      "actuator_roles": {
+        "Dome CTRL": [
+          "NC",
+          3,
+          12
+        ],
+        "Dome CTRL Vent": [
+          "NC",
+          10,
+          14
+        ],
+        "Fuel Fill Press": [
+          "NC",
+          2,
+          14
+        ],
+        "Fuel Fill Vent": [
+          "NC",
+          5,
+          14
+        ],
+        "Fuel Main": [
+          "NC",
+          6,
+          12
+        ],
+        "Fuel Upstream": [
+          "NC",
+          1,
+          12
+        ],
+        "High Press CTRL": [
+          "NC",
+          2,
+          12
+        ],
+        "High Press Vent": [
+          "NC",
+          3,
+          14
+        ],
+        "Low Press Vent": [
+          "NC",
+          6,
+          14
+        ],
+        "Ox Main": [
+          "NC",
+          7,
+          14
+        ],
+        "Ox Upstream": [
+          "NC",
+          10,
+          12
+        ],
+        "fuel vent": [
+          "NO",
+          7,
+          12
+        ],
+        "lox vent": [
+          "NO",
+          9,
+          12
+        ]
+      },
+      "actuator_service": {
+        "bind_address": "0.0.0.0",
+        "port": 9998
+      },
+      "adc": {
+        "absolute_5v_v": 5,
+        "internal_v": 2.5,
+        "vdd_nominal_v": 5
+      },
+      "boards": {
+        "actuator_board": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "board_id": 11,
+          "enable_serial_printing": true,
+          "enabled": false,
+          "ip": "192.168.2.11",
+          "listen_port": 5005,
+          "mac": "4a:27:e2:88:39:5d",
+          "necessary_for_abort": false,
+          "num_actuators": 10,
+          "send_port": 5005,
+          "type": "ACTUATOR",
+          "voltage_reference": 0
+        },
+        "actuator_board_2": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "board_id": 12,
+          "designated_survivor": true,
+          "enable_serial_printing": true,
+          "enabled": true,
+          "ip": "192.168.2.12",
+          "listen_port": 5005,
+          "mac": "3e:84:27:cc:20:9d",
+          "necessary_for_abort": false,
+          "num_actuators": 10,
+          "send_port": 5005,
+          "type": "ACTUATOR",
+          "voltage_reference": 0
+        },
+        "actuator_board_3": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "board_id": 13,
+          "enable_serial_printing": true,
+          "enabled": false,
+          "ip": "192.168.2.13",
+          "listen_port": 5005,
+          "mac": "",
+          "necessary_for_abort": false,
+          "num_actuators": 10,
+          "send_port": 5005,
+          "type": "ACTUATOR",
+          "voltage_reference": 0
+        },
+        "actuator_board_4": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "board_id": 14,
+          "enable_serial_printing": true,
+          "enabled": true,
+          "ip": "192.168.2.14",
+          "listen_port": 5005,
+          "mac": "da:3b:da:4d:fe:b5",
+          "necessary_for_abort": false,
+          "num_actuators": 10,
+          "send_port": 5005,
+          "type": "ACTUATOR",
+          "voltage_reference": 0
+        },
+        "ball_valve_board": {
+          "active_connectors": [
+            1,
+            2
+          ],
+          "board_id": 71,
+          "designated_survivor": false,
+          "enable_serial_printing": 0,
+          "enabled": false,
+          "ip": "192.168.2.71",
+          "listen_port": 5005,
+          "mac": "fc:b4:67:73:cf:63",
+          "necessary_for_abort": false,
+          "send_port": 5005,
+          "type": "BALL_VALVE",
+          "voltage_reference": 0
+        },
+        "encoder_board": {
+          "active_connectors": [
+            1,
+            2
+          ],
+          "board_id": 61,
+          "designated_survivor": false,
+          "enable_serial_printing": false,
+          "enabled": true,
+          "ip": "192.168.2.61",
+          "listen_port": 5005,
+          "mac": "",
+          "necessary_for_abort": false,
+          "send_port": 5005,
+          "type": "ENCODER",
+          "voltage_reference": 1
+        },
+        "lc_board": {
+          "active_connectors": [
+            1
+          ],
+          "board_id": 41,
+          "designated_survivor": false,
+          "enable_serial_printing": true,
+          "enabled": true,
+          "ip": "192.168.2.41",
+          "mac": "46:1b:f6:91:06:ed",
+          "necessary_for_abort": false,
+          "send_port": 5005,
+          "type": "LC",
+          "voltage_reference": 1
+        },
+        "lc_board_2": {
+          "active_connectors": [
+            1
+          ],
+          "board_id": 42,
+          "designated_survivor": false,
+          "enable_serial_printing": true,
+          "enabled": true,
+          "ip": "192.168.2.42",
+          "mac": "36:85:18:70:fd:31",
+          "necessary_for_abort": false,
+          "send_port": 5005,
+          "type": "LC",
+          "voltage_reference": 0
+        },
+        "pt_board": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "board_id": 21,
+          "designated_survivor": false,
+          "enable_serial_printing": false,
+          "enabled": true,
+          "ip": "192.168.2.21",
+          "mac": "4a:27:e2:3a:d5:49",
+          "necessary_for_abort": true,
+          "pt_type": "0-5V ratiometric",
+          "send_port": 5005,
+          "type": "PT",
+          "voltage_reference": 1
+        },
+        "pt_board_2": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "adc_ref_voltage": 2.5,
+          "board_id": 22,
+          "enable_serial_printing": true,
+          "enabled": true,
+          "hp_pt_full_scale_psi": 5000,
+          "hp_pt_sense_resistor_ohms": 120,
+          "ip": "192.168.2.22",
+          "mac": "da:3b:da:4c:fb:6d",
+          "pt_type": "4-20 mA absolute",
+          "send_port": 5005,
+          "type": "PT",
+          "voltage_reference": 0
+        },
+        "rtd_board": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "board_id": 31,
+          "designated_survivor": false,
+          "enable_serial_printing": true,
+          "enabled": true,
+          "ip": "192.168.2.31",
+          "mac": "4a:27:e2:3a:ad:71",
+          "necessary_for_abort": false,
+          "send_port": 5005,
+          "type": "RTD",
+          "voltage_reference": 0
+        },
+        "rtd_board_2": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "board_id": 32,
+          "designated_survivor": false,
+          "enable_serial_printing": true,
+          "enabled": false,
+          "ip": "192.168.2.32",
+          "mac": "",
+          "necessary_for_abort": false,
+          "send_port": 5005,
+          "type": "RTD",
+          "voltage_reference": 0
+        },
+        "tc_board": {
+          "active_connectors": [
+            2,
+            3,
+            4,
+            5
+          ],
+          "board_id": 51,
+          "designated_survivor": false,
+          "enable_serial_printing": true,
+          "enabled": true,
+          "ip": "192.168.2.51",
+          "mac": "",
+          "necessary_for_abort": false,
+          "send_port": 5005,
+          "type": "TC",
+          "voltage_reference": 0
+        },
+        "tc_board_2": {
+          "active_connectors": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10
+          ],
+          "board_id": 52,
+          "designated_survivor": false,
+          "enable_serial_printing": true,
+          "enabled": false,
+          "ip": "192.168.2.52",
+          "mac": "",
+          "necessary_for_abort": false,
+          "send_port": 5005,
+          "type": "TC",
+          "voltage_reference": 0
+        }
+      },
+      "calibration": {
+        "enabled": true,
+        "environmental": {
+          "aging_factor": 1,
+          "humidity": 50,
+          "min_consensus_sensors": 2,
+          "mounting_torque": 1,
+          "temperature": 25,
+          "vibration": 0
+        },
+        "exclude_hp_pt": true,
+        "lc": {
+          "csv_paths": [],
+          "full_scale_value": 300,
+          "json_dir": "scripts/calibration/calibrations/lc",
+          "pga_gain": 32,
+          "sensitivity_mv_per_v": 2
+        },
+        "orchestrator": {
+          "agreement_threshold": 0.6,
+          "auto_save_interval_sec": 300,
+          "consensus_enabled": true,
+          "drift_glr_threshold": 3,
+          "max_points": 30,
+          "min_points": 5,
+          "min_r_squared": 0.95,
+          "rls_forgetting_factor": 0.995,
+          "self_cal_alpha_threshold": 0.6,
+          "status_interval_sec": 30,
+          "target_points": 15,
+          "target_r_squared": 0.99
+        },
+        "prior_from_polynomial": true,
+        "pt": {
+          "csv_paths": [
+            "../firmware/PT_Board/Calibration/PT Calibration Attempt 2026-02-04_test2.csv"
+          ],
+          "json_dir": "scripts/calibration/calibrations"
+        },
+        "rtd": {
+          "adc_ref_voltage": 2.5,
+          "csv_paths": [],
+          "excitation_ua": 1000,
+          "json_dir": "scripts/calibration/calibrations/rtd",
+          "r0_ohm": 1000
+        },
+        "sidecar": {
+          "adc_forward_interval_ms": 200,
+          "enabled": true,
+          "host": "127.0.0.1",
+          "port": 8100,
+          "reconnect_interval_ms": 5000,
+          "relay_host": "127.0.0.1",
+          "relay_port": 9090,
+          "write_interval_sec": 0.01,
+          "write_to_elodin": false
+        },
+        "tc": {
+          "adc_ref_voltage": 2.5,
+          "csv_paths": [],
+          "json_dir": "scripts/calibration/calibrations/tc"
+        },
+        "use_robust_stack": true
+      },
+      "calibration_full_scale_pt_board": {
+        "Dome CTRL": 1000,
+        "Fuel Fill Vent": 1000,
+        "Fuel Upstream": 1000,
+        "Low Press": 1000
+      },
+      "calibration_model_lc_board": {
+        "Fuel Scale": "cubic"
+      },
+      "calibration_model_lc_board_2": {
+        "LOX Scale": "cubic"
+      },
+      "calibration_model_pt_board": {
+        "Dome CTRL": "cubic",
+        "Fuel Fill Vent": "physics",
+        "Fuel Upstream": "cubic",
+        "LOX Upstream": "cubic",
+        "Low Press": "physics"
+      },
+      "calibration_model_pt_board_2": {
+        "Dome Mid": "cubic",
+        "Excitation V": "physics",
+        "GN2 High": "cubic",
+        "High Press": "cubic"
+      },
+      "config_broadcast_service": {
+        "backend_url": "http://127.0.0.1:8082",
+        "enabled": true,
+        "interval_ms": 1000
+      },
+      "controller": {
+        "P_copv_min_pa": 0,
+        "altitude_goal": 0,
+        "command_type": "THRUST_DESIRED",
+        "controller_config_path": "",
+        "controller_loop_hz": 100,
+        "controller_service_url": "http://localhost:8000",
+        "duty_sweep_enabled": false,
+        "duty_sweep_step_duration_sec": 2,
+        "duty_sweep_steps": [
+          [
+            0.1,
+            0.1
+          ],
+          [
+            0.3,
+            0.2
+          ],
+          [
+            0.5,
+            0.4
+          ],
+          [
+            0.3,
+            0.3
+          ],
+          [
+            0.1,
+            0.1
+          ]
+        ],
+        "engine_lut_path": "output/lut/engine_performance.npz",
+        "fallback_fuel_duty_cycle": 0,
+        "fallback_ox_duty_cycle": 0,
+        "lut_path": "output/lut/controller_policy_fsw.bin",
+        "pressure_fuel_target": 0,
+        "pressure_ox_target": 0,
+        "pwm_duration_ms": 2000,
+        "pwm_frequency_hz": 6,
+        "thrust_curve_path": "output/lut/thrust_curve.csv",
+        "thrust_desired": 1000,
+        "use_cpp_controller": true
+      },
+      "controller_service": {
+        "fire_duration_ms": 6000,
+        "fire_extended_ms": 10000,
+        "port": 9999,
+        "sequencer_owns_valves": true
+      },
+      "daq_bridge": {
+        "publish": [
+          "pt_raw",
+          "tc_raw",
+          "rtd_raw",
+          "lc_raw",
+          "actuator_status",
+          "actuator_cal",
+          "encoder_raw"
+        ]
+      },
+      "data_logger_service": {
+        "enabled": true,
+        "ws_url": "ws://127.0.0.1:8081"
+      },
+      "database": {
+        "auto_flush_interval_ms": 100,
+        "connection_retry_attempts": 3,
+        "connection_retry_delay_ms": 1000,
+        "host": "127.0.0.1",
+        "max_buffer_size": 4096,
+        "port": 2240
+      },
+      "discovery": {
+        "discovery_timeout_seconds": 30,
+        "enabled": true,
+        "ip_range_end": 150,
+        "ip_range_start": 100,
+        "mode": "hybrid",
+        "network_interface": "auto",
+        "subnet": "192.168.2.0/24"
+      },
+      "display": {
+        "adc_bits": 32,
+        "display_ma_samples": 1,
+        "graph_ma_samples": 1,
+        "only_show_actuators_with_roles": true,
+        "only_show_pt_with_roles": true,
+        "window_seconds": 26,
+        "y_axis_autoscale": true,
+        "y_axis_max": 700,
+        "y_axis_min": 0
+      },
+      "fire": {
+        "duration_ms": 1000,
+        "expiry_target": "Armed",
+        "extended_ms": 1000,
+        "gate_actuator": "Fuel Main",
+        "state": ""
+      },
+      "flow": {
+        "duration_ms": 1000,
+        "gate_actuator": "Fuel Main",
+        "max_ms": 10000,
+        "return_target": "Ready"
+      },
+      "gui": {
+        "downsample_mode": "envelope",
+        "encoder_points_per_second": 100,
+        "groups": {
+          "Fuel": [
+            "Fuel Upstream"
+          ],
+          "LOX": [
+            "LOX Upper",
+            "LOX Mid",
+            "LOX Lower",
+            "COPV RTD"
+          ]
+        },
+        "points_per_second": 20,
+        "pressure_bars": [
+          {
+            "color": "#ff0000",
+            "label": "FF Vent",
+            "limits": "",
+            "role": "Fuel Fill Vent"
+          },
+          {
+            "color": "#00ff2a",
+            "label": "Fuel Up",
+            "limits": "Fuel_Upstream",
+            "role": "Fuel Upstream"
+          },
+          {
+            "color": "#fff700",
+            "label": "Dome CTRL",
+            "limits": "",
+            "role": "Dome CTRL"
+          },
+          {
+            "color": "#4c00ff",
+            "label": "Dome Mid",
+            "limits": "",
+            "role": "Dome Mid"
+          },
+          {
+            "color": "#fb00ff",
+            "label": "GN2 High",
+            "limits": "GN2_High",
+            "role": "GN2 High"
+          },
+          {
+            "color": "#00ffd5",
+            "label": "High Press",
+            "limits": "",
+            "role": "High Press"
+          },
+          {
+            "color": "#ff0088",
+            "label": "Low Press",
+            "limits": "",
+            "role": "Low Press"
+          },
+          {
+            "color": "#888888",
+            "label": "LOX Upstream",
+            "limits": "",
+            "role": "LOX Upstream"
+          }
+        ],
+        "tabs": [
+          "unified",
+          "boards",
+          "config",
+          "calibration",
+          "feed-char",
+          "session",
+          "video"
+        ]
+      },
+      "heartbeat_service": {
+        "backend_url": "http://127.0.0.1:8082",
+        "broadcast_ip": "192.168.2.255",
+        "broadcast_port": 5005,
+        "enabled": true,
+        "interval_ms": 200
+      },
+      "logs": {
+        "backend_udp_port": 8092
+      },
+      "network": {
+        "actuator_cmd_port": 5005,
+        "bind_ip": "0.0.0.0",
+        "buffer_size": 1024,
+        "sensor_port": 5006
+      },
+      "phase2": {
+        "absolute_drift_threshold_psi": 2,
+        "consensus_threshold_psi": 1,
+        "consensus_update_rate": 0.1,
+        "drift_threshold": 2,
+        "ema_smoothing_alpha": 0.02,
+        "enabled": false,
+        "forgetting_factor": 0.995,
+        "min_residuals_for_drift_check": 10,
+        "process_noise": 0.000001,
+        "save_interval_seconds": 300
+      },
+      "pressure_limits": {
+        "Fuel_Upstream": {
+          "MEOP": 650,
+          "NOP": 540,
+          "POP": 750,
+          "show_in_top_bar": true
+        },
+        "GN2_High": {
+          "MEOP": 5000,
+          "NOP": 4000,
+          "POP": 1000,
+          "show_in_top_bar": true
+        }
+      },
+      "pressure_mappings": {
+        "ETH": 1,
+        "GN2": 6,
+        "LOX": 5
+      },
+      "routing": {
+        "actuator_cal": {
+          "channels": 20,
+          "description": "Calibrated actuator current (amps) from calibration_service",
+          "packet_id": [
+            49,
+            0
+          ]
+        },
+        "actuator_status": {
+          "channels": 20,
+          "description": "Actuator current sense readings",
+          "packet_id": [
+            48,
+            0
+          ]
+        },
+        "encoder_raw": {
+          "channels": 2,
+          "description": "Raw encoder angle (0-4095) — AS5600 12-bit",
+          "packet_id": [
+            36,
+            0
+          ]
+        },
+        "lc_calibrated": {
+          "channels": 20,
+          "description": "Calibrated LC force",
+          "packet_id": [
+            35,
+            16
+          ]
+        },
+        "lc_raw": {
+          "channels": 20,
+          "description": "Raw LC ADC counts",
+          "packet_id": [
+            35,
+            0
+          ]
+        },
+        "pt_calibrated": {
+          "channels": 30,
+          "description": "Calibrated PT pressure (PSI) — 0x11..0x1E (board1: 0x11-0x17, board2: 0x1B-0x1E)",
+          "packet_id": [
+            32,
+            16
+          ]
+        },
+        "pt_raw": {
+          "channels": 14,
+          "description": "Raw PT ADC counts — 0x01..0x0E (board1: 1-7, board2+offset10: 11-14)",
+          "packet_id": [
+            32,
+            0
+          ]
+        },
+        "rtd_raw": {
+          "channels": 20,
+          "description": "Raw RTD resistance counts",
+          "packet_id": [
+            34,
+            0
+          ]
+        },
+        "tc_raw": {
+          "channels": 20,
+          "description": "Raw TC ADC counts",
+          "packet_id": [
+            33,
+            0
+          ]
+        }
+      },
+      "sensor_roles_encoder_board": {
+        "Encoder 1": 1,
+        "Encoder 2": 2
+      },
+      "sensor_roles_lc_board": {
+        "Fuel Scale": 1
+      },
+      "sensor_roles_lc_board_2": {
+        "LOX Scale": 1
+      },
+      "sensor_roles_pt_board": {
+        "Dome CTRL": 3,
+        "Fuel Fill Vent": 1,
+        "Fuel Upstream": 2,
+        "LOX Upstream": 5,
+        "Low Press": 4
+      },
+      "sensor_roles_pt_board_2": {
+        "Dome Mid": 3,
+        "Excitation V": 2,
+        "GN2 High": 1,
+        "High Press": 4
+      },
+      "sensor_roles_rtd_board": {
+        "COPV RTD": 1,
+        "LOX Lower": 4,
+        "LOX Mid": 3,
+        "LOX Upper": 2
+      },
+      "sensor_roles_tc_board": {
+        "Chamber Mid TC 1": 2,
+        "Chamber Mid TC 2": 3,
+        "Chamber Throat TC 1": 4,
+        "Chamber Throat TC 2": 5
+      },
+      "server_heartbeat": {
+        "broadcast_ip": "192.168.2.255",
+        "broadcast_port": 5005,
+        "interval_ms": 200
+      },
+      "sim_pt_targets": {
+        "1": 500,
+        "2": 450,
+        "3": 480,
+        "4": 400,
+        "5": 500,
+        "6": 4000,
+        "7": 480,
+        "8": 400,
+        "9": 380,
+        "10": 380,
+        "11": 3500,
+        "12": 24,
+        "13": 1000,
+        "14": 4000
+      },
+      "state_machine": {
+        "actuator_csv": "config/state_machine_actuators.csv",
+        "actuator_delay_csv": "config/state_machine_actuator_delays.csv",
+        "transitions_csv": "config/state_transitions.csv"
+      },
+      "states": [
+        {
+          "id": 1,
+          "is_boot": true,
+          "name": "Idle",
+          "panel_col": 0,
+          "panel_row": 0
+        },
+        {
+          "id": 2,
+          "name": "Armed",
+          "panel_col": 0,
+          "panel_row": 1
+        },
+        {
+          "id": 3,
+          "name": "Press Standby",
+          "panel_col": 0,
+          "panel_row": 2
+        },
+        {
+          "id": 4,
+          "name": "Dome Press",
+          "panel_col": 1,
+          "panel_row": 2
+        },
+        {
+          "id": 5,
+          "name": "COPV Fill",
+          "panel_col": 2,
+          "panel_row": 2
+        },
+        {
+          "id": 6,
+          "name": "Fuel Press",
+          "panel_col": 3,
+          "panel_row": 2
+        },
+        {
+          "id": 14,
+          "name": "LOX Press",
+          "panel_col": 3,
+          "panel_row": 1
+        },
+        {
+          "id": 7,
+          "name": "Vent",
+          "panel_col": 0,
+          "panel_row": 3
+        },
+        {
+          "id": 8,
+          "name": "Dome Vent",
+          "panel_col": 1,
+          "panel_row": 3
+        },
+        {
+          "id": 9,
+          "name": "High Press Vent",
+          "panel_col": 2,
+          "panel_row": 3
+        },
+        {
+          "id": 10,
+          "name": "Fuel Tank Vent",
+          "panel_col": 3,
+          "panel_row": 3
+        },
+        {
+          "id": 11,
+          "name": "Ready",
+          "panel_col": 0,
+          "panel_row": 4
+        },
+        {
+          "id": 12,
+          "name": "Fire",
+          "panel_col": 1,
+          "panel_row": 4
+        },
+        {
+          "id": 13,
+          "is_flow": true,
+          "name": "Flow Test"
+        },
+        {
+          "id": 15,
+          "name": "Dynamic Test",
+          "panel_col": 3,
+          "panel_row": 0,
+          "script_file": "dynamic_test.script",
+          "script_return_target": "Press Standby",
+          "script_timeout_ms": 10000,
+          "script_timeout_target": "Press Standby"
+        }
+      ],
+      "system": {
+        "mode": "GROUND",
+        "state": "GSE"
+      },
+      "time_sync": {
+        "log_interval_s": 10,
+        "max_batch_age_s": 20,
+        "max_plausible_gap_s": 60,
+        "mode": "board-clock",
+        "resync_threshold_ms": 1000,
+        "window_seconds": 10
+      }
+    }
+  },
+  "readStateScriptRefusals": [
+    [
+      "../config.toml",
+      "Error: Invalid script name \"../config.toml\" (letters, digits, _ and -, ending .script)"
+    ],
+    [
+      "x.txt",
+      "Error: Invalid script name \"x.txt\" (letters, digits, _ and -, ending .script)"
+    ],
+    [
+      "no_such.script",
+      "accepted"
+    ]
+  ],
+  "scripts": {
+    "dynamic_test.script": {
+      "logs": [],
+      "value": "start = pressure(HIGH_PRESS)\nwhile pressure(GN2_HIGH) < start * 0.7:\n    open_valve(HIGH_PRESS_CTRL)\n    delay(0.4)\n    close_valve(HIGH_PRESS_CTRL)\n    delay(2.5)"
+    }
+  },
+  "transitions": {
+    "logs": [],
+    "value": ",Idle,Armed,Press Standby,Dome Press,COPV Fill,Fuel Press,LOX Press,Vent,Dome Vent,High Press Vent,Fuel Tank Vent,Ready,Fire,Flow Test,Dynamic Test\nIdle,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0\nArmed,1,1,1,0,0,0,0,1,0,0,0,0,0,0,0\nPress Standby,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1\nDome Press,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0\nCOPV Fill,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0\nFuel Press,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0\nLOX Press,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0\nVent,0,0,1,0,0,0,0,1,1,1,1,1,0,0,0\nDome Vent,0,0,1,0,0,0,0,1,1,0,0,0,0,0,0\nHigh Press Vent,0,0,1,0,0,0,0,1,0,1,0,0,0,0,0\nFuel Tank Vent,0,0,1,0,0,0,0,1,0,0,1,0,0,0,0\nReady,0,0,1,0,0,0,0,0,0,0,0,1,1,1,0\nFire,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0\nFlow Test,0,0,1,0,0,0,0,0,0,0,0,1,0,1,0\nDynamic Test,0,0,1,0,0,0,0,0,0,0,0,0,0,0,1\n"
+  },
+  "undeployedChanges": {
+    "logs": [],
+    "value": [
+      "config.toml",
+      "state_machine_actuator_delays.csv",
+      "state_machine_actuators.csv",
+      "state_transitions.csv"
+    ]
+  },
+  "validateActiveProfile": {
+    "logs": [],
+    "value": {
+      "errors": 0,
+      "issues": [
+        {
+          "level": "warn",
+          "message": "No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer's abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards' own independent abort logic is unaffected.",
+          "page": "state"
+        }
+      ],
+      "profile": "digital-twin",
+      "warnings": 1
+    }
+  }
+}

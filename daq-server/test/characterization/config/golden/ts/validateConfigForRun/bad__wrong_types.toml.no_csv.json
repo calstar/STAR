@@ -1,0 +1,15 @@
+{
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "A state has no id (or one outside 1-254), so the sequencer cannot load it — use \"Fix the ids\" on the State Machine tab.",
+      "page": "state"
+    },
+    {
+      "level": "warn",
+      "message": "No state is flagged Abort, so this rig has no abort states. Nothing falls back to the built-in Engine / GSE / Emergency aborts: entering a state never triggers the sequencer's abort broadcast, and any abort control the config declares no state for is disabled in the GUI. The boards' own independent abort logic is unaffected.",
+      "page": "state"
+    }
+  ]
+}

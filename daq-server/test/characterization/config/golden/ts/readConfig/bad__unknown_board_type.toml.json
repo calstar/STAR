@@ -1,0 +1,57 @@
+{
+  "logs": [],
+  "value": {
+    "boards": {
+      "lowercase_board": {
+        "active_connectors": [
+          1
+        ],
+        "board_id": 33,
+        "ip": "192.168.2.33",
+        "type": "pt"
+      },
+      "untyped_board": {
+        "active_connectors": [
+          1
+        ],
+        "board_id": 32,
+        "ip": "192.168.2.32"
+      },
+      "widget_board": {
+        "active_connectors": [
+          1,
+          2
+        ],
+        "board_id": 31,
+        "enabled": true,
+        "ip": "192.168.2.31",
+        "type": "WIDGET"
+      }
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    }
+  }
+}

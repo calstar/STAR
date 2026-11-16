@@ -1,0 +1,162 @@
+{
+  "ballValveBoardIds": {
+    "logs": [],
+    "value": []
+  },
+  "perBoard": {
+    "labjack_1": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "LabJack T7 Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": [
+          "scan_rate_hz must be positive.",
+          "channel 1: range must be one of 10, 1, 0.1, 0.01 (volts).",
+          "channel 2: AIN1 is already used by channel 1.",
+          "channel 2: tc_type \"\": only type K thermocouples are converted so far.",
+          "channel 3: ain must be 0-13.",
+          "channel 4: a differential input must be an even AIN (it pairs with the odd one above it).",
+          "channel 4: a 4-20mA PT needs shunt_ohms.",
+          "channel 5: kind \"STRAIN\" must be one of PT, TC, LC, RTD, VOLTAGE.",
+          "channel 6: an RTD needs ljtr_ohms (the LJTick-Resistance's fixed resistor)."
+        ]
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": [
+          "scan_rate_hz must be positive."
+        ]
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": [
+          "channel 1: range must be one of 10, 1, 0.1, 0.01 (volts).",
+          "channel 2: AIN1 is already used by channel 1.",
+          "channel 2: tc_type \"\": only type K thermocouples are converted so far.",
+          "channel 3: ain must be 0-13.",
+          "channel 4: a differential input must be an even AIN (it pairs with the odd one above it).",
+          "channel 4: a 4-20mA PT needs shunt_ohms.",
+          "channel 5: kind \"STRAIN\" must be one of PT, TC, LC, RTD, VOLTAGE.",
+          "channel 6: an RTD needs ljtr_ohms (the LJTick-Resistance's fixed resistor)."
+        ]
+      }
+    }
+  },
+  "t7Channels": {
+    "logs": [],
+    "value": [
+      {
+        "ain": 1,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": "T71_Cal.AIN1",
+        "calField": "pressure_psi",
+        "calLow": 17,
+        "enabled": true,
+        "entity": "T71.AIN1",
+        "kind": "PT",
+        "rawLow": 1,
+        "role": "LOX Tank",
+        "slot": 1
+      },
+      {
+        "ain": 1,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": "T71_Cal.AIN1",
+        "calField": "temperature_c",
+        "calLow": 17,
+        "enabled": true,
+        "entity": "T71.AIN1",
+        "kind": "TC",
+        "rawLow": 1,
+        "role": "Nozzle",
+        "slot": 1
+      },
+      {
+        "ain": 3,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": "T71_Cal.AIN3",
+        "calField": "pressure_psi",
+        "calLow": 19,
+        "enabled": true,
+        "entity": "T71.AIN3",
+        "kind": "PT",
+        "rawLow": 3,
+        "role": "Odd Diff",
+        "slot": 1
+      },
+      {
+        "ain": 4,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": null,
+        "calField": null,
+        "calLow": null,
+        "enabled": true,
+        "entity": "T71.AIN4",
+        "kind": "STRAIN",
+        "rawLow": 4,
+        "role": "Strain",
+        "slot": 1
+      },
+      {
+        "ain": 6,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": "T71_Cal.AIN6",
+        "calField": "temperature_c",
+        "calLow": 22,
+        "enabled": true,
+        "entity": "T71.AIN6",
+        "kind": "RTD",
+        "rawLow": 6,
+        "role": "Line Temp",
+        "slot": 1
+      },
+      {
+        "ain": 14,
+        "boardId": 81,
+        "boardIp": "192.168.2.81",
+        "boardKey": "labjack_1",
+        "calEntity": null,
+        "calField": null,
+        "calLow": null,
+        "enabled": true,
+        "entity": "T71.AIN14",
+        "kind": "CJC",
+        "rawLow": 14,
+        "role": "",
+        "slot": 1
+      }
+    ]
+  },
+  "t7RoleClashes": {
+    "logs": [],
+    "value": []
+  }
+}

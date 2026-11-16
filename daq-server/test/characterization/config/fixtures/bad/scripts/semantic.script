@@ -1,0 +1,8 @@
+y = x + 1
+delay(0)
+delay(-1)
+z = 5 / 0
+if 1 < 2 < 3:
+    delay(1)
+pressure(GN2_HIGH)
+FUEL_MAIN = 3
