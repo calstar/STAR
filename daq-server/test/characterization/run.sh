@@ -24,12 +24,20 @@ leftovers() {
     grep -E 'board_simulator|board_startup_sim|daq_bridge|_service|elodin-db|t7_bridge|tsx .*src/server' |
     grep -v -E 'grep|run\.sh|ctest' || true
 }
+# A socket held by a reparented or renamed child does not match by path, so the test ports are
+# checked too: the stand's fixed ports, the integration test's and every area's private range.
+TEST_PORTS='^(2240|2241|3232|5005|5006|5007|5008|5014|5015|5016|8081|8181|8182|8192|9997|9998|9999|26[3-5][0-9][0-9])$'
+leftover_ports() {
+  command -v lsof >/dev/null || return 0
+  lsof -nP -iTCP -sTCP:LISTEN -iUDP 2>/dev/null | awk 'NR>1 {n=$9; sub(/.*:/,"",n); print n" "$1" pid="$2}' |
+    while read -r port rest; do [[ "$port" =~ $TEST_PORTS ]] && echo "port $port held by $rest"; done | sort -u
+}
 for r in "$HERE"/*/run.sh; do
   [ -f "$r" ] || continue
   area="$(basename "$(dirname "$r")")"
   echo "── $area/run.sh"
   bash "$r" || { echo "   FAILED: $r"; fail=1; }
-  left="$(leftovers)"
+  left="$(leftovers; leftover_ports)"
   if [ -n "$left" ]; then
     echo "   FAILED: $area left processes running after its run:"
     echo "$left" | sed 's/^/     /'
