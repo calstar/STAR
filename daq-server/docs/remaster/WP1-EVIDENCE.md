@@ -297,7 +297,7 @@ The grep-level argument above is not the whole story. Two mechanisms walk up to
 |---|---|---|
 | (a) | `cmake -S daq-server -B /tmp/wp1-build-{before,after} -Wno-dev && cmake --build … -j8`, fresh dirs, before (`b2599617`) and after the deletion | both exit 0; 29 `warning:` lines each, identical after normalising the build dir (`diff` empty); `ls bin | sort` identical, 46 files. `git status` clean after each. |
 | (b) | `rm -rf backend/node_modules frontend/node_modules`; `npm ci --no-audit --no-fund` in backend then frontend; `npm test` in each | `npm ci` exit 0 both. backend: 356 passed, 9 skipped, **1 failed** = "this machine's LAN name > on macOS is the Bonjour name", the AGENT-RULES known-red on this Mac. frontend: 50 files / 488 tests passed; `npm run test:build` exit 0. |
-| (c) | `bash daq-server/test/characterization/linux/linux_gate.sh --areas pipeline,lifecycle wp/WP1-junk` (takes the stack lock itself) | see report |
+| (c) | `bash daq-server/test/characterization/linux/linux_gate.sh --areas pipeline,lifecycle wp/WP1-junk` (takes the stack lock itself), tree `35a8b40d` (the deletions + `.gitignore`) | `npm ok`, `build ok`, `characterization ok`: `LIFECYCLE: PASS`, `pipeline[pt]/[nocal]/[boards]: PASS`, `CHARACTERIZATION: PASS`, `LINUX GATE: PASS`. 1-min load after: 3.18. |
 | (d) | `git ls-files daq-server/node_modules daq-server/.cache daq-server/build-ci daq-server/build-clang-ci daq-server/diablo_server/backend/dist daq-server/output/lut/controller_lut.bin daq-server/output/lut/controller_lut_ddp_small.npz \| wc -l` | `0` |
 
 The Linux leg (c) exports the committed tree into a container and runs `npm ci` there, so it also
