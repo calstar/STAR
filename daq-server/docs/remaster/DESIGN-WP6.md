@@ -59,6 +59,40 @@ changed the following; each changed place is marked with its tag.
   `config-caches`, `mission-time` → `env`); step 2.8's functions return frame counts;
   `stats.startTimeMs` is set by `initStats()` at row 14 instead of at import (STYLE-S30).
 
+**AMENDMENT (debate verdict) — `debates/WP6/verdict.md`, 2026-11-16.** The WP6 design debate (A
+concern modules, B service objects, C pipeline) adopted step 1 unchanged (16 modules, the DAG,
+`server.ts` as composition root, §6.1-6.3). Its rulings are applied below, each landing site marked
+**AMENDMENT (debate verdict)**; reviewed text the verdict calls wrong is struck through with its
+replacement beside it. In short:
+
+- **[A10] Bare imports** (verdict F9): step 1 yields **fifteen** R1a bare imports, not one (§6.1
+  R1a lists them); step 2.6 is rewritten as the A10 pruning rule (§6.4 item 6). The step-1 agent
+  captures the module-order baseline on the parent commit, in commit 1.1 (D44(2)).
+- **Step 2** = 2.1-2.5, 2.8, 2.9 unchanged; 2.6 = A10; new **2.10 pure decisions** (C's idea, B's
+  value-level signatures) and **2.11 the test recipe** (B's). **Owners send; decisions return.**
+  Not adopted: C's shell/core guard (a module's own timer callback sends, F4) and B's factories
+  (STYLE-S34: a vitest is not a second user).
+- **No `elodin-link` seam and no clock seam in WP6.** No `createElodinLink` factory, no deps
+  object, no `now` dep, no `setClockForTests` in `server/*`; `now` is a parameter of the 2.10 pure
+  decisions only; module functions keep `Date.now()` at today's sites; tests fake timers. A later
+  D-SUB/D-ECHO package passes `client` as a **parameter at the decision** (`registerVTables(client)`,
+  `duePairs(desired, state, now)`), not a factory.
+- **Fact corrections** (verdict §1): `broadcast` dereferences `wss` (`:905`), which after row 1.3 is
+  an `export let` assigned by `attachWebSocketServer` — a vitest that reaches a sender throws
+  unless it mocks `ws-clients` (§3.1, §8 R1); `Date.now()` is read at **9** sites inside the four
+  concerns (`:492, 525, 582, 648, 662, 935, 1516, 1549, 1567`; four are `const now =`, `:648` is
+  `const at`), and row 1.13's `noteIngest()` adds `:1775`; `activeNotificationKeys.has` is read at
+  **8** sites (`:513, 679, 695, 701, 710, 714, 1736, 1747`); the mismatch timer's callback itself
+  sends (`:511, 514`); the stale sweep is not pure (it writes `:667, 693, 700, 719`).
+- **Gaps** (§7): G1 stays MUST before 1.11/1.12 on a **ball-valve** route with a recorded
+  fallback; G2 needs an opt-in simulator flag the orchestrator approves; G3 is a two-config
+  fixture, not a sim-config edit.
+
+Line numbers added by this amendment were verified with `git show backend-remastered:…` at
+`c3af6e62`, where `diablo_server/`, `sim/` and `test/characterization/pipeline/` are identical to
+`b2599617`; `test/test_integration.sh` has moved **+1** after its line 243
+(C1), so the verdict's `:516, :674` are cited here as `:517, :675`.
+
 Research cited: `docs/remaster/research/node-realtime-backend.md` (§1 elided imports, §2 timers,
 §3 backpressure, §4 D-SUB, §5 functional core) and `research/subscription-robustness.md` (Ideas
 2-5), merged at 963e81b9 (LEDGER D42).
@@ -250,10 +284,10 @@ evaluation, which is exactly the startup-order failure this split must not intro
 | 2 | `server/config-caches.ts` | config-derived lookups on the Elodin hot path, rebuilt after a deploy | `hpBoardNumbersCache`, `t7CalFieldsCache` (live), `initConfigCaches()`, `resetConfigCaches()`, `uniqueIdFromPtEntity(entity)`, `t7BoardIdForSlot(slot)` |
 | 3 | `server/sensor-stream.ts` | GUI downsampling and the two sample exits (immediate / windowed) | `guiStreamConfig`, `envelope`, `encoderEnvelope`, `broadcastLastTime` (step 1 only), `streamBudgetFor`, `saneSampleTimeMs`, `initGuiStream()`, `reloadGuiStreamConfig()`, `emitSensorPoint`, `emitSensorWindow`, `flushEnvelopes()`; step 2: `publishSample(high, low, parsed, epochNow)` |
 | 3 | `server/calibration-state.ts` | the backend's half of calibration: PT coefficients, raw-ADC tracking, the `CalibrationHost` handed to `calibration-handler.ts` | `calibrationHost` (live), `initCalibrationState()`, `reloadCalibrationEntityMap()`, `lastRawAdc`; step 2: `noteRawAdc(entity, value)`, `setCalibrationElodin(client)` |
-| 3 | `server/board-status.ts` | what the backend knows about each board: config baseline, heartbeats, T7 liveness, stale sweep and its notifications, self-test results, diagnostics log | `BOARD_STATUS_HZ`, `boardsStatus`, `loadBoardsFromConfig()`, `updateBoard(low, payload)`, `countHeartbeat(id)`, `noteT7Alive(slot)`, `markStaleBoards()`, `broadcastBoardStatus()`, `boardLabel(status)`, `logDiagnostics()`, `selfTestLatest`, `selfTestNotifiedBoards`; step 2: `noteSelfTestResults(boardId, rows, epochNow)` |
+| 3 | `server/board-status.ts` | what the backend knows about each board: config baseline, heartbeats, T7 liveness, stale sweep and its notifications, self-test results, diagnostics log | `BOARD_STATUS_HZ`, `boardsStatus`, `loadBoardsFromConfig()`, `updateBoard(low, payload)`, `countHeartbeat(id)`, `noteT7Alive(slot)`, `markStaleBoards()`, `broadcastBoardStatus()`, `boardLabel(status)`, `logDiagnostics()`, `selfTestLatest`, `selfTestNotifiedBoards`; step 2: `noteSelfTestResults(boardId, rows, epochNow)`; step 2.10 (AMENDMENT (debate verdict)): pure `boardHealthEvents(…)`, `selfTestFailure(…)` |
 | 3 | `server/engine-state.ts` | the sequencer's state as the backend reports it: current state, debug mode, allowed set, refusal reasons, the CSV-derived commanded positions | `currentState`, `debugMode`, `STATE_ACTUATOR_MAP` (live), `initEngineState()`, `reloadStateActuatorMap()`, `configStateName(id)`, `getExpectedPositions(state)`, `broadcastCommandedActuatorsForState(state)`, `broadcastStateUpdate()`, `refreshScriptStatus()`, `setDebugMode(v)`, `applySequencerState(rows)` |
-| 4 | `server/actuator-mismatch.ts` | the 5 s commanded-vs-sensed check | `actuatorSensedState`, `scheduleActuatorMismatchCheck(state)`; step 2: `noteSensedRow(row, rows)` |
-| 4 | `server/elodin-link.ts` | the Elodin DB connection: connect/disconnect with the session, subscription passes, link health shown on the status badge | `elodin`, `noteIngest()`, `isSimulated()`, `connectionStatusPayload(extra)`, `broadcastConnectionStatus()`, `syncElodinToSession()`, `onElodinConnected`, `onElodinDbError`, `onElodinDisconnected`, `onElodinError` |
+| 4 | `server/actuator-mismatch.ts` | the 5 s commanded-vs-sensed check | `actuatorSensedState`, `scheduleActuatorMismatchCheck(state)`; step 2: `noteSensedRow(row, rows)`; step 2.10 (AMENDMENT (debate verdict)): pure `mismatchVerdict(…)` |
+| 4 | `server/elodin-link.ts` | the Elodin DB connection: connect/disconnect with the session, subscription passes, link health shown on the status badge | `elodin`, `noteIngest()`, `isSimulated()`, `connectionStatusPayload(extra)`, `broadcastConnectionStatus()`, `syncElodinToSession()`, `onElodinConnected`, `onElodinDbError`, `onElodinDisconnected`, `onElodinError`; step 2.10 (AMENDMENT (debate verdict)): pure `nextResubscribeDelay(res, now)` |
 | 5 | `server/ingest.ts` | route each Elodin row to the module that owns what it says | `handleElodinPacket(header, payload)` |
 | 5 | `server/commands.ts` | browser → backend messages and engine commands | `handleMessage(ws, msg)` (`handleCommand` stays module-private) |
 | 6 | `server/ws-connection.ts` | one browser connection: identity, connect burst, wiring of its handlers | `handleConnection(ws, req)` |
@@ -276,7 +310,10 @@ accepted pair that has not delivered within T while its board heartbeats is re-s
 `board-status` (layer 3) is a downward edge, so the DAG allows it without restructuring; WP6 does not
 add it (D17(d)), and nobody should "simplify" the layers so that it would become a cycle.
 `elodin-link` keeps `scheduleResubscribe` and the four listeners verbatim so the watchdog has one
-home.
+home. **AMENDMENT (debate verdict):** WP6 adds no seam here beyond the pure
+`nextResubscribeDelay` (§6.4 item 10): no `createElodinLink` factory, no deps object. The package
+that builds D-SUB/D-ECHO passes `client` as a parameter at the decision (`registerVTables(client)`,
+`duePairs(desired, state, now)`).
 **`server/*` never imports `api-server.ts` or `api/*`, and they never import `server/*`**: the HTTP
 side reaches the WS side only through the `createAPIHandler` options, which `server.ts` builds.
 
@@ -314,7 +351,12 @@ Why, from this codebase:
   `tsc --noEmit` is clean on the baseline (exit 0), and it is a **required gate step** (decision D-c):
   the singleton design is accepted only with it, because esbuild/tsx do not type-check and a missed
   setter would otherwise fail only when its line runs.
-- Testability comes from rule M1, not from injection.
+- ~~Testability comes from rule M1, not from injection.~~ **AMENDMENT (debate verdict, F1):** M1
+  gives importability, not callability: `wss` is an `export let` assigned by
+  `attachWebSocketServer` (row 1.3), and `broadcast` dereferences it (`:905`,
+  `wss.clients.size`), so a vitest reaching a sender mocks `ws-clients` (§7, the 2.11 recipe).
+  The decisions worth testing alone are extracted as pure functions over values (§6.4 item 10),
+  which need no mock, fixture or fake clock.
 
 ### 3.2 A WS command (e.g. `state_transition`)
 
@@ -502,6 +544,30 @@ Rules for every commit in step 1:
     line *before* the commit; never for an import that is already elided today (type-only or
     unused, e.g. `import type { StateActuatorMap }`): a bare import there would **add** a module
     to the evaluation set — a behaviour change.
+
+    **AMENDMENT (debate verdict, F9) — the fifteen.** Measured on the 46-module bundle (round-1 A,
+    upheld): of `server.ts`'s imports only nine keep a value user once step 1 is done, and fifteen
+    of the elided lines are today the first evaluation point of some module, so step 1 turns
+    **fifteen** imports into bare imports, not the one this note first discussed. Each becomes bare
+    in the commit that moves its last value user out of `server.ts`:
+
+    | line | module | line | module |
+    |---|---|---|---|
+    | 27 | `elodin-client` | 39 | `legacy/state-actuators` (`state-csv/` after WP5) |
+    | 28 | `elodin-protocol` | 41 | `legacy/state-transitions` |
+    | 29 | `lc-tare` | 47 | `client-outbox` |
+    | 30 | `ball-valve-cal` | 48 | `history-backfill` |
+    | 31 | `sensor-config` | 49 | `history-cache` |
+    | 32 | `elodin-vtable-registry` | 53 | `calibration` |
+    | 33 | `refusal-text` | 298 | `countdown-state` |
+    | 34 | `script-status` | | |
+
+    `gui-stream` (`:43-46`) is not on the list: if its line is elided it is still reached at once
+    by `client-outbox.ts:37`, the next surviving import. Exactly one module in these closures has
+    an import-time effect, `state-actuators.ts:79-81` (config read, can warn). The list is
+    mechanical — no judgement about which bare import "matters" in a move-only pass; pruning is
+    step 2.6's (A10). The **step-1 agent** captures the module-order baseline (§6.3 item 6) on the
+    parent commit, in commit 1.1 (D44(2)), and every later commit diffs against its parent.
   - **R1b (runtime order, the check that counts).** Diff the esbuild bundle's module order before
     and after the commit; the only permitted difference is new `server/*` entries (effect-free by
     M1). The command (§6.3 item 6) runs in under 1 s, binds no port and needs no stack lock.
@@ -533,7 +599,7 @@ Rules for every commit in step 1:
 | 1.3 | `server/ws-clients.ts` | 66-72 (`WsWithControl`), 187-209 (`ClientStream`, `clientStreams`), 233-274 body → `flushClientOutboxes`, 278-280 body → `resetOutboxStats`, 901 → `attachWebSocketServer(httpServer)` assigning `export let wss`, 904-917 (`broadcast`, `send`), 941-960 body → `reapUnresponsiveClients` + `KEEPALIVE_MS`, 1557-1562 (`clientStreamStatus`) | see §2 | `server.ts` keeps `setInterval(flushClientOutboxes, 100)` at row 3, `setInterval(resetOutboxStats, 10_000)` at row 4, `attachWebSocketServer(httpServer)` at row 18, `setInterval(reapUnresponsiveClients, KEEPALIVE_MS)` at row 21. **Same commit: re-point the drain slice of `__tests__/lc-tare.test.ts:199-202`** to `server/ws-clients.ts`. From this commit on, `server.ts` no longer contains `cs.outbox.drain()`, both `indexOf` calls return -1, the slice is empty and the two `not.toContain` assertions pass vacuously — the test goes silent here, not red at 1.14. Add a non-vacuity assertion that both anchors are found (`indexOf(...) > -1` for `cs.outbox.drain()` and `cs.pacer.noteFlush`). Mutation to re-run: move the tare into the drain (subtract a `force_kg_tared` offset between the two anchors) → red |
 | 1.4 | `server/notifications.ts` | 627, 633-652 | see §2 | |
 | 1.5 | `server/history.ts` | 81-86, 122-126, 129 body → `pruneHistory`, 1148-1203 | `history`, `pruneHistory`, `sendHistoricalData` | `broadcastLastTime` (127) goes to 1.7 |
-| 1.6 | `server/mission-time.ts` | 297-299 → `export let` + `initMissionTime()` | + `setFirstPacketTimeMs`, `setCountdownTargetMs` | `mission-time.ts` imports `countdown-state.js`; **`server.ts` keeps its own `countdown-state.js` import** (R1: it stays at its position, today line 298, so `countdown-state` still evaluates there) |
+| 1.6 | `server/mission-time.ts` | 297-299 → `export let` + `initMissionTime()` | + `setFirstPacketTimeMs`, `setCountdownTargetMs` | `mission-time.ts` imports `countdown-state.js`; **`server.ts` keeps its own `countdown-state.js` import** (R1: it stays at its position, today line 298, so `countdown-state` still evaluates there). **AMENDMENT (debate verdict, F9):** ~~keeps its own import~~ keeps it **as a bare import** (R1a): `saveCountdownTargetTimeMs` (`:1362`) still uses it until row 1.15 moves `handleCommand`, and that commit rewrites `:298` as `import './countdown-state.js';` — never deletes it |
 | 1.7 | `server/sensor-stream.ts` | 90-118, 127, 133-141 → `initGuiStream()` (assigns `guiStreamConfig`, `envelope`, `encoderEnvelope`, logs), 163-185, 211-227, 285-293 body → `flushEnvelopes` | see §2 | 143-161 (`configStateName`) goes to 1.11 |
 | 1.8 | `server/config-caches.ts` | 327-373 (+ the T7 map 350-351); 329/331 initialisers → `initConfigCaches()`; 854-857 → `resetConfigCaches()` | see §2 | `noteT7Alive`'s own lazy fill (575-579) moves with `noteT7Alive` in 1.10, unchanged |
 | 1.9 | `server/calibration-state.ts` | 305-325 (load → `initCalibrationState()`), 375-384 (host built inside `initCalibrationState()`, after the load), 852-853 → `reloadCalibrationEntityMap()` | see §2 | the host must be built after `loadPTCalibration` (it copies the path by value; frozen in `ws_events.txt` `calibration_command`) |
@@ -620,7 +686,8 @@ imported bindings), `applyDeployedConfigChange` (body verbatim with 852-857 repl
 
    It writes nothing to disk and starts nothing. Whether the list is frozen as a file (a de-facto
    golden) or only diffed per commit is the orchestrator's call (research Q2); this note asks only
-   for the per-commit diff.
+   for the per-commit diff. **AMENDMENT (debate verdict):** the step-1 agent runs `order` on the
+   parent commit and records it in commit 1.1 (D44(2)); step 2.6's A10 pruning diffs against it.
 
 **At checkpoints only** — after commits 1.7, 1.13 and 1.16 — under the stack lock, within AGENT-RULES
 rule 7's hold limit (≤ ~5-10 min per hold; split across holds if needed): `pipeline/run.sh pt`,
@@ -662,10 +729,25 @@ Each is its own commit, each with the §6.3 checks. Order matters only where not
 6. **Imports last.** ~~Prune `server.ts` to what it uses … only import-time warnings from
    `legacy/state-actuators` may move.~~ **[A2]** Mostly moot: an import with no used specifier is
    already absent at runtime, so pruning a specifier (`resetTareState`, `setRunDir` from a line
-   that keeps `expandWithTare`) changes nothing, and R1a's bare imports **stay** (they are the
+   that keeps `expandWithTare`) changes nothing~~, and R1a's bare imports **stay** (they are the
    evaluation points). Prune only specifiers; never delete a bare import or turn one back into a
    named import that a later edit could leave unused. Gate: §6.3 item 6 diff empty and the 60-line
-   log diff (item 5) identical — no warning may move.
+   log diff (item 5) identical — no warning may move.~~
+   **AMENDMENT (debate verdict) — A10 replaces "never delete a bare import".** Step 1 leaves
+   fifteen bare imports (§6.1 R1a). In step 2 a bare import **may** be deleted only when all three
+   hold:
+   1. every module in its import closure passes the M1 top-level reading (only imports, types,
+      constants from `process.env`/literals/`import.meta.url`, pure constructors, functions —
+      STYLE-S30);
+   2. the §6.3 item 6 module-order diff against the baseline (captured by the step-1 agent on the
+      parent commit in commit 1.1, D44(2)) shows those modules **only moving later**, nothing else
+      moving;
+   3. the §6.3 item 5 startup-log diff is identical.
+
+   `./state-csv/state-actuators.js` (import-time config read and warning, `:79-81`) and
+   `./state-csv/state-transitions.js` **stay** bare, each with a comment saying why it is there
+   (STYLE-S37). Pruning an unused specifier from a named import is still allowed and changes
+   nothing at runtime; never turn a bare import back into a named one.
 7. ~~Replace the `lc-tare.test.ts` source-text check with a real test.~~ **Moved out of WP6**
    (decision): a separate test-only package, after step 1 has merged.
 8. **[A4] Connect-burst replays move to their owners** (should; after G9 and G13 exist). Walkthroughs
@@ -695,6 +777,63 @@ Each is its own commit, each with the §6.3 checks. Order matters only where not
    today's order (`configStateName(id)` — the deployed-config cache — then `readConfig().states`);
    `STATE_TO_CSV_NAME` moves with it. `commands` keeps the warn line, the `ERROR` reply text, the
    `holdMs` check (still after the id check, as today) and the line format.
+10. **AMENDMENT (debate verdict) — pure decisions** (C's idea, B's value-level signatures; if
+    §7 G1's fallback is recorded, `mismatchVerdict` and its vitest land **before** 2.1). Four decisions become functions over **values** that return today's payload
+    literals (same text, same key order, G9) or `null`, with no import-time read, no send, no log,
+    no clock read and no write. Each lands with a backend vitest and a listed mutation that goes
+    red. **Owners send; decisions return:** the owning module calls the function and keeps every
+    send, write and log; no carrier type beyond `NotificationPayload`, no dispatcher. Each caller
+    keeps its `const now = Date.now()` (or `epochNow`) **where it is** and passes it in.
+    - `actuator-mismatch.mismatchVerdict(expected, sensed, stateName, mismatchActive, now):
+      NotificationPayload | null` — the decision of `:489-516` (the `expected` empty → `null`
+      early-out of `:490` included) minus the sends. `checkActuatorMismatch` (the timer
+      callback) fetches `getExpectedPositions(state)`, `configStateName(state) ??
+      SystemState[state] ?? 'UNKNOWN'`, `activeNotificationKeys.has('actuator_mismatch')`, keeps
+      `const now = Date.now()` (`:492`), calls the verdict, then does today's `console.warn` (on
+      raise), `broadcastNotification` and `add`/`delete` (`:510-515`). **Listed non-verbatim
+      edits:** `configStateName` is hoisted out of the mismatch branch (today it runs only when
+      something mismatches; it reads the deployed-config cache and logs nothing); the warn line
+      moves to the caller, its text built from the returned `message`.
+    - `board-status.boardHealthEvents(status, prev, firstSeenSetup, activeKeys, now):
+      NotificationPayload[]` — the per-board notification decisions of `:671-717`, in today's
+      order (lost raise/clear, one-shot connected, setup-stuck raise/clear, unrecognized
+      raise/clear). `markStaleBoards` keeps its loop, its `const now` (`:662`), and every write —
+      `status.connected = false` (`:667`), `boardFirstSeenSetupMs` set/delete (`:693, 700`), the
+      key-set `add`/`delete`, `prevConnectedState.set` (`:719`) — and `broadcastBoardStatus()`
+      (`:721`) (verdict F5: the sweep is not a pure reducer, only its per-board verdict is).
+      **Listed non-verbatim edit:** the `boardFirstSeenSetupMs` set at `:693` happens in the loop
+      before the call, which receives the resulting `first`.
+    - `board-status.selfTestFailure(boardId, rows, notified, label, now): NotificationPayload |
+      null` — the `self_test_fail_<id>` payload for the first failing row of a board not yet in
+      `notified`, else `null` (from `:1679-1689`). `noteSelfTestResults` keeps the `selfTestLatest`
+      snapshot writes up to and including the failing row (the `break` stays), the
+      `selfTestNotifiedBoards.add`, the send and the key `add`; `epochNow` stays the caller's
+      (`:1670`). **Listed non-verbatim edit:** `label` is computed before the call.
+    - `elodin-link.nextResubscribeDelay(res, now): number` — `:1512-1516`. `scheduleResubscribe`
+      passes `Date.now()`; **listed non-verbatim edit:** the inline `Date.now()` of `:1516`
+      becomes the `now` parameter, read at the same moment by the caller. The loop
+      (`scheduleResubscribe`, the timer dedupe `:1504`, the `isConnected` guard `:1507`, the
+      `.catch` → 5 s `:1518-1520`) and the four listeners stay verbatim (A6 room); there is **no
+      `createElodinLink` factory and no deps object** in WP6.
+
+    Return types `selfTestFailure → NotificationPayload | null` and `nextResubscribeDelay →
+    number` are this note's reading of the verdict, which gave only the parameters. **Clock:**
+    `now` is a parameter of these four pure decisions only. No `now` dep, no `setClockForTests`
+    in `server/*`; every other module function keeps `Date.now()` at today's sites (verdict F2:
+    nine in the four concerns, `:492, 525, 582, 648, 662, 935, 1516, 1549, 1567`); tests fake
+    timers (`elodin-reconnect.test.ts:62`, `board-scan-rate.test.ts:17, 23` already do; the
+    registry's `nowFn`/`setClockForTests` at `elodin-vtable-registry.ts:96-99` is the registry's
+    own and is not copied). The verdicts read `activeNotificationKeys` only through
+    the `mismatchActive`/`activeKeys` values their caller passes (eight `has` reads today: `:513,
+    679, 695, 701, 710, 714, 1736, 1747`).
+11. **AMENDMENT (debate verdict) — the test recipe** (B's), also written into §7. A vitest of a
+    layer ≥ 2 `server/*` module: `vi.mock('../ws-clients.js')` (any sender otherwise throws on
+    the unassigned `wss`, `:905`); `vi.useFakeTimers()` + `vi.setSystemTime(…)`; `vi.resetModules()`
+    and a dynamic `import()` per case (module singletons); a `CONFIG_PATH` fixture (a temp-dir
+    `config.toml`, as `config-profile-create-calibration.test.ts` does) for any closure that
+    contains `engine-state`, `commands`, `elodin-link` or `session-manager` (`elodin-link` reaches
+    `engine-state` through `onElodinConnected` → `refreshScriptStatus()`, `:1601`, verdict F10).
+    The 2.10 pure decisions need none of this.
 
 Step 2 is its own queue item, gated in full like step 1; each commit runs the per-commit checks of
 §6.3 and the checkpoint runs after 2.1 and at the end.
@@ -717,6 +856,10 @@ Step 2 is its own queue item, gated in full like step 1; each commit runs the pe
 - Fire-and-forget backfill on connect; no optimistic state; the backend never sends FIRE_*.
 - No signal handlers; crash guards; the `[ThinServer]` log lines, the conn_open/conn_close JSON
   (including its counters, which skip `mission_start_time` and `session_update` — a log quirk, kept).
+- **AMENDMENT (debate verdict):** step 2.10 moves no `Date.now()` site and no payload literal: each
+  caller keeps its clock read where it is today (`:1516`'s inline read is rewritten in place as the
+  `now` argument, which `scheduleResubscribe` reads at that same point in the `.then`), and the returned payloads are today's literals with
+  today's key order (G9).
 
 ---
 
@@ -737,6 +880,14 @@ Step 2 is its own queue item, gated in full like step 1; each commit runs the pe
 | tare at the parse site | `__tests__/lc-tare.test.ts:192-203` | re-pointed in 1.14 |
 | end to end (calibration capture via `lastRawAdc`, LC tare, ball valve, T7, sample conservation) | `test/ws_data_flow_test.ts` via `test_integration.sh` | gate |
 
+**AMENDMENT (debate verdict) — backend vitests (step 2.11's recipe).** A vitest of a layer ≥ 2
+`server/*` module uses `vi.mock('../ws-clients.js')`, `vi.useFakeTimers()` + `vi.setSystemTime`,
+`vi.resetModules()` with a dynamic import per case, and a `CONFIG_PATH` fixture for any closure
+containing `engine-state`, `commands`, `elodin-link` or `session-manager`; the 2.10 pure decisions
+need none of it (§6.4 item 11). **Backend vitests do not discharge §7 rows**: the rows below are C0
+characterization, black-box. Substituting a vitest for a row is a decision the orchestrator records
+per row (as G1's fallback below), never a default.
+
 ### Gaps — a move could change these and no golden would notice
 
 Each is a test to add **before** the step that touches it. G1-G5, G7-G10 belong in
@@ -746,12 +897,12 @@ WP6's own per-commit scripts (§6.3).
 | gap | priority (orchestrator) | must exist before |
 |---|---|---|
 | G7 + G8 | MUST | step 1 |
-| G1 | MUST | commits 1.11 / 1.12 (feasibility below) |
+| G1 | MUST — **AMENDMENT (debate verdict):** ball-valve route; recorded fallback if C0 cannot land it before 1.10 merges | commits 1.11 / 1.12 (feasibility below) |
 | G10 | MUST | commits 1.15 / 1.16 |
 | G4 | MUST, owned by WP5 | WP5 lands |
 | G11, G12 | MUST (scripts, §6.3 items 4-5) | step 1, first commit |
 | G9 | should | step 2 |
-| G2, G3 | should | steps 2.1 / 2.2 |
+| G2, G3 | should — **AMENDMENT (debate verdict):** G2 needs an opt-in simulator flag (orchestrator approval); G3 is a two-config fixture | steps 2.1 / 2.2 |
 | G6 | should | step 2.3 |
 | G5, G13 | nice-to-have | — |
 
@@ -761,7 +912,7 @@ WP6's own per-commit scripts (§6.3).
   **The script first proposed here is infeasible:** turning `debug_mode` off calls
   `actuator_commander_.clearAllManualOverrides()` before it publishes state
   (`SequencerService.cpp:949-952`), so the manually opened valve returns to the state's position
-  and nothing is left to mismatch. Two candidates, for C0 to confirm before choosing:
+  and nothing is left to mismatch. ~~Two candidates, for C0 to confirm before choosing:
   (a) stay in debug: unlock → `debug_mode` on → open a valve the current state expects closed →
   `debug_mode` on **again** (`doSetDebugMode(true)` publishes state without clearing overrides, which
   schedules the 5 s check) → expect `notification actuator_mismatch ongoing=true "Actuator mismatch
@@ -771,10 +922,51 @@ WP6's own per-commit scripts (§6.3).
   simulated actuator board reports the opened channel as sensed open. (b) a simulator-side
   sensed-state fault: `board_simulator.py` reports one actuator channel's current-sense opposite to
   its command, so any state publish yields a mismatch 5 s later. (b) does not depend on debug-mode
-  semantics but needs a simulator option.
+  semantics but needs a simulator option.~~
+  **AMENDMENT (debate verdict, F7) — neither candidate as written; the ball valve delivers.** No
+  sensed `ACTn.CHm.actuator_state` row exists in any pipeline golden (only `ACT_CMD.*_commanded`),
+  so `:497` skips every ACT entity: in the simulated stack no sensed `actuator_state` row reaches
+  the backend, and the simulator's ACTUATOR current is a free sine (`board_simulator.py:617-623`;
+  commands reach only `valve_target`, `:430-441`). That strikes (a)'s ACT-board form and (b). A
+  **ball valve** does report a sensed position: `BV1_Cal.CH1.position_pct`
+  (`pipeline/golden/boards/ws_streams.txt:100-105`) → sensed entity `BV1.CH1` (`server.ts:1727-1738`),
+  and `resolveActuatorTelemetryEntity` maps a ball-valve role to `BV<n>.CH<m>`
+  (`state-actuators.ts:140-144`). The script C0 builds:
+  - **Fixture:** the `Main Ball Valve` actuator role and a CLOSE-in-every-state CSV row, as
+    `test_integration.sh` has them (`"Main Ball Valve" = ["NC", 1, 71]` at `:675`, the CSV row at
+    `:517`), in a new pipeline mode or a `ws_data_flow_test` case — **not** the frozen `boards`
+    session.
+  - **Steps:** unlock → `debug_mode` on → `actuator "Main Ball Valve" 1` → wait > 3 s
+    (`BALL_VALVE_TRAVEL_S`, `board_simulator.py:49`) → `debug_mode` on **again**
+    (`doSetDebugMode(true)` publishes state without clearing overrides, `SequencerService.cpp:947-955`,
+    which schedules the 5 s check) → ≥ 5 s → `notification actuator_mismatch ongoing=true
+    "Actuator mismatch in <state>: BV1.CH1 (expected CLOSED, sensed OPEN)"` → close the valve (a
+    sensed change with the key active reschedules) → `"Actuator positions match expected"
+    ongoing=false` → debug off.
+  - **Fallback (recorded):** if C0 cannot land it before row 1.10 merges, the orchestrator records a
+    substitution: a `--color-moved` review of `:472-517` and of the 1.11 split, plus step 2.10's
+    `mismatchVerdict` vitest landing before 2.1. G1 stays MUST before 1.11/1.12 either way.
 - **G2 `self_test_fail_<id>`** (one notification per board, `break` after the first failure): the
-  simulators only pass. Needs a simulator option that fails one sensor.
-- **G3 `unrecognized_<id>`**: no board outside config ever heartbeats in a golden.
+  simulators only pass (`board_simulator.py:344, 460-461`). ~~Needs a simulator option that fails
+  one sensor.~~ **AMENDMENT (debate verdict):** needs an
+  opt-in `--fail-connector <board>:<ch>` in `sim/board_simulator.py`, default unchanged. The file is
+  shared: `service-controller.ts:21` also launches it (simulated systemd runs), so the option needs
+  the orchestrator's approval (team question 2).
+- **G3 `unrecognized_<id>`**: ~~no board outside config ever heartbeats in a golden.~~
+  **AMENDMENT (debate verdict, F6):** it is not "one fixture edit" to the sim config. The pipeline
+  gives `$CFG` to `daq_bridge` (`pipeline/run.sh:182`) and to the backend (`:195`); only the
+  simulator reads `sim_config.toml` (`:223`). `daq_bridge` registers `[0x10, id]` only for its
+  config's enabled boards (`daq_bridge_main.cpp:568-571, 590`), and the backend subscribes
+  `[0x10, id]` only for its config's boards (`elodin-vtable-registry.ts:242-262, 335-340`; 1..255
+  only when none qualify), so a sim-only board is never heard. Dischargeable black-box by C0 with
+  a **two-config fixture**: `daq_bridge` and the simulator on `$CFG`; the backend on a copy in which
+  one board is still subscribed but not `expected` — spell its id `id =` instead of `board_id =`
+  (the registry takes `b.board_id ?? b.id`, `:247`; `loadBoardsFromConfig` needs a numeric
+  `board_id`, `server.ts:399`). An empty `[boards]` also works but trips the registry's 1..255
+  fallback, which its own comment (`:330-334`) names as the request-id overflow; avoid it. C0
+  confirms; before 2.1/2.2.
+- **AMENDMENT (debate verdict) — C0 builds:** the G3 fixture, the G2 option and case, the G1
+  ball-valve case; G7/G8, G10, G11/G12.
 - **G4 :9998 down / slow**: no golden sends a command with the sequencer stopped or stalled. Add
   (lifecycle): SIGSTOP the sequencer → `state_transition` → `ERROR "State transition failed:
   timeout"` after ~2 s; SIGTERM it → `ERROR "State transition failed: connect ECONNREFUSED
@@ -821,6 +1013,12 @@ WP6's own per-commit scripts (§6.3).
   (§6.2, checked by `tsc`), and keeping cross-module `Map`/`Set` mutation verbatim until step 2. The
   subtle ones: `calibrationHost` must be built after the PT load (path by value); `wss` is a live
   binding assigned by `attachWebSocketServer` and must never be destructured into a local.
+  **AMENDMENT (debate verdict, F1):** because `wss` becomes an `export let` (row 1.3), every sender
+  (`broadcast` dereferences it at `:905`) throws in a test process that never called
+  `attachWebSocketServer`; today's `const wss` (`:901`) cannot be unassigned. Backend vitests mock
+  `ws-clients` (§6.4 item 11); in production row 18 assigns it in the synchronous startup body,
+  before any timer or listener can run (a synchronous send before row 18 would already be a TDZ
+  error on today's `const`).
 - **R2 Import cycles.** §2's DAG; the WS↔link near-cycle resolved by layering. A cycle check is
   cheap (`npx madge --circular src/server.ts`, or a grep that no `server/*` file imports
   `ws-connection`, `commands` or `ingest`). `server/*` and `api/*` never import each other.
@@ -884,6 +1082,17 @@ priority table in §7. Q1 remains for WP5.
 - **Q5** Step 2.7 (replacing the `lc-tare` source-text test) changes a backend test's method;
   acceptable inside WP6, or a separate test-only package?
 
+**AMENDMENT (debate verdict) — team questions the verdict leaves open** (`debates/WP6/verdict.md` §6,
+verbatim):
+
+1. Sensed `ACTn.CHm.actuator_state` rows are absent in the simulated stack — on the stand too? If
+   so, `actuator_mismatch` has never fired for an ACT board (record, don't fix).
+2. May C0 add opt-in flags to `sim/board_simulator.py`, which simulated systemd runs also launch?
+3. Does a vitest count as S34's second user? Recommend no, unless it produces a gate artifact.
+4. D-SUB/D-ECHO: approve the `client`-parameter seam then; reserve Idea 2's `control` event in
+   `elodin-link`'s header now?
+5. Confirm the step-1 agent owns the order-diff baseline (D44(2)).
+
 ---
 
 ## Alternatives considered (design/ts2, 2026-11-16)
@@ -936,6 +1145,38 @@ stateful concern, across three files.
 commits 2.8 and 2.9, the timer rule, the D-SUB room, STYLE conformance, the interface
 refinements); each is marked where it lands.
 
+### AMENDMENT (debate verdict) — the WP6 design debate (`debates/WP6/`, 2026-11-16)
+
+Three advocates re-argued A, B and C over two rounds; the judge adopted step 1 (A's sixteen
+modules, the DAG, `server.ts` as composition root, §6.1-6.3) unchanged. What each side gave up,
+and what step 2 took from it:
+
+- **A (prevails).** Kept: the module layout, owners that send, and **A10** (fifteen bare imports
+  in step 1; pruning by three conditions in 2.6). Conceded: "testability comes from M1" was
+  overstated — importable is not callable once `wss` is an `export let` (`:905`, F1); the comparison
+  table's A "testability" cell above is read with that correction.
+- **B (loses factories, wins the recipe).** Abandoned in round 2: the per-concern factories
+  (`createBoardStatus`, `createActuatorMismatch`, `createNotifications`) and the `now` dep, in favour
+  of C's pure decisions with `now` by parameter. Kept to the end and **not adopted**: one
+  `createElodinLink(deps)` factory with a fake-client vitest as its second user — STYLE-S34 as the
+  tree applies it counts `CalibrationHost`'s second user because it produces
+  `calibration/golden/ts.txt`, and a vitest is not a second user; nor is the vitest fixture-free
+  (`onElodinConnected` → `refreshScriptStatus()`, `:1601`, reaches `engine-state`, which reads
+  config at import; F10). The resubscribe chain B wanted tested (`:1504, 1507, 1512-1513,
+  1518-1520, 1629-1630`, F11) is real behaviour no test reaches; deferred to D-SUB (D17(d)), which
+  passes `client` at the decision. **Adopted from B:** the value-level signatures of 2.10 (`expected`,
+  `stateName` passed in, so the mismatch vitest needs no fixture) and the 2.11 test recipe.
+- **C (loses shell/core, wins decisions).** Abandoned in round 2: per-concern objects, and the
+  claim that the `elodin-link` chain needs no seam (conceded to B). Kept to the end and **not
+  adopted**: the shell/core guard ("the six core files import no sender") and owners returning
+  frames for 2.8 — `actuator-mismatch`'s own 5 s timer callback is the sender (`:511, 514`, F4),
+  and the guard adds about a dozen new dispatch sites where key order (G9) is unguarded. Also
+  ruled false: `staleSweep` as a pure reducer (`:667, 693, 700, 719` are writes, F5). **Adopted
+  from C:** pure decisions over values with `now` as a parameter (2.10; the same shape as WP5's
+  `duePairs` and the registry's `nowFn`), and the observation that the raise/clear verdict already
+  lives in the payload's `ongoing` (nine of nine sites), so no carrier type beyond
+  `NotificationPayload` is needed.
+
 ---
 
 ## Walkthroughs (design/ts2, 2026-11-16)
@@ -976,7 +1217,10 @@ fixes are the amendments [A3], [A4] (§6.4 steps 2.8, 2.9).
     returns (order frozen, §6.1 row 1.11).
 11. 5 s later **`actuator-mismatch`** compares `engine-state.getExpectedPositions(Fire)` with the
     sensed positions it holds; raises or clears `actuator_mismatch` through
-    **`notifications.raiseNotification` / `clearNotification`** (step 2.2).
+    **`notifications.raiseNotification` / `clearNotification`** (step 2.2). **AMENDMENT (debate
+    verdict):** the timer callback first calls the pure **`mismatchVerdict(expected, sensed,
+    stateName, mismatchActive, now)`** (step 2.10), then sends what it returns; the decision is
+    `actuator-mismatch`'s, the send stays in its own callback.
 12. Meanwhile `[0x31]`/`[0x34]` rows update the sensed positions (**`actuator-mismatch.noteSensedRow`**,
     step 2.1), and every row goes to **`sensor-stream.publishSample`** (history, then outboxes;
     `ws-clients` drains them every 100 ms).
@@ -1011,6 +1255,9 @@ Owners per step: as (a). No new finding.
 1. **Heartbeats stop.** The 1 s stale sweep (registered in `server.ts`, row 13) runs
    **`board-status.markStaleBoards`**: past 5 s it sets `connected = false`, raises `board_lost_<id>`
    (**`notifications.raiseNotification`**), and calls `broadcastBoardStatus()` (**`board-status`**).
+   **AMENDMENT (debate verdict):** per board the sweep keeps its writes and calls the pure
+   **`boardHealthEvents(status, prev, firstSeenSetup, activeKeys, now)`** (step 2.10) and sends
+   each returned payload in order.
 2. Same second, in registration order [A5]: the 1 s `broadcastBoardStatus` (**`board-status`**),
    then `broadcastConnectionStatus` (**`elodin-link`**). The order is on the wire (G11).
 3. **A heartbeat returns.** `[0x10, id]` → **`ingest`** (delivery note first) →
@@ -1018,13 +1265,17 @@ Owners per step: as (a). No new finding.
    immediately. A T7 has no heartbeat: its data rows reach **`board-status.noteT7Alive`** via the
    T7 slot lookup (**`config-caches.t7BoardIdForSlot`**, one owner after step 2.4).
 4. Next sweep: **`board-status`** clears `board_lost_<id>` (`clearNotification`, `ongoing:false`)
-   and emits the one-shot `"… connected"` info (`broadcastNotification`).
+   and emits the one-shot `"… connected"` info (`broadcastNotification`). **AMENDMENT (debate
+   verdict):** both payloads come from **`boardHealthEvents`** (step 2.10); `markStaleBoards`
+   sends them.
 5. A board config does not know: `updateBoard` creates it with `expected:false`; the sweep raises
    `unrecognized_<id>`. **`board-status`**.
 6. Self-test rows `[0x60..0x6F, id]` → **`board-status.noteSelfTestResults`** (step 2.1): snapshot
    for replay, first failure per board → `self_test_fail_<id>`. *In step 1 this has two owners*
    (`ingest` writes `selfTestLatest` and the notification key, `board-status` owns them) — the
-   planned step 2.1 fixes it.
+   planned step 2.1 fixes it. **AMENDMENT (debate verdict):** inside `noteSelfTestResults` the
+   pure **`selfTestFailure(boardId, rows, notified, label, now)`** (step 2.10) decides the
+   `self_test_fail_<id>` payload; `noteSelfTestResults` keeps the snapshot writes and sends it.
 7. **Session stop / start** (the C5-1 flash): `sessionManager` calls the callbacks `server.ts`
    passed in its `listen` callback. Stop → `server.ts`'s arrow: `board-status.loadBoardsFromConfig()`,
    `broadcastBoardStatus()`, `elodin.disconnect()` when no pipeline. Start → `applyDeployedConfigChange()`
@@ -1111,10 +1362,10 @@ step 1 (containers the moved bodies still mutate, WP6-R3) are marked `[step 1]`,
 | `config-caches.ts` | 2 | `hpBoardNumbersCache`, `t7CalFieldsCache`, `initConfigCaches`, `resetConfigCaches`, `uniqueIdFromPtEntity`, `t7BoardIdForSlot` |
 | `sensor-stream.ts` | 3 | `StreamBudget`, `guiStreamConfig`, `envelope`/`encoderEnvelope`/`broadcastLastTime` [step 1], `streamBudgetFor`, `saneSampleTimeMs`, `initGuiStream`, `reloadGuiStreamConfig`, `emitSensorPoint`, `emitSensorWindow`, `flushEnvelopes`, `publishSample` |
 | `calibration-state.ts` | 3 | `calibrationHost`, `lastRawAdc` [step 1], `initCalibrationState`, `reloadCalibrationEntityMap`, `noteRawAdc`, `setCalibrationElodin` |
-| `board-status.ts` | 3 | `BOARD_STATUS_HZ`, `BOARD_HEARTBEAT_STALE_MS`, `boardsStatus`/`selfTestLatest`/`selfTestNotifiedBoards` [step 1], `loadBoardsFromConfig`, `updateBoard`, `countHeartbeat`, `noteT7Alive`, `markStaleBoards`, `broadcastBoardStatus`, `boardLabel`, `logDiagnostics`, `noteSelfTestResults`, `sendBoardStatus`, `sendSelfTestReplay` |
+| `board-status.ts` | 3 | `BOARD_STATUS_HZ`, `BOARD_HEARTBEAT_STALE_MS`, `boardsStatus`/`selfTestLatest`/`selfTestNotifiedBoards` [step 1], `loadBoardsFromConfig`, `updateBoard`, `countHeartbeat`, `noteT7Alive`, `markStaleBoards`, `broadcastBoardStatus`, `boardLabel`, `logDiagnostics`, `noteSelfTestResults`, `sendBoardStatus`, `sendSelfTestReplay`, `boardHealthEvents`/`selfTestFailure` [step 2.10] |
 | `engine-state.ts` | 3 | `currentState`, `debugMode`, `stateActuatorMap`, `initEngineState`, `reloadStateActuatorMap`, `configStateName`, `getExpectedPositions`, `broadcastCommandedActuatorsForState`, `broadcastStateUpdate`, `refreshScriptStatus`, `setDebugMode` [step 1], `applySequencerState`, `sendConnectStateUpdate`, `sendCommandedSnapshot`, `TransitionTarget`, `resolveTransitionTarget` |
-| `actuator-mismatch.ts` | 4 | `actuatorSensedState` [step 1], `scheduleActuatorMismatchCheck`, `noteSensedRow` |
-| `elodin-link.ts` | 4 | `elodin`, `noteIngest`, `isSimulated`, `connectionStatusPayload`, `broadcastConnectionStatus`, `syncElodinToSession`, `onElodinConnected`, `onElodinDbError`, `onElodinDisconnected`, `onElodinError` |
+| `actuator-mismatch.ts` | 4 | `actuatorSensedState` [step 1], `scheduleActuatorMismatchCheck`, `noteSensedRow`, `mismatchVerdict` [step 2.10] |
+| `elodin-link.ts` | 4 | `elodin`, `noteIngest`, `isSimulated`, `connectionStatusPayload`, `broadcastConnectionStatus`, `syncElodinToSession`, `onElodinConnected`, `onElodinDbError`, `onElodinDisconnected`, `onElodinError`, `nextResubscribeDelay` [step 2.10] |
 | `ingest.ts` | 5 | `handleElodinPacket` |
 | `commands.ts` | 5 | `handleMessage` |
 | `ws-connection.ts` | 6 | `handleConnection` |
@@ -1122,6 +1373,14 @@ step 1 (containers the moved bodies still mutate, WP6-R3) are marked `[step 1]`,
 
 Also in the stub tree: WP5's `sequencer-client.ts`, `sensor-config.ts` (delta), `elodin-vtable-registry.ts`
 (delta: `duePairs`), `state-csv/*`; WP7's `api/*`, `api-server.ts`.
+
+**AMENDMENT (debate verdict).** The stubs gain step 2.10's four pure decisions —
+`actuator-mismatch.mismatchVerdict`, `board-status.boardHealthEvents` and `selfTestFailure`,
+`elodin-link.nextResubscribeDelay` — typed over values only (`NotificationPayload`, `BoardStatus`,
+`ParsedSensorData`, `SubscriptionPassResult`, all already in `product-types.ts`; no new type). The
+`elodin-link` header now says WP6 has no factory or deps object and that D-SUB passes `client` as
+a parameter at the decision. Nothing in the stubs had a factory, deps object or clock seam to
+remove. Type-check re-run after the change: exit 0.
 
 ### What writing the interfaces changed (amendments to §2 / §6.4, marked [A9])
 
