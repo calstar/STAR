@@ -593,3 +593,112 @@ and G1 Blend. **Before cleanup C1:** DESIGN-WP8 gap 1. The rest are recorded as 
 3. (Decided: tares-before-reload must be guarded before WP9; see §7.)
 4. (Decided: the < 400-line DoD is waived; no C1b.)
 5. `logged_ch5`: delete in cleanup (and the baseline line) or keep?
+
+---
+
+# Amendments (design/cpp2, 2026-11-16) — alternatives, interfaces, walkthroughs
+
+Added after the review (D39), with D42's research and STYLE.md (D43, cited `STYLE-S<n>`). Nothing
+above is deleted; changes to the reviewed text are marked **AMENDMENT**.
+
+## A. Alternatives considered
+
+| | **A. TU per concern + carrier structs (§2-§3, chosen)** | B. `CalibrationService` class owning the loop | C. Pipeline of stages |
+|---|---|---|---|
+| shape | `main` keeps argv, construction in today's order, loop head, shutdown; free functions in `SensorModels`, `CalibrationActions`, `AbortThresholds`, `CalibrationCommands`, `RawStream`, header-only `Conversions`; `CalibrationContext`/`StreamState` carry `main`'s locals | one class whose members are today's locals (stores, managers, capture window, tracker, client) and whose methods are today's lambdas; `main` is `CalibrationService svc(args); return svc.run();` | interfaces `PacketSource → Decoder → Converter → Publisher` for the stream, `Command → Capture → Fit → Persist` for 0x46; one implementation each |
+| clarity | a reader finds each concern by file; `main` is the table of contents in execution order | the most familiar OO shape; the lambdas' captures become `this->` | the data flow is drawn in the types, but every stage has one implementation and the interesting state (latches, smoother, `last_adc_map`, dedupe) is shared across stages anyway |
+| lines deleted | ~0 in move-only (a split); C2/C3 cleanups ~40 | ~0; adds a ~120-line class declaration | negative (interfaces + adapters) |
+| testability | unchanged: calibration is reached only through the binary (§7, "White-box hooks: none"); nothing would test a function directly (D20) | same: no white-box harness may reach it | in principle per-stage unit tests; in practice the stages write files and publish (not pure), and the goldens are black-box |
+| fit with characterization | no harness edit; byte-identical service output pre/post (§6.1) | no harness edit, but **construction order is the trap**: members are constructed in declaration order, and today's local order has side effects that print and register (`load_calibration` prints, `CubicCalibrationStore`'s constructor registers paths, tares load before the first reload, §8). A class freezes that order into a header; one reordered member changes `stack.txt`'s startup lines or the tare/reload order | rewrite of every path; the literal-multiset and `nm --undefined-only` checks (§6.1) cannot hold |
+| float path (D22) | `select_pt_psi` stays header-inline at its three call sites; `PtSmoother::step` in the same statement sequence; lib untouched (§6.3) | same if methods stay inline-able; a member function in its own TU is out-of-line unless defined in the header | **high**: the Blend expression and the smoother move behind virtual calls into other TUs; GCC's `-ffp-contract=fast` sees different code |
+| thread/lock risk | none (one thread, §1.4); the `LcTareStore` → evaluator nesting kept verbatim | none, if the evaluator captures `this` instead of `ctx` | none in threads; the evaluator nesting has to cross an interface |
+| research | subscription-robustness §0/Idea 1: calibration is one of the two registrars of the calibrated tables (`calibration_main.cpp:1484`) — A keeps the registration lambdas in `main` (§2), so registration order (frozen in `elodin/golden`) does not move; cpp-service-plumbing §4: C6-9 (`return 1` when Elodin is down) is a team proposal, kept | — | — |
+
+**Why B lost.** The structural difference between A and B is who owns construction order. In A it
+is `main`'s statement order, unchanged and visible; in B it is member declaration order in a header,
+which nobody reviews as behaviour. The single-user class is also exactly what D17(d) and STYLE-S34
+reject (BLOAT-MAP's `CalibrationController` was refused for the same reason, §5).
+
+**Why C lost.** It is a rewrite of the float path the LEDGER WP9 row protects (robust predictions at
+abs 1e-9 psi; 8e-10 measured across platforms), for interfaces with one implementation each.
+
+**Decision: A, as reviewed**, with two amendments:
+
+- **AMENDMENT: `CalibrationContext` gets its own header, `CalibrationContext.hpp`** (not
+  `CalibrationActions.hpp` as in §2/§3). Four headers need the struct (`CalibrationActions`,
+  `AbortThresholds`, `CalibrationCommands`, `RawStream`), and `AbortThresholds.hpp` would otherwise
+  include the whole actions API for one type while `CalibrationActions.cpp` includes
+  `AbortThresholds.hpp` back. The struct, its members and where `main` builds it are unchanged; the
+  move-only diff gains one file of declarations. STYLE-S34/D43(3): a method-less carrier is not an
+  abstraction.
+- **AMENDMENT (walkthrough fix, cleanup C2):** the reconnect clear of `last_adc_map` becomes
+  `on_elodin_reconnected(StreamState&)` in `RawStream.cpp`, called at the same point of `main`'s loop
+  head (after `capture_window.clear()`, before `[Cal] Reconnected to Elodin`). Move-only keeps
+  `stream.last_adc_map.clear();` in `main` as §3 says. Reason in walkthrough (d) step 13: the map is
+  RawStream's state, and in move-only two modules write it. One call site, a moved statement
+  (D43(3)).
+
+Names conform to STYLE-S1 (`services/calibration` is 1:35, snake_case): every new function in §2/§5
+already is. Files are `PascalCase.{hpp,cpp}` in the service directory, linked into
+`calibration_service` only (STYLE-S2). `table_id_for` (DESIGN-WP3 §2.5) is **not** adopted here:
+calibration derives `cal_lo = type_lo + 0x10` from the received id (1966-1968) and the slot by the
+inverse (490, 517); neither is the same integer expression.
+
+## B. Interfaces
+
+Declaration-only stubs in `docs/remaster/design-stubs/cpp/services/calibration/` (not built):
+
+| stub | from § | notes |
+|---|---|---|
+| `Conversions.hpp` | §2 step 1 | header-only `inline` today's bodies; stub shows declarations |
+| `SensorModels.hpp` | §2 step 2 | `extern` globals until cleanup C2; `select_pt_psi` stays `inline` in this header (D22) |
+| `CalibrationContext.hpp` | §3 (AMENDMENT: own header) | carrier, references only |
+| `CalibrationActions.hpp` | §2 step 3 | |
+| `AbortThresholds.hpp` | §2 step 4 | |
+| `CalibrationCommands.hpp` | §2 step 5 | |
+| `RawStream.hpp` | §2 step 6 | `StreamState`; `on_elodin_reconnected` marked cleanup-only |
+
+## C. Walkthroughs
+
+### (d) A calibration save: capture → fit → abort thresholds / cubic store files
+
+Scenario: the operator presses "Capture reference" for PT uid 2103 at 500 psi. The backend writes a
+CalibrationCommand row to Elodin `[0x46,0x00]` (`cmd=1`, `sensor_id=2103`, `ref=500.0f`). One thread
+throughout (calibration_service has no other).
+
+| # | step | owner (after the move-only pass) | output / state written |
+|---|---|---|---|
+| 1 | read the row from the subscribed `[0x46,0x00]` stream; `ErrorResponse`/reconnect handling | `main` loop head (`calibration_main.cpp`) | `pkt_buf` |
+| 2 | parse header bytes `[4..7]`, `type_hi == 0x46` → dispatch, then `continue` | `main` loop head | — |
+| 3 | length check (≥ 24) and duplicate drop | `handle_calibration_command` (`CalibrationCommands.cpp`) using `CommandDedupe` (lib) | dedupe memory |
+| 4 | decode `cmd`, `sensor_id`, `ref` (memcpy, not a cast); log `[Cal] Received CalibrationCommand` | `handle_calibration_command` | log line |
+| 5 | capture decision: fresh, settled, enough samples | `CaptureWindow::capture` (lib), called by `take_capture` (`CalibrationActions.cpp`), which logs a `REJECTED` line | `CaptureResult` |
+| 6 | PT or LC? | `is_lc_uid` → `apply_capture` (`CalibrationActions.cpp`) | — |
+| 7 | add the point and refit the cubic | `CubicCalibrationStore::add_point` (lib; the fit arithmetic, not moved, D22) via `apply_pt_capture` | store's in-memory points + fit |
+| 8 | make the fit live for factory conversion | `PTCalibrationManager::set_calibration` (lib), triggered by `apply_pt_capture` | live coefficients |
+| 9 | teach the robust learner | `RobustCalibrationManager::update_calibration` (lib) | learner state (C3-1: wall-clock dependent) |
+| 10 | sample the robust curve (41 points) into the store | `sample_robust_curve` (`CalibrationActions.cpp`) → `CubicCalibrationStore::set_fit_curve` | `fitCurve` (masked in goldens, C3-1) |
+| 11 | write `cubic_calibration.json` | `CubicCalibrationStore::save` (lib) | file |
+| 12 | write the adjustments file | `RobustCalibrationManager::save_adjustments` (lib) | file |
+| 13 | recompute abort thresholds: per abort role, invert psi → ADC by bisection over the forward model (`select_pt_psi`, header-inline), `.tmp` + rename | `write_abort_thresholds` (`AbortThresholds.cpp`); `invert_abort_psi_to_adc` file-static there | `abort_thresholds.txt` (+ per-role stderr lines; write failure logged, continue) |
+| 14 | the next raw PT sample uses the new fit | `handle_esp32_raw` (`RawStream.cpp`) → `select_pt_psi` → `PtSmoother::step` → publish calibrated `[0x20, lo+0x10]` inside `begin_batch`/`flush_batch` | Elodin row |
+| 15 | boards learn the new threshold | **config_broadcast_service** (another process): re-reads `abort_thresholds.txt` every cycle in `buildPackets` and sends ACTUATOR_CONFIG — only if an ACTUATOR board is the designated survivor (C6-6), with abort IPs reversed (C1-2) | UDP |
+
+Ownership check:
+
+- Steps 7, 8, 9, 11, 12 have one owner each (a lib object) and one trigger in this flow
+  (`apply_pt_capture`); the same owners are also triggered by clear (cmd 2/6), reload (cmd 7),
+  startup and shutdown — more triggers, not more owners.
+- Step 13 has one owner, `AbortThresholds`, triggered from three places (capture, clear,
+  `reload_live_store`), all in `CalibrationActions.cpp`. Before the split the writer was a lambda any
+  code in `main` could call; after it, only the actions TU includes `AbortThresholds.hpp`.
+- Step 15 has no owner *inside* calibration_service, by design: there is no notification, the
+  consumer polls a file. That is the existing contract (file + cycle), recorded so nobody "fixes" it
+  by adding a push in WP9. With C6-6 the delivery can have zero effect on the stand; frozen.
+- **Fixed by amendment:** the reconnect step (not in this flow, but on the same state) had two
+  writers in move-only: `main`'s loop head clears `stream.last_adc_map`, which is RawStream's state
+  read at step 14. Cleanup C2 gives the clear to RawStream (`on_elodin_reconnected`).
+- No step needs a lock beyond the lib objects' own uncontended mutexes; the only nesting
+  (`LcTareStore::mutex_` → evaluator) is on the LC path and moves verbatim (§1.4).
+
+What a failure at each step does is §4's table, unchanged.
