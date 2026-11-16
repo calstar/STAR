@@ -388,6 +388,11 @@ Rules for every commit in step 1:
   §6.2); (b) the `_SEQUENCER_STATE` block is split as described in step 1.11. Object, `Map` and
   `Set` mutations through imported references (`activeNotificationKeys.add`,
   `calibrationHost.elodin = …`, `actuatorSensedState.set`) stay as they are until step 2.
+  So step 1 also exports the containers its moved bodies mutate from other modules:
+  `activeNotificationKeys`, `notificationBuffer`, `selfTestLatest`, `selfTestNotifiedBoards`,
+  `actuatorSensedState`, `lastRawAdc`, `clientStreams`, `broadcastLastTime`, `envelope`,
+  `encoderEnvelope`, and `_t7SlotToBoardId` (which `noteT7Alive` in board-status fills until step
+  2.4). `_ptSlotToBoardId` stays private to `config-caches`.
 - **R4 (one commit per module)**, in the order below, each green on its own (§6.3).
 
 | # | commit: create | cut from `server.ts` (today's lines) | exports | notes |
@@ -433,7 +438,8 @@ imported bindings), `applyDeployedConfigChange` (body verbatim with 852-857 repl
 
 ### 6.3 Checks for every step-1 commit
 
-`npx tsc --noEmit` (exit 0), backend `npm test`, then under the stack lock: `pipeline/run.sh pt`,
+`npx tsc --noEmit` (exit 0), backend `npm test` with no failure outside
+`test/characterization/baseline_vitest_failures.txt`, then under the stack lock: `pipeline/run.sh pt`,
 `nocal`, `boards`; `lifecycle/run.sh`; at the end of the step, `test_integration.sh`
 (`ws_data_flow_test`). Review with `git diff --color-moved=dimmed-zebra
 --color-moved-ws=allow-indentation-change backend-remastered -- diablo_server/backend/src`: every
@@ -524,7 +530,8 @@ Each is a test to add **before** the step that touches it. G1-G5, G7, G9, G10 be
 - **G4 :9998 down / slow**: no golden sends a command with the sequencer stopped or stalled. Add
   (lifecycle): SIGSTOP the sequencer → `state_transition` → `ERROR "State transition failed:
   timeout"` after ~2 s; SIGTERM it → `ERROR "State transition failed: connect ECONNREFUSED
-  127.0.0.1:<port>"` (N5 normalises the port); `debug_mode` → no reply. WP5 already moves this code.
+  127.0.0.1:<port>"` (N5 normalises the port; `refusalText` passes any reply without an `ERR:`
+  prefix through unchanged); `debug_mode` → no reply. WP5 already moves this code.
 - **G5 keepalive reaper**: a client that stops answering pings is reaped within [30, 60] s
   (`KEEPALIVE_MS` 30 000 + one sweep); not covered anywhere.
 - **G6 slot 0 → 10** in `uniqueIdFromPtEntity` (today 344-345) and the T7 slot map: no golden has a
