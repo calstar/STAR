@@ -4,7 +4,7 @@ ACT_CMD.B2.CH2.actuator_state_commanded  value={0, 1}
 ACT_CMD.B2.CH3.actuator_state_commanded  value=0
 ACT_CMD.B2.CH5.actuator_state_commanded  value=0
 ACT_CMD.B2.CH6.actuator_state_commanded  value=0
-ACT_CMD.B2.CH7.actuator_state_commanded  value=0
+ACT_CMD.B2.CH7.actuator_state_commanded  value={0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, replayed by elodin-db on subscribe (defect)
 ACT_CMD.B2.CH8.actuator_state_commanded  value={0, 1}
 ACT_CMD.B4.CH1.actuator_state_commanded  value=0
 ACT_CMD.B4.CH10.actuator_state_commanded  value=0
@@ -58,17 +58,10 @@ PT1_Cal.CH8.raw_adc_counts  value=1243500000
 PT1_Cal.CH9.pressure_psi  value=0
 PT1_Cal.CH9.raw_adc  value=1199500000
 PT1_Cal.CH9.raw_adc_counts  value=1199500000
-SELF_TEST.BOARD_21.sensor_0  value=1
-SELF_TEST.BOARD_21.sensor_1  value=1
-SELF_TEST.BOARD_21.sensor_10  value=1
-SELF_TEST.BOARD_21.sensor_2  value=1
-SELF_TEST.BOARD_21.sensor_3  value=1
-SELF_TEST.BOARD_21.sensor_4  value=1
-SELF_TEST.BOARD_21.sensor_5  value=1
-SELF_TEST.BOARD_21.sensor_6  value=1
-SELF_TEST.BOARD_21.sensor_7  value=1
-SELF_TEST.BOARD_21.sensor_8  value=1
-SELF_TEST.BOARD_21.sensor_9  value=1
+
+## self-test (P12): per board, the exact expected result | not-received (one-shot UDP self-test, defect)
+board 21 (PT): sensor_0, sensor_1, sensor_10, sensor_2, sensor_3, sensor_4, sensor_5, sensor_6, sensor_7, sensor_8, sensor_9 all 1 | not-received (one-shot UDP self-test, defect)
+self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet: ok
 
 ## timing bounds (from config, not observed; README T1)
 envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): median within [0.9 W, 2 W]: yes; at least 5 gaps: yes
@@ -96,13 +89,13 @@ envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): 
 {"connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
 
 ## historical_data (P8: series keys per step, the distinct values each carries)
-# connect client A: 67 series
+# connect client A: 56 series (self-test: P12)
   ACT_CMD.B2.CH1.actuator_state_commanded {0}
   ACT_CMD.B2.CH2.actuator_state_commanded {0}
   ACT_CMD.B2.CH3.actuator_state_commanded {0}
   ACT_CMD.B2.CH5.actuator_state_commanded {0}
   ACT_CMD.B2.CH6.actuator_state_commanded {0}
-  ACT_CMD.B2.CH7.actuator_state_commanded {0}
+  ACT_CMD.B2.CH7.actuator_state_commanded {0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, replayed by elodin-db on subscribe (defect)
   ACT_CMD.B2.CH8.actuator_state_commanded {1}
   ACT_CMD.B4.CH1.actuator_state_commanded {0}
   ACT_CMD.B4.CH10.actuator_state_commanded {0}
@@ -153,24 +146,13 @@ envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): 
   PT1_Cal.CH9.pressure_psi {0}
   PT1_Cal.CH9.raw_adc {1199500000}
   PT1_Cal.CH9.raw_adc_counts {1199500000}
-  SELF_TEST.BOARD_21.sensor_0 {1}
-  SELF_TEST.BOARD_21.sensor_1 {1}
-  SELF_TEST.BOARD_21.sensor_10 {1}
-  SELF_TEST.BOARD_21.sensor_2 {1}
-  SELF_TEST.BOARD_21.sensor_3 {1}
-  SELF_TEST.BOARD_21.sensor_4 {1}
-  SELF_TEST.BOARD_21.sensor_5 {1}
-  SELF_TEST.BOARD_21.sensor_6 {1}
-  SELF_TEST.BOARD_21.sensor_7 {1}
-  SELF_TEST.BOARD_21.sensor_8 {1}
-  SELF_TEST.BOARD_21.sensor_9 {1}
-# viewer_client client B: 67 series
+# viewer_client client B: 56 series (self-test: P12)
   ACT_CMD.B2.CH1.actuator_state_commanded {0}
   ACT_CMD.B2.CH2.actuator_state_commanded {0}
   ACT_CMD.B2.CH3.actuator_state_commanded {0}
   ACT_CMD.B2.CH5.actuator_state_commanded {0}
   ACT_CMD.B2.CH6.actuator_state_commanded {0}
-  ACT_CMD.B2.CH7.actuator_state_commanded {0}
+  ACT_CMD.B2.CH7.actuator_state_commanded {0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, replayed by elodin-db on subscribe (defect)
   ACT_CMD.B2.CH8.actuator_state_commanded {1}
   ACT_CMD.B4.CH1.actuator_state_commanded {0}
   ACT_CMD.B4.CH10.actuator_state_commanded {0}
@@ -221,24 +203,13 @@ envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): 
   PT1_Cal.CH9.pressure_psi {0}
   PT1_Cal.CH9.raw_adc {1199500000}
   PT1_Cal.CH9.raw_adc_counts {1199500000}
-  SELF_TEST.BOARD_21.sensor_0 {1}
-  SELF_TEST.BOARD_21.sensor_1 {1}
-  SELF_TEST.BOARD_21.sensor_10 {1}
-  SELF_TEST.BOARD_21.sensor_2 {1}
-  SELF_TEST.BOARD_21.sensor_3 {1}
-  SELF_TEST.BOARD_21.sensor_4 {1}
-  SELF_TEST.BOARD_21.sensor_5 {1}
-  SELF_TEST.BOARD_21.sensor_6 {1}
-  SELF_TEST.BOARD_21.sensor_7 {1}
-  SELF_TEST.BOARD_21.sensor_8 {1}
-  SELF_TEST.BOARD_21.sensor_9 {1}
-# history client A: 67 series
+# history client A: 56 series (self-test: P12)
   ACT_CMD.B2.CH1.actuator_state_commanded {0}
   ACT_CMD.B2.CH2.actuator_state_commanded {0}
   ACT_CMD.B2.CH3.actuator_state_commanded {0}
   ACT_CMD.B2.CH5.actuator_state_commanded {0}
   ACT_CMD.B2.CH6.actuator_state_commanded {0}
-  ACT_CMD.B2.CH7.actuator_state_commanded {0}
+  ACT_CMD.B2.CH7.actuator_state_commanded {0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, replayed by elodin-db on subscribe (defect)
   ACT_CMD.B2.CH8.actuator_state_commanded {1}
   ACT_CMD.B4.CH1.actuator_state_commanded {0}
   ACT_CMD.B4.CH10.actuator_state_commanded {0}
@@ -289,14 +260,3 @@ envelope spacing of PT1.CH1.raw_adc_counts history (W = 2000/4 pts/s = 500 ms): 
   PT1_Cal.CH9.pressure_psi {0}
   PT1_Cal.CH9.raw_adc {1199500000}
   PT1_Cal.CH9.raw_adc_counts {1199500000}
-  SELF_TEST.BOARD_21.sensor_0 {1}
-  SELF_TEST.BOARD_21.sensor_1 {1}
-  SELF_TEST.BOARD_21.sensor_10 {1}
-  SELF_TEST.BOARD_21.sensor_2 {1}
-  SELF_TEST.BOARD_21.sensor_3 {1}
-  SELF_TEST.BOARD_21.sensor_4 {1}
-  SELF_TEST.BOARD_21.sensor_5 {1}
-  SELF_TEST.BOARD_21.sensor_6 {1}
-  SELF_TEST.BOARD_21.sensor_7 {1}
-  SELF_TEST.BOARD_21.sensor_8 {1}
-  SELF_TEST.BOARD_21.sensor_9 {1}

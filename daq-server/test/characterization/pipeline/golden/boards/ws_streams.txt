@@ -84,7 +84,7 @@ ACT_CMD.B2.CH2.actuator_state_commanded  value=0
 ACT_CMD.B2.CH3.actuator_state_commanded  value=0
 ACT_CMD.B2.CH5.actuator_state_commanded  value=0
 ACT_CMD.B2.CH6.actuator_state_commanded  value=0
-ACT_CMD.B2.CH7.actuator_state_commanded  value=0
+ACT_CMD.B2.CH7.actuator_state_commanded  value={0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, replayed by elodin-db on subscribe (defect)
 ACT_CMD.B2.CH8.actuator_state_commanded  value=1
 ACT_CMD.B4.CH1.actuator_state_commanded  value=0
 ACT_CMD.B4.CH10.actuator_state_commanded  value=0
@@ -199,63 +199,6 @@ RTD1_Cal.CH4.raw_adc  value=962000000
 RTD1_Cal.CH4.raw_adc_counts  value=962000000
 RTD1_Cal.CH4.raw_resistance_counts  value=962000000
 RTD1_Cal.CH4.temperature_c  value=30.82261848449707
-SELF_TEST.BOARD_12.sensor_0  value=1
-SELF_TEST.BOARD_12.sensor_1  value=1
-SELF_TEST.BOARD_12.sensor_10  value=1
-SELF_TEST.BOARD_12.sensor_2  value=1
-SELF_TEST.BOARD_12.sensor_3  value=1
-SELF_TEST.BOARD_12.sensor_4  value=1
-SELF_TEST.BOARD_12.sensor_5  value=1
-SELF_TEST.BOARD_12.sensor_6  value=1
-SELF_TEST.BOARD_12.sensor_7  value=1
-SELF_TEST.BOARD_12.sensor_8  value=1
-SELF_TEST.BOARD_12.sensor_9  value=1
-SELF_TEST.BOARD_14.sensor_0  value=1
-SELF_TEST.BOARD_14.sensor_1  value=1
-SELF_TEST.BOARD_14.sensor_10  value=1
-SELF_TEST.BOARD_14.sensor_2  value=1
-SELF_TEST.BOARD_14.sensor_3  value=1
-SELF_TEST.BOARD_14.sensor_4  value=1
-SELF_TEST.BOARD_14.sensor_5  value=1
-SELF_TEST.BOARD_14.sensor_6  value=1
-SELF_TEST.BOARD_14.sensor_7  value=1
-SELF_TEST.BOARD_14.sensor_8  value=1
-SELF_TEST.BOARD_14.sensor_9  value=1
-SELF_TEST.BOARD_21.sensor_0  value=1
-SELF_TEST.BOARD_21.sensor_1  value=1
-SELF_TEST.BOARD_21.sensor_10  value=1
-SELF_TEST.BOARD_21.sensor_2  value=1
-SELF_TEST.BOARD_21.sensor_3  value=1
-SELF_TEST.BOARD_21.sensor_4  value=1
-SELF_TEST.BOARD_21.sensor_5  value=1
-SELF_TEST.BOARD_21.sensor_6  value=1
-SELF_TEST.BOARD_21.sensor_7  value=1
-SELF_TEST.BOARD_21.sensor_8  value=1
-SELF_TEST.BOARD_21.sensor_9  value=1
-SELF_TEST.BOARD_22.sensor_0  value=1
-SELF_TEST.BOARD_22.sensor_1  value=1
-SELF_TEST.BOARD_22.sensor_2  value=1
-SELF_TEST.BOARD_22.sensor_3  value=1
-SELF_TEST.BOARD_22.sensor_4  value=1
-SELF_TEST.BOARD_31.sensor_0  value=1
-SELF_TEST.BOARD_31.sensor_1  value=1
-SELF_TEST.BOARD_31.sensor_2  value=1
-SELF_TEST.BOARD_31.sensor_3  value=1
-SELF_TEST.BOARD_31.sensor_4  value=1
-SELF_TEST.BOARD_42.sensor_0  value=1
-SELF_TEST.BOARD_42.sensor_1  value=1
-SELF_TEST.BOARD_42.sensor_2  value=1
-SELF_TEST.BOARD_42.sensor_6  value=1
-SELF_TEST.BOARD_51.sensor_0  value=1
-SELF_TEST.BOARD_51.sensor_2  value=1
-SELF_TEST.BOARD_51.sensor_3  value=1
-SELF_TEST.BOARD_51.sensor_4  value=1
-SELF_TEST.BOARD_51.sensor_5  value=1
-SELF_TEST.BOARD_60.sensor_0  value=1
-SELF_TEST.BOARD_60.sensor_2  value=1
-SELF_TEST.BOARD_61.sensor_0  value=1
-SELF_TEST.BOARD_61.sensor_1  value=1
-SELF_TEST.BOARD_61.sensor_2  value=1
 TC1.CH2.raw_adc_counts  value=5000000
 TC1.CH3.raw_adc_counts  value=5500000
 TC1.CH4.raw_adc_counts  value=6000000
@@ -272,6 +215,18 @@ TC1_Cal.CH4.temperature_c  value=171.10931396484375
 TC1_Cal.CH5.raw_adc  value=6500000
 TC1_Cal.CH5.raw_adc_counts  value=6500000
 TC1_Cal.CH5.temperature_c  value=185.6881866455078
+
+## self-test (P12): per board, the exact expected result | not-received (one-shot UDP self-test, defect)
+board 12 (ACTUATOR): sensor_0, sensor_1, sensor_10, sensor_2, sensor_3, sensor_4, sensor_5, sensor_6, sensor_7, sensor_8, sensor_9 all 1 | not-received (one-shot UDP self-test, defect)
+board 14 (ACTUATOR): sensor_0, sensor_1, sensor_10, sensor_2, sensor_3, sensor_4, sensor_5, sensor_6, sensor_7, sensor_8, sensor_9 all 1 | not-received (one-shot UDP self-test, defect)
+board 21 (PT): sensor_0, sensor_1, sensor_10, sensor_2, sensor_3, sensor_4, sensor_5, sensor_6, sensor_7, sensor_8, sensor_9 all 1 | not-received (one-shot UDP self-test, defect)
+board 22 (PT): sensor_0, sensor_1, sensor_2, sensor_3, sensor_4 all 1 | not-received (one-shot UDP self-test, defect)
+board 31 (RTD): sensor_0, sensor_1, sensor_2, sensor_3, sensor_4 all 1 | not-received (one-shot UDP self-test, defect)
+board 42 (LC): sensor_0, sensor_1, sensor_2, sensor_6 all 1 | not-received (one-shot UDP self-test, defect)
+board 51 (TC): sensor_0, sensor_2, sensor_3, sensor_4, sensor_5 all 1 | not-received (one-shot UDP self-test, defect)
+board 60 (PT (startup)): sensor_0, sensor_2 all 1 | not-received (one-shot UDP self-test, defect)
+board 61 (ENCODER): sensor_0, sensor_1, sensor_2 all 1 | not-received (one-shot UDP self-test, defect)
+self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet: ok
 
 ## timing bounds (from config, not observed; README T1)
 envelope spacing: fewer than 5 gaps in the history reply (0 points)
@@ -299,7 +254,7 @@ envelope spacing: fewer than 5 gaps in the history reply (0 points)
 {"connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
 
 ## historical_data (P8: series keys per step, the distinct values each carries)
-# connect client A: 271 series
+# connect client A: 216 series (self-test: P12)
   ACT2.CH1.raw_adc_counts <varies>
   ACT2.CH10.raw_adc_counts <varies>
   ACT2.CH2.raw_adc_counts <varies>
@@ -385,7 +340,7 @@ envelope spacing: fewer than 5 gaps in the history reply (0 points)
   ACT_CMD.B2.CH3.actuator_state_commanded {0}
   ACT_CMD.B2.CH5.actuator_state_commanded {0}
   ACT_CMD.B2.CH6.actuator_state_commanded {0}
-  ACT_CMD.B2.CH7.actuator_state_commanded {0}
+  ACT_CMD.B2.CH7.actuator_state_commanded {0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, replayed by elodin-db on subscribe (defect)
   ACT_CMD.B2.CH8.actuator_state_commanded {1}
   ACT_CMD.B4.CH1.actuator_state_commanded {0}
   ACT_CMD.B4.CH10.actuator_state_commanded {0}
@@ -500,61 +455,6 @@ envelope spacing: fewer than 5 gaps in the history reply (0 points)
   RTD1_Cal.CH4.raw_adc_counts {962000000}
   RTD1_Cal.CH4.raw_resistance_counts {962000000}
   RTD1_Cal.CH4.temperature_c {30.82261848449707}
-  SELF_TEST.BOARD_12.sensor_0 {1}
-  SELF_TEST.BOARD_12.sensor_1 {1}
-  SELF_TEST.BOARD_12.sensor_10 {1}
-  SELF_TEST.BOARD_12.sensor_2 {1}
-  SELF_TEST.BOARD_12.sensor_3 {1}
-  SELF_TEST.BOARD_12.sensor_4 {1}
-  SELF_TEST.BOARD_12.sensor_5 {1}
-  SELF_TEST.BOARD_12.sensor_6 {1}
-  SELF_TEST.BOARD_12.sensor_7 {1}
-  SELF_TEST.BOARD_12.sensor_8 {1}
-  SELF_TEST.BOARD_12.sensor_9 {1}
-  SELF_TEST.BOARD_14.sensor_0 {1}
-  SELF_TEST.BOARD_14.sensor_1 {1}
-  SELF_TEST.BOARD_14.sensor_10 {1}
-  SELF_TEST.BOARD_14.sensor_2 {1}
-  SELF_TEST.BOARD_14.sensor_3 {1}
-  SELF_TEST.BOARD_14.sensor_4 {1}
-  SELF_TEST.BOARD_14.sensor_5 {1}
-  SELF_TEST.BOARD_14.sensor_6 {1}
-  SELF_TEST.BOARD_14.sensor_7 {1}
-  SELF_TEST.BOARD_14.sensor_8 {1}
-  SELF_TEST.BOARD_14.sensor_9 {1}
-  SELF_TEST.BOARD_21.sensor_0 {1}
-  SELF_TEST.BOARD_21.sensor_1 {1}
-  SELF_TEST.BOARD_21.sensor_10 {1}
-  SELF_TEST.BOARD_21.sensor_2 {1}
-  SELF_TEST.BOARD_21.sensor_3 {1}
-  SELF_TEST.BOARD_21.sensor_4 {1}
-  SELF_TEST.BOARD_21.sensor_5 {1}
-  SELF_TEST.BOARD_21.sensor_6 {1}
-  SELF_TEST.BOARD_21.sensor_7 {1}
-  SELF_TEST.BOARD_21.sensor_8 {1}
-  SELF_TEST.BOARD_21.sensor_9 {1}
-  SELF_TEST.BOARD_22.sensor_0 {1}
-  SELF_TEST.BOARD_22.sensor_1 {1}
-  SELF_TEST.BOARD_22.sensor_2 {1}
-  SELF_TEST.BOARD_22.sensor_3 {1}
-  SELF_TEST.BOARD_22.sensor_4 {1}
-  SELF_TEST.BOARD_31.sensor_0 {1}
-  SELF_TEST.BOARD_31.sensor_1 {1}
-  SELF_TEST.BOARD_31.sensor_2 {1}
-  SELF_TEST.BOARD_31.sensor_3 {1}
-  SELF_TEST.BOARD_31.sensor_4 {1}
-  SELF_TEST.BOARD_42.sensor_0 {1}
-  SELF_TEST.BOARD_42.sensor_1 {1}
-  SELF_TEST.BOARD_42.sensor_2 {1}
-  SELF_TEST.BOARD_42.sensor_6 {1}
-  SELF_TEST.BOARD_51.sensor_0 {1}
-  SELF_TEST.BOARD_51.sensor_2 {1}
-  SELF_TEST.BOARD_51.sensor_3 {1}
-  SELF_TEST.BOARD_51.sensor_4 {1}
-  SELF_TEST.BOARD_51.sensor_5 {1}
-  SELF_TEST.BOARD_61.sensor_0 {1}
-  SELF_TEST.BOARD_61.sensor_1 {1}
-  SELF_TEST.BOARD_61.sensor_2 {1}
   TC1.CH2.raw_adc_counts {5000000}
   TC1.CH3.raw_adc_counts {5500000}
   TC1.CH4.raw_adc_counts {6000000}

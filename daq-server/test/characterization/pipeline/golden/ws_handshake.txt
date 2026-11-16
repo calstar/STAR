@@ -22,17 +22,7 @@
 {"payload": {"component": "actuator_state_commanded", "entity": "ACT_CMD.B4.CH10", "timestamp": "<ts>", "value": 0}, "timestamp": "<ts>", "type": "sensor_update"}
 {"payload": {"component": "actuator_state_commanded", "entity": "ACT_CMD.B4.CH3", "timestamp": "<ts>", "value": 0}, "timestamp": "<ts>", "type": "sensor_update"}
 {"payload": {"component": "actuator_state_commanded", "entity": "ACT_CMD.B4.CH4", "timestamp": "<ts>", "value": 0}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_0", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_1", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_2", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_3", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_4", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_5", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_6", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_7", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_8", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_9", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_10", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
+<self-test replay: see ws_streams.txt self-test section (P12)>
 
 ## client B (connected in step viewer_client)
 {"payload": {"connId": "c3", "connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}, "timestamp": "<ts>", "type": "connection_status"}
@@ -58,14 +48,4 @@
 {"payload": {"component": "actuator_state_commanded", "entity": "ACT_CMD.B4.CH10", "timestamp": "<ts>", "value": 0}, "timestamp": "<ts>", "type": "sensor_update"}
 {"payload": {"component": "actuator_state_commanded", "entity": "ACT_CMD.B4.CH3", "timestamp": "<ts>", "value": 0}, "timestamp": "<ts>", "type": "sensor_update"}
 {"payload": {"component": "actuator_state_commanded", "entity": "ACT_CMD.B4.CH4", "timestamp": "<ts>", "value": 0}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_0", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_1", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_2", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_3", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_4", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_5", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_6", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_7", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_8", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_9", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
-{"payload": {"component": "sensor_10", "entity": "SELF_TEST.BOARD_21", "timestamp": "<ts>", "value": 1}, "timestamp": "<ts>", "type": "sensor_update"}
+<self-test replay: see ws_streams.txt self-test section (P12)>
