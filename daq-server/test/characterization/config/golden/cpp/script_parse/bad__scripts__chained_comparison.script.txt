@@ -1,0 +1,17 @@
+
+=== script fixtures/bad/scripts/chained_comparison.script (parse only)
+parse.ok = false
+parse.diag.count = 1
+parse.diag 1:10 E_CHAINED_COMPARISON "two comparisons in a row — write it as a and b, e.g. (x > 100) and (x < 200)"
+top = [0, 0) empty=true max_depth=0
+expr[0] Number @1:4 number=1 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[1] Number @1:8 number=2 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+block_items = []
+canonical:
+(seq)
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0
