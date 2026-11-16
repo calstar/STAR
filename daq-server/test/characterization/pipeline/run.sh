@@ -16,7 +16,9 @@
 # board IPs on loopback and its ports in 264xx; nothing in the checkout is moved or written.
 #
 # Env: CHAR_BUILD_DIR (default build-gate/ or build/), CHAR_KEEP=1 keeps the fixture and logs,
-#      CHAR_CAPTURE_ONLY=<path> copies the raw capture there and skips the comparison.
+#      CHAR_CAPTURE_ONLY=<path> copies the raw capture there and skips the comparison,
+#      CHAR_UNDER_LOAD=1 says the machine is under deliberate synthetic load (set by whoever starts
+#      it): the self-test rule then tolerates not-received boards (README P12).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -238,7 +240,9 @@ cat > "$FX/context.json" <<EOF
 {"now_ms": $START_MS, "gui_points_per_second": $(sed -n "/^\[gui\]/,/^\[/s/^points_per_second = \([0-9.]*\)/\1/p" "$CFG"),
  "paths": {"$FX/config": "<cfgdir>", "$FX/home": "<home>", "$FX": "<fx>",
            "$ROOT": "<daq>"},
- "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))')}
+ "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))'),
+ "under_load": $([ "${CHAR_UNDER_LOAD:-0}" = 1 ] && echo true || echo false),
+ "selftest_expected": $("$PY" "$HERE/selftest_expected.py" "$FX/sim_config.toml" "$CFG")}
 EOF
 
 if [ -n "${CHAR_CAPTURE_ONLY:-}" ]; then
