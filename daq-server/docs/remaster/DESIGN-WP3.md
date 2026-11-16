@@ -356,7 +356,9 @@ One commit each, in this order, each built and guarded:
 3. `SendMsg.hpp`; adopt in `DatabaseConfig.cpp` and `ControllerService.cpp`.
 4. `Printer.cpp`; `FSW_SOURCES`.
 5. `TableId.hpp`; adopt in `DatabaseConfig.cpp` (15 sites + `appendTables`), `T7Stream.cpp`,
-   `SensorTables.cpp`. One commit; the schema goldens and the mutation in §2.5 are its proof.
+   `SensorTables.cpp`, plus the `table_id_for` ctest (`lib/test/test_table_id.cpp`, registered in
+   `lib/CMakeLists.txt`, which WP3 owns). One commit; the schema goldens, the ctest and the
+   mutations in §2.5 are its proof.
 6. Comment fix in `ControllerMessages.hpp:71` (PSM no longer exists): optional, separate
    (STYLE-S38: stale comments are corrected outside a move).
 
