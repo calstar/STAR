@@ -303,59 +303,132 @@ def ch7_render(key, vals):
     return None
 
 
-def selftest_section(steps, ctx):
-    """P12. Self-test results, one line per board the simulator self-tests.
+def selftest_paths(steps):
+    """Every path a self-test result reaches a client by, as {path: {board: {sensor: value}}}.
 
-    Each board's line is written as its exact expected result OR not-received: the result is a
-    one-shot UDP packet (the simulator's skip-startup burst), and on a loaded Linux box some never
-    reach the backend (defect). The golden is the same either way; the rule line below fails when
-      (a) any received result differs from the expected one (sensor set or a non-pass value),
-      (b) more than half the boards are not-received, or
-      (c) the run is quiet (unloaded) and ANY board is not-received.
-    `under_load` comes from run.sh (CHAR_UNDER_LOAD, set by whoever starts the synthetic load).
+    - "handshake <client>": the connect replay (server.ts selfTestLatest);
+    - "history <step> <client>": a full history reply (more than 10 series, i.e. a connect
+      backfill or an unnarrowed query; narrowed queries name one key and carry no self-test);
+    - "live": self-test sensor_updates outside a handshake.
+    Client C (late_client) is left out of the history paths: it connects past the backend's 60 s
+    connect-backfill horizon, so its backfill no longer reaches back to the one-shot self-test.
     """
-    expected = ctx.get("selftest_expected", {})
-    seen = defaultdict(dict)
-    for _, frames in steps:
-        for fs in frames.values():
+    paths = defaultdict(lambda: defaultdict(dict))
+    first = {}
+    for st, frames in steps:
+        for client, fs in frames.items():
+            hs = set()
+            if client not in first:
+                first[client] = st["name"]
+                hs = {id(m) for m in handshake_frames(fs)}
+            full = (
+                sum(len(m["payload"]) for m in fs if m["type"] == "historical_data")
+                > 10
+                and client != "C"
+            )
             for m in fs:
                 if m["type"] == "sensor_update":
                     e, c = m["payload"]["entity"], m["payload"]["component"]
                     if e.startswith("SELF_TEST.BOARD_"):
-                        seen[e[len("SELF_TEST.BOARD_") :]][c] = m["payload"]["value"]
-                elif m["type"] == "historical_data":
+                        key = f"handshake {client}" if id(m) in hs else "live"
+                        paths[key][e[len("SELF_TEST.BOARD_") :]][c] = m["payload"][
+                            "value"
+                        ]
+                elif m["type"] == "historical_data" and full:
                     for k, series in m["payload"].items():
                         if k.startswith("SELF_TEST.BOARD_"):
                             ent, comp = k.rsplit(".", 1)
                             for v in series.get("values", []):
-                                seen[ent[len("SELF_TEST.BOARD_") :]][comp] = v
+                                paths[f"history {st['name']} {client}"][
+                                    ent[len("SELF_TEST.BOARD_") :]
+                                ][comp] = v
+            if full:
+                paths.setdefault(f"history {st['name']} {client}", defaultdict(dict))
+    for client in first:
+        paths.setdefault(f"handshake {client}", defaultdict(dict))
+    return paths
+
+
+def selftest_section(steps, ctx):
+    """P12. Self-test results, one line per board the simulators self-test.
+
+    Each board's line is written as its exact expected result OR not-received: the result is a
+    one-shot UDP packet (the simulator's skip-startup burst), and on a loaded Linux box some never
+    reach the backend (defect). The golden is the same either way; the rule line below fails when
+      (a) any result received by any path differs from the expected one (sensor set, or a value
+          other than 1), or comes from a board not expected;
+      (b) more than half the boards are not-received (by any path);
+      (c) the run is quiet (unloaded) and ANY board is not-received;
+      (d) the run is quiet and any handshake replay or full history reply lacks any board: every
+          path that carried the self-test in the old golden must carry all of it exactly.
+    `under_load` comes from run.sh (CHAR_UNDER_LOAD, set by whoever starts the synthetic load).
+    """
+    expected = ctx.get("selftest_expected", {})
+    want = {b: sorted(f"sensor_{i}" for i in e["sensors"]) for b, e in expected.items()}
+    paths = selftest_paths(steps)
+    union = defaultdict(dict)
+    problems = []
+    for path, boards in sorted(paths.items()):
+        for board, got in sorted(boards.items()):
+            union[board].update(got)
+            if board not in want:
+                problems.append(f"{path}: board {board} (not expected) {dumps(got)}")
+            elif sorted(got) != want[board] or any(v != 1 for v in got.values()):
+                problems.append(f"{path}: board {board} received {dumps(got)}")
     out = [
         "## self-test (P12): per board, the exact expected result | not-received (one-shot UDP"
         " self-test, defect)"
     ]
-    problems, missing = [], []
+    missing = []
     for board in sorted(expected, key=int):
-        exp = expected[board]
-        want = sorted(f"sensor_{i}" for i in exp["sensors"])
         out.append(
-            f"board {board} ({exp['type']}): {', '.join(want)} all 1"
+            f"board {board} ({expected[board]['type']}): {', '.join(want[board])} all 1"
             " | not-received (one-shot UDP self-test, defect)"
         )
-        got = seen.pop(board, None)
-        if got is None:
+        if board not in union:
             missing.append(board)
-        elif sorted(got) != want or any(v != 1 for v in got.values()):
-            problems.append(f"board {board} received {dumps(got)}")
-    for board, got in sorted(seen.items()):
-        problems.append(f"board {board} (not expected) received {dumps(got)}")
     under_load = bool(ctx.get("under_load"))
     if not under_load and missing:
         problems.append(f"quiet run, not-received: {', '.join(missing)}")
     if 2 * len(missing) > len(expected):
         problems.append(f"more than half not-received: {', '.join(missing)}")
+    order = [st["name"] for st, _ in steps]
+    startup_step = (
+        order.index("startup_board") if "startup_board" in order else len(order)
+    )
+    first_step = {}
+    for i, (st, frames) in enumerate(steps):
+        for client in frames:
+            first_step.setdefault(client, i)
+    path_step = {}
+    for path in paths:
+        parts = path.split()
+        if parts[0] == "handshake":
+            path_step[path] = first_step.get(parts[1], 0)
+        elif parts[0] == "history":
+            path_step[path] = order.index(parts[1])
+    if not under_load:
+        for path, boards in sorted(paths.items()):
+            if path == "live":
+                continue
+            # The startup board (60) self-tests during the startup_board step; a path that
+            # closed before it is not expected to carry it.
+            lack = [
+                b
+                for b in sorted(expected, key=int)
+                if b not in boards
+                and not (
+                    expected[b]["type"] == "PT (startup)"
+                    and path_step.get(path, 0) < startup_step
+                )
+            ]
+            if lack:
+                problems.append(f"quiet run, {path} lacks: {', '.join(lack)}")
+    checked = sorted(p for p in paths if p != "live")
+    out.append("paths checked: " + "; ".join(checked))
     out.append(
         "self-test rule (a) exact if received, (b) at most half not-received, (c) all"
-        " received when quiet: "
+        " received when quiet, (d) every replay/full-history path complete when quiet: "
         + ("ok" if not problems else "VIOLATED: " + "; ".join(problems))
     )
     out.append("")
@@ -465,7 +538,8 @@ def main():
                     for k, series in m["payload"].items():
                         keys[k] = sorted({dumps(v) for v in series.get("values", [])})
                         assert set(series) == {"time", "values"}, series.keys()
-                    hist.append((st["name"], client, keys))
+                    if client != "C":  # late_client: see selftest_paths
+                        hist.append((st["name"], client, keys))
                 elif t in ("connection_status", "board_status_update", "board_log"):
                     p = n.value(m["payload"])
                     p = {
