@@ -16,9 +16,24 @@ echo "── stack lock self-test"
 bash "$HERE/test_stack_lock.sh" || fail=1
 echo "── ctest -L characterization ($BUILD)"
 (cd "$BUILD" && ctest -L characterization --output-on-failure) || fail=1
+# Processes launched from this checkout that outlive an area's run would pollute the next area's
+# captures (LEDGER D33: a straggler simulator once fed PT data into lifecycle's ball-valve capture).
+# Under the stack lock nothing else from this checkout runs, so anything matching ROOT is a leak.
+leftovers() {
+  ps -axo pid=,command= 2>/dev/null | grep -F "$ROOT/" |
+    grep -E 'board_simulator|board_startup_sim|daq_bridge|_service|elodin-db|t7_bridge|tsx .*src/server' |
+    grep -v -E 'grep|run\.sh|ctest' || true
+}
 for r in "$HERE"/*/run.sh; do
   [ -f "$r" ] || continue
-  echo "── $(basename "$(dirname "$r")")/run.sh"
+  area="$(basename "$(dirname "$r")")"
+  echo "── $area/run.sh"
   bash "$r" || { echo "   FAILED: $r"; fail=1; }
+  left="$(leftovers)"
+  if [ -n "$left" ]; then
+    echo "   FAILED: $area left processes running after its run:"
+    echo "$left" | sed 's/^/     /'
+    fail=1
+  fi
 done
 [ "$fail" = 0 ] && echo "CHARACTERIZATION: PASS" || { echo "CHARACTERIZATION: FAIL"; exit 1; }
