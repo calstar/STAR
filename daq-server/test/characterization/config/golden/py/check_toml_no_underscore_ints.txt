@@ -1,0 +1,78 @@
+== check_toml_no_underscore_ints.main()
+[check_toml] OK — 4 config TOML file(s) have no underscore-separated numbers.
+exit 0
+== scan_file config/config_base.toml
+== scan_file config/config_flight_daq.toml
+== scan_file config/config_ground_daq.toml
+== scan_file config/config_sitl.toml
+== scan_file config/profiles/default/config.toml
+== scan_file config/profiles/digital-twin/config.toml
+== scan_file config/profiles/server/config.toml
+== scan_file test/characterization/config/fixtures/bad/actuator_roles_bad.toml
+== scan_file test/characterization/config/fixtures/bad/bad_pt_type.toml
+== scan_file test/characterization/config/fixtures/bad/duplicate_key.toml
+== scan_file test/characterization/config/fixtures/bad/duplicate_sensors.toml
+== scan_file test/characterization/config/fixtures/bad/dynamic_states_bad.toml
+== scan_file test/characterization/config/fixtures/bad/empty.toml
+== scan_file test/characterization/config/fixtures/bad/environmental_bad_id.toml
+== scan_file test/characterization/config/fixtures/bad/environmental_duplicate_id.toml
+== scan_file test/characterization/config/fixtures/bad/environmental_non_integer_id.toml
+== scan_file test/characterization/config/fixtures/bad/fire_flow_bad.toml
+== scan_file test/characterization/config/fixtures/bad/malformed.toml
+== scan_file test/characterization/config/fixtures/bad/missing_sections.toml
+== scan_file test/characterization/config/fixtures/bad/not_toml_json.toml
+== scan_file test/characterization/config/fixtures/bad/out_of_range_ports.toml
+== scan_file test/characterization/config/fixtures/bad/slot_collision.toml
+== scan_file test/characterization/config/fixtures/bad/slug_collision.toml
+== scan_file test/characterization/config/fixtures/bad/t7_errors.toml
+== scan_file test/characterization/config/fixtures/bad/underscore_ints.toml
+  4: sensor_port = 5_006
+  5: actuator_cmd_port = 5_005
+  8: port = 2_240
+  11: interval_ms = 1_000
+  12: target_port = 5_006
+  13: elodin_port = 2_240
+  16: duration_ms = 6_000
+== scan_file test/characterization/config/fixtures/bad/unknown_board_type.toml
+== scan_file test/characterization/config/fixtures/bad/wrong_types.toml
+== SystemConfig.load(config/system_config.json)
+-- config/system_config.json
+  anomaly_detection_enabled = True
+  auto_backup_enabled = True
+  backup_directory = './calibration_backups'
+  backup_interval_seconds = 60.0
+  consensus_agreement_threshold = 0.6
+  consensus_enabled = True
+  health_monitoring_enabled = True
+  log_directory = './calibration_logs'
+  max_backup_files = 10
+  max_pressure = 1500.0
+  max_uncertainty = 500.0
+  max_voltage = 10.0
+  min_pressure = -50.0
+  min_sensors_for_consensus = 2
+  min_voltage = 0.0
+  mode = 'test'
+  model_order = 8
+  num_sensors = 37
+  validation_enabled = True
+-- test/characterization/config/fixtures/bad/no_such_system_config.json
+  anomaly_detection_enabled = True
+  auto_backup_enabled = True
+  backup_directory = './calibration_backups'
+  backup_interval_seconds = 60.0
+  consensus_agreement_threshold = 0.6
+  consensus_enabled = True
+  health_monitoring_enabled = True
+  log_directory = './calibration_logs'
+  max_backup_files = 10
+  max_pressure = 1500.0
+  max_uncertainty = 500.0
+  max_voltage = 10.0
+  min_pressure = -50.0
+  min_sensors_for_consensus = 2
+  min_voltage = 0.0
+  mode = 'test'
+  model_order = 8
+  num_sensors = 16
+  validation_enabled = True

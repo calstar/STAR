@@ -1,0 +1,6 @@
+=== stdout
+1:1: E_LOOP_WITHOUT_DELAY this loop's body never calls delay() — add one (e.g. delay(0.05)) so the loop waits rather than spinning, and so its poll rate is visible where it is read
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

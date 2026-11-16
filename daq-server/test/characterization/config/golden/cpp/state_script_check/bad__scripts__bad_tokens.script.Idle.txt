@@ -1,0 +1,6 @@
+=== stdout
+1:5: E_BAD_NUMBER malformed number — digits and at most one '.', with no exponent and no trailing letters
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

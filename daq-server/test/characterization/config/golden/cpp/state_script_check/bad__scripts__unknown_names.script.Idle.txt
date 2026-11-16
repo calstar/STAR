@@ -1,0 +1,8 @@
+=== stdout
+1:12: E_UNKNOWN_ACTUATOR no actuator named WARP_COIL — known names include DOME_CTRL, DOME_CTRL_VENT, FUEL_FILL_PRESS
+2:14: E_UNKNOWN_SENSOR no sensor named NO_SUCH_SENSOR — known names include DOME_CTRL, DOME_MID, EXCITATION_V
+3:15: E_UNKNOWN_STATE no state named NOWHERE — known names include ARMED, COPV_FILL, DOME_PRESS
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

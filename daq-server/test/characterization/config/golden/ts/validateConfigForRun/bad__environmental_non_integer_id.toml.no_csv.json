@@ -1,0 +1,10 @@
+{
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "Environmental Board (env_board): Environmental board ID must be an integer from 1 to 255.",
+      "page": "boards"
+    }
+  ]
+}

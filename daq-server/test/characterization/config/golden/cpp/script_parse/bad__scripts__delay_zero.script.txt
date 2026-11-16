@@ -1,0 +1,16 @@
+
+=== script fixtures/bad/scripts/delay_zero.script (parse only)
+parse.ok = false
+parse.diag.count = 1
+parse.diag 1:1 E_DELAY_NOT_POSITIVE "delay(0.000000) — a delay must be a positive number of seconds"
+top = [0, 0) empty=true max_depth=0
+expr[0] Number @1:7 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+block_items = []
+canonical:
+(seq)
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

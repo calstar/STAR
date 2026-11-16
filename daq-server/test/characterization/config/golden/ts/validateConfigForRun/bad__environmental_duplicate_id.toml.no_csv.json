@@ -1,0 +1,15 @@
+{
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "Environmental Board #1 (env_a): Environmental board ID 90 is also claimed by env_b — their readings would merge.",
+      "page": "boards"
+    },
+    {
+      "level": "error",
+      "message": "Environmental Board #2 (env_b): Environmental board ID 90 is also claimed by env_a — their readings would merge.",
+      "page": "boards"
+    }
+  ]
+}

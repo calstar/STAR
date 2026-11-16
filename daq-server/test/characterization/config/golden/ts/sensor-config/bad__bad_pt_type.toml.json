@@ -1,0 +1,69 @@
+{
+  "hpBoardNumbers": {
+    "logs": [],
+    "value": [
+      3,
+      4
+    ]
+  },
+  "loadActuatorChannelToEntityMap": {
+    "logs": [],
+    "value": {}
+  },
+  "loadLcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadRtdBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadSensorRoleMap": {
+    "logs": [
+      "log: 📋 Loaded sensor role map from config.toml (1 channels): {\"1\":\"PT_Cal.Chamber\"}",
+      "log: 📋 Loaded sensor role map for board pt_absolute (192.168.2.21): {\"1\":\"PT_Cal.Chamber\"}",
+      "log: 📋 Loaded sensor role map for board pt_unknown (192.168.2.22): {\"1\":\"PT_Cal.Chamber\"}",
+      "log: 📋 Loaded sensor role map for board pt_legacy (192.168.2.23): {\"1\":\"PT_Cal.Chamber\"}",
+      "log: 📋 Loaded sensor role map for board pt_legacy_2 (192.168.2.24): {\"1\":\"PT_Cal.Chamber\"}"
+    ],
+    "value": {
+      "boardChannelToEntityMaps": [
+        [
+          "192.168.2.21",
+          {
+            "1": "PT_Cal.Chamber"
+          }
+        ],
+        [
+          "192.168.2.22",
+          {
+            "1": "PT_Cal.Chamber"
+          }
+        ],
+        [
+          "192.168.2.23",
+          {
+            "1": "PT_Cal.Chamber"
+          }
+        ],
+        [
+          "192.168.2.24",
+          {
+            "1": "PT_Cal.Chamber"
+          }
+        ]
+      ],
+      "channelToEntityMap": {
+        "1": "PT_Cal.Chamber"
+      }
+    }
+  },
+  "loadTcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "t7CalFields": {
+    "logs": [],
+    "value": []
+  }
+}

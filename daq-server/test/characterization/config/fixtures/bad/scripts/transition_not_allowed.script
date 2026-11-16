@@ -1,0 +1,3 @@
+delay(1)
+transition_to(FIRE)
+transition_to(PRESS_STANDBY)

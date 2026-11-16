@@ -1,0 +1,5 @@
+open_valve(HIGH_PRESS_CTRL)
+transition_to(DYNAMIC_TEST)
+x = pressure(GN2_HIGH)
+if x > 1e3:
+    delay(1)

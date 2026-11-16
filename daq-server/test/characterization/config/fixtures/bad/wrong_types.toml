@@ -1,0 +1,37 @@
+[network]
+bind_ip = 127
+sensor_port = "5006"
+actuator_cmd_port = 5005.0
+
+[database]
+host = "127.0.0.1"
+port = true
+
+[heartbeat_service]
+enabled = "yes"
+
+[boards.pt_board]
+type = "PT"
+ip = "192.168.2.21"
+board_id = 21.0
+enabled = 1
+active_connectors = ["1", 2, 3.0]
+enable_serial_printing = true
+adc_ref_voltage = 5
+
+[sensor_roles_pt_board]
+"Fuel Upstream" = "1"
+"Ox Upstream" = 2.0
+"COPV" = 3
+
+[abort_pts]
+"COPV" = "900"
+
+[[states]]
+id = "1"
+name = "Idle"
+
+[[states]]
+id = 2
+name = 42
+is_boot = "true"

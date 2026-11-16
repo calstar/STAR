@@ -1,0 +1,6 @@
+=== stdout
+2:1: E_TAB_INDENT tab in indentation — use spaces (a tab is invisible in the editor, and mixed indentation silently changes which branch a valve command is in)
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1
