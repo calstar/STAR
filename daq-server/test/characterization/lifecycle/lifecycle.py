@@ -83,19 +83,49 @@ LISTENERS = {
     "integration_startup": "P_STARTUP_LISTEN",
 }
 
-# Timing buckets. Every edge is a property of the code under test, named where it is used.
-HB_SVC_PERIOD = [(0.15, 0.30, "200 ms ([heartbeat_service].interval_ms = 200)")]
-ONE_SECOND = [(0.85, 1.25, "1 s")]
-TENTH = [(0.07, 0.14, "100 ms")]
-# Board marked lost: BOARD_HEARTBEAT_STALE_MS = 5000, swept every 1 s, last heartbeat up to 1 s
-# before the stop -> 4-7 s after it. 10 s or 2 s would land outside.
+# Timing bounds. Every edge comes from a constant in the code or config under test (cited in the
+# label), never from an observed value, with headroom stated; see README.md "Timing assumptions".
+
+
+def bound(lo: float, hi: float, why: str) -> tuple[float, float, str]:
+    return (lo, hi, f"[{lo:g}, {hi:g}] s: {why}")
+
+
+def periodic(p: float, why: str) -> list:
+    """A periodic sender at nominal period p: median gap within [0.75 p, 1.5 p]."""
+    return [
+        bound(round(0.75 * p, 3), round(1.5 * p, 3), f"period {p * 1000:g} ms, {why}")
+    ]
+
+
+HB_SVC_PERIOD = periodic(0.2, "[heartbeat_service].interval_ms = 200")
+BRIDGE_HB_PERIOD = periodic(0.2, "[server_heartbeat].interval_ms = 200")
+STACK_PERIOD = periodic(1.0, "[stacklight_service].interval_ms = 1000")
+CFG_PERIOD = periodic(1.0, "[config_broadcast_service].interval_ms = 1000")
+SIM_HB_PERIOD = periodic(1.0, "board_simulator heartbeat_interval = 1.0")
+SIM_DATA_PERIOD = periodic(0.1, "board_simulator sensor_interval = 0.1")
+# Board marked lost after its heartbeats stop: BOARD_HEARTBEAT_STALE_MS = 5000 (server.ts), swept
+# by markStaleBoards every 1000 ms, last heartbeat up to the sim's 1.0 s heartbeat_interval before
+# the stop: [5 - 1, 5 + 1 + 1] = [4, 7] s, + 1 s headroom. A doubled stale time (10 s) lands at
+# [9, 12] s, outside.
+LOST = bound(
+    4.0,
+    8.0,
+    "BOARD_HEARTBEAT_STALE_MS 5000 - 1 s hb period, + 1 s sweep + 1 s hb + 1 s",
+)
 SINCE_STOP = [
-    (0.0, 2.5, "0-2.5s"),
-    (2.5, 4.0, "2.5-4s"),
-    (4.0, 7.5, "4-7.5s (stale 5000 ms + 1 s sweep + 1 s heartbeat period)"),
-    (7.5, 20.0, "7.5-20s"),
+    (0.0, 2.5, "[0, 2.5) s"),
+    (2.5, 4.0, "[2.5, 4) s"),
+    LOST,
+    (8.0, 30.0, "[8, 30) s"),
 ]
-SINCE_START = [(0.0, 3.0, "0-3s"), (3.0, 6.0, "3-6s"), (6.0, 20.0, "6-20s")]
+# A restarted board is seen within: interpreter start-up (assumed <= 3 s, README) + its first
+# heartbeat (sent on the first loop pass) + SENSOR_CONFIG within one 1000 ms broadcast interval +
+# the 1 Hz board-status broadcast and stale sweep (1 s each) = 6 s.
+SINCE_START = [
+    bound(0.0, 6.0, "start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s"),
+    (6.0, 30.0, "[6, 30) s"),
+]
 
 
 class Run:
@@ -379,7 +409,7 @@ def bridge_only_heartbeat(r: Run):
     time.sleep(2.0)
     r.emit(
         g,
-        f"  SERVER_HEARTBEAT period: {period(cap, 'hb_bridge', t0, None, [(0.15, 0.30, '200 ms ([server_heartbeat].interval_ms = 200)')])}",
+        f"  SERVER_HEARTBEAT period: {period(cap, 'hb_bridge', t0, None, BRIDGE_HB_PERIOD)}",
     )
     for key in LISTENERS:
         r.emit(g, f"  packets to {key}'s listen_port: {len(cap.get(key, t0))}")
@@ -450,7 +480,7 @@ def sim_board(r: Run):
     hb_gap = stack.median_gap([t for t, _e, d in setup if d[0] == 1])
     r.emit(
         g,
-        f"  BOARD_HEARTBEAT period: {N.bucket(hb_gap if hb_gap is not None else -1, ONE_SECOND)}",
+        f"  BOARD_HEARTBEAT period: {N.bucket(hb_gap if hb_gap is not None else -1, SIM_HB_PERIOD)}",
     )
 
     # config_broadcast_service supplies the SENSOR_CONFIG, as on the stand.
@@ -470,13 +500,14 @@ def sim_board(r: Run):
     r.emit(g, f"    BOARD_HEARTBEAT board_state after SELF_TEST: {states}")
     data_t = [t for t, _e, _d in cap.get("daq", t1, ptype=3)]
     r.emit(
-        g, f"    SENSOR_DATA period: {N.bucket(stack.median_gap(data_t) or -1, TENTH)}"
+        g,
+        f"    SENSOR_DATA period: {N.bucket(stack.median_gap(data_t) or -1, SIM_DATA_PERIOD)}",
     )
     time.sleep(5.0)
     st = cap.get("daq", t1, ptype=12)
     r.emit(
         g,
-        f"    SELF_TEST sends in the 6 s re-send window: {N.bucket(len(st), [(5, 9, '5-8 (one, then ~1 Hz for 6 s)')])}",
+        f"    SELF_TEST sends in the 6 s re-send window: {N.bucket(len(st), [(5, 9, "[5, 8] sends: one, then _selftest_resend_until = +6.0 s at 1 Hz")])}",
     )
     log = pr.output()
     for ln in log.splitlines():
@@ -493,7 +524,10 @@ def sim_board(r: Run):
         stats = json.load(open(os.path.join(r.work, "sim_pt_stats.json")))
     except (OSError, ValueError):
         pass
-    r.emit(g, f"  SIGTERM -> exit {rc} within {N.bucket(dt or 99, [(0, 1.0, '1 s')])}")
+    r.emit(
+        g,
+        f"  SIGTERM -> exit {rc} within {N.bucket(dt or 99, [bound(0, 1.0, "_sigterm_handler sleeps 0.1 s")])}",
+    )
     r.emit(
         g,
         f"  stats file keys: {sorted(stats)}; boards: {sorted(stats.get('boards', {}))}",
@@ -545,7 +579,7 @@ def sim_board(r: Run):
     st = cap.wait_for("skip", 0.1, t0, ptype=12)
     r.emit(
         g,
-        f"  one-shot SELF_TEST after: {N.bucket(st[0] - t0, [(1.8, 2.6, '2 s (run_started + 2.0)')]) if st else 'none'}",
+        f"  one-shot SELF_TEST after: {N.bucket(st[0] - t0, [bound(1.8, 2.6, "now - run_started >= 2.0, from the first heartbeat")]) if st else 'none'}",
     )
     rc, _dt = r.stop(pr, signal.SIGINT)
     r.emit(g, f"  SIGINT -> exit {rc}")
@@ -715,7 +749,14 @@ def ball_valve_heartbeat_loss(r: Run):
                 # BALL_VALVE_HEARTBEAT_TIMEOUT_S = 5 counts from the last heartbeat heard, and
                 # this harness sends one every 200 ms, so the earliest legal start is 4.8 s.
                 opened_at,
-                [(4.75, 6.0, "5-6s (BALL_VALVE_HEARTBEAT_TIMEOUT_S = 5)")],
+                [
+                    bound(
+                        4.8,
+                        6.0,
+                        "BALL_VALVE_HEARTBEAT_TIMEOUT_S 5 - 0.2 s sender period,"
+                        " + 0.1 s data period + 0.9 s",
+                    )
+                ],
             )
             if opened_at is not None
             else "never (12 s)"
@@ -955,10 +996,10 @@ def session(r: Run):
         g,
         f"  heartbeat_service period: {period(cap, 'P_HB_SVC', t1, None, HB_SVC_PERIOD)}",
     )
-    r.emit(g, f"  stacklight period: {period(cap, 'P_STACK', t2, None, ONE_SECOND)}")
+    r.emit(g, f"  stacklight period: {period(cap, 'P_STACK', t2, None, STACK_PERIOD)}")
     r.emit(
         g,
-        f"  config_broadcast period (actuator_board_2): {period(cap, 'actuator_board_2', t3, None, ONE_SECOND)}",
+        f"  config_broadcast period (actuator_board_2): {period(cap, 'actuator_board_2', t3, None, CFG_PERIOD)}",
     )
     r.emit(
         g,
@@ -1110,7 +1151,7 @@ def heartbeat_loss(r: Run, mon, sim, cap, hb):
     got = cap.wait_for("P_HB_SVC", 3.0, t3)
     r.emit(
         g,
-        f"  heartbeat_service restarted: first SERVER_HEARTBEAT after {N.bucket(got[0] - t3, [(0, 1.0, '<1 s')]) if got else 'never'}",
+        f"  heartbeat_service restarted: first SERVER_HEARTBEAT after {N.bucket(got[0] - t3, [bound(0, 2.0, "first send precedes the first 200 ms sleep; + process start-up")]) if got else 'never'}",
     )
     r.emit(g)
 
@@ -1313,21 +1354,23 @@ def ota_handshake(r: Run):
 def shutdown(r: Run, cap, mon, sim, cb, sl, cal, ota, el, br, hb, be):
     g = "shutdown"
     # Edges per service: what bounds its exit after the signal.
-    IMMEDIATE = [(0, 0.6, "<0.6 s")]
+    IMMEDIATE = [bound(0, 0.6, "exits on its next loop check (<= 100 ms), + 0.5 s")]
     PER = {
-        "board_simulator": [(0, 1.0, "<1 s (handler sleeps 0.1 s)")],
+        "board_simulator": [bound(0, 1.0, "_sigterm_handler sleeps 0.1 s, + 0.9 s")],
         "config_broadcast_service": IMMEDIATE,
         "stacklight_service": [
-            (0, 1.2, "<1.2 s (Elodin recv timeout 500 ms + 100 ms loop)")
+            bound(0, 1.2, "kStacklightRecvTimeoutMs 500 + 100 ms loop, + 0.6 s")
         ],
-        "calibration_service": [(0, 3.5, "<3.5 s")],
-        "ota_service": [(0, 1.6, "<1.6 s (select timeout 1 s)")],
-        "elodin-db": IMMEDIATE,
+        "calibration_service": [bound(0, 3.5, "timing assumption, README")],
+        "ota_service": [bound(0, 1.6, "select timeout 1 s, + 0.6 s")],
+        "elodin-db": [bound(0, 5.0, "not our code: timing assumption, README")],
         "daq_bridge": IMMEDIATE,
         "heartbeat_service": [
-            (0, 3.6, "<3.6 s (Elodin recv timeout 3000 ms + 100 ms loop)")
+            bound(0, 3.6, "kElodinRecvTimeoutMs 3000 + 100 ms loop, + 0.5 s")
         ],
-        "backend (node server.ts)": IMMEDIATE,
+        "backend (node server.ts)": [
+            bound(0, 0.6, "no signal handler: default action")
+        ],
     }
     watch = [
         "pt_board",
@@ -1470,7 +1513,7 @@ def sigint_each(r: Run):
         rc, dt = r.stop(pr, signal.SIGINT)
         r.emit(
             g,
-            f"  {n}: exit {rc} within {N.bucket(dt if dt is not None else 99, [(0, 4.0, '<4 s')])}",
+            f"  {n}: exit {rc} within {N.bucket(dt if dt is not None else 99, [bound(0, 4.0, 'slowest loop: kElodinRecvTimeoutMs 3000, + 1 s')])}",
         )
     benv = {
         "WS_PORT": str(P["P_WS"]),
@@ -1492,12 +1535,12 @@ def sigint_each(r: Run):
     rc, dt = r.stop(be, signal.SIGINT)
     r.emit(
         g,
-        f"  backend (node server.ts): exit {rc} within {N.bucket(dt if dt is not None else 99, [(0, 1.0, '<1 s')])}",
+        f"  backend (node server.ts): exit {rc} within {N.bucket(dt if dt is not None else 99, [bound(0, 1.0, 'no signal handler: default action')])}",
     )
     rc, dt = r.stop(el, signal.SIGINT)
     r.emit(
         g,
-        f"  elodin-db: exit {rc} within {N.bucket(dt if dt is not None else 99, [(0, 1.0, '<1 s')])}",
+        f"  elodin-db: exit {rc} within {N.bucket(dt if dt is not None else 99, [bound(0, 5.0, 'not our code: timing assumption, README')])}",
     )
 
 

@@ -19,7 +19,7 @@
     @6   flags = 0   [00]
     @7   text_len = 26   [1A 00]
     @9   text = '[SIM] board 21 PT alive #<n>'
-  BOARD_HEARTBEAT period: 1 s
+  BOARD_HEARTBEAT period: [0.75, 1.5] s: period 1000 ms, board_simulator heartbeat_interval = 1.0
   after config_broadcast_service starts:
     first SELF_TEST:
       SELF_TEST len=28
@@ -77,18 +77,18 @@
       @57  chunk[0].sensor[9].id = 10   [0A]
       @58  chunk[0].sensor[9].data = <sample>
     BOARD_HEARTBEAT board_state after SELF_TEST: [2]
-    SENSOR_DATA period: 100 ms
-    SELF_TEST sends in the 6 s re-send window: 5-8 (one, then ~1 Hz for 6 s)
+    SENSOR_DATA period: [0.075, 0.15] s: period 100 ms, board_simulator sensor_interval = 0.1
+    SELF_TEST sends in the 6 s re-send window: [5, 8] sends: one, then _selftest_resend_until = +6.0 s at 1 Hz
     sim log: [pt_board] SENSOR_CONFIG received from ('127.0.0.1', <port>), running self-test
     sim log: [pt_board] SELF_TEST sent, transitioning to ACTIVE
-  SIGTERM -> exit 0 within 1 s
+  SIGTERM -> exit 0 within [0, 1] s: _sigterm_handler sleeps 0.1 s
   stats file keys: ['boards', 'total_sensor_packets', 'total_sensor_updates']; boards: ['pt_board']
   stats board keys: ['board_id', 'channels_per_packet', 'chunks_per_packet', 'clock_drift_ppm', 'clock_offset_ms', 'net_jitter_ms', 'packets_sent', 'rebooted_at', 'start_near_wrap', 'total_sensor_updates', 'type']
 
 == board_simulator.py --skip-startup
   packet types in order of first appearance (3 s): ['BOARD_HEARTBEAT', 'LOGS', 'SENSOR_DATA', 'SELF_TEST']
   first BOARD_HEARTBEAT board_state: 2
-  one-shot SELF_TEST after: 2 s (run_started + 2.0)
+  one-shot SELF_TEST after: [1.8, 2.6] s: now - run_started >= 2.0, from the first heartbeat
   SIGINT -> exit 0
 
 == board_startup_sim.py
