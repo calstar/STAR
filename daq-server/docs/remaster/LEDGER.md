@@ -39,7 +39,11 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | suite | result |
 |---|---|
 | clean build | ok, 10 unique warnings (frozen in `baseline_warnings.txt`) |
-| _rest pending_ | |
+| ctest | 29/32 serial. Known failing on this Mac on `main` (`baseline_ctest_failures.txt`): `script_runtime` (republish burst count 2 < 3 in 2.3 s), `sequencer_concurrency` (all checks pass, then the fake controller's `accept` with `SO_RCVTIMEO` never returns on macOS → 120 s timeout in teardown), `t7_integration` (needed loopback aliases; rerun pending) |
+| backend vitest | 1 known failure on this Mac: `video.test.ts` "on macOS is the Bonjour name" expects `Theos-MacBook-Pro-774.local`, gets this Mac's `computer-9.local` |
+| frontend vitest, lint, vite build, shared types | ok |
+| format | daq-server C/C++ clang-format-19 clean; repo-wide `format.sh --check` red on `main` (firmware/ Python under black 25.11) — see D11 |
+| integration | first run 0 samples: macOS loopback aliases missing (script swallows the failed sudo). User added the 16 aliases (they vanish at reboot — check `ifconfig lo0` first); rerun pending |
 
 ## Work packages
 
@@ -56,7 +60,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | queued (after suite) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
 | WP2 | delete C++ no target compiles | — | — | queued | BLOAT-MAP WP2 | WP1 |
 | WP3 | lib hygiene: PressureStateMachine, move db.hpp, split Parser/DatabaseConfig | — | — | queued | BLOAT-MAP WP3 | WP2 |
-| WP4 | dead launchers + superseded test scripts, `--legacy` branch | — | — | queued | BLOAT-MAP WP4 | WP1 |
+| WP4 | dead launchers + superseded test scripts, `--legacy` branch; make test_integration.sh fail loudly (non-zero, listing them) when a macOS loopback alias is missing instead of `|| true` + a false ✅ (reviewer suggestion) | — | — | queued | BLOAT-MAP WP4 | WP1 |
 | WP5 | backend dead TS + line client + slot helper | — | — | queued | BLOAT-MAP WP5 | WP1 |
 | WP6 | split server.ts | — | — | queued | BLOAT-MAP WP6 | WP5 |
 | WP7 | split api-server.ts | — | — | queued | BLOAT-MAP WP7 | WP5 |
