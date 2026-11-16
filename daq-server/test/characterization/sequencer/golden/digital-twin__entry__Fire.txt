@@ -1,0 +1,24 @@
+# session digital-twin/entry/Fire
+(walk legally Idle -> Ready)
+> TRANSITION:Armed
+  < OK
+> TRANSITION:Press Standby
+  < OK
+> TRANSITION:Ready
+  < OK
+> TRANSITION:Fire
+  < OK
+  state Ready -> Fire
+  first datagram: ACTUATOR_COMMAND
+      +0ms x3 (x2 sends) ACTUATOR_COMMAND v0 n=12: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch1=1[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=1[Ox Main|fuel vent] ch10=1[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0c03000a0002000500010102000300060007010a0107010901
+    +1.00s x3 ACTUATOR_COMMAND v0 n=1: ch6=1[Fuel Main|Low Press Vent]
+              raw 0400........010601
+  republish [Fire]: first ~1s into the state, every ~1s
+              ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=1[Fuel Main|Low Press Vent] ch1=1[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=1[Ox Main|fuel vent] ch10=1[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0d03000a00020005000601010102000300060007010a0107010901
+-- sequencer log (N6: load-time lines, then message counts)
+   [SequencerService] Fire state: (none) — fire timer disabled
+   [SequencerService] Flow hold: Flow Test 600 ms (max 10000) → Ready
+   [SequencerService] Flow gate: "Fuel Main" opens +1000 ms after entry, closes +0 ms after expiry; hold = requested + 1000 - 0 ms, so the requested duration is how long IT is open
+   [SequencerService] Dynamic state: Dynamic Test — 6 statement(s), timeout 10000 ms -> Press Standby, ends -> Press Standby, reads "GN2 High" "High Press"

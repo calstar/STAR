@@ -1,0 +1,25 @@
+# session controller/gate-disabled
+> controller <- FIRE_START
+  < 'ERR:fire gate disabled (sequencer owns the valves)\n'
+> controller <- FIRE_START (again)
+  < 'ERR:fire gate disabled (sequencer owns the valves)\n'
+> controller <- FIRE_STOP
+  < 'ERR:fire gate disabled (sequencer owns the valves)\n'
+> controller <- FIRE_STOP (again)
+  < 'ERR:fire gate disabled (sequencer owns the valves)\n'
+> controller <- BOGUS
+  < 'ERR\n'
+> controller <- <empty line>
+  < 'ERR\n'
+> controller <- FIRE_START<CRLF>
+  < 'ERR\n'
+> controller <- FIRE_STOP<CRLF>
+  < 'ERR\n'
+> controller <- <connect, send nothing, half-close>
+  < ''
+> controller <- <partial, then half-close>
+  < ''
+-- controller log (N6: load-time lines, then message counts)
+   x4 'refused — fire gate disabled (sequencer owns the valves)'
+   x4 'Unknown control cmd:'
+   x3 'control connection closed with no command (timeout or peer went away)'

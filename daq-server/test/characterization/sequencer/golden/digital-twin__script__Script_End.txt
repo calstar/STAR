@@ -1,0 +1,38 @@
+# session digital-twin/script/Script End
+> TRANSITION:Armed
+  < OK
+> TRANSITION:Press Standby
+  < OK
+> TRANSITION:Script End
+  < OK
+  state Press Standby -> Script End
+  state Script End -> Press Standby
+  first datagram: ACTUATOR_COMMAND
+      +0ms x3 ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=0[Fuel Main|Low Press Vent] ch1=0[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=0[Ox Main|fuel vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0d03000a00020005000600010002000300060007000a0007010901
+    +100ms x3 ACTUATOR_COMMAND v0 n=1: ch9=0[lox vent]
+              raw 0400........010900
+    +600ms x3 (x2 sends) ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=0[Fuel Main|Low Press Vent] ch1=0[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=0[Ox Main|fuel vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0d03000a00020005000600010002000300060007000a0007010901
+  republish [Press Standby]: first ~1s into the state, every ~1s
+              ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=0[Fuel Main|Low Press Vent] ch1=0[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=0[Ox Main|fuel vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0d03000a00020005000600010002000300060007000a0007010901
+-- sequencer log (N6: load-time lines, then message counts)
+   [SequencerService] Fire state: (none) — fire timer disabled
+   [SequencerService] Flow hold: Flow Test 600 ms (max 10000) → Ready
+   [SequencerService] Flow gate: "Fuel Main" opens +1000 ms after entry, closes +0 ms after expiry; hold = requested + 1000 - 0 ms, so the requested duration is how long IT is open
+   [SequencerService] ERROR: dynamic state REFUSED — Script BadName: script_file "../escape.script" is not a bare <name>.script filename (letters, digits, _ and - only). It is not enterable.
+   [SequencerService] ERROR: dynamic state REFUSED — Script Missing: cannot read <WORK>/digital-twin/scripts/missing.script — the script did not deploy with the profile, or the name is wrong. It is not enterable.
+   [SequencerService] ERROR: dynamic state REFUSED — Script BadValve: badvalve.script line 1: no actuator named NO_SUCH_VALVE — known names include DOME_CTRL, DOME_CTRL_VENT, FUEL_FILL_PRESS. It is not enterable.
+   [SequencerService] ERROR: dynamic state REFUSED — Script BadTarget: badtarget.script line 1: this state is not allowed to transition to IDLE — state_transitions.csv does not permit it. It is not enterable.
+   [SequencerService] ERROR: dynamic state REFUSED — Script NoTimeout: has a script but no script_timeout_ms — an unbounded script has no safe degraded mode. It is not enterable.
+   [SequencerService] ERROR: dynamic state REFUSED — Script BigTimeout: script_timeout_ms is 700000 ms, above the 600000 ms ceiling — a typo must not arm a long valve-open window. It is not enterable.
+   [SequencerService] ERROR: dynamic state REFUSED — Script NoColumn: has no column in state_machine_actuators.csv — a dynamic state still needs one, because entry applies it first to put every valve in a defined position before the script runs. It is not enterable.
+   [SequencerService] ERROR: dynamic state REFUSED — Script Syntax: syntax.script line 1: expected a bare actuator name here (e.g. FUEL_VENT), found end of line. It is not enterable.
+   [SequencerService] Dynamic state: Dynamic Test — 6 statement(s), timeout 10000 ms -> Press Standby, ends -> Press Standby, reads "GN2 High" "High Press"
+   [SequencerService] Dynamic state: Script Seq — 7 statement(s), timeout 5000 ms -> Vent, ends -> Press Standby
+   [SequencerService] Dynamic state: Script End — 2 statement(s), timeout 5000 ms -> Vent, ends -> Press Standby
+   [SequencerService] Dynamic state: Script Timeout — 3 statement(s), timeout 600 ms -> Script Landing, ends -> Press Standby
+   [SequencerService] Dynamic state: Script Loop — 7 statement(s), timeout 5000 ms -> Vent, ends -> Press Standby
+   [SequencerService] Dynamic state: Script Long — 3 statement(s), timeout 10000 ms -> Vent, ends -> Press Standby
+   x2 '[HoldTimer]'

@@ -1,0 +1,33 @@
+# session digital-twin/pressure/stale
+# pressure roles subscribed: GN2 High, High Press
+> TRANSITION:Armed
+  < OK
+> TRANSITION:Press Standby
+  < OK
+> TRANSITION:Dynamic Test
+  < OK
+  state Press Standby -> Dynamic Test
+  first datagram: ACTUATOR_COMMAND
+      +0ms x3 ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=0[Fuel Main|Low Press Vent] ch1=0[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=0[Ox Main|fuel vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0d03000a00020005000600010002000300060007000a0007010901
+    +100ms x3 ACTUATOR_COMMAND v0 n=1: ch2=1[Fuel Fill Press|High Press CTRL]
+              raw 0400........010201
+    +500ms x3 ACTUATOR_COMMAND v0 n=1: ch2=0[Fuel Fill Press|High Press CTRL]
+              raw 0400........010200
+(feed stopped)
+  state Dynamic Test -> Press Standby
+  first datagram: ACTUATOR_COMMAND
+       +2s x3 (x2 sends) ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=0[Fuel Main|Low Press Vent] ch1=0[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=0[Ox Main|fuel vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0d03000a00020005000600010002000300060007000a0007010901
+  republish [Dynamic Test]: every ~1s
+              ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=0[Fuel Main|Low Press Vent] ch1=0[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=0[Ox Main|fuel vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0d03000a00020005000600010002000300060007000a0007010901
+  republish [Press Standby]: first ~1s into the state, every ~1s
+              ACTUATOR_COMMAND v0 n=13: ch3=0[Dome CTRL|High Press Vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch5=0[Fuel Fill Vent] ch6=0[Fuel Main|Low Press Vent] ch1=0[Fuel Upstream] ch2=0[Fuel Fill Press|High Press CTRL] ch3=0[Dome CTRL|High Press Vent] ch6=0[Fuel Main|Low Press Vent] ch7=0[Ox Main|fuel vent] ch10=0[Dome CTRL Vent|Ox Upstream] ch7=1[Ox Main|fuel vent] ch9=1[lox vent]
+              raw 0400........0d03000a00020005000600010002000300060007000a0007010901
+-- sequencer log (N6: load-time lines, then message counts)
+   [SequencerService] Fire state: (none) — fire timer disabled
+   [SequencerService] Flow hold: Flow Test 600 ms (max 10000) → Ready
+   [SequencerService] Flow gate: "Fuel Main" opens +1000 ms after entry, closes +0 ms after expiry; hold = requested + 1000 - 0 ms, so the requested duration is how long IT is open
+   [SequencerService] Dynamic state: Dynamic Test — 6 statement(s), timeout 10000 ms -> Press Standby, ends -> Press Standby, reads "GN2 High" "High Press"
+   x2 '[HoldTimer]'
