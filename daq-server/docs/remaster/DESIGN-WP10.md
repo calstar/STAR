@@ -932,3 +932,13 @@ Ownership check:
   (D-SUB). WP10 preserves the race exactly: no barrier, no ack wait, no reordering of the six
   registrations, no change to the 5 s cadence. The proposals (echo check, liveness, reconnect
   remedy) are in the research and are the team's.
+
+## D. Open questions (added)
+
+5. Tag spelling: D42(c) says `// FROZEN C4-1`; STYLE-S12 and D43(4) say `// Kept: <id> (D17)`. This
+   note uses S12's so one grep finds every kept defect in every WP. Orchestrator to confirm.
+6. Should the `publishState` lock-contract comment land in the move-only commit (D42(c): "where that
+   code moves") rather than in cleanup step 1? This note follows STYLE-S12/S38 (a move adds no
+   comment lines); either is behaviour-neutral.
+7. If CI cannot judge the D34 timing tests when WP10 is queued, is alternative C (daq_bridge +
+   `ActuatorCommander_udp` only) the accepted fallback?
