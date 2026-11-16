@@ -763,7 +763,7 @@ on CI when WP10 is queued, C is the fallback: it is a strict subset of A's steps
 - **AMENDMENT (D42 binding 3, DESIGN-WP3 §2.5):** `register_all_tables` is the one daq_bridge
   registration site a later D-SLOT injectivity check lands in; the ids themselves come from WP3's
   `fsw::elodin::table_id_for` inside `DatabaseConfig`. Honest limit: calibration_service registers
-  the calibrated tables too (`calibration_main.cpp:1484`, its own `register_calibrated` lambda, WP9
+  the calibrated tables too (`calibration_main.cpp:1483`, its own `register_calibrated` lambda, WP9
   keeps it in `main`), so a D-SLOT fix has two registration call sites across two processes, both
   through `DatabaseConfig` and therefore through one `table_id_for`. Cleanup may also adopt
   `table_id_for` where the integer expression is the same — candidates, decided at cleanup review:
