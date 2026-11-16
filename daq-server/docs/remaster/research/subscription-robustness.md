@@ -85,7 +85,7 @@ behaviour of a misconfigured stand (C2-4 class), so it is the team's call.
 per-family split of `DatabaseConfig.cpp` should expose one *pure* `tableIdFor(family, slot, ch,
 calibrated) -> std::optional<std::pair<uint8_t,uint8_t>>` used by both `register_tables` and
 `register_calibrated_tables`, with the current wrap reproduced exactly (the optional is always
-engaged today). WP10's `registerAllTables()` is then the one call site where (b) lands later.
+engaged today). WP10's `registerAllTables()` is then the one call site where (b) lands later. *(Superseded: WP10 keeps the two registration sites separate, LEDGER D49(10); a later D-SLOT fix puts its check in `table_id_for`/DatabaseConfig.)*
 A characterization *test* (not a golden edit) can enumerate the shipped profiles
 (`test/characterization/config/golden/cpp/config/profiles__*.toml.txt` already print
 `boards[i].slot()`) and assert the id map is injective — it documents D-SLOT without changing

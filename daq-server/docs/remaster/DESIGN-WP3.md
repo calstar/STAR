@@ -20,7 +20,7 @@ float arithmetic moves here), AGENT-RULES 4-6.
 
 Inputs beyond the reviewed notes: `docs/remaster/research/subscription-robustness.md` (Idea 1:
 one pure table-id function so a later D-SLOT fix is one clause), LEDGER D42 (binding: "one pure
-`tableIdFor()` and a single `registerAllTables()`"), and `STYLE.md` (branch `design/style` @
+`tableIdFor()` and a single `registerAllTables()`"; the second half was dropped by D49(10)), and `STYLE.md` (branch `design/style` @
 fc425dce; cited as `STYLE-S<n>`).
 
 WP3 does five things, each a separate commit:
