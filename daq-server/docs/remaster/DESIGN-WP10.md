@@ -14,6 +14,21 @@ All line numbers below were re-anchored on `backend-remastered` @ `b2599617` (pr
 `main` @ `15b5a0c5`). If WP3/WP8/WP9 land first (the DAG says they do), re-anchor with the `grep -n`
 anchors given in each step; the function names, not the numbers, are the contract of this note.
 
+**Prerequisites:** C1 (`packets/`, `elodin/`) merged into `backend-remastered`; WP8 and WP9 merged
+(DAG); DESIGN-WP8 gap 2 (sequencer/controller/t7 SIGTERM/SIGINT exit code and latency) merged.
+
+**Orchestrator decisions recorded here (design review):**
+- WP10 **owns `diablo_server/CMakeLists.txt`** (for `SEQUENCER_SOURCES` /
+  `ACTUATOR_COMMANDER_SOURCES`).
+- `char_config_services.cpp`'s daq_bridge branch is re-pointed to `BoardMap.hpp` (accepted).
+- **D18 is extended for WP10:** besides the two harness `.cpp` files, WP10 may edit
+  `test/characterization/config/CMakeLists.txt`, only to add `ActuatorCommander_load.cpp` and
+  `ActuatorCommander_udp.cpp` to `char_config_dump` and `target_sources(char_cfg_daq_bridge PRIVATE
+  …/daq_bridge/BoardMap.cpp)`. **That CMake edit, the BoardMap split and the include change land
+  in ONE commit** (§6.1 step 4). Goldens byte-identical; the area's mutations re-run; the
+  orchestrator reviews the harness diff.
+- The move-only pass and the cleanup pass are **separate queue items, each fully gated**.
+
 Rules this note applies: D5 (contract frozen), D12(e) (move-only package merged alone, then
 cleanup), D17 (design over speed, behaviour bit for bit, per-service settings, no single-user
 abstractions), D18/D20 (harness re-pointing), D22 (float), D31/D34 (timing tests), the Parked
@@ -475,8 +490,13 @@ CMake.
    and `ActuatorCommander_udp.cpp` (276-390).
 3. **ControllerService.** Create `lib/src/control/ControllerService_pwm.cpp` (41-62, 383-530) and
    `ControllerService_elodin.cpp` (754-1107; `using` lines copied).
-4. **daq_bridge.** Create `BackendLogForwarder.hpp`, `BoardMap.hpp`, `BoardMap.cpp` as §4.3;
-   `daq_bridge_main.cpp` includes `"BackendLogForwarder.hpp"` and `"BoardMap.hpp"`.
+4. **daq_bridge + harness, one commit.** Create `BackendLogForwarder.hpp`, `BoardMap.hpp`,
+   `BoardMap.cpp` as §4.3; `daq_bridge_main.cpp` includes `"BackendLogForwarder.hpp"` and
+   `"BoardMap.hpp"`. In the **same commit**: the `char_config_services.cpp` include change (§7.3)
+   and the `test/characterization/config/CMakeLists.txt` edit (§7.2 `char_config_dump` sources and
+   §7.3 `target_sources(char_cfg_daq_bridge …)`). Because that CMake edit also names the
+   ActuatorCommander TUs, step 2's ActuatorCommander split is part of this same commit (otherwise
+   `char_config_dump` does not build in between). No other commit touches harness files.
 5. **CMake.**
    - `diablo_server/CMakeLists.txt` (not in BLOAT-MAP's WP10 file list; the package claims it),
      before `add_subdirectory(lib)`:
@@ -502,7 +522,9 @@ CMake.
      (same order the targets list today).
    - `services/CMakeLists.txt` `sequencer_service` (14-24): `sequencer/sequencer_main.cpp
      ${SEQUENCER_SOURCES}`.
-   - `lib/CMakeLists.txt`: the SequencerService users are **6 test executables**, not 8 —
+   - `lib/CMakeLists.txt`. Users, correctly counted: **6 SequencerService test executables plus 4
+     ActuatorCommander-only test executables, plus the `sequencer_service` executable** (the
+     LEDGER's "8 targets" is wrong). The SequencerService users —
      `test_sequencer_elodin` (254), `test_hold_rules` (276), `test_script_states` (299),
      `test_script_runtime` (325), and the `foreach` pair `test_sequencer_concurrency` /
      `test_abort_ordering` (406-424): replace their eight sequencer source lines with
@@ -512,13 +534,18 @@ CMake.
      `FSW_SOURCES`: add `src/control/ControllerService_pwm.cpp` and
      `src/control/ControllerService_elodin.cpp` after line 41.
    - `daq_bridge/CMakeLists.txt`: `add_executable(daq_bridge daq_bridge_main.cpp BoardMap.cpp)`.
-   - Harness CMake (`test/characterization/config/CMakeLists.txt`), §7.3.
+   - Harness CMake (`test/characterization/config/CMakeLists.txt`), §7.2/§7.3: in step 4's commit
+     only (D18 extension above).
 6. **Verify** (all port-binding runs under `with_stack_lock.sh`, subsets only, D23/D36): clean build,
    no new warning vs `baseline_warnings.txt`; `ctest -R
    'actuator_delays|script_positions|ball_valve_commander|fire_lifecycle|hold_rules|script_states|script_runtime|sequencer_concurrency|abort_ordering|controller_pwm_roles|robust_ddp|characterization_config_cpp'`;
    `CHAR_AREAS=sequencer,config,lifecycle,packets,elodin,pipeline`;
    `linux_gate.sh --areas sequencer,config,lifecycle,packets,elodin,pipeline <rev>`; a CI run
-   (D34: required for any WP touching the sequencer). The full gate is the orchestrator's.
+   (D34: required for any WP touching the sequencer). `t7_integration` is in the verify list too,
+   **judged on CI only** (D34: the local Linux leg inherits this Mac's timer overshoot); it runs
+   the stack against `fsw_daq_lib`, which gains the two ControllerService TUs. `actuator_delays`,
+   `script_positions` and `script_runtime` are likewise CI-only (D34), and D31's 10× rule applies
+   to any of them that needs a retry. The full gate is the orchestrator's.
 
 ### 6.2 Cleanup pass (second package)
 
@@ -605,10 +632,13 @@ go red; revert. Orchestrator reviews the harness diff. If the cleanup moves
    loop). `elodin/` captures startup only; lifecycle `shutdown` only checks "still running". The
    cleanup's `registerAllTables` merges exactly this path, so a characterization case must exist
    first: restart the stand-in Elodin (`packets/bb.py FakeElodin`) and record each service's second
-   registration stream (a golden that only grows, D20). Until then `registerAllTables` is blocked.
-2. Sequencer and controller **exit codes and SIGTERM latency** are not frozen (the sequencer
-   harness kills after 3 s; lifecycle does not run them for safety). C4-1's "SIGTERM does not exit"
-   and C4-5's ">3 s exit" are documented, not asserted.
+   registration stream (a golden that only grows, D20). This gap gates **only cleanup's
+   `registerAllTables`**; the move-only pass does not depend on it (the reconnect code moves
+   verbatim).
+2. Sequencer and controller **exit codes and SIGTERM latency**: **closed by DESIGN-WP8 gap 2**,
+   which must merge before WP8 pass 1 and therefore before WP10. C4-1's "SIGTERM does not exit"
+   stays documented (the gap 2 case runs without a refused dynamic state); C4-5's ">3 s exit" is
+   asserted as a bound there.
 3. Controller TABLE rows ([0x40]-[0x44] data), LUT- and DDP-driven duties and the thrust curve are
    not characterized; only test duty and FIRE_START/STOP are. A float change there would not go red.
 4. C4-2's double fire is avoided, not frozen (the session lands where the second transition is
@@ -655,15 +685,12 @@ go red; revert. Orchestrator reviews the harness diff. If the cleanup moves
 
 ## Open questions
 
-1. `diablo_server/CMakeLists.txt` is not in BLOAT-MAP's WP10 file list; the package needs it for
-   `SEQUENCER_SOURCES` (the alternative, `PARENT_SCOPE` from `lib/`, is obscure). Orchestrator to
-   confirm ownership.
+1. (Decided: WP10 owns `diablo_server/CMakeLists.txt`.)
 2. Answered by `DESIGN-WP8.md`: it gives only `openUdpSocket`/`ipv4Destination` (statement-identical
    socket creation and address fill) and no TCP-client or Elodin-loop helper. So the sequencer's
    controller-notify client and the B3 sites in these four files stay hand-written after WP10;
    only the optional `openUdpSocket` adoption in cleanup remains.
-3. Who adds the Elodin-reconnect characterization (§7.4 gap 1) — the elodin/packets owner before
-   WP10's cleanup, or WP10 itself under D18?
-4. The LEDGER says "8 CMake test targets" list the sequencer sources; the tree has 6 test
-   executables plus `sequencer_service` (and 4 more that list only ActuatorCommander). The ledger
-   row should be corrected.
+3. Who adds the Elodin-reconnect characterization (§7.4 gap 1)? It gates only cleanup's
+   `registerAllTables`, so it can land any time before WP10's cleanup item.
+4. The LEDGER's "8 CMake test targets" should read: 6 SequencerService test executables plus 4
+   ActuatorCommander-only test executables, plus the `sequencer_service` executable.
