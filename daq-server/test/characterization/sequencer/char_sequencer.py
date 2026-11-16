@@ -29,13 +29,14 @@ import wire as W  # noqa: E402
 from fake_elodin import FakeElodin  # noqa: E402
 
 GOLDEN = H.HERE / "golden"
-# How long after a republish a settled window ends. Must exceed wire.BOUNDARY_LOOKAHEAD_NS (60 ms)
-# plus the next transition's own latency: a tick landing within the lookahead of the next state's
+# How long after a republish a settled window ends. Must exceed the boundary lookahead (60 ms, 110 ms
+# for an abort: wire.BOUNDARY_LOOKAHEAD_NS + wire.ABORT_DONE_STEP_NS) plus the next transition's own
+# latency: a tick landing within the lookahead of the next state's
 # publish is taken for that state's entry (seen on Linux under load, where the next command's
 # publish arrived within 50 ms of the tick). The next tick is still ~0.8 s away.
 SETTLE_TAIL = 0.2
 # A send can only be classified (republish or entry) once any transition publish it precedes has
-# arrived, and wire.BOUNDARY_LOOKAHEAD_NS says that is within 60 ms. While waiting, only sends at
+# arrived, and the lookahead says that is within 60 ms (110 ms for an abort). While waiting, only sends at
 # least this old are counted. Without it a poll landing between a new state's entry sends and its
 # publish took the entry (apply + first pass, full column) for two republish rounds of the OLD
 # state and ended the window before the new state republished (digital-twin/entry/Flow Test on
@@ -533,7 +534,7 @@ class Session:
         while time.monotonic() < deadline:
             bounds = self._bounds()
             sends = W.to_sends(self.run.rec.since(self.rec_mark))
-            W.mark_ticks(sends, bounds)
+            W.mark_ticks(sends, bounds, aborts=self.model.aborts)
             cur = len(bounds) - 1
             final = time.monotonic_ns() - CLASSIFY_AFTER_NS
             mine = [
@@ -570,7 +571,7 @@ class Session:
         while time.monotonic_ns() < deadline:
             bounds = self._bounds()
             sends = W.to_sends(self.run.rec.since(self.rec_mark))
-            W.mark_ticks(sends, bounds)
+            W.mark_ticks(sends, bounds, aborts=self.model.aborts)
             final = time.monotonic_ns() - CLASSIFY_AFTER_NS
             for s in sends:
                 if s.tick and start < s.t <= final and self._is_full(s, bounds):
@@ -627,7 +628,7 @@ class Session:
         base = self.rec_mark
         bounds = self._bounds()
         sends_all = W.to_sends(packets[: end_mark - base])
-        W.mark_ticks(sends_all, bounds)
+        W.mark_ticks(sends_all, bounds, aborts=self.model.aborts)
         W.mark_pwm_tails(sends_all)
         for s in sends_all:
             if s.tick and not self._is_full(s, bounds):

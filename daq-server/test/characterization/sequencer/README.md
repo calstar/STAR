@@ -114,8 +114,18 @@ the rules below were changed for those mechanisms, never to fit one golden.
   clear of the next tick. The tail must exceed the 60 ms boundary lookahead: at 50 ms, on Linux
   under load, the next command's transition publish arrived within 60 ms of the tick, the tick was
   taken for that state's entry, and it showed up as an extra `+4s` command with `every` lost.
+  **An abort entry's lookahead is 110 ms** (`wire.ABORT_DONE_STEP_NS`): after the column is sent,
+  `doTransitionTo`'s second `triggerAbort()` joins the ABORT_DONE thread the first one started,
+  which only sees the cancel at the end of its current 50 ms `sleep_for` step
+  (`AbortBroadcaster::waitAndSendAbortDone`), and only then is the transition published. Measured
+  first-entry-send to publish: non-abort entries <= 17 ms, abort entries 37-76 ms at 1x+ load (the
+  sequencer instrumented, 140 abort entries). At 60 ms, under load, `GSE Abort -> Emergency Abort`'s
+  entry (same per-board column sizes as GSE Abort's, 4 s into GSE Abort's loop) was taken for two
+  GSE Abort republishes and dropped: both actuator lines missing, or one of the two sends missing
+  (`x3` for `x3 (x2 sends)`). SETTLE_TAIL (200 ms) and CLASSIFY_AFTER_NS (150 ms) both exceed 110 ms.
   The converse race: while waiting, `settle()` only counts sends older than `CLASSIFY_AFTER_NS`
-  (150 ms), because a send is classified by the transition publish that follows it within 60 ms. A
+  (150 ms), because a send is classified by the transition publish that follows it within 60 ms
+  (110 ms for an abort). A
   poll landing between a new state's entry sends (apply + first pass, a full column) and its publish
   otherwise counted them as two republish rounds of the old state and ended the window before the
   new state republished (`digital-twin/entry/Flow Test` on Linux: Ready's summary missing, session
@@ -136,8 +146,9 @@ the rules below were changed for those mechanisms, never to fit one golden.
   see below) is dropped.
 
 **Timing assumptions** (the only ones the goldens make): a staged send lands no earlier than 5 ms
-before and no later than 0.1 s + 25% after its configured delay; the republish interval is within
-[0.8, 1.5] x 1 s; non-staged waits overshoot by less than their floor band (100 ms below 1 s). All
+before and no later than 0.1 s + 25% after its configured delay; a state's entry sends precede its
+transition publish by less than 60 ms, plus one 50 ms ABORT_DONE step for an abort; the republish
+interval is within [0.8, 1.5] x 1 s; non-staged waits overshoot by less than their floor band (100 ms below 1 s). All
 hold on macOS and Linux arm64 at 1x synthetic load (one `yes` per core on top of the host).
 
 Goldens are recorded on macOS (darwin-arm64). N4/N5 are chosen so Linux timing should land in the
