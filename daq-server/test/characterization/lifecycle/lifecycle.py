@@ -62,6 +62,11 @@ P = {
         (14, "P_STARTUP_LISTEN"),
         (20, "P_SIMCAP"),
         (21, "P_BV_LISTEN"),
+        # one capture port per simulator run, so a straggler from the previous run cannot land
+        # in the next one's capture
+        (22, "P_SIMCAP_SKIP"),
+        (23, "P_SIMCAP_BSS"),
+        (24, "P_SIMCAP_BV"),
     ]
 }
 FSW_PORT, OTA_BOARD_PORT = 5008, 3232
@@ -126,9 +131,20 @@ class Run:
     def svc(self, name, binary, *args, env=None) -> stack.Proc:
         return self.start(name, [os.path.join(self.bin, binary), *args], env=env)
 
-    def stop(self, pr: stack.Proc, sig=signal.SIGTERM, timeout=8.0):
+    def stop(self, pr: stack.Proc, sig=signal.SIGTERM, timeout=30.0):
+        """Signal and wait, bounded. A process still alive at the deadline reports exit None
+        (the golden goes red) and is then reaped, so it cannot leak into the next scenario.
+        """
         pr.signal(sig)
-        return pr.wait(timeout)
+        rc, dt = pr.wait(timeout)
+        if rc is None:
+            pr.reap()
+        return rc, dt
+
+    def ensure_dead(self, *prs: stack.Proc):
+        for pr in prs:
+            if pr.alive():
+                pr.reap()
 
     def cleanup(self):
         for pr in reversed(self.procs):
@@ -358,7 +374,7 @@ def bridge_only_heartbeat(r: Run):
     t0 = time.monotonic()
     br = r.svc("bridge_hb", "daq_bridge", r.cfg_bridge_hb)
     r.emit(g, "  first packet on [server_heartbeat] broadcast port:")
-    for ln in decode_first(cap, "hb_bridge", t0, timeout=8):
+    for ln in decode_first(cap, "hb_bridge", t0, timeout=30):
         r.emit(g, ln)
     time.sleep(2.0)
     r.emit(
@@ -387,9 +403,10 @@ def sim_board(r: Run):
     )
     cap = stack.Capture()
     cap.listen("daq", P["P_SIMCAP"])
+    # in SETUP the sim sends from its bound listen_port (board_simulator.py SimulatedBoard.start)
+    cap.only_from("daq", P["P_PT_LISTEN"])
 
     r.emit(g, "== board_simulator.py, PT board, full lifecycle (no --skip-startup)")
-    t0 = time.monotonic()
     pr = r.start(
         "sim_pt",
         [
@@ -409,8 +426,12 @@ def sim_board(r: Run):
         ],
         cwd=ROOT,
     )
-    time.sleep(2.5)
-    setup = cap.get("daq", t0)
+    # The 2.5 s window starts at the board's first packet, not at process launch: interpreter
+    # start-up is not the board's behaviour, and under load it alone can exceed the window.
+    first_pkt = cap.wait_for("daq", 30.0)
+    t0 = first_pkt[0] if first_pkt else time.monotonic()
+    time.sleep(max(0.0, t0 + 2.5 - time.monotonic()))
+    setup = cap.get("daq", t0, t0 + 2.5)
     r.emit(g, "  SETUP, first 2.5 s, packet types in order of first appearance:")
     seen = []
     for _t, _e, d in setup:
@@ -482,7 +503,8 @@ def sim_board(r: Run):
     r.emit(g)
 
     r.emit(g, "== board_simulator.py --skip-startup")
-    t0 = time.monotonic()
+    r.ensure_dead(pr, cb)
+    cap.listen("skip", P["P_SIMCAP_SKIP"])
     pr = r.start(
         "sim_skip",
         [
@@ -493,7 +515,7 @@ def sim_board(r: Run):
             "--target",
             "127.0.0.1",
             "--port",
-            str(P["P_SIMCAP"]),
+            str(P["P_SIMCAP_SKIP"]),
             "--low-noise",
             "--only-type",
             "PT",
@@ -501,16 +523,26 @@ def sim_board(r: Run):
         ],
         cwd=ROOT,
     )
-    time.sleep(3.0)
-    first = cap.get("daq", t0)
+    # With --skip-startup the sim binds port 0, so its source port is learned from its first
+    # packet (on a capture port nothing else targets) and pinned from then on. The window is
+    # measured from that packet: its first heartbeat goes out on the loop's first pass, at
+    # run_started (board_simulator.py _run).
+    first_pkt = cap.wait_for("skip", 30.0)
+    if first_pkt:
+        with cap.lock:
+            port = next(p[4] for p in cap.packets if p[0] == "skip")
+        cap.only_from("skip", port)
+    t0 = first_pkt[0] if first_pkt else time.monotonic()
+    time.sleep(max(0.0, t0 + 3.0 - time.monotonic()))
+    first = cap.get("skip", t0, t0 + 3.0)
     seen = []
     for _t, _e, d in first:
         if wire.ptype(d) not in seen:
             seen.append(wire.ptype(d))
     r.emit(g, f"  packet types in order of first appearance (3 s): {seen}")
-    hb = cap.wait_for("daq", 0.1, t0, ptype=1)
+    hb = cap.wait_for("skip", 0.1, t0, ptype=1)
     r.emit(g, f"  first BOARD_HEARTBEAT board_state: {hb[2][40] if hb else None}")
-    st = cap.wait_for("daq", 0.1, t0, ptype=12)
+    st = cap.wait_for("skip", 0.1, t0, ptype=12)
     r.emit(
         g,
         f"  one-shot SELF_TEST after: {N.bucket(st[0] - t0, [(1.8, 2.6, '2 s (run_started + 2.0)')]) if st else 'none'}",
@@ -521,6 +553,10 @@ def sim_board(r: Run):
 
     r.emit(g, "== board_startup_sim.py")
     bss = os.path.join(ROOT, "sim", "board_startup_sim.py")
+    r.ensure_dead(pr)
+    cap.listen("bss", P["P_SIMCAP_BSS"])
+    # board_startup_sim.py sends from the socket it bound to --listen-port
+    cap.only_from("bss", P["P_STARTUP_LISTEN"])
     t0 = time.monotonic()
     pr = r.start(
         "bss",
@@ -532,16 +568,15 @@ def sim_board(r: Run):
             "--listen-port",
             str(P["P_STARTUP_LISTEN"]),
             "--daq-port",
-            str(P["P_SIMCAP"]),
+            str(P["P_SIMCAP_BSS"]),
             "--timeout-s",
-            "20",
+            "60",
         ],
         cwd=ROOT,
     )
-    time.sleep(1.5)
     r.emit(g, "  first BOARD_HEARTBEAT:")
     for ln in decode_first(
-        cap, "daq", t0, ptype=1
+        cap, "bss", t0, ptype=1, timeout=30.0
     ):  # this sim stamps epoch ms, not uptime
         r.emit(g, ln)
     t1 = time.monotonic()
@@ -549,9 +584,9 @@ def sim_board(r: Run):
     tx.sendto(
         bytes([5, 0, 0, 0, 0, 0, 1, 2, 1, 0, 3]), ("127.0.0.1", P["P_STARTUP_LISTEN"])
     )
-    rc, _ = pr.wait(5)
+    rc, _ = pr.wait(30)
     tx.close()
-    st = cap.get("daq", t1, ptype=12)
+    st = cap.get("bss", t1, ptype=12)
     r.emit(
         g,
         f"  SENSOR_CONFIG (mode byte 3) -> {len(st)} SELF_TEST packet(s), then exit {rc}",
@@ -572,13 +607,13 @@ def sim_board(r: Run):
             "--listen-port",
             str(P["P_STARTUP_LISTEN"]),
             "--daq-port",
-            str(P["P_SIMCAP"]),
+            str(P["P_SIMCAP_BSS"]),
             "--timeout-s",
             "1.5",
         ],
         cwd=ROOT,
     )
-    rc, _ = pr.wait(6)
+    rc, _ = pr.wait(30)
     r.emit(g, f"  no SENSOR_CONFIG within --timeout-s -> exit {rc}")
     cap.close()
 
@@ -590,12 +625,14 @@ def ball_valve_heartbeat_loss(r: Run):
     sim = os.path.join(ROOT, "sim", "board_simulator.py")
     cfg = stack.build_config(
         os.path.join(r.work, "sim_bv.toml"),
-        {**P, "P_DAQ": P["P_SIMCAP"]},
+        {**P, "P_DAQ": P["P_SIMCAP_BV"]},
         True,
         {"ball_valve_board": P["P_BV_LISTEN"]},
     )
     cap = stack.Capture()
-    cap.listen("daq", P["P_SIMCAP"])
+    cap.listen("daq", P["P_SIMCAP_BV"])
+    # a ball valve always binds its listen_port, so that is its source (SimulatedBoard.start)
+    cap.only_from("daq", P["P_BV_LISTEN"])
     tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     dest = ("127.0.0.1", P["P_BV_LISTEN"])
     pr = r.start(
@@ -608,12 +645,14 @@ def ball_valve_heartbeat_loss(r: Run):
             "--target",
             "127.0.0.1",
             "--port",
-            str(P["P_SIMCAP"]),
+            str(P["P_SIMCAP_BV"]),
             "--low-noise",
             "--skip-startup",
         ],
         cwd=ROOT,
     )
+    # interpreter start-up is not the valve's behaviour: begin once it is streaming
+    cap.wait_for("daq", 30.0, ptype=3)
     hb_on = threading.Event()
     hb_on.set()
     stop = threading.Event()
@@ -673,7 +712,10 @@ def ball_valve_heartbeat_loss(r: Run):
         "  heartbeats stopped: valve starts opening after "
         + (
             N.bucket(
-                opened_at, [(4.9, 6.0, "5-6s (BALL_VALVE_HEARTBEAT_TIMEOUT_S = 5)")]
+                # BALL_VALVE_HEARTBEAT_TIMEOUT_S = 5 counts from the last heartbeat heard, and
+                # this harness sends one every 200 ms, so the earliest legal start is 4.8 s.
+                opened_at,
+                [(4.75, 6.0, "5-6s (BALL_VALVE_HEARTBEAT_TIMEOUT_S = 5)")],
             )
             if opened_at is not None
             else "never (12 s)"
@@ -1425,7 +1467,7 @@ def sigint_each(r: Run):
                 g, f"  {n}: had already exited ({pr.p.returncode}) before the signal"
             )
             continue
-        rc, dt = r.stop(pr, signal.SIGINT, timeout=8)
+        rc, dt = r.stop(pr, signal.SIGINT)
         r.emit(
             g,
             f"  {n}: exit {rc} within {N.bucket(dt if dt is not None else 99, [(0, 4.0, '<4 s')])}",

@@ -320,9 +320,11 @@ class Capture:
 
     def __init__(self):
         self.socks: dict[str, socket.socket] = {}
-        self.packets: list[tuple[str, float, int, bytes]] = (
-            []
-        )  # name, mono, epoch_ms, data
+        # name, mono, epoch_ms, data, source port
+        self.packets: list[tuple[str, float, int, bytes, int]] = []
+        # name -> the one source port accepted there (only_from); a process left over from an
+        # earlier scenario, or another board on 127.0.0.1, can never be mistaken for the sender
+        self.sources: dict[str, int] = {}
         self.lock = threading.Lock()
         self._stop = False
         self.thread = threading.Thread(target=self._run, daemon=True)
@@ -334,6 +336,13 @@ class Capture:
         s.setblocking(False)
         with self.lock:
             self.socks[name] = s
+
+    def only_from(self, name: str, port: int | None):
+        with self.lock:
+            if port is None:
+                self.sources.pop(name, None)
+            else:
+                self.sources[name] = port
 
     def release(self, name: str):
         with self.lock:
@@ -360,11 +369,11 @@ class Capture:
                 if s in r:
                     while True:
                         try:
-                            data, _ = s.recvfrom(65536)
+                            data, addr = s.recvfrom(65536)
                         except (BlockingIOError, OSError):
                             break
                         with self.lock:
-                            self.packets.append((name, now, epoch, data))
+                            self.packets.append((name, now, epoch, data, addr[1]))
 
     def get(
         self,
@@ -374,10 +383,12 @@ class Capture:
         ptype: int | None = None,
     ):
         with self.lock:
+            src = self.sources.get(name)
             return [
                 (t, e, d)
-                for n, t, e, d in self.packets
+                for n, t, e, d, sp in self.packets
                 if n == name
+                and (src is None or sp == src)
                 and t >= since
                 and (until is None or t < until)
                 and (ptype is None or (d and d[0] == ptype))
