@@ -40,6 +40,8 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D18 | Characterization *harness* code (not goldens) may be adapted by a package when the code it reaches into moves (e.g. C2's `char_config_services.cpp` `#include`s service mains; `#define private public` around `ActuatorCommander.hpp`), but only with golden files byte-identical, the area's mutation checks re-run in the package, and the orchestrator reviewing the harness diff. | Packages that split mains must be able to keep the harness compiling; a harness edit is the one way to quietly weaken a test, so it is reviewed. |
 | D19 | **Merge protocol (from C1 on):** merge the package into a scratch branch `queue/<id>` cut from the current `backend-remastered` tip, run the gate there, and only on green fast-forward `backend-remastered` to it; then log the row. **Which gate:** characterization merges (test-only files over unchanged product code) need `--fast` plus the characterization step; **every WP that touches product code needs the full gate (integration included) and the Linux leg** (`linux/linux_gate.sh`, arm64 full; amd64 build+ctest+characterization) before the fast-forward. `--fast` is for iterating inside a package, never for a product-code merge check. C2 was merged into `backend-remastered` before its gate ran — a one-off while the baseline was still being built (test-only files over main's code); its gate is being run after the fact and logged. | Merges are gated first, then logged; `backend-remastered` never holds an ungated commit. |
 | D20 | Goldens are reached black-box wherever the refactor will move internals: built binaries, TCP/UDP interfaces, public library APIs that survive; white-box only for pure functions with stable signatures. C2 is reworking its harness (`char/config-blackbox`: drop `#define private public` and `#include` of service mains; same golden files); C4 will get the same instruction. D18 stays as the rare exception, not the path. Done before `remaster-baseline`. | White-box goldens tied to private members and mains would need a harness edit in nearly every WP, and each such edit can quietly weaken a test. |
+| D21 | The goal's "data-logger CSV output" has no counterpart on `main`: the data logger is archived (`archive/legacy/python-services/data_logger_service.py`, wrote binary `.sensorlog`), `[data_logger_service]` in config is unused, elodin-db 0.16.1 has no export command. The only CSV the backend serves is `/api/state-csv`; C5 freezes those three tables byte for byte (`pipeline/golden/csv.txt`). REPORT.md says so. | Freezing a CSV that is never written would be a test that cannot fail. |
+| D22 | Float goldens: **one golden per output for every build type, OS and arch**, compared at ≤ 4 ULP for floating-point values (exact for integers, raw codes, ids, non-float bytes; NaN/inf exact); never a per-variant golden, never SKIP for an unknown variant. | C3's first version kept per-variant goldens and skipped unknown variants, so Linux (the stand, CI) could not fail; WP9 moving math across TUs can change inlining and FMA contraction (clang fuses a*b+c at -O2 on arm64) and would turn last-bit noise red. 4 ULP still catches a 1e-12-relative coefficient change (~4500 ULP). **Scoped exceptions (C3):** values that are ill-conditioned by construction get a named, value-scoped limit, each proven by a mutation in its family: RTD Callendar-Van Dusen inverse near R0 (catastrophic cancellation; abs 1e-9 °C in a stated band), the robust learner's ridge-fit seed and its covariance and predictions (-O0 vs -O2 differ at 1e-10 to 1e-8 relative; rel 1e-7, abs 1e-9 psi), AllanVariance (8 ULP, 2 values). The comparator prints family, limit and distance on failure. |
 | D12 | Adopt the reviewer's (star-f9) advice: (a) tag `remaster-baseline` after C1–C6 merge and add a gate step `git diff --exit-code remaster-baseline -- <goldens> frontend/__tests__ frontend/e2e`; only the orchestrator moves the tag, each move logged here; (b) run the suite 3× back-to-back and once under parallel ctest load before trusting it; (c) the normaliser replaces timestamps/IDs only, never sorts, drops fields or rounds, and the mutation check targets it (extra WS field, reordered sensor list, changed 4th-decimal float); (d) WP1 checks deploy/, dev.sh, flake.nix, systemd units for build-ci/ users, and the gate's `npm ci` from clean must still work; (e) god-file splits (WP6/7, WP9/10) go in two packages each: a mechanical move-only split merged alone, then cleanup. | Enforces the golden rule mechanically; avoids flaky goldens being "fixed" by loosening; keeps diffs bisectable. |
 
 ## Baseline on `main` (this machine)
@@ -63,9 +65,10 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | C0 | gate, lock, characterization skeleton, ledger | orchestrator | remaster | merged (158d330d, f0c4b22c) | `test/characterization/{gate,run,with_stack_lock}.sh`, `CMakeLists.txt`, `README.md`, `docs/remaster/` | — |
 | C1 | packets (daq-protocol bytes, transport structs) + Elodin schema goldens | agent | worktree, branch `char/packets` | reported (10 tests, 10 mutations caught); sent back for D20 black-box rework of service goldens | `test/characterization/{packets,elodin}/` | C0 |
 | C2 | config loaders (C++ + TS), scripts parser, bad configs | agent | `char/config` → `char/config-blackbox` | merged 041a5246 (gate after the fact, D19); black-box rework in progress (D20) | `test/characterization/config/` | C0 |
-| C3 | calibration math (C++, calibration_service, TS) | agent | `char/calibration` | running: 90a378a1, 3 mutations caught; moving its calibration_main harness to the stack run (D20) | `test/characterization/calibration/` | C0 |
+| C3 | calibration math (C++, calibration_service, TS) | agent | `char/calibration` | reported (black-box stack vs stand-in Elodin, lib public API, TS; 3 mutations); sent back: one golden for all builds/platforms with a 4-ULP float comparator, never skip (D22) | `test/characterization/calibration/` | C0 |
 | C4 | sequencer/controller UDP streams, TCP replies, aborts | agent | `char/sequencer` | running: WIP 169127e9, 64 sessions, converging; black-box (built binaries over TCP/UDP, stand-in Elodin) | `test/characterization/sequencer/` | C0 |
-| C5 | pipeline WS frames, HTTP, logger CSV | agent | `char/pipeline` | running | `test/characterization/pipeline/` | C0 |
+| C5 | pipeline WS frames, HTTP, logger CSV | agent | `char/pipeline` | reported (6 goldens, 3 mutations, 3× identical, black-box); queued for merge after H1. Follow-up C5b: all-board-types WS session |
+| C5b | all board types through the pipeline (LC, TC, RTD, encoder, actuator, ball valve, environmental): WS frame shapes per type; needs the lo0 aliases and **fails, never skips**, without them (as test_integration.sh) | agent | `char/pipeline-boards` | queued | `test/characterization/pipeline/` (new files only) | C5 | `test/characterization/pipeline/` | C0 |
 | C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | **merged** 9d846bd6 (7 goldens, 6 mutations incl. normaliser, black-box) | `test/characterization/lifecycle/` | C0 |
 | B0 | bloat-map research (read-only) | agent | none | done → `docs/remaster/BLOAT-MAP.md` | — | — |
 | WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | queued (after suite) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
@@ -85,6 +88,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 | when | package | merge commit | gate |
 |---|---|---|---|
+| 2026-11-15 | H1 harness: test_integration.sh restores the live `abort_thresholds.txt` (H-1); lock `--status` | queue/H1 ff | **full gate PASS** (integration 167/0; abort_thresholds.txt sha256 f8270df7… identical before/after; tree-unchanged flagged only the orchestrator's ledger edit, now exempt) |
 | 2026-11-15 | C6 char/lifecycle (queue/C6, ff) | 9d846bd6 | `--fast` PASS incl. characterization (LIFECYCLE PASS) |
 | 2026-11-15 | C2 char/config (merged before gate — one-off, D19) | 041a5246 | `--fast` PASS on 78aff6cd (after gate fixes: Ninja build, vitest allowlist); full integration on main code PASS 167/0 earlier |
 
@@ -101,9 +105,9 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 ## Defects found in the original (kept as-is, for the team)
 
-- H-1 (harness, found by the orchestrator) `test/test_integration.sh` parks `cubic_calibration.json` and `lc_tare.json` but **not** `scripts/calibration/calibrations/abort_thresholds.txt`; its `calibration_service` regenerates that tracked file in place (seen 2026-11-15 20:03, ADC values 858993460→901943133). On the stand an integration run overwrites the live abort thresholds. Fix belongs in WP4 (park and restore it like the others); the gate now fails on any dirty tracked file after a run.
+- H-1 (harness, found by the orchestrator; **fixed in H1**, merged) `test/test_integration.sh` parks `cubic_calibration.json` and `lc_tare.json` but **not** `scripts/calibration/calibrations/abort_thresholds.txt`; its `calibration_service` regenerates that tracked file in place (seen 2026-11-15 20:03, ADC values 858993460→901943133). On the stand an integration run overwrites the live abort thresholds. Fix belongs in WP4 (park and restore it like the others); the gate now fails on any dirty tracked file after a run.
 
-**Lead REPORT.md with these (safety-relevant on the real stand), each with its operator-visible consequence:** C2-2 (shipped profile TOMLs never checked for underscore ints), C6-3 (server-heartbeat loss undetected; daq_bridge never takes over), C6-4 (board shown disconnected while its data still displays), C6-1 (log claims SENSOR_CONFIG sent, 0 packets), C6-6 (config_broadcast silent unless an actuator board is designated survivor), C2-1 (digital-twin fire timer disabled), C2-4 (bad/missing TOML → service starts on defaults).
+**Lead REPORT.md with these (safety-relevant on the real stand), each with its operator-visible consequence:** H-1 (fixed), C2-2 (shipped profile TOMLs never checked for underscore ints), C6-3 (server-heartbeat loss undetected; daq_bridge never takes over), C6-4 (board shown disconnected while its data still displays), C6-1 (log claims SENSOR_CONFIG sent, 0 packets), C6-6 (config_broadcast silent unless an actuator board is designated survivor), C2-1 (digital-twin fire timer disabled), C2-4 (bad/missing TOML → service starts on defaults).
 
 From C1 (packets/Elodin; each frozen in a golden):
 - C1-1 `create_abort_done_packet` writes `version = 1`; every other encoder writes 0.
@@ -113,6 +117,22 @@ From C1 (packets/Elodin; each frozen in a golden):
 - C1-5 Parsers ignore the version byte and accept trailing bytes (the pipeline enforces both only for ENVIRONMENTAL_DATA).
 - C1-6 TS `ElodinClient` never resyncs on an implausible length: waits forever, buffers, re-schedules `setImmediate` every tick.
 - C1-7 With config_base's cubic models and no thresholds file, ACTUATOR_CONFIG carries no abort-PT thresholds.
+
+From C3 (calibration):
+- C3-1 Robust-model predictions depend on wall-clock time between calls (bias decays with time), so they are not reproducible from inputs; `predict_pressure_psi` runs on every PT sample even when the PT does not use the robust model.
+- C3-2 `calibration.ts` fills agreeing channels 8–10 with `Math.random`: the backend's backfilled coefficients differ on every load.
+- C3-3 `loadPTCalibration` falls back to scanning repo directories by mtime when the override file yields no coefficients.
+- C3-4 TS `parseTareFile` accepts a tare with uid 0; C++ `LcTareStore::load` skips it.
+- C3-5 `IMUCalibration.cpp` does not compile on main (default argument at `IMUCalibration.hpp:92`, unqualified `SensorType` at `:203`); it is commented out of the build (WP2 deletes it).
+
+From C5 (pipeline):
+- C5-1 Session start and stop reload board status from config: a heartbeating board is reported "connection lost", then "connected" a second later.
+- C5-2 In mock mode the run directory is never created: `POST /api/feed-char/results` during a session → 500 ENOENT.
+- C5-3 `debug_mode` emits two identical `state_update` frames.
+- C5-4 Legacy state-CSV loaders join `[state_machine]` paths onto fixed dirs: an absolute path is never found → empty transition list, no commanded-actuator snapshot.
+- C5-5 `/api/cubic_calibration` ignores `DAQ_CALIBRATIONS_DIR`; the backend's PT calibration comes from `daq-server/calibration/*.json`, whose coefficients are zeros.
+- C5-6 `GET /api/state-script?name=<missing>` → 200 with empty body; `PUT /api/video/config` without a revision → misleading 409.
+- C5-7 `sensor-backend.service` runs `npm run dev` (`tsx watch`) in production.
 
 From C4 (sequencer; provisional until its report):
 - C4-1 A refused dynamic state deadlocks the sequencer worker when Elodin is connected.
