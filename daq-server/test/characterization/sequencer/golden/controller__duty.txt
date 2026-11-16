@@ -2,19 +2,15 @@
 > controller <- FIRE_START
   < 'OK\n'
   first datagram: PWM_ACTUATOR_COMMAND
-      +0ms x1 PWM_ACTUATOR_COMMAND v0 n=2: ch3[Fuel Press|GSE High Press Control] dur=2000ms duty=0.1 freq=6Hz; ch8[LOX Dump|LOX Press] dur=2000ms duty=0.1 freq=6Hz
+      +0ms x1 to board 12: PWM_ACTUATOR_COMMAND v0 n=2: ch3[Fuel Press] dur=2000ms duty=0.1 freq=6Hz; ch8[LOX Press] dur=2000ms duty=0.1 freq=6Hz
               raw 0a00........0203d0070000cdcccc3d0000c04008d0070000cdcccc3d0000c040
               repeated every ~10ms, still running when the window closed
 > controller <- FIRE_START (again)
   < 'OK\n'
-  first datagram: PWM_ACTUATOR_COMMAND
-      +0ms x1 PWM_ACTUATOR_COMMAND v0 n=2: ch3[Fuel Press|GSE High Press Control] dur=2000ms duty=0.1 freq=6Hz; ch8[LOX Dump|LOX Press] dur=2000ms duty=0.1 freq=6Hz
-              raw 0a00........0203d0070000cdcccc3d0000c04008d0070000cdcccc3d0000c040
-              repeated every ~10ms, still running when the window closed
 > controller <- FIRE_STOP
   < 'OK\n'
   first datagram: PWM_ACTUATOR_COMMAND
-      +0ms x1 PWM_ACTUATOR_COMMAND v0 n=2: ch3[Fuel Press|GSE High Press Control] dur=2000ms duty=0 freq=6Hz; ch8[LOX Dump|LOX Press] dur=2000ms duty=0 freq=6Hz
+      +0ms x1 to board 12: PWM_ACTUATOR_COMMAND v0 n=2: ch3[Fuel Press] dur=2000ms duty=0 freq=6Hz; ch8[LOX Press] dur=2000ms duty=0 freq=6Hz
               raw 0a00........0203d0070000000000000000c04008d0070000000000000000c040
 > controller <- FIRE_STOP (again)
   < 'OK\n'

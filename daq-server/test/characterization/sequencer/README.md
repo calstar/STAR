@@ -19,20 +19,22 @@ Golden files: `golden/<profile>__<kind>__<name>.txt`, one per session. Python 3.
 
 ## Safety and isolation
 
-Every config the suite runs a service against is a copy of a shipped profile with **every**
-`192.168.x.x` address rewritten to `127.0.0.1` and every stand port moved into this area's private
-range; `harness.patch_config` asserts no 192.168 address and no 5005 / 2240 / 9998 / 9999 survives.
-Ports: 26301 actuator UDP (also the abort broadcast and PWM destination — one capture socket sees
-everything, in arrival order), 26302 sequencer TCP, 26303 controller TCP, 26304 a fake Elodin,
-26306 board send ports (nothing listens). Work files: `daq-server/.tmp/char_sequencer_<pid>/`.
-Only PIDs this suite started are ever signalled.
+Every config the suite runs a service against is a copy of a shipped profile with every
+`[boards.*]` address rewritten to **`127.0.0.<board_id>`**, every other `192.168.x.x` (the abort
+broadcast, the stacklight) to `127.0.0.1`, and every stand port moved into this area's private range.
+`harness.patch_config` asserts no non-loopback address and no 5005 / 2240 / 9998 / 9999 survives,
+and that every `[actuator_roles]` board has a `[boards]` entry (`ActuatorCommander` would otherwise
+fall back to `192.168.2.<board>`). Ports: 26301 actuator UDP — bound on 127.0.0.1 (abort broadcast)
+and on each actuator / ball-valve board's 127.0.0.<id>, one socket each, read by one thread so
+arrival order is kept — 26302 sequencer TCP, 26303 controller TCP, 26304 a fake Elodin, 26306
+board send ports (nothing listens). Work files: `daq-server/.tmp/char_sequencer_<pid>/`. Only PIDs
+this suite started are ever signalled.
 
-**Board identity is not on the wire here.** macOS has only 127.0.0.1 on lo0, so every actuator board
-maps to one address. `ActuatorCommander::sendBatch` groups by IP *string*, so boards 12 and 14 —
-separate datagrams on the stand — collapse into one datagram per stage, and their channel numbers
-overlap. The decode therefore names a channel's candidate roles (`ch2=0[Fuel Fill Press|Fuel Vent]`)
-rather than one. A refactor that misroutes a role to the wrong board would not be caught; one that
-changes what is sent, when, or in what grouping would be.
+**Every command is frozen with its destination board** (`to board 12: ...`), taken from the address
+the datagram was sent to, and each channel is named by the one role `[actuator_roles]` puts on that
+board and channel. On macOS the addresses 127.0.0.11-14 and .71 need lo0 aliases
+(`sudo ifconfig lo0 alias 127.0.0.<id> up`, as `test_integration.sh` uses); if any is missing
+`run.sh` **fails** and lists them. Linux routes all of 127/8 to lo and needs none.
 
 ## Profiles and sessions
 
@@ -82,6 +84,12 @@ the rules below were changed for those mechanisms, never to fit one golden.
   the controller's PWM answer race each other inside a few tens of ms. The one ordering the code
   guarantees is frozen explicitly as `first datagram:` — on an abort entry the ABORT broadcast
   leaves before any valve is commanded.
+- **N3c** The loop's first pass skips roles whose stage is still pending
+  (`ActuatorCommander::applyForState`, `pending_roles_`); a stage due in ~1 ms (default Fire's LOX
+  Main, 0.001 s) is sent from the stage thread and races it. A send to one board that is an earlier
+  send to that board plus exactly the pairs a stage has already sent there is that first pass:
+  counted as `(xK sends)` on the earlier line. Every pair it carries is still frozen, in the earlier
+  send or the stage.
 - **N4** Times are relative to the window's first datagram (or, after a `(note)`, to the moment the
   harness changed something). A *staged* send — an actuator send in the entered state's own loop,
   for a state that is neither an abort nor scripted, i.e. the delays CSV at work — is rounded to the
@@ -113,6 +121,8 @@ the rules below were changed for those mechanisms, never to fit one golden.
   are one line with their period (median gap, floored to 10 ms) and whether they stopped inside the
   window or were still running when the harness moved on. Neither the count nor the stop time is
   frozen: the stream stops within one period of the event that stops it, which is frozen itself.
+  A stream packet continuing a stream that was running when a window opened belongs to that
+  stream, already recorded where it started, and is not listed again.
   **N7b**: a stream packet repeating within 50 ms after the close command (the loop's straggler,
   see below) is dropped.
 
@@ -155,14 +165,17 @@ run alongside as a control, stayed green); each was reverted:
 | actuator delay: default `Fuel Fill Press` in Fuel Fill 0.2 -> 0.25 | `default/entry/Fuel Fill` | `+200ms` -> `+250ms` |
 | swapped order within one state: `triggerAbort()` moved below `applyForState()` in `doTransitionTo` | `default/entry/Engine Abort` | `first datagram: ABORT` -> `ACTUATOR_COMMAND` |
 | TCP reply: `ERR:not in FIRE state` -> `ERR:not in fire state` | `default/malformed` | the reply line |
+| a role on the wrong board: default `"LOX Main" = ["NC", 1, 12]` -> board 14 | `default/entry/Fire`, `default/entry/Idle` | `to board 12: ... ch1=0[LOX Main]` -> `to board 14: ...` |
 
 ## What each rule hides, and why it is allowed to
 
 | rule | hides | concurrency it absorbs (code) | still visible, proven by |
 |---|---|---|---|
 | N1 | clock bytes 2..5 | n/a — a clock | — |
+| (none) | nothing about boards: the destination is part of every send's identity and canonical key | — | wrong-board mutation went red |
 | N2 | retransmit count is kept; only the repeat lines | `ActuatorCommander::sendBatch` 3 rounds, `AbortBroadcaster::sendPacket` 4 repeats | xN is frozen |
 | N3a | the gap between identical sends (count kept as xK) | apply on the worker vs the loop's first pass on `loop_thread_` (`startContinuousLoop`); the two `triggerAbort()` calls | K frozen |
+| N3c | whether the loop's first pass came before or after a ~1 ms stage | `loop_thread_` vs the stage thread over `pending_roles_` | every pair still frozen; delay mutation still red |
 | N3b | arrival order inside one time bucket | stage thread (`applyForState`'s detached `std::thread`) vs `loop_thread_` vs the worker's second `triggerAbort()` vs controller_service's process; no defined order between them | the ordered guarantee is `first datagram`: abort-order swap went red |
 | N4 | sub-bucket timing | sleeps only overshoot: `HoldTimer`, ScriptRunner `wait_until`, `AbortBroadcaster::waitAndSendAbortDone` (50 ms steps) | staged delays keep 50 ms: delay 0.2 -> 0.25 went red |
 | N5 | republish count and exact phase (content and period kept) | `loop_thread_` runs on its own 100 x 10 ms clock | its content is frozen per summary window |
