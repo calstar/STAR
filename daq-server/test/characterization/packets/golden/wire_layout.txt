@@ -1,0 +1,107 @@
+# DAQv2 wire protocol layout (lib/daq-protocol/src)
+DIABLO_COMMS_VERSION=0
+MAX_SENSORS_PER_BOARD=10
+MAX_ACTUATORS_PER_BOARD=10
+MAX_CHUNKS_PER_PACKET=10
+MAX_PACKET_SIZE=512
+MAX_ABORT_ACTUATORS=255
+MAX_ABORT_PTS=255
+
+enum PacketType : uint8_t sizeof=1
+  PacketType::BOARD_HEARTBEAT = 1
+  PacketType::SERVER_HEARTBEAT = 2
+  PacketType::SENSOR_DATA = 3
+  PacketType::ACTUATOR_COMMAND = 4
+  PacketType::SENSOR_CONFIG = 5
+  PacketType::ACTUATOR_CONFIG = 6
+  PacketType::ABORT = 7
+  PacketType::ABORT_DONE = 8
+  PacketType::CLEAR_ABORT = 9
+  PacketType::PWM_ACTUATOR_COMMAND = 10
+  PacketType::NO_CONNECTION_ABORT = 11
+  PacketType::SELF_TEST = 12
+  PacketType::ENVIRONMENTAL_DATA = 13
+  PacketType::STACKLIGHT_COMMAND = 14
+  PacketType::LOGS = 15
+enum BoardState : uint8_t sizeof=1
+  BoardState::SETUP = 1
+  BoardState::ACTIVE = 2
+  BoardState::CONNECTION_LOSS_DETECTED = 3
+  BoardState::NO_CONNECTION_ABORT = 4
+  BoardState::NO_CONN_ABORT_FOLLOWER = 5
+  BoardState::PT_ABORT = 6
+  BoardState::NO_PT_ABORT = 7
+  BoardState::ABORT_FINISHED = 8
+  BoardState::STANDALONE_ABORT = 9
+  BoardState::SELF_TEST = 10
+enum EngineState : uint8_t sizeof=1
+  EngineState::SAFE = 0
+  EngineState::PRESSURIZING = 1
+  EngineState::LOX_FILL = 2
+  EngineState::FIRING = 3
+  EngineState::POST_FIRE = 4
+
+struct PacketHeader sizeof=6 alignof=1 standard_layout=1 trivially_copyable=1
+  packet_type offset=0 size=1 type=PacketType(u8)
+  version offset=1 size=1 type=u8
+  timestamp offset=2 size=4 type=u32
+struct BoardHeartbeatPacket sizeof=35 alignof=1 standard_layout=1 trivially_copyable=1
+  firmware_hash offset=0 size=32 type=u8[32]
+  board_id offset=32 size=1 type=u8
+  engine_state offset=33 size=1 type=EngineState(u8)
+  board_state offset=34 size=1 type=BoardState(u8)
+struct ServerHeartbeatPacket sizeof=1 alignof=1 standard_layout=1 trivially_copyable=1
+  engine_state offset=0 size=1 type=EngineState(u8)
+struct SensorDataPacket sizeof=2 alignof=1 standard_layout=1 trivially_copyable=1
+  num_chunks offset=0 size=1 type=u8
+  num_sensors offset=1 size=1 type=u8
+struct SensorDataChunk sizeof=4 alignof=1 standard_layout=1 trivially_copyable=1
+  timestamp offset=0 size=4 type=u32
+struct SensorDatapoint sizeof=5 alignof=1 standard_layout=1 trivially_copyable=1
+  sensor_id offset=0 size=1 type=u8
+  data offset=1 size=4 type=u32
+struct SensorConfigPacket sizeof=1 alignof=1 standard_layout=1 trivially_copyable=1
+  num_sensors offset=0 size=1 type=u8
+struct ActuatorCommandPacket sizeof=1 alignof=1 standard_layout=1 trivially_copyable=1
+  num_commands offset=0 size=1 type=u8
+struct ActuatorCommand sizeof=2 alignof=1 standard_layout=1 trivially_copyable=1
+  actuator_id offset=0 size=1 type=u8
+  actuator_state offset=1 size=1 type=u8
+struct PWMActuatorCommandPacket sizeof=1 alignof=1 standard_layout=1 trivially_copyable=1
+  num_commands offset=0 size=1 type=u8
+struct PWMActuatorCommand sizeof=13 alignof=1 standard_layout=1 trivially_copyable=1
+  actuator_id offset=0 size=1 type=u8
+  duration offset=1 size=4 type=u32
+  duty_cycle offset=5 size=4 type=f32
+  frequency offset=9 size=4 type=f32
+struct ActuatorConfigPacket sizeof=2 alignof=1 standard_layout=1 trivially_copyable=1
+  is_abort_controller offset=0 size=1 type=u8
+  num_abort_actuators offset=1 size=1 type=u8
+struct AbortActuatorLocation sizeof=7 alignof=1 standard_layout=1 trivially_copyable=1
+  ip_address offset=0 size=4 type=u32
+  actuator_id offset=4 size=1 type=u8
+  vent_state offset=5 size=1 type=u8
+  abort_state offset=6 size=1 type=u8
+struct AbortPTSectionHeader sizeof=1 alignof=1 standard_layout=1 trivially_copyable=1
+  num_abort_pts offset=0 size=1 type=u8
+struct AbortPTLocation sizeof=9 alignof=1 standard_layout=1 trivially_copyable=1
+  ip_address offset=0 size=4 type=u32
+  sensor_id offset=4 size=1 type=u8
+  pressure_threshold_adc offset=5 size=4 type=u32
+struct SelfTestPacket sizeof=2 alignof=1 standard_layout=1 trivially_copyable=1
+  adc_good offset=0 size=1 type=u8
+  num_sensors offset=1 size=1 type=u8
+struct SelfTestResult sizeof=2 alignof=1 standard_layout=1 trivially_copyable=1
+  sensor_id offset=0 size=1 type=u8
+  result offset=1 size=1 type=u8
+struct EnvironmentalDataPacket sizeof=12 alignof=1 standard_layout=1 trivially_copyable=1
+  temperature_c offset=0 size=4 type=f32
+  pressure_pa offset=4 size=4 type=u32
+  humidity_rh offset=8 size=4 type=f32
+struct StacklightCommandPacket sizeof=4 alignof=1 standard_layout=1 trivially_copyable=1
+  red offset=0 size=1 type=u8
+  yellow offset=1 size=1 type=u8
+  green offset=2 size=1 type=u8
+  buzzer offset=3 size=1 type=u8
+struct SensorDataChunkCollection (host-side; vector member, layout not frozen)
+struct SensorConfigData (host-side; vector member, layout not frozen)

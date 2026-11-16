@@ -1,0 +1,44 @@
+# sequencer_service (black box): datagrams to [server_heartbeat] broadcast_ip:port
+# (127.0.0.1) around TRANSITIONs sent to its TCP command port.
+## at start-up: 0 datagrams
+## TRANSITION:GSE Abort -> reply 'OK': 12 datagrams
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+## TRANSITION:Idle -> reply 'OK': 0 datagrams
+## TRANSITION:Armed -> reply 'OK': 0 datagrams
+## TRANSITION:Engine Abort -> reply 'OK': 12 datagrams
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+## TRANSITION:Emergency Abort -> reply 'OK': 12 datagrams
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+0s] len=6: 07 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
+  [+3s] len=6: 08 00 [<steady_clock ms, LE u32>]
