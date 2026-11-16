@@ -90,8 +90,9 @@ replacement beside it. In short:
 
 Line numbers added by this amendment were verified with `git show backend-remastered:…` at
 `c3af6e62`, where `diablo_server/`, `sim/` and `test/characterization/pipeline/` are identical to
-`b2599617`; `test/test_integration.sh` has moved **+1** after its line 243
-(C1), so the verdict's `:516, :674` are cited here as `:517, :675`.
+`b2599617`; `test/test_integration.sh` changed in C1 (+1 line at 239, +7 at 697, +26 at 1092, +1
+at 1163), so the verdict's `:516, :674`, which fall in the +1 region, are cited here as `:517,
+:675`; later lines of that file moved further, and this amendment does not re-cite them.
 
 Research cited: `docs/remaster/research/node-realtime-backend.md` (§1 elided imports, §2 timers,
 §3 backpressure, §4 D-SUB, §5 functional core) and `research/subscription-robustness.md` (Ideas
@@ -938,7 +939,7 @@ WP6's own per-commit scripts (§6.3).
     session.
   - **Steps:** unlock → `debug_mode` on → `actuator "Main Ball Valve" 1` → wait > 3 s
     (`BALL_VALVE_TRAVEL_S`, `board_simulator.py:49`) → `debug_mode` on **again**
-    (`doSetDebugMode(true)` publishes state without clearing overrides, `SequencerService.cpp:947-955`,
+    (`doSetDebugMode(true)` publishes state without clearing overrides, `SequencerService.cpp:947-954`,
     which schedules the 5 s check) → ≥ 5 s → `notification actuator_mismatch ongoing=true
     "Actuator mismatch in <state>: BV1.CH1 (expected CLOSED, sensed OPEN)"` → close the valve (a
     sensed change with the key active reschedules) → `"Actuator positions match expected"
@@ -966,7 +967,9 @@ WP6's own per-commit scripts (§6.3).
   fallback, which its own comment (`:330-334`) names as the request-id overflow; avoid it. C0
   confirms; before 2.1/2.2.
 - **AMENDMENT (debate verdict) — C0 builds:** the G3 fixture, the G2 option and case, the G1
-  ball-valve case; G7/G8, G10, G11/G12.
+  ball-valve case; G7/G8, G10, G11/G12. [Verdict text as written. This section's preamble and the
+  priority table keep G11/G12 as WP6's own per-commit scripts (§6.3 items 4-6), not C0
+  characterization; orchestrator to confirm which.]
 - **G4 :9998 down / slow**: no golden sends a command with the sequencer stopped or stalled. Add
   (lifecycle): SIGSTOP the sequencer → `state_transition` → `ERROR "State transition failed:
   timeout"` after ~2 s; SIGTERM it → `ERROR "State transition failed: connect ECONNREFUSED
