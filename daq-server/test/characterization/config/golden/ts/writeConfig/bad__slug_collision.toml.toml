@@ -1,0 +1,26 @@
+[actuator_roles]
+"Fuel Main" = [ "NC", 1, 12 ]
+fuel-main = [ "NC", 2, 12 ]
+"???" = [ "NC", 3, 12 ]
+
+[boards.actuator_board]
+type = "ACTUATOR"
+ip = "192.168.2.12"
+board_id = 12
+
+[[states]]
+id = 1
+name = "Idle"
+is_boot = true
+
+[[states]]
+id = 2
+name = "Armed"
+script_file = "fine.script"
+script_timeout_ms = 1000
+script_return_target = "Idle"
+script_timeout_target = "Idle"
+
+[controller]
+duty_sweep_steps = [ [ 0.1, 0.1 ], [ 0.3, 0.2 ], [ 0.5, 0.4 ], [ 0.3, 0.3 ], [ 0.1, 0.1 ] ]
+duty_sweep_step_duration_sec = 2

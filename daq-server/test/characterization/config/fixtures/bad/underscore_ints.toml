@@ -1,0 +1,16 @@
+# Valid TOML, but test/check_toml_no_underscore_ints.py rejects it: the hand-rolled parsers
+# (std::stoi) stop at the underscore.
+[network]
+sensor_port = 5_006
+actuator_cmd_port = 5_005
+
+[database]
+port = 2_240
+
+[stacklight_service]
+interval_ms = 1_000
+target_port = 5_006
+elodin_port = 2_240
+
+[fire]
+duration_ms = 6_000

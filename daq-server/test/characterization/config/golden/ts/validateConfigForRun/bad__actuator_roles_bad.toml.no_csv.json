@@ -1,0 +1,30 @@
+{
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "Unknown Board is on board 99, which is not in Boards. Add board 99 under Boards (type ACTUATOR, or BALL_VALVE for a motorized ball valve), or move the role.",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "Ball NO is valve 1 on ball valve board 71, which lists active_connectors []. Add 1 to the board's Active Connectors, or move the role.",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "Ball NO is on ball valve board 71 and is marked NO. A ball valve has no NO/NC — 1 opens it — so set it to NC.",
+      "page": "roles"
+    },
+    {
+      "level": "error",
+      "message": "2 actuators are assigned \"pwm_fuel\" (PWM One, PWM Two) — exactly one must be.",
+      "page": "controller"
+    },
+    {
+      "level": "error",
+      "message": "No actuator is assigned \"pwm_ox\" — the controller has no ox PWM output. Assign one, or clear the other assignment if this rig does not use the PWM controller.",
+      "page": "controller"
+    }
+  ]
+}

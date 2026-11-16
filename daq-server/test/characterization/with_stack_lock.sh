@@ -15,7 +15,21 @@ set -euo pipefail
 LOCK_DIR="${DAQ_STACK_LOCK:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/daq-stack.lock}"
 WAIT_S="${DAQ_STACK_LOCK_WAIT:-7200}"
 
-[ $# -gt 0 ] || { echo "usage: $0 <command> [args...]" >&2; exit 2; }
+[ $# -gt 0 ] || { echo "usage: $0 <command> [args...] | --status" >&2; exit 2; }
+
+# --status: who holds the lock, for how long, and who is waiting.
+if [ "$1" = "--status" ]; then
+  if [ -d "$LOCK_DIR" ]; then
+    age=$(($(date +%s) - $(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR")))
+    echo "held ${age}s by pid $(cat "$LOCK_DIR/pid" 2>/dev/null || echo '?'): $(cat "$LOCK_DIR/what" 2>/dev/null || echo '?')"
+  else
+    echo "free"
+  fi
+  for t in "$LOCK_DIR.priority"/*; do [ -e "$t" ] && echo "priority ticket: pid $(basename "$t")"; done
+  echo "waiting / running under the lock:"
+  ps -axo pid=,etime=,command= | grep '[w]ith_stack_lock.sh' | grep -v -- '--status' | sed 's/^/  /'
+  exit 0
+fi
 
 # Never edit this file in place while runs may be executing it: bash reads scripts incrementally.
 # Write a new file and mv it over this one.

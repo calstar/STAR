@@ -1,0 +1,315 @@
+{
+  "diffVsDefaultHeader": {
+    "missing": [
+      "Fuel Fill",
+      "Ox Fill",
+      "GN2 Low Press",
+      "GN2 Low Vent",
+      "Fuel Vent",
+      "Ox Press",
+      "Ox Vent",
+      "GN2 High Press",
+      "GN2 High Vent",
+      "Calibrate",
+      "Engine Abort",
+      "GSE Abort",
+      "Emergency Abort"
+    ],
+    "orphan": [
+      "Dome Press",
+      "COPV Fill",
+      "LOX Press",
+      "Dome Vent",
+      "High Press Vent",
+      "Fuel Tank Vent",
+      "Flow Test",
+      "Dynamic Test"
+    ]
+  },
+  "grid": {
+    "logs": [],
+    "value": {
+      "rows": [
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "OPEN",
+            "CLOSE"
+          ],
+          "key": "Fuel Upstream"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "High Press CTRL"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "Dome CTRL"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "OPEN",
+            "CLOSE"
+          ],
+          "key": "Fuel Main"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "fuel vent"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "lox vent"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "OPEN",
+            "CLOSE"
+          ],
+          "key": "Ox Upstream"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "Fuel Fill Press"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "High Press Vent"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "Fuel Fill Vent"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "Low Press Vent"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "OPEN",
+            "CLOSE"
+          ],
+          "key": "Ox Main"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "OPEN",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE",
+            "CLOSE"
+          ],
+          "key": "Dome CTRL Vent"
+        }
+      ],
+      "states": [
+        "Idle",
+        "Armed",
+        "Press Standby",
+        "Dome Press",
+        "COPV Fill",
+        "Fuel Press",
+        "LOX Press",
+        "Vent",
+        "Dome Vent",
+        "High Press Vent",
+        "Fuel Tank Vent",
+        "Ready",
+        "Fire",
+        "Flow Test",
+        "Dynamic Test"
+      ]
+    }
+  },
+  "roundTrip": ",Idle,Armed,Press Standby,Dome Press,COPV Fill,Fuel Press,LOX Press,Vent,Dome Vent,High Press Vent,Fuel Tank Vent,Ready,Fire,Flow Test,Dynamic Test\nFuel Upstream,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE\nHigh Press CTRL,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nDome CTRL,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nFuel Main,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE\nfuel vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE\nlox vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nOx Upstream,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE\nFuel Fill Press,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nHigh Press Vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nFuel Fill Vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nLow Press Vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\nOx Main,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE\nDome CTRL Vent,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,OPEN,OPEN,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE,CLOSE\n",
+  "roundTripIdentical": true
+}

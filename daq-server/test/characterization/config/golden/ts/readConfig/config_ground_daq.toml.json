@@ -1,0 +1,314 @@
+{
+  "logs": [],
+  "value": {
+    "calibration": {
+      "calibration_file": "calibration/data/ground_calibration.json",
+      "enabled": true
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    },
+    "database": {
+      "auto_flush_interval_ms": 100,
+      "connection_retry_attempts": 3,
+      "connection_retry_delay_ms": 1000,
+      "db_host": "127.0.0.1",
+      "db_port": 2240,
+      "max_buffer_size": 2048
+    },
+    "discovery": {
+      "announcement_port": 2245,
+      "auto_update_config": true,
+      "config_update_interval_seconds": 60,
+      "discovery_timeout_seconds": 30,
+      "enabled": true,
+      "mode": "hybrid",
+      "network_interface": "eth0"
+    },
+    "hotfire": {
+      "enabled": false,
+      "include_flight_sensors": true
+    },
+    "sensor_data": {
+      "enable_all_sensors": true,
+      "update_rate_hz": 10
+    },
+    "sensors": {
+      "gse": {
+        "lc": {},
+        "pt": {
+          "PT_FF": {
+            "board_id": 11,
+            "channel": 0,
+            "component": "fuel_fill",
+            "max_psi": 1000,
+            "packet_id": [
+              32,
+              176
+            ],
+            "purpose": "Fuel fill pressure"
+          },
+          "PT_HPF": {
+            "board_id": 12,
+            "channel": 0,
+            "component": "pressurant_fill",
+            "max_psi": 5000,
+            "packet_id": [
+              32,
+              192
+            ],
+            "purpose": "High pressure fill"
+          },
+          "PT_LPF": {
+            "board_id": 12,
+            "channel": 2,
+            "component": "pressurant_fill",
+            "max_psi": 1000,
+            "packet_id": [
+              32,
+              194
+            ],
+            "purpose": "Low pressure fill"
+          },
+          "PT_MPF": {
+            "board_id": 12,
+            "channel": 1,
+            "component": "pressurant_fill",
+            "max_psi": 2000,
+            "packet_id": [
+              32,
+              193
+            ],
+            "purpose": "Medium pressure fill"
+          },
+          "PT_OF": {
+            "board_id": 10,
+            "channel": 0,
+            "component": "lox_fill",
+            "max_psi": 1000,
+            "packet_id": [
+              32,
+              160
+            ],
+            "purpose": "LOX fill pressure"
+          }
+        },
+        "rtd": {},
+        "tc": {}
+      },
+      "hotfire": {
+        "flight_lc": {
+          "LC_CHAMBER_1": {
+            "board_id": 5,
+            "channel": 0,
+            "location": "chamber",
+            "packet_id": [
+              35,
+              80
+            ],
+            "purpose": "Chamber load cell 1"
+          },
+          "LC_CHAMBER_2": {
+            "board_id": 5,
+            "channel": 1,
+            "location": "chamber",
+            "packet_id": [
+              35,
+              81
+            ],
+            "purpose": "Chamber load cell 2"
+          },
+          "LC_CHAMBER_3": {
+            "board_id": 5,
+            "channel": 2,
+            "location": "chamber",
+            "packet_id": [
+              35,
+              82
+            ],
+            "purpose": "Chamber load cell 3"
+          }
+        },
+        "flight_pt": {
+          "PT_FDP": {
+            "board_id": 1,
+            "channel": 1,
+            "max_psi": 1000,
+            "packet_id": [
+              32,
+              17
+            ],
+            "purpose": "Fuel downstream"
+          },
+          "PT_FUP": {
+            "board_id": 1,
+            "channel": 0,
+            "max_psi": 1000,
+            "packet_id": [
+              32,
+              16
+            ],
+            "purpose": "Fuel upstream"
+          },
+          "PT_HP": {
+            "board_id": 0,
+            "channel": 0,
+            "max_psi": 5000,
+            "packet_id": [
+              32,
+              0
+            ],
+            "purpose": "High pressure"
+          },
+          "PT_LP": {
+            "board_id": 0,
+            "channel": 1,
+            "max_psi": 1000,
+            "packet_id": [
+              32,
+              1
+            ],
+            "purpose": "COPV post regulator"
+          },
+          "PT_ODP": {
+            "board_id": 2,
+            "channel": 1,
+            "max_psi": 1000,
+            "packet_id": [
+              32,
+              33
+            ],
+            "purpose": "Oxidizer downstream"
+          },
+          "PT_OUP": {
+            "board_id": 2,
+            "channel": 0,
+            "max_psi": 1000,
+            "packet_id": [
+              32,
+              32
+            ],
+            "purpose": "Oxidizer upstream"
+          }
+        },
+        "flight_rtd": {
+          "RTD_COPV": {
+            "board_id": 3,
+            "channel": 0,
+            "location": "COPV",
+            "packet_id": [
+              34,
+              48
+            ],
+            "purpose": "COPV temperature"
+          },
+          "RTD_LOX_1": {
+            "board_id": 3,
+            "channel": 1,
+            "location": "LOX_tank",
+            "packet_id": [
+              34,
+              49
+            ],
+            "purpose": "LOX tank temperature top"
+          },
+          "RTD_LOX_2": {
+            "board_id": 3,
+            "channel": 2,
+            "location": "LOX_tank",
+            "packet_id": [
+              34,
+              50
+            ],
+            "purpose": "LOX tank temperature middle"
+          },
+          "RTD_LOX_3": {
+            "board_id": 3,
+            "channel": 3,
+            "location": "LOX_tank",
+            "packet_id": [
+              34,
+              51
+            ],
+            "purpose": "LOX tank temperature bottom"
+          }
+        },
+        "flight_tc": {
+          "TC_CHAMBER_1": {
+            "board_id": 4,
+            "channel": 0,
+            "location": "chamber",
+            "packet_id": [
+              33,
+              64
+            ],
+            "purpose": "Chamber temperature front"
+          },
+          "TC_CHAMBER_2": {
+            "board_id": 4,
+            "channel": 1,
+            "location": "chamber",
+            "packet_id": [
+              33,
+              65
+            ],
+            "purpose": "Chamber temperature middle"
+          },
+          "TC_CHAMBER_3": {
+            "board_id": 4,
+            "channel": 2,
+            "location": "chamber",
+            "packet_id": [
+              33,
+              66
+            ],
+            "purpose": "Chamber temperature rear"
+          },
+          "TC_CHAMBER_4": {
+            "board_id": 4,
+            "channel": 3,
+            "location": "chamber",
+            "packet_id": [
+              33,
+              67
+            ],
+            "purpose": "Chamber temperature side"
+          }
+        }
+      }
+    },
+    "system": {
+      "mode": "GROUND",
+      "network": {
+        "base_ip": "192.168.2.0",
+        "bind_address": "0.0.0.0",
+        "bind_port": 5005,
+        "ip_range_end": 150,
+        "ip_range_start": 100
+      },
+      "state": "GSE"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+,Idle,Armed,Fire,No Such State
+Fuel Main,CLOSE,CLOSE,OPEN,OPEN
+Warp Coil,OPEN,OPEN,OPEN,OPEN
+Fuel Vent,AJAR,closed,open,
+Ox Main,CLOSE
+,OPEN,OPEN,OPEN,OPEN
