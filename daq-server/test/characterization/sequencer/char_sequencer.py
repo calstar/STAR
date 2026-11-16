@@ -34,6 +34,13 @@ GOLDEN = H.HERE / "golden"
 # publish is taken for that state's entry (seen on Linux under load, where the next command's
 # publish arrived within 50 ms of the tick). The next tick is still ~0.8 s away.
 SETTLE_TAIL = 0.2
+# A send can only be classified (republish or entry) once any transition publish it precedes has
+# arrived, and wire.BOUNDARY_LOOKAHEAD_NS says that is within 60 ms. While waiting, only sends at
+# least this old are counted. Without it a poll landing between a new state's entry sends and its
+# publish took the entry (apply + first pass, full column) for two republish rounds of the OLD
+# state and ended the window before the new state republished (digital-twin/entry/Flow Test on
+# Linux: Ready's entry happened to have Flow Test's column size).
+CLASSIFY_AFTER_NS = 150_000_000
 WORK = H.DAQ / ".tmp" / f"char_sequencer_{os.getpid()}"
 OUT = H.DAQ / ".tmp" / "char_sequencer_out"
 
@@ -516,9 +523,8 @@ class Session:
 
         Waits `min_wait`, then (if given) for a datagram of `until_type` (ABORT_DONE, say), then
         until the state the rig is in *now* has republished `ticks` times since the step began
-        (and at least once after that datagram), then 50 ms more. Ending every summary window
-        50 ms after a tick is what makes its tick content fixed and keeps the next command ~1 s
-        clear of the next tick, whatever the loop's period is under load.
+        (and at least once after that datagram), then until SETTLE_TAIL after that tick. Only
+        ticks older than CLASSIFY_AFTER_NS are counted, so an entry is never mistaken for one.
         """
         t0 = self.steps[-1]["t_open"]
         time.sleep(min_wait)
@@ -529,10 +535,14 @@ class Session:
             sends = W.to_sends(self.run.rec.since(self.rec_mark))
             W.mark_ticks(sends, bounds)
             cur = len(bounds) - 1
+            final = time.monotonic_ns() - CLASSIFY_AFTER_NS
             mine = [
                 s
                 for s in sends
-                if s.tick and s.loop == cur and s.t > t0 and self._is_full(s, bounds)
+                if s.tick
+                and s.loop == cur
+                and t0 < s.t <= final
+                and self._is_full(s, bounds)
             ]
             # One republish is a send to each board: count complete rounds.
             per_dest: dict[str, int] = {}
@@ -542,7 +552,11 @@ class Session:
             if need is None and any(s.ptype == until_type and s.t > t0 for s in sends):
                 need = max(ticks, rounds + 1)
             if need is not None and rounds >= need:
-                time.sleep(SETTLE_TAIL)
+                # SETTLE_TAIL after the tick that completed the count (already >= 150 ms ago).
+                last = max(x.t for x in mine)
+                time.sleep(
+                    max(0.0, (last + SETTLE_TAIL * 1e9 - time.monotonic_ns()) / 1e9)
+                )
                 return
             time.sleep(0.02)
         raise RuntimeError(
@@ -557,9 +571,12 @@ class Session:
             bounds = self._bounds()
             sends = W.to_sends(self.run.rec.since(self.rec_mark))
             W.mark_ticks(sends, bounds)
+            final = time.monotonic_ns() - CLASSIFY_AFTER_NS
             for s in sends:
-                if s.tick and s.t > start and self._is_full(s, bounds):
-                    time.sleep(SETTLE_TAIL)
+                if s.tick and start < s.t <= final and self._is_full(s, bounds):
+                    time.sleep(
+                        max(0.0, (s.t + SETTLE_TAIL * 1e9 - time.monotonic_ns()) / 1e9)
+                    )
                     return
             time.sleep(0.02)
         raise RuntimeError("no republish tick seen")

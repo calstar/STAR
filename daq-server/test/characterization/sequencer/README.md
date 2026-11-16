@@ -114,6 +114,12 @@ the rules below were changed for those mechanisms, never to fit one golden.
   clear of the next tick. The tail must exceed the 60 ms boundary lookahead: at 50 ms, on Linux
   under load, the next command's transition publish arrived within 60 ms of the tick, the tick was
   taken for that state's entry, and it showed up as an extra `+4s` command with `every` lost.
+  The converse race: while waiting, `settle()` only counts sends older than `CLASSIFY_AFTER_NS`
+  (150 ms), because a send is classified by the transition publish that follows it within 60 ms. A
+  poll landing between a new state's entry sends (apply + first pass, a full column) and its publish
+  otherwise counted them as two republish rounds of the old state and ended the window before the
+  new state republished (`digital-twin/entry/Flow Test` on Linux: Ready's summary missing, session
+  3.5 s instead of 6).
 - **N6** Service logs are written by several threads with no line atomicity, so lines can come
   out spliced (seen in the 3x runs). Only two things are frozen: the sequencer's load-time verdicts
   (printed by `init()` before its other threads talk: fire/flow/script verdicts, warnings, refusals),
