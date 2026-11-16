@@ -5,7 +5,7 @@
     @1   version = 0   [00]
     @2   timestamp = <non-epoch-ms>
     @6   engine_state = 0   [00]
-  SERVER_HEARTBEAT period: 200 ms ([server_heartbeat].interval_ms = 200)
+  SERVER_HEARTBEAT period: [0.15, 0.3] s: period 200 ms, [server_heartbeat].interval_ms = 200
   packets to pt_board's listen_port: 0
   packets to actuator_board_2's listen_port: 0
   packets to actuator_board_4's listen_port: 0
@@ -392,9 +392,9 @@ backend: accepting TCP: True
   WS upgrade: HTTP/1.1 101 Switching Protocols
 
 == board_simulator.py (PT board 21) joins the running stack
-  [0-3s] board 21: connected=True boardState=1
-  [0-3s] notification info: 'Board 21 (PT) connected' ongoing=- key=-
-  [0-3s] board 21: connected=True boardState=2
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] board 21: connected=True boardState=1
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] notification info: 'Board 21 (PT) connected' ongoing=- key=-
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] board 21: connected=True boardState=2
   sim log: [pt_board] SENSOR_CONFIG received from ('127.0.0.1', <port>), running self-test
   sim log: [pt_board] SELF_TEST sent, transitioning to ACTIVE
 
@@ -473,7 +473,7 @@ backend: accepting TCP: True
 
 == periodic traffic on the long-lived client, 3 s window
   message types: ['board_log', 'board_status_update', 'connection_status', 'sensor_update']
-  heartbeat_service period: 200 ms ([heartbeat_service].interval_ms = 200)
-  stacklight period: 1 s
-  config_broadcast period (actuator_board_2): 1 s
+  heartbeat_service period: [0.15, 0.3] s: period 200 ms, [heartbeat_service].interval_ms = 200
+  stacklight period: [0.75, 1.5] s: period 1000 ms, [stacklight_service].interval_ms = 1000
+  config_broadcast period (actuator_board_2): [0.75, 1.5] s: period 1000 ms, [config_broadcast_service].interval_ms = 1000
   SERVER_HEARTBEAT from daq_bridge over the whole startup: 0
