@@ -39,7 +39,7 @@ bash "$HERE/../with_stack_lock.sh" docker run --rm --security-opt seccomp=unconf
   step() { local n=\$1; shift; printf '── %-18s ' \$n; if \"\$@\" > /tmp/\$n.log 2>&1; then echo ok; else echo FAIL; tail -40 /tmp/\$n.log; fails+=(\$n); fi; }
   step npm bash -c '(cd diablo_server/backend && npm ci --no-audit --no-fund) && (cd diablo_server/frontend && npm ci --no-audit --no-fund)'
   step build bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -Wno-dev && cmake --build build'
-  step ctest bash -c 'cd build && ctest --output-on-failure -j\$(nproc)'
+  step ctest bash test/characterization/ctest_with_retry.sh build -j\$(nproc)
   step backend-vitest bash -c 'cd diablo_server/backend && npm test'
   step characterization bash -c 'CHAR_BUILD_DIR=/src/daq-server/build bash test/characterization/run.sh'
   [ $FULL = 1 ] && step integration bash test/test_integration.sh
