@@ -291,7 +291,10 @@ class FakeElodin:
         self.data: list[bytearray] = []
         self.stamps: list[float] = []  # monotonic time of the last byte per connection
         self.stopped = False
-        threading.Thread(target=self._accept, daemon=True).start()
+        self.threads: list[threading.Thread] = []
+        t = threading.Thread(target=self._accept, daemon=True)
+        t.start()
+        self.threads.append(t)
 
     def _accept(self):
         while not self.stopped:
@@ -299,12 +302,18 @@ class FakeElodin:
                 c, _ = self.l.accept()
             except OSError:
                 return
+            if self.stopped:  # the wake-up connection from close()
+                c.close()
+                return
             with self.lock:
                 idx = len(self.conns)
                 self.conns.append(c)
                 self.data.append(bytearray())
                 self.stamps.append(time.monotonic())
-            threading.Thread(target=self._read, args=(c, idx), daemon=True).start()
+            t = threading.Thread(target=self._read, args=(c, idx), daemon=True)
+            t.start()
+            with self.lock:
+                self.threads.append(t)
 
     def _read(self, c, idx):
         while True:
@@ -350,17 +359,31 @@ class FakeElodin:
             return b"".join(bytes(d) for d in self.data)
 
     def close(self):
+        """Wake every blocked accept/recv with shutdown() and join the threads before the fds
+        are closed. A thread left blocked on a closed fd is not just a leak: under qemu-user
+        (amd64 emulated on arm64) its restarted accept() lands on whatever reuses that fd number
+        next, i.e. the next FakeElodin's listener, and steals that service's connection.
+        """
         self.stopped = True
-        try:
-            self.l.close()
+        try:  # wakes a blocked accept() on every platform (macOS ignores shutdown() on a listener)
+            socket.create_connection(("127.0.0.1", self.port), 1).close()
         except OSError:
             pass
         with self.lock:
-            for c in self.conns:
-                try:
-                    c.close()
-                except OSError:
-                    pass
+            socks = [self.l] + list(self.conns)
+            threads = list(self.threads)
+        for s in socks:
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        for t in threads:
+            t.join(5)
+        for s in socks:
+            try:
+                s.close()
+            except OSError:
+                pass
 
 
 def elodin_frames(stream: bytes):
