@@ -12,7 +12,7 @@
               raw 0700........
        +3s x4 to 127.0.0.1: ABORT_DONE v0
               raw 0800........
-  republish [GSE Abort]: first ~1s into the state, every ~1s
+  republish [GSE Abort]: first after 1 s within [0.8, 1.5]x, every 1 s within [0.8, 1.5]x
               to board 12: ACTUATOR_COMMAND v0 n=7: ch7=1[Fuel Main] ch3=0[Fuel Press] ch2=0[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=1[LOX Press] ch6=0[LOX Vent]
               raw 0400........070701030002000500010008010600
               to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=0[GN2 Vent] ch3=0[GSE High Press Control] ch5=1[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]

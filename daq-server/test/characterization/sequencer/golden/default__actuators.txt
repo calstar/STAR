@@ -6,172 +6,172 @@
 > ACTUATOR:Fuel Fill Press:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch2=1[Fuel Fill Press]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch2=1[Fuel Fill Press]
               raw 0400........010201
 > ACTUATOR:Fuel Fill Press:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch2=0[Fuel Fill Press]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch2=0[Fuel Fill Press]
               raw 0400........010200
 > ACTUATOR:Fuel Fill Vent:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch1=1[Fuel Fill Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch1=1[Fuel Fill Vent]
               raw 0400........010101
 > ACTUATOR:Fuel Fill Vent:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch1=0[Fuel Fill Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch1=0[Fuel Fill Vent]
               raw 0400........010100
 > ACTUATOR:Fuel Main:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch7=0[Fuel Main]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch7=0[Fuel Main]
               raw 0400........010700
 > ACTUATOR:Fuel Main:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch7=1[Fuel Main]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch7=1[Fuel Main]
               raw 0400........010701
 > ACTUATOR:Fuel Press:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch3=1[Fuel Press]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch3=1[Fuel Press]
               raw 0400........010301
 > ACTUATOR:Fuel Press:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch3=0[Fuel Press]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch3=0[Fuel Press]
               raw 0400........010300
 > ACTUATOR:Fuel Vent:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch2=1[Fuel Vent]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch2=1[Fuel Vent]
               raw 0400........010201
 > ACTUATOR:Fuel Vent:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch2=0[Fuel Vent]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch2=0[Fuel Vent]
               raw 0400........010200
 > ACTUATOR:GN2 Vent:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch6=1[GN2 Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch6=1[GN2 Vent]
               raw 0400........010601
 > ACTUATOR:GN2 Vent:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch6=0[GN2 Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch6=0[GN2 Vent]
               raw 0400........010600
 > ACTUATOR:GSE High Press Control:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch3=1[GSE High Press Control]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch3=1[GSE High Press Control]
               raw 0400........010301
 > ACTUATOR:GSE High Press Control:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch3=0[GSE High Press Control]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch3=0[GSE High Press Control]
               raw 0400........010300
 > ACTUATOR:GSE High Press Vent:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch5=1[GSE High Press Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch5=1[GSE High Press Vent]
               raw 0400........010501
 > ACTUATOR:GSE High Press Vent:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch5=0[GSE High Press Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch5=0[GSE High Press Vent]
               raw 0400........010500
 > ACTUATOR:GSE LOX Fill Vent:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch10=1[GSE LOX Fill Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch10=1[GSE LOX Fill Vent]
               raw 0400........010a01
 > ACTUATOR:GSE LOX Fill Vent:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch10=0[GSE LOX Fill Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch10=0[GSE LOX Fill Vent]
               raw 0400........010a00
 > ACTUATOR:GSE Low Press Vent:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch5=1[GSE Low Press Vent]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch5=1[GSE Low Press Vent]
               raw 0400........010501
 > ACTUATOR:GSE Low Press Vent:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch5=0[GSE Low Press Vent]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch5=0[GSE Low Press Vent]
               raw 0400........010500
 > ACTUATOR:GSE Med Press Control:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch4=1[GSE Med Press Control]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch4=1[GSE Med Press Control]
               raw 0400........010401
 > ACTUATOR:GSE Med Press Control:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch4=0[GSE Med Press Control]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch4=0[GSE Med Press Control]
               raw 0400........010400
 > ACTUATOR:LOX Dump:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch8=1[LOX Dump]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch8=1[LOX Dump]
               raw 0400........010801
 > ACTUATOR:LOX Dump:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch8=0[LOX Dump]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch8=0[LOX Dump]
               raw 0400........010800
 > ACTUATOR:LOX Fill:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch7=1[LOX Fill]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch7=1[LOX Fill]
               raw 0400........010701
 > ACTUATOR:LOX Fill:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch7=0[LOX Fill]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch7=0[LOX Fill]
               raw 0400........010700
 > ACTUATOR:LOX Main:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch1=1[LOX Main]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch1=1[LOX Main]
               raw 0400........010101
 > ACTUATOR:LOX Main:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch1=0[LOX Main]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch1=0[LOX Main]
               raw 0400........010100
 > ACTUATOR:LOX Press:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch8=0[LOX Press]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch8=0[LOX Press]
               raw 0400........010800
 > ACTUATOR:LOX Press:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch8=1[LOX Press]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch8=1[LOX Press]
               raw 0400........010801
 > ACTUATOR:LOX Vent:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch6=1[LOX Vent]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch6=1[LOX Vent]
               raw 0400........010601
 > ACTUATOR:LOX Vent:0
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch6=0[LOX Vent]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch6=0[LOX Vent]
               raw 0400........010600
 > ACTUATOR:FUEL FILL PRESS:open
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch2=1[Fuel Fill Press]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch2=1[Fuel Fill Press]
               raw 0400........010201
 > ACTUATOR:fuel fill press:closed
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch2=0[Fuel Fill Press]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch2=0[Fuel Fill Press]
               raw 0400........010200
 > ACTUATOR:No Such Valve:1
   < ERR:actuator command failed
@@ -184,21 +184,21 @@
 > ACTUATOR: Fuel Fill Vent : 1 
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch1=1[Fuel Fill Vent]
+       +0s x3 to board 14: ACTUATOR_COMMAND v0 n=1: ch1=1[Fuel Fill Vent]
               raw 0400........010101
 > ACTUATOR:Fuel Main:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch7=0[Fuel Main]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch7=0[Fuel Main]
               raw 0400........010700
-  republish [Idle]: every ~1s
+  republish [Idle]: every 1 s within [0.8, 1.5]x
               to board 12: ACTUATOR_COMMAND v0 n=7: ch7=0[Fuel Main] ch3=0[Fuel Press] ch2=0[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=1[LOX Press] ch6=0[LOX Vent]
               raw 0400........070700030002000500010008010600
               to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=1[Fuel Fill Vent] ch6=0[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
               raw 0400........09020001010600030005000a00040008000700
 > DEBUG_MODE:0
   < OK
-  republish [Idle]: every ~1s
+  republish [Idle]: every 1 s within [0.8, 1.5]x
               to board 12: ACTUATOR_COMMAND v0 n=7: ch7=1[Fuel Main] ch3=0[Fuel Press] ch2=0[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=0[LOX Press] ch6=0[LOX Vent]
               raw 0400........070701030002000500010008000600
               to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=0[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
@@ -210,17 +210,17 @@
 > ACTUATOR:Fuel Main:1
   < OK
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch7=0[Fuel Main]
+       +0s x3 to board 12: ACTUATOR_COMMAND v0 n=1: ch7=0[Fuel Main]
               raw 0400........010700
 > TRANSITION:Armed
   < OK
   state Idle -> Armed
   first datagram: ACTUATOR_COMMAND
-      +0ms x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=7: ch7=1[Fuel Main] ch3=0[Fuel Press] ch2=0[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=1[LOX Press] ch6=0[LOX Vent]
+       +0s x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=7: ch7=1[Fuel Main] ch3=0[Fuel Press] ch2=0[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=1[LOX Press] ch6=0[LOX Vent]
               raw 0400........070701030002000500010008010600
-      +0ms x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=0[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
+       +0s x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=0[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
               raw 0400........09020001000600030005000a00040008000700
-  republish [Armed]: first ~1s into the state, every ~1s
+  republish [Armed]: first after 1 s within [0.8, 1.5]x, every 1 s within [0.8, 1.5]x
               to board 12: ACTUATOR_COMMAND v0 n=7: ch7=1[Fuel Main] ch3=0[Fuel Press] ch2=0[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=0[LOX Main] ch8=1[LOX Press] ch6=0[LOX Vent]
               raw 0400........070701030002000500010008010600
               to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=0[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
