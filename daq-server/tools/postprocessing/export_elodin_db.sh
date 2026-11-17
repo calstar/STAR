@@ -9,7 +9,7 @@
 #   ./export_elodin_db.sh ~/.local/share/elodin/daq_20260307_174529 ./export
 #   FORMAT=csv ./export_elodin_db.sh ~/.local/share/elodin/daq_live ./out
 #
-# Data rates (see scripts/postprocessing/README.md):
+# Data rates (see tools/postprocessing/README.md):
 #   - Raw sensor data: every packet (no downsampling)
 #   - Controller measurement: every 10th tick (~1 Hz at 10 Hz loop)
 #   - Calibrated PT/TC/RTD/LC: throttled to ~100 Hz per channel
@@ -66,7 +66,7 @@ if ! "$ELODIN_DB_BIN" export --help &>/dev/null; then
   echo "  3. Use Lua REPL: elodin-db lua --db $DB_PATH"
   echo "     Then :sql localhost:2240 (with DB running in replay mode)"
   echo ""
-  echo "See scripts/postprocessing/README.md for full docs."
+  echo "See tools/postprocessing/README.md for full docs."
   exit 1
 fi
 

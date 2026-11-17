@@ -1,6 +1,6 @@
 #!/bin/bash
 # Diagnostic script to start the core Elodin dev stack without tmux.
-# Usage: USE_SIM=1 bash scripts/debug/start_manual_no_tmux.sh
+# Usage: USE_SIM=1 bash tools/debug/start_manual_no_tmux.sh
 
 PROJECT="/home/aidan/Diablo-FSW"
 mkdir -p /tmp/manual_logs

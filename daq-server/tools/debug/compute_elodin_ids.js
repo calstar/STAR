@@ -1,5 +1,5 @@
 // Diagnostic script to verify FNV-1a hash calculations for Elodin VTable names.
-// Usage: node scripts/debug/compute_elodin_ids.js "VTableStream"
+// Usage: node tools/debug/compute_elodin_ids.js "VTableStream"
 
 const name = process.argv[2] || "VTableStream";
 
