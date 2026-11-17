@@ -574,7 +574,7 @@ export function mockAnalyze(doc: RocketDocument, cond: Conditions): Analysis & M
       const parent = n.parent
       const r = parent ? bodyRadius(parent, n.x - parent.x + n.len / 2) : maxR
       const count = Math.max(1, Math.round(num(p, 'fincount', 3)))
-      const th0 = num(p, 'angleoffset', 0) + num(p, 'rotation', 0)
+      const th0 = num(p, 'angleoffset', 0) + num(p, 'rotation', 0) + cond.theta
       for (let i = 0; i < count; i++) {
         const th = th0 + (2 * Math.PI * i) / count
         const ct = Math.cos(th)
@@ -619,7 +619,7 @@ export function mockAnalyze(doc: RocketDocument, cond: Conditions): Analysis & M
       const parent = n.parent
       const r = parent ? bodyRadius(parent, n.x - parent.x + n.len / 2) : maxR
       const count = Math.max(1, Math.round(num(p, t === 'tubefinset' ? 'fincount' : 'instancecount', t === 'tubefinset' ? 6 : 1)))
-      const th0 = num(p, 'angleoffset', 0)
+      const th0 = num(p, 'angleoffset', 0) + cond.theta
       const ro = n.outerR
       const height = t === 'railbutton' ? num(p, 'totalheight', 0.0097) : 2 * ro
       const sep = num(p, 'instanceseparation', 0)
@@ -652,8 +652,11 @@ export function mockAnalyze(doc: RocketDocument, cond: Conditions): Analysis & M
       }
     } else if (t === 'innertube' || t === 'tubecoupler' || t === 'centeringring' || t === 'bulkhead' || t === 'engineblock') {
       shapes.push({ id: c.id, kind: 'internal', points: rect(n.x, n.x + n.len, y0 - n.outerR, y0 + n.outerR), closed: true })
-      if (t === 'innertube' || t === 'tubecoupler') {
-        shapes.push({ id: c.id, kind: 'internal', points: rect(n.x, n.x + n.len, y0 - n.innerR, y0 + n.innerR), closed: true })
+      if ((t === 'engineblock' || t === 'centeringring') && n.innerR > 0) {
+        // OpenRocket draws a ring's bore as two lines across it.
+        for (const sgn of [1, -1]) {
+          shapes.push({ id: c.id, kind: 'internal', points: [[n.x, y0 + sgn * n.innerR], [n.x + n.len, y0 + sgn * n.innerR]], closed: false })
+        }
       }
       const count = Math.max(1, num(p, 'instancecount', 1))
       mass = Math.PI * (n.outerR * n.outerR - n.innerR * n.innerR) * n.len * density(c) * count

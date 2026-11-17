@@ -24,7 +24,9 @@ describe('units', () => {
   it('shows metric lengths in the chosen unit', () => {
     expect(toDisplay('length', 0.1, METRIC)).toBeCloseTo(10, 12)
     expect(toDisplay('length', 0.1, { length: 'mm', mass: 'g' })).toBeCloseTo(100, 12)
-    expect(fmt('length', 0.4254, METRIC)).toBe('42.54 cm')
+    expect(fmt('length', 0.4254, METRIC)).toBe('42.5 cm')
+    expect(fmt('length', 0.2598, METRIC)).toBe('26 cm')
+    expect(fmt('mass', 0.0061557, METRIC)).toBe('6.16 g')
     expect(fmt('mass', 0.0712591, METRIC)).toBe('71.3 g')
   })
 

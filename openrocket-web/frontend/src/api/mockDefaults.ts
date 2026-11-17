@@ -176,16 +176,3 @@ export function defaultComponent(type: ComponentType): Component {
   return { id: newId(), type, name: NAMES[type], params: params(type), children: [] }
 }
 
-export function newRocketDocument(): import('../types').RocketDocument {
-  const stage = defaultComponent('stage')
-  stage.name = 'Sustainer'
-  const rocket = defaultComponent('rocket')
-  rocket.children = [stage]
-  const cfg = newId()
-  return {
-    version: 1,
-    rocket,
-    motorConfigs: [{ id: cfg, name: '', default: true, stages: { '0': true }, motors: {} }],
-    selectedConfig: cfg,
-  }
-}

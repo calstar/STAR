@@ -107,9 +107,21 @@ export function fmtNumber(v: number, digits: number): string {
   return s.includes('.') ? s.replace(/\.?0+$/, '') || '0' : s
 }
 
+/**
+ * OpenRocket's Unit.toString: three significant figures, trailing zeros
+ * dropped ("42.5 cm", "26 cm", "6.16 g").
+ */
+export function fmtSig(v: number, sig = 3): string {
+  if (!Number.isFinite(v)) return '—'
+  if (v === 0) return '0'
+  const mag = Math.floor(Math.log10(Math.abs(v)))
+  const decimals = Math.max(0, sig - 1 - mag)
+  return fmtNumber(v, Math.min(decimals, 10))
+}
+
 export function fmt(kind: Kind, si: number, p: UnitPrefs, digits?: number): string {
   const u = unitFor(kind, p)
-  const n = fmtNumber(si / u.per, digits ?? u.digits)
+  const n = digits == null ? fmtSig(si / u.per) : fmtNumber(si / u.per, digits)
   if (!u.label) return n
   return u.label === '°' ? `${n}°` : `${n} ${u.label}`
 }
