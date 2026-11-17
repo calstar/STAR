@@ -2,17 +2,23 @@
 // diablo_server/lib/include/net/TcpCommandServer.hpp
 // (+ lib/src/net/TcpCommandServer.cpp in fsw_daq_lib).
 //
-// The accept loop two command ports share statement for statement (sequencer_main.cpp:282-349,
-// controller_main.cpp:151-214: the Conn/reap_finished block, the loop, the shutdown/join tail).
+// The accept loop two command ports share with identical syscalls and branches
+// (sequencer_main.cpp:282-349, controller_main.cpp:151-214: the Conn/reap_finished block, the
+// loop, the shutdown/join tail). The one textual change is the spawn lambda: it calls
+// on_client(raw->fd) where today's call handleClient(raw->fd, svc) / handleControlClient(raw->fd,
+// svc). Unobservable.
 // Listener setup is NOT here: each main opens, binds, listens on and closes its own socket as
 // today (sequencer 252-276/351, controller 128-147/216, ota 410-434/456); openTcpListener was
 // dropped because a callee that closes on bind failure inverts the caller's log → close order at
 // all three sites (DESIGN-WP8 §0, Rejected).
 //
 // Owns:       the Conn vector (on the calling thread's stack; Conn and reap_finished moved
-//             verbatim from sequencer_main.cpp:284-301 with their leading comment 282-283, S38;
-//             the controller's copy 151-169 is deleted with its comment) and one tracked thread
-//             per client, all joined before it returns. It BORROWS listen_fd and never closes it.
+//             verbatim from sequencer_main.cpp:284-301 with their leading comment 282-283, S38 —
+//             stale here, it names `svc` and `main()`; listed at DESIGN-WP8 §6.2, corrected in
+//             WP10's cleanup, DESIGN-WP10 §6.2; the controller's copy 151-169 is deleted with its
+//             comment) and one tracked
+//             thread per client, all joined before it returns. It BORROWS listen_fd and never
+//             closes it.
 //             Both mains lose the whole block: a Conn and a reap_finished left behind with no loop
 //             are -Wunused-variable, and baseline_warnings.txt admits no new line.
 // Threads:    runs on the caller's thread (sequencer: main; controller: its detached control
