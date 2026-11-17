@@ -11,6 +11,9 @@ import info.openrocket.core.motor.MotorConfiguration;
 import info.openrocket.core.motor.ThrustCurveMotor;
 import info.openrocket.core.rocketcomponent.FinSet;
 import info.openrocket.core.rocketcomponent.FlightConfiguration;
+import info.openrocket.core.rocketcomponent.MassObject;
+import info.openrocket.core.rocketcomponent.RingComponent;
+import info.openrocket.core.rocketcomponent.Transition;
 import info.openrocket.core.rocketcomponent.RocketComponent;
 import info.openrocket.core.rocketcomponent.SymmetricComponent;
 import info.openrocket.core.startup.OpenRocketCore;
@@ -30,9 +33,11 @@ import java.util.Map;
  *   javac -cp OpenRocket-24.12.jar Oracle.java
  *   java -Djava.awt.headless=true -cp OpenRocket-24.12.jar:. Oracle rocket.ork
  *
- * Output: {"rocket": {...}, "components": [...], "cm": [...], "aero": [...]}
+ * Output: {"rocket": {...}, "components": [...], "cm": [...], "aero": [...], "aeroRoll": [...]}
  * Aero is sampled over a Mach x AoA grid at OpenRocket's default flight
  * conditions (FlightConditions' own atmosphere), roll and pitch rates zero.
+ * aeroRoll repeats it at AoA 4 deg over roll rates and theta (roll damping and
+ * forcing, and the per-fin sin^2(theta - angle) weighting).
  */
 public class Oracle {
     static final double[] MACHS = {0.05, 0.3, 0.6, 0.8, 0.95, 1.05, 1.3, 2.0, 3.0};
@@ -74,6 +79,8 @@ public class Oracle {
             .append(", \"structure\": ").append(body(MassCalculator.calculateStructure(cfg)))
             .append(", \"burnout\": ").append(body(MassCalculator.calculateBurnout(cfg)))
             .append(", \"motor\": ").append(body(MassCalculator.calculateMotor(cfg)))
+            .append(", \"selectedConfig\": ").append(q(String.valueOf(cfg.getId().key)))
+            .append(", \"length\": ").append(n(cfg.getLength()))
             .append("}");
 
         out.append(", \"components\": [");
@@ -94,6 +101,10 @@ public class Oracle {
                 .append(", \"rotUnitInertia\": ").append(n(c.getRotationalUnitInertia()))
                 .append(", \"overrideMass\": ").append(c.isMassOverridden() ? n(c.getOverrideMass()) : "null")
                 .append(", \"overrideCG\": ").append(c.isCGOverridden() ? n(c.getOverrideCGX()) : "null")
+                .append(", \"relX\": ").append(n(c.getPosition().x))
+                .append(", \"axialMethod\": ").append(q(c.getAxialMethod().name()))
+                .append(", \"axialOffset\": ").append(n(c.getAxialOffset()))
+                .append(", \"instanceCount\": ").append(c.getInstanceCount())
                 .append(", \"locations\": [");
             Coordinate[] locs = c.getComponentLocations();
             for (int i = 0; i < locs.length; i++) {
@@ -106,7 +117,30 @@ public class Oracle {
                 out.append(", \"foreRadius\": ").append(n(s.getForeRadius()))
                     .append(", \"aftRadius\": ").append(n(s.getAftRadius()))
                     .append(", \"wetArea\": ").append(n(s.getComponentWetArea()))
-                    .append(", \"volume\": ").append(n(s.getComponentVolume()));
+                    .append(", \"volume\": ").append(n(s.getComponentVolume()))
+                    .append(", \"planformArea\": ").append(n(s.getComponentPlanformArea()))
+                    .append(", \"planformCenter\": ").append(n(s.getComponentPlanformCenter()))
+                    .append(", \"fullVolume\": ").append(n(s.getFullVolume()))
+                    .append(", \"radii\": [");
+                for (int i = 0; i <= 20; i++) {
+                    if (i > 0) out.append(", ");
+                    out.append(n(s.getRadius(s.getLength() * i / 20.0)));
+                }
+                out.append("]");
+                if (c instanceof Transition) {
+                    Transition t = (Transition) c;
+                    out.append(", \"shape\": ").append(q(t.getShapeType().name()))
+                        .append(", \"clipped\": ").append(t.isClipped())
+                        .append(", \"shapeParameter\": ").append(n(t.getShapeParameter()));
+                }
+            }
+            if (c instanceof MassObject) {
+                out.append(", \"radius\": ").append(n(((MassObject) c).getRadius()));
+            }
+            if (c instanceof RingComponent) {
+                RingComponent r = (RingComponent) c;
+                out.append(", \"outerRadius\": ").append(n(r.getOuterRadius()))
+                    .append(", \"innerRadius\": ").append(n(r.getInnerRadius()));
             }
             if (c instanceof FinSet) {
                 FinSet f = (FinSet) c;
@@ -117,6 +151,12 @@ public class Oracle {
                 for (int i = 0; i < pts.length; i++) {
                     if (i > 0) out.append(", ");
                     out.append("[").append(n(pts[i].x)).append(", ").append(n(pts[i].y)).append("]");
+                }
+                out.append("], \"rootPoints\": [");
+                Coordinate[] rp = f.getRootPoints();
+                for (int i = 0; i < rp.length; i++) {
+                    if (i > 0) out.append(", ");
+                    out.append("[").append(n(rp[i].x)).append(", ").append(n(rp[i].y)).append("]");
                 }
                 out.append("]");
             }
@@ -142,6 +182,15 @@ public class Oracle {
                 .append(", \"ejectionDelay\": ").append(n(mc.getEjectionDelay()))
                 .append(", \"ignitionDelay\": ").append(n(mc.getIgnitionDelay()))
                 .append(", \"ignitionEvent\": ").append(q(mc.getIgnitionEvent().name()))
+                .append(", \"motorType\": ").append(q(m.getMotorType().name()))
+                .append(", \"commonName\": ").append(q(m.getCommonName()))
+                .append(", \"delays\": [");
+            double[] dl = m.getStandardDelays();
+            for (int i = 0; i < dl.length; i++) {
+                if (i > 0) out.append(", ");
+                out.append(n(dl[i]));
+            }
+            out.append("]")
                 .append(", \"time\": [");
             double[] t = m.getTimePoints();
             double[] th = m.getThrustPoints();
@@ -178,17 +227,49 @@ public class Oracle {
         BarrowmanCalculator calc = new BarrowmanCalculator();
         for (double mach : MACHS) {
             for (double aoaDeg : AOAS_DEG) {
+                if (!first) out.append(", ");
+                first = false;
+                aeroPoint(out, calc, cfg, mach, aoaDeg, 0, 0, false);
+            }
+        }
+        out.append("]");
+
+        // Roll and theta: roll forcing/damping (cant), per-fin sin^2(theta - angle).
+        out.append(", \"aeroRoll\": [");
+        first = true;
+        for (double mach : ROLL_MACHS) {
+            for (double roll : ROLL_RATES) {
+                for (double theta : THETAS) {
+                    if (!first) out.append(", ");
+                    first = false;
+                    aeroPoint(out, calc, cfg, mach, ROLL_AOA_DEG, roll, theta, true);
+                }
+            }
+        }
+        out.append("]}");
+        System.out.println(out);
+        System.exit(0);
+    }
+
+    static final double[] ROLL_MACHS = {0.3, 1.2, 2.0};
+    static final double[] ROLL_RATES = {0.0, 0.05, 6.0, 300.0};
+    static final double[] THETAS = {0.0, 0.4};
+    static final double ROLL_AOA_DEG = 4.0;
+
+    static void aeroPoint(StringBuilder out, BarrowmanCalculator calc, FlightConfiguration cfg,
+                          double mach, double aoaDeg, double rollRate, double theta, boolean withRoll) {
                 FlightConditions fc = new FlightConditions(cfg);
                 fc.setMach(mach);
                 fc.setAOA(Math.toRadians(aoaDeg));
-                fc.setTheta(0);
-                fc.setRollRate(0);
+                fc.setTheta(theta);
+                fc.setRollRate(rollRate);
                 WarningSet w = new WarningSet();
                 Map<RocketComponent, AerodynamicForces> fa = calc.getForceAnalysis(cfg, fc, w);
-                if (!first) out.append(", ");
-                first = false;
-                out.append("{\"mach\": ").append(n(mach)).append(", \"aoaDeg\": ").append(n(aoaDeg))
-                    .append(", \"velocity\": ").append(n(fc.getVelocity()))
+                out.append("{\"mach\": ").append(n(mach)).append(", \"aoaDeg\": ").append(n(aoaDeg));
+                if (withRoll) {
+                    out.append(", \"rollRate\": ").append(n(rollRate)).append(", \"theta\": ").append(n(theta));
+                }
+                out.append(", \"velocity\": ").append(n(fc.getVelocity()))
                     .append(", \"warnings\": ").append(w.size())
                     .append(", \"forces\": [");
                 boolean f1 = true;
@@ -208,13 +289,11 @@ public class Oracle {
                         .append(", \"pressureCD\": ").append(n(f.getPressureCD()))
                         .append(", \"baseCD\": ").append(n(f.getBaseCD()))
                         .append(", \"overrideCD\": ").append(n(f.getOverrideCD()))
+                        .append(", \"Croll\": ").append(n(f.getCroll()))
+                        .append(", \"CrollDamp\": ").append(n(f.getCrollDamp()))
+                        .append(", \"CrollForce\": ").append(n(f.getCrollForce()))
                         .append("}");
                 }
                 out.append("]}");
-            }
-        }
-        out.append("]}");
-        System.out.println(out);
-        System.exit(0);
     }
 }
