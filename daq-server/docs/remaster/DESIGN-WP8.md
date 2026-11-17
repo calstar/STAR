@@ -125,10 +125,12 @@ No service main holds a mutex except t7_bridge's `g_log_mutex` (59, a leaf taken
 
 All nine use `signal()`/`std::signal()` (BSD semantics on glibc and macOS: `SA_RESTART`, handler
 stays installed; research `cpp-service-plumbing.md` §0.1); none uses `sigaction`. Seven handlers
-print `"\n[<Tag>] Shutting down..."` (controller: `"\n[controller_service] Caught signal, shutting
-down…"`, U+2026) **then** clear the flag; daq_bridge's `signal_handler` (108-111) clears the flag
-**first**, then prints; t7_bridge's `on_signal` (83-85) only clears the flag. Handler lines and
-exact strings are the "replaces" column of §2.1's table. **SIGPIPE** is ignored by ota (408),
+print **then** clear the flag — five print `"\n[<Tag>] Shutting down..."`, calibration
+`"\n[CalibrationService] Caught signal, shutting down..."`, the controller
+`"\n[controller_service] Caught signal, shutting down…"` (U+2026); daq_bridge's `signal_handler`
+(108-111) clears the flag **first**, then prints; t7_bridge's `on_signal` (83-85) only clears the
+flag. The exact strings are the "call" column of §2.1's table, the handler lines its "replaces"
+column. **SIGPIPE** is ignored by ota (408),
 sequencer (243), t7_bridge (345) and daq_bridge (344) and takes its default (the process dies,
 −13) in heartbeat, stacklight, config_broadcast, controller and calibration — LEDGER Parked
 "SIGPIPE disposition" verbatim, a per-service setting until the team decides. Every reply on a TCP
@@ -576,7 +578,7 @@ config_broadcast, and `config/run.sh` (bin half, under the lock) once per such c
 - **Timing ctests (D31, D34): exposure is `t7_integration` only** (pass 1 step 2; CI-judged).
   `sequencer_main.cpp` and `controller_main.cpp` build only their binaries
   (`services/CMakeLists.txt:15,36`), `AbortBroadcaster.cpp` is untouched, and heartbeat/stacklight
-  are in no ctest — so pass 2 has no timing-ctest exposure. What pass 2 does touch: the sequencer
+  are in no timing ctest — so pass 2 has no timing-ctest exposure. What pass 2 does touch: the sequencer
   characterization's republish bounds (`[0.8, 1.5]×`, judged on the Linux leg and CI) and the
   config `golden/cpp/` via the stacklight `#include` (§7.3).
 - **Lifecycle shutdown bounds** cite the mains' constants by name (`kElodinRecvTimeoutMs` 3000 →
