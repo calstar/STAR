@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the private fixture tree one pipeline characterization run reads and writes.
 
-    make_fixture.py <daq_root> <fixture_dir> <ports.json> [pt|boards]
+    make_fixture.py <daq_root> <fixture_dir> <ports.json> [pt|boards|stalesub]
 
 Everything a service writes lands under <fixture_dir>; nothing in the checkout is moved or
 touched (the integration harness parks the live calibration store instead — this does not).
@@ -18,7 +18,14 @@ Layout (the C++ services run with cwd = <fixture_dir>; every path they hard-code
   scripts/calibration/calibrations/    copy of the committed store, minus the operator files
   sim_config.toml                      the simulator's view: pt — only pt_board enabled;
                                        boards — every board config enables but the T7,
-                                       at 127.0.0.<id>
+                                       at 127.0.0.<id>; stalesub — only pt_board_2 (board 22,
+                                       the slot the startup board's ids wrap onto)
+  registrar_a.toml                     stalesub only: the services config with every board but
+                                       [boards.integration_startup] disabled -- what a
+                                       calibration_service run on it registers is exactly the
+                                       slot-10 table set ([0x20,0x31] as PT10_Cal.CH1)
+  regA/                                stalesub only: that registrar's cwd (its own copy of the
+                                       store and config, so it touches nothing the stack reads)
   home/                                HOME for the backend (~/.local/share/elodin run dirs)
 
 Config is config_base.toml with every 192.168.2.x rewritten to 127.0.0.x (as
@@ -52,7 +59,7 @@ def sub_line(text, pattern, repl, count=0, section=None):
 def main():
     daq_root, fx, ports_path = sys.argv[1:4]
     mode = sys.argv[4] if len(sys.argv) > 4 else "pt"
-    assert mode in ("pt", "boards"), mode
+    assert mode in ("pt", "boards", "stalesub"), mode
     ports = json.load(open(ports_path))
     root = fx
     cfg_dir = os.path.join(root, "config")
@@ -121,9 +128,11 @@ def main():
     # it in char/backend). An absolute path is NOT equivalent: the backend's legacy loaders join
     # the configured path onto other directories, so an absolute one is never found.
     os.makedirs(os.path.join(root, "char", "backend"), exist_ok=True)
-    if mode == "boards":
-        # The SETUP -> SELF_TEST startup board, exactly as test_integration.sh declares it;
-        # board_startup_sim.py plays it (session.ts), board_simulator.py skips it by name.
+    if mode in ("boards", "stalesub"):
+        # The SETUP -> SELF_TEST startup board, exactly as test_integration.sh declared it;
+        # board_startup_sim.py plays it (session.ts boards), board_simulator.py skips it by name.
+        # Its board_id 60 is PT slot 10, whose uint8 table ids wrap onto PT2.CH1 (README
+        # "Registrars before the backend"); the goldens freeze that, so it stays.
         text += f"""
 [boards.integration_startup]
 enabled = true
@@ -167,19 +176,43 @@ designated_survivor = false
 
     # The simulator's view. pt: every board but pt_board disabled, so it never tries to bind a
     # 127.0.0.x it cannot have. boards: every board but the LabJack T7 (t7_bridge's, not the
-    # simulator's: board_simulator.py has no T7 model and refuses its address).
-    sim = text
-    out, pos = [], 0
-    for m in re.finditer(r"^\[boards\.([A-Za-z0-9_]+)\]\n(?:(?!\[).*\n)*", sim, re.M):
-        out.append(sim[pos : m.start()])
-        block = m.group(0)
-        is_t7 = re.search(r'^type = "T7"$', block, re.M) is not None
-        if (mode == "pt" and m.group(1) != "pt_board") or (mode == "boards" and is_t7):
-            block = re.sub(r"^enabled = true$", "enabled = false", block, flags=re.M)
-        out.append(block)
-        pos = m.end()
-    out.append(sim[pos:])
-    open(os.path.join(fx, "sim_config.toml"), "w").write("".join(out))
+    # simulator's: board_simulator.py has no T7 model and refuses its address). stalesub: only
+    # pt_board_2, the board whose channel 1 shares its table ids with the startup board.
+    def only(keep):
+        out, pos = [], 0
+        for m in re.finditer(
+            r"^\[boards\.([A-Za-z0-9_]+)\]\n(?:(?!\[).*\n)*", text, re.M
+        ):
+            out.append(text[pos : m.start()])
+            block = m.group(0)
+            if not keep(m.group(1), block):
+                block = re.sub(
+                    r"^enabled = true$", "enabled = false", block, flags=re.M
+                )
+            out.append(block)
+            pos = m.end()
+        out.append(text[pos:])
+        return "".join(out)
+
+    def not_t7(_name, block):
+        return re.search(r'^type = "T7"$', block, re.M) is None
+
+    sim = only(
+        {
+            "pt": lambda name, _b: name == "pt_board",
+            "boards": not_t7,
+            "stalesub": lambda name, _b: name == "pt_board_2",
+        }[mode]
+    )
+    open(os.path.join(fx, "sim_config.toml"), "w").write(sim)
+    if mode == "stalesub":
+        reg = only(lambda name, _b: name == "integration_startup")
+        open(os.path.join(fx, "registrar_a.toml"), "w").write(reg)
+        rega = os.path.join(fx, "regA")
+        shutil.copytree(
+            cal_dir, os.path.join(rega, "scripts", "calibration", "calibrations")
+        )
+        shutil.copytree(cfg_dir, os.path.join(rega, "config"))
 
 
 if __name__ == "__main__":
