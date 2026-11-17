@@ -9,13 +9,15 @@ so you can verify the Elodin side of the pipeline and inspect data in the editor
 > fake-data path today is the board simulator → `daq_bridge` → Elodin stack and
 > the web GUI.
 
-## Option A — Full fake-data stack (recommended)
+## Option A — Full dev stack with the board simulator (recommended)
 
-Brings up Elodin DB, `daq_bridge`, the board simulator, and the web backend/GUI:
+Brings up Elodin DB, `daq_bridge`, the board simulator, and the web backend/GUI
+in one tmux session (the database is named `daq_<timestamp>` unless you set
+`ELODIN_DB_NAME`):
 
 ```bash
 cd /path/to/STAR/daq-server
-./deploy/startup/start_fake_data_stack.sh
+USE_SIM=1 ./deploy/startup/start_tmux_dev.sh
 ```
 
 Pipeline: `sim/board_simulator.py` → UDP :5006 → `build/bin/daq_bridge` →
@@ -23,20 +25,14 @@ Elodin DB (:2240) → backend → web UI. The simulator emits DiabloAvionics-for
 heartbeats and sensor data, so the whole server path exercises real parsing,
 routing, and calibration.
 
-For the full dev stack (all services in tmux) with the simulator enabled:
-
-```bash
-USE_SIM=1 ./deploy/startup/start_tmux_dev.sh
-```
-
 ## Option B — Just an Elodin DB
 
 To stand up only the database (e.g. to point the editor or an ad-hoc client at
 it):
 
 ```bash
-cd /path/to/STAR/daq-server
-./test/test_elodin_groundstation.sh 2240 test_groundstation
+mkdir -p ~/.local/share/elodin
+elodin-db run "[::]:2240" ~/.local/share/elodin/test_groundstation
 ```
 
 This:
@@ -44,14 +40,14 @@ This:
 - creates the database at `~/.local/share/elodin/test_groundstation`,
 - runs until Ctrl+C.
 
-Arguments are `<db_port> <db_name>` (defaults `2240` / `test_groundstation`).
+Use `0.0.0.0:2240` instead of `[::]:2240` on a host without IPv6.
 
 ## Inspecting data in the Elodin editor
 
 ```bash
 elodin editor ~/.local/share/elodin/test_groundstation
-# or, for the fake-data stack DB:
-elodin editor ~/.local/share/elodin/daq_fake
+# or, for a dev-stack DB (replace the timestamp):
+elodin editor ~/.local/share/elodin/daq_<timestamp>
 ```
 
 In the editor you can watch the per-board, per-channel tables update live
@@ -61,7 +57,7 @@ and query historical data.
 
 ## Validation checklist
 
-- **Sensor data flowing:** with the fake stack running, raw and calibrated PT
+- **Sensor data flowing:** with the dev stack running, raw and calibrated PT
   tables grow with increasing timestamps in the editor, and the web UI plots
   update.
 - **Calibration:** `*_Cal.*` tables populate, confirming `calibration_service`
@@ -79,8 +75,8 @@ ss -tuln | grep 2240
 # Does the DB dir exist?
 ls -la ~/.local/share/elodin/
 
-# Stack logs (fake-data stack writes to /tmp)
-tail -f /tmp/elodin_fake.log /tmp/daq_fake.log
+# Stack logs (start_tmux_dev.sh writes to /tmp/gui_logs)
+tail -f /tmp/gui_logs/db.log /tmp/gui_logs/daq.log
 ```
 
 If sensor data is not appearing, confirm the board simulator is running and the
