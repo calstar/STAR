@@ -39,7 +39,9 @@ interface HttpRec {
 }
 /** `notes`: lines the session itself derives from its own stamps (a bound met or not), printed
  *  under the step in ws_events.txt (characterize.py P13). Categorical only -- never a raw ms. */
-interface Step { name: string; t0: number; t1: number; frames: Frame[]; sent: Sent[]; http: HttpRec[]; notes: string[] }
+/** A file of the fixture read at this point of the step (H1: what a write left on disk). */
+interface FileRec { file: string; content: string | null }
+interface Step { name: string; t0: number; t1: number; frames: Frame[]; sent: Sent[]; http: (HttpRec | FileRec)[]; notes: string[] }
 
 const capture = { wsPort: PORT, steps: [] as Step[] };
 let cur: Step | null = null;
@@ -142,6 +144,12 @@ function request(
   });
 }
 
+/** Record a fixture file as it is right now, in order with the requests around it. */
+function file(rel: string): void {
+  const abs = `${process.env.CHAR_FIXTURE}/${rel}`;
+  cur!.http.push({ file: rel, content: fs.existsSync(abs) ? fs.readFileSync(abs, 'utf8') : null });
+}
+
 const VIEWER = { 'X-Auth-Email': 'viewer@example.com' };
 const OPERATOR = { 'X-Auth-Email': 'operator@example.com' };
 
@@ -159,7 +167,7 @@ async function getSweep(): Promise<void> {
     '/api/query', '/api/pressure-limits', '/api/gui-config', '/api/sensor-config',
     '/api/sensors', '/api/sensors/PT1.CH1',
     '/api/board-logs', '/api/board-logs?board=21&limit=5', '/api/board-logs/stats',
-    '/api/debug', '/api/engine_state', '/api/calibration_status', '/api/cubic_calibration',
+    '/api/debug', '/api/debug?values', '/api/engine_state', '/api/calibration_status', '/api/cubic_calibration',
     '/api/ball_valve_cal', '/api/lc_tare', '/api/feed-char/results', '/api/calibration_profiles',
     '/api/config_packets', '/api/ota-flash/projects',
     '/api/video/streams', '/api/video/config', '/api/video/recordings',
@@ -252,6 +260,10 @@ async function main(): Promise<void> {
   step('transition_armed');
   command('A', 'state_transition', { state: 2 });
   await settle(2500);
+  // D64(3): the HTTP view of the state the WS path just reached (engineState 2, not the sweep's
+  // 1), and /api/debug at value level (P13) with a client connected and ingest flowing.
+  await request('GET', '/api/engine_state');
+  await request('GET', '/api/debug?values');
 
   step('debug_on');
   command('A', 'debug_mode', { debugMode: true });
@@ -382,6 +394,62 @@ async function main(): Promise<void> {
   await request('PUT', '/api/video/config', { body: JSON.stringify({ streams: 'nope' }) });
   await request('POST', '/api/video/previews', { body: JSON.stringify({ url: 'not-a-url' }) });
   await request('DELETE', '/api/video/previews/nope');
+
+  step('http_operator_writes');
+  // H1 (DESIGN-WP7 §7, with WP6 G7): the success path of every write an operator makes while
+  // idle. http_errors and http_viewer_gates reach these routes only as the viewer or with a body
+  // that is refused; here each gets the operator and a body it accepts, so what is frozen is the
+  // status and body, the files the write left in the fixture's config/ tree (FILE lines: the
+  // deployed copy and the profile's), and the frames that follow — config_updated in
+  // ws_events.txt, board_status_update in ws_streams.txt. Idle on purpose: only an idle write
+  // deploys and fires its callback. Last on purpose: nothing after it reads what it changed.
+  const active = JSON.parse((await request('GET', '/api/config')).body).config;
+  await request('POST', '/api/config', { headers: OPERATOR, body: JSON.stringify({ config: { ...active, char: { h1_save: 1 } } }) });
+  await settle(1500);
+  file('config/config.toml');
+  file('config/profiles/default/config.toml');
+  const deployed = fs.readFileSync(`${process.env.CHAR_FIXTURE}/config/config.toml`, 'utf8');
+  await request('POST', '/api/config/import', { headers: OPERATOR, body: `${deployed}\n[char_import]\nh1 = 1\n` });
+  await settle(1500);
+  file('config/config.toml');
+  file('config/profiles/default/config.toml');
+  // An upload that does not parse: 400, and the profile is rolled back to what it was.
+  await request('POST', '/api/config/import', { headers: OPERATOR, body: 'x = [' });
+  await settle(800);
+  file('config/profiles/default/config.toml');
+  const csv = fs.readFileSync(`${process.env.CHAR_FIXTURE}/config/profiles/default/state_machine_actuators.csv`, 'utf8');
+  await request('POST', '/api/state-csv?name=actuators', { headers: OPERATOR, body: csv.split('\n').slice(0, 3).join('\n') + '\n' });
+  await settle(1500);
+  file('config/state_machine_actuators.csv');
+  file('config/profiles/default/state_machine_actuators.csv');
+  await request('GET', '/api/state-csv?name=actuators');
+  await request('POST', '/api/state-script?name=h1.script&state=Idle', { headers: OPERATOR, body: 'delay(1)' });
+  await settle(800);
+  file('config/scripts/h1.script');
+  file('config/profiles/default/scripts/h1.script');
+  await request('GET', '/api/state-script?name=h1.script');
+  await request('GET', '/api/state-script');
+  await request('POST', '/api/config/profiles/create', { headers: OPERATOR, body: JSON.stringify({ name: 'h1' }) });
+  await settle(800);
+  file('config/profiles/h1/config.toml');
+  await request('POST', '/api/config/profiles/rename', { headers: OPERATOR, body: JSON.stringify({ name: 'h1', newName: 'h1b' }) });
+  await settle(800);
+  file('config/profiles/h1/config.toml');
+  file('config/profiles/h1b/config.toml');
+  await request('POST', '/api/config/profiles/switch', { headers: OPERATOR, body: JSON.stringify({ name: 'h1b' }) });
+  await settle(1500);
+  file('config/.active_profile');
+  file('config/config.toml');
+  await request('POST', '/api/config/profiles/switch', { headers: OPERATOR, body: JSON.stringify({ name: 'default' }) });
+  await settle(1500);
+  file('config/.active_profile');
+  await request('POST', '/api/config/profiles/delete', { headers: OPERATOR, body: JSON.stringify({ name: 'h1b' }) });
+  await settle(800);
+  file('config/profiles/h1b/config.toml');
+  await request('GET', '/api/config/profiles');
+  await request('POST', '/api/calibration_profiles/save', { headers: OPERATOR, body: JSON.stringify({ name: 'h1cal' }) });
+  await settle(800);
+  await request('GET', '/api/calibration_profiles');
 
   step('disconnect');
   await closeClient('A');
