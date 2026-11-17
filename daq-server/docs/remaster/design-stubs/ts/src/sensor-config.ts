@@ -47,7 +47,9 @@ export interface SensorConfigEntry {
  *
  * Moved verbatim from `api-server.ts:102-303` with its private helpers (`enabledBoardCount`,
  * `generatedRole`, `asBoardId`, `elodinSlotFromBoardId`; the last becomes `boardSlot` in WP7 2.2,
- * after gap H4). Pure when `config` is passed; with no argument it calls `readConfig()` (the
+ * proven by a diff — its body at `api-server.ts:98-99` is byte-identical to `boardSlot`'s — not
+ * by gap H4, which is worth writing but not gating, D63). Pure when `config` is passed; with no
+ * argument it calls `readConfig()` (the
  * default parameter is evaluated per call, as today). Throws whatever `readConfig()` throws —
  * the route's caller (`api/gui-config`) lets it reach the router's catch (500), as today.
  */

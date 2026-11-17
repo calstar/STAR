@@ -3,8 +3,10 @@
  * endpoints, LC tares, calibration profiles.  [WP7 1.10]
  *
  * Owns: the module constant `SRC_DIR` (from `import.meta.url`, STYLE-S30; WP7-S3 — the two
- * `__dirname` candidates are re-rooted on it so the one-level-deeper file resolves the same
- * paths). Stores belong to `routes/calibration-profiles.ts`, `ball-valve-cal.ts`, `lc-tare.ts`,
+ * `__dirname` candidates, `api-server.ts:942-943`, are re-rooted on it so the one-level-deeper
+ * file resolves the same paths; the move-only check applies that one substitution to the old
+ * text before comparing — step 1's only non-verbatim edit). Stores belong to
+ * `routes/calibration-profiles.ts`, `ball-valve-cal.ts`, `lc-tare.ts`,
  * and `calibration_service` (sole writer of the cubic store). Must not know about: `server/*`
  * (Elodin cmd 7 is reached through `opts.onCalibrationReload`). Contract: `http.txt` (cubic body,
  * 403 on save), H2 (load/new_blank as viewer), H3, H8. Import-time effects: none.

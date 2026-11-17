@@ -4,7 +4,10 @@
  * Owns: the OTA temp directories for the duration of one request; `MAX_BODY` and the SSE closure
  * move inside the body unchanged. Must not know about: `server/*`, sessions. Talks to
  * `ota_service` through `ota-service-cmd.ts`. Contract: `lifecycle/golden/ota.txt` (6 cases),
- * `http.txt` (400s); H2 freezes `flash-all` only against a config with no enabled boards.
+ * `http.txt` (400s); the H8 package freezes both POST routes **as the viewer, as today's 200**
+ * (`flash-all` only against a config with no enabled boards; `/api/ota-flash` with
+ * `firmwareBase64` in lifecycle's fake-board case) so SEC-2 stays visible. Defects kept, bodies
+ * verbatim: SEC-2 (no gate), SEC-3 (`projectPath` reaches `pio run` as the caller sent it).
  * Import-time effects: none.
  */
 

@@ -3,8 +3,9 @@
  *
  * Owns: nothing. Must not know about: `server/*`, the editor's draft (it reads the deployed
  * config, unlike `api/states`; frozen). Contract: `pipeline/golden/http.txt`,
- * `boards/http.txt` (every board type), `__tests__/t7.test.ts` (via the re-export). H4 freezes
- * slot 0 → 10 before step 2.2. Import-time effects: none.
+ * `boards/http.txt` (every board type), `__tests__/t7.test.ts` (via the re-export). H4 (slot
+ * 0 → 10) is worth writing but does not gate 2.2, which is proven by a diff (D63).
+ * Import-time effects: none.
  */
 
 import type { IncomingMessage, ServerResponse } from '../product-types.js';
