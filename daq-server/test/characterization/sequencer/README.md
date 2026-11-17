@@ -52,6 +52,7 @@ seconds, and chosen so no state's actuator loop ends near a republish tick (N5).
 | `default/holds`, `default/aborts` | hold-duration refusals, `EXTEND_FIRE` in and out of Fire; abort ordering, a stale stage landing after an abort, abort-from-abort cancelling ABORT_DONE. |
 | `default/fire-*` | Ready → Fire with the controller up, up with a test duty (PWM stream), up with its gate disabled, down (the retry path; in `default/entry/Fire`), and with `sequencer_owns_valves`. |
 | `controller/*` | `FIRE_START` / `FIRE_STOP` / junk straight to controller_service's port: shipped config, test duty, gate disabled, unresolved PWM roles. |
+| `default/clients`, `controller/clients` | the concurrent-client cap of each command port (`kMaxClients` / `kMaxControlClients`, 64; DESIGN-WP8 §7.2 gap 5): 64 idle connections held, the 65th gets `ERR:too many connections\n` and is closed, the busy log line's exact bytes (`[Sequencer] client limit (64) reached — refusing connection`; `[ControllerService] ⚠️  client limit (64) reached — refusing connection`, U+26A0 U+FE0F then two spaces, em dash U+2014), and a 66th is served once the 64 close. Both busy lines are harness-read from here on (STYLE S15). |
 | `digital-twin/flow` | `Flow Test:<ms>` holds: refusals, the gate stagger, early exit, re-entry. |
 | `digital-twin/scripts-load`, `script/*` | dynamic states added the way `test_integration.sh` adds its Script Test: load-time refusals (via `SCRIPTS` and the reply), and runs that end, time out, loop, transition, are pre-empted and are overridden by hand. |
 | `digital-twin/pressure/*` | the profile's own `Dynamic Test` (reads `High Press`, `GN2 High`) against a fake calibrated-PT feed: no reading, uncalibrated, a full run, a feed that goes stale mid-script. |
@@ -150,6 +151,9 @@ before and no later than 0.1 s + 25% after its configured delay; a state's entry
 transition publish by less than 60 ms, plus one 50 ms ABORT_DONE step for an abort; the republish
 interval is within [0.8, 1.5] x 1 s; non-staged waits overshoot by less than their floor band (100 ms below 1 s). All
 hold on macOS and Linux arm64 at 1x synthetic load (one `yes` per core on top of the host).
+The client-cap sessions add two: 64 paced idle connects plus a 0.3 s settle land inside the readers'
+5 s `SO_RCVTIMEO` (the harness refuses past 4 s), and the 64 reader threads of closed connections have
+returned and been reaped within 1.0 s, so the 66th connection meets a count of 0, not the cap.
 
 Goldens are recorded on macOS (darwin-arm64). N4/N5 are chosen so Linux timing should land in the
 same buckets, but that has not been verified.
@@ -191,6 +195,7 @@ run alongside as a control, stayed green); each was reverted:
 | swapped order within one state: `triggerAbort()` moved below `applyForState()` in `doTransitionTo` | `default/entry/Engine Abort` | `first datagram: ABORT` -> `ACTUATOR_COMMAND` |
 | TCP reply: `ERR:not in FIRE state` -> `ERR:not in fire state` | `default/malformed` | the reply line |
 | a role on the wrong board: default `"LOX Main" = ["NC", 1, 12]` -> board 14 | `default/entry/Fire`, `default/entry/Idle` | `to board 12: ... ch1=0[LOX Main]` -> `to board 14: ...` |
+| client cap: `kMaxClients` 64 -> 32 (`sequencer_main.cpp`) | `default/clients` | `x1 '[Sequencer] client limit (64) reached — refusing connection'` -> 33 lines saying `(32)` |
 
 ## What each rule hides, and why it is allowed to
 
