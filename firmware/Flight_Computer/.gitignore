@@ -1,0 +1,7 @@
+
+.venv-fusion/
+simulation/fusion/output/
+__pycache__/
+
+# Small recorded fixtures required by replay tests.
+!simulation/fusion/data/*.csv

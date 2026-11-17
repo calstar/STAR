@@ -6,6 +6,7 @@
 #include "board_time.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
+#include "fusion_task.h"
 #include "main.h"
 #include "nand_stm32.h"
 
@@ -21,6 +22,7 @@ static void to_emmc(void* ctx, uint8_t type, const void* data, uint8_t len) {
     (void)ctx;
     /* Non-blocking; false outside ARMED/LAUNCHED/RECOVERY or when every
      * chunk is full (the log counts and reports drops itself). */
+    fusion_task_submit(type, data, len);
     uint32_t t = osKernelGetTickCount();
     (void)emmc_log_append(emmc_stm32_log(), type, t, data, len);
     (void)emmc_log_append(nand_stm32_log(), type, t, data, len); /* backup */
@@ -53,6 +55,7 @@ static void sensors_task(void* argument) {
             osMutexAcquire(snapshot_lock, osWaitForever);
             restart = false;
             fc_config_t cfg = board_config_get(); /* this arming's settings */
+            fusion_task_reset(cfg.imu_accel_fs_g, cfg.imu_gyro_fs_dps);
             core.settings = sensors_settings(&cfg);
             sensors_core_init(&core, board_time_us());
             osMutexRelease(snapshot_lock);

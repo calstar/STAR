@@ -111,7 +111,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install PlatformIO
-        run: pip install platformio
+        run: pip install platformio -r firmware/Flight_Computer/simulation/fusion/requirements.txt
 
       # Same pin as daq-server-ci: clang-format formatting changes between
       # major versions, so CI and laptops must agree.

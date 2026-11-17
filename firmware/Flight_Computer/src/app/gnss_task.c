@@ -5,6 +5,7 @@
 #include "board_uart9.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
+#include "fusion_task.h"
 #include "main.h"
 #include "nand_stm32.h"
 
@@ -38,6 +39,7 @@ static void set_baud(void* ctx, uint32_t baud) {
 
 static void to_emmc(void* ctx, uint8_t type, const void* data, uint8_t len) {
     (void)ctx;
+    fusion_task_submit(type, data, len);
     uint32_t t = osKernelGetTickCount();
     (void)emmc_log_append(emmc_stm32_log(), type, t, data, len);
     (void)emmc_log_append(nand_stm32_log(), type, t, data, len); /* backup */

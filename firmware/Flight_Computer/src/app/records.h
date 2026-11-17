@@ -23,6 +23,8 @@ enum {
     REC_GNSS = 0x13,  /* rec_gnss_t (gnss_core) */
     REC_HEALTH = 0x14,
     REC_EVENT = 0x15,
+    /* 0x16 is reserved for the GUI protocol's session config record. */
+    REC_FUSION = 0x17, /* rec_fusion_t, version 1 */
 };
 
 /* Where a task core hands its records (eMMC log on the board, a list in
@@ -62,6 +64,18 @@ typedef struct __attribute__((packed)) {
     uint8_t fix_type, num_sv, flags;
 } rec_gnss_t;
 
+/* Version 1, SI units, altitude relative to the startup pad pressure.
+ * q is body-to-launch-frame (w,x,y,z); flags are defined in fusion.h.
+ * dropped includes invalid records and IMU gaps, plus queue loss on board. */
+typedef struct __attribute__((packed)) {
+    uint32_t t_us;
+    float altitude_m, velocity_mps, acceleration_mps2, bias_mps2;
+    float q[4];
+    float sigma_altitude_m, sigma_velocity_mps;
+    uint32_t flags, dropped;
+} rec_fusion_t;
+
+_Static_assert(sizeof(rec_fusion_t) == 52, "rec_fusion_t layout");
 _Static_assert(sizeof(rec_imu_t) == 18, "rec_imu_t layout");
 _Static_assert(sizeof(rec_gnss_t) == 49, "rec_gnss_t layout");
 _Static_assert(sizeof(rec_highg_t) == 7, "rec_highg_t layout");

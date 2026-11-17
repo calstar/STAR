@@ -16,6 +16,7 @@
  * Usage: flight_e2e [--list] [--only=id,id]
  * Exit 0 only if every selected check passed.
  */
+#include <math.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -27,6 +28,7 @@
 #include "fake_baro.h"
 #include "fake_gnss.h"
 #include "fake_regs.h"
+#include "fusion.h"
 #include "gnss_core.h"
 #include "sensors_core.h"
 
@@ -220,6 +222,8 @@ typedef struct {
 } faults_t;
 
 typedef struct {
+    fusion_t fusion;
+    bool fusion_enabled;
     fake_regs_t imu, highg;
     fake_baro_t baro;
     sensors_core_t core;
@@ -284,11 +288,22 @@ static void sink(void* ctx, uint8_t type, const void* data, uint8_t len) {
         r->t_ms = w->now / 1000U;
         memcpy(r->data, data, len);
     }
+    if (w->fusion_enabled && type != REC_FUSION) {
+        rec_fusion_t result;
+        if (fusion_feed(&w->fusion, type, data, len, &result))
+            sink(ctx, REC_FUSION, &result, sizeof result);
+    }
 }
 
 static void set_chips(world_t* w, uint32_t t) {
     int16_t v[7];
     imu_truth(t, v);
+    if (w->fusion_enabled && phase_at(t) == PAD) {
+        /* The pipeline's usual sawtooth gyro is a wire-format stress test;
+         * fusion needs a stationary pad to determine gravity and bias. */
+        for (int i = 1; i < 6; ++i)
+            v[i] = 0;
+    }
     for (int i = 0; i < 7; ++i) {
         w->imu.regs[0x20 + 2 * i] = (uint8_t)v[i];
         w->imu.regs[0x21 + 2 * i] = (uint8_t)((uint16_t)v[i] >> 8);
@@ -701,6 +716,45 @@ static void check_gps(void) {
     world_free(&w);
 }
 
+static void check_fusion_log(void) {
+    world_t w;
+    world_init(&w, NULL);
+    w.fusion_enabled = true;
+    fusion_init(&w.fusion, 16, 4000);
+    fly(&w);
+    image_t image;
+    read_image(&w.card, &image, MAX_RECS);
+    fusion_t replay;
+    fusion_init(&replay, 16, 4000);
+    rec_fusion_t expected = {0};
+    bool pending = false;
+    unsigned count = 0;
+    for (unsigned i = 0; i < image.n; ++i) {
+        const rec_t* r = &image.recs[i];
+        if (r->type == REC_FUSION) {
+            EXPECT(pending, "fusion output without corresponding sensor input");
+            EXPECT(r->len == sizeof expected, "fusion output size %u", r->len);
+            EXPECT(memcmp(r->data, &expected, sizeof expected) == 0,
+                   "fusion replay differs at output %u", count);
+            EXPECT(isfinite(expected.altitude_m) &&
+                       isfinite(expected.velocity_mps),
+                   "nonfinite fusion output");
+            EXPECT(expected.flags & FUSION_READY, "unaligned fusion output");
+            pending = false;
+            ++count;
+        } else if (r->type >= REC_IMU && r->type <= REC_GNSS) {
+            EXPECT(!pending, "missing fusion record before next sensor input");
+            pending = fusion_feed(&replay, r->type, r->data, r->len, &expected);
+        }
+    }
+    EXPECT(count > 800, "only %u fusion outputs over 20 seconds", count);
+    EXPECT(!pending, "missing final fusion record");
+    note("%u fusion records survived drivers -> filter -> eMMC -> replay",
+         count);
+    free(image.recs);
+    world_free(&w);
+}
+
 typedef struct {
     const char* id;
     const char* what;
@@ -708,6 +762,8 @@ typedef struct {
 } check_t;
 
 static const check_t checks[] = {
+    {"fusion_log", "sensor records -> fusion -> eMMC -> identical replay",
+     check_fusion_log},
     {"sensor_rates",
      "IMU 833 Hz, high-g 400 Hz, baro ~50 Hz over a 20 s flight",
      check_sensor_rates},

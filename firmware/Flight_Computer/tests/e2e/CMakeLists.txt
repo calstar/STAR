@@ -11,6 +11,7 @@ option(FLIGHT_TEST_CANARY "Corrupt the card image before checking it" OFF)
 set(ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 set(SOURCES
     flight_e2e.c
+    ${ROOT}/src/app/fusion.c
     ${ROOT}/src/app/sensors_core.c
     ${ROOT}/src/app/fc_config.c
     ${ROOT}/src/app/gnss_core.c
@@ -28,6 +29,9 @@ set(SOURCES
 add_executable(flight_e2e ${SOURCES})
 target_include_directories(flight_e2e PRIVATE
     ${ROOT}/src/app ${ROOT}/src/chips ${ROOT}/src/radio ${ROOT}/tests/fakes)
+if(UNIX)
+    target_link_libraries(flight_e2e PRIVATE m)
+endif()
 set_target_properties(flight_e2e PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
 target_compile_options(flight_e2e PRIVATE -Wall -Wextra -Werror)
 if(FLIGHT_TEST_CANARY)

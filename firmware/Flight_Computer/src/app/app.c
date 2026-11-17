@@ -3,6 +3,7 @@
 #include "board_config.h"
 #include "cmsis_os2.h"
 #include "emmc_stm32.h"
+#include "fusion_task.h"
 #include "gnss_task.h"
 #include "ground_task.h"
 #include "idle_task.h"
@@ -51,6 +52,7 @@ bool app_start(void) {
     }
     bool ok = start_emmc();
     ok = start_nand() && ok;
+    ok = fusion_task_start() && ok;
     ok = sensors_task_start() && ok;
     ok = gnss_task_start() && ok;
     ok = radio_task_start() && ok;

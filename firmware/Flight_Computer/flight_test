@@ -167,8 +167,20 @@ check emmc "eMMC log: chunks, mount, torn writes, card checks, flight state" \
 check chips "chip drivers vs datasheets: ISM330DHCX, H3LIS100DL, MS5611, UBX" \
   ctest_suite chips tests/chips
 check app "task cores: sensors, GNSS, boot report, sleep math, mode" ctest_suite app tests/app
+check fusion "fusion: physics, alignment, saturation, stale input, covariance, GPS" \
+  ctest_suite fusion tests/fusion
 check idle "Idle logic (Aaron, PR #162): heartbeat schedule, battery, Arm" \
   ctest_suite idle tests/idle IDLE_SANITIZERS
+
+fusion_simulation() {
+  local python="${FUSION_PYTHON:-$HERE/.venv-fusion/bin/python}"
+  [ -x "$python" ] || python="$(command -v python3)"
+  FUSION_C_REPLAY="$OUT/build_fusion/fusion_replay" \
+    "$python" "$HERE/simulation/fusion/test_tools.py" || return 1
+  "$python" "$HERE/simulation/fusion/simulate.py" --full \
+    --out "$OUT/fusion_simulation" --c-replay "$OUT/build_fusion/fusion_replay"
+}
+check fusion_replay "full-flight synthetic faults meet targets; C matches independent Python" fusion_simulation
 
 # ── stage 3: end to end ────────────────────────────────────────────────────
 stage "3  end to end: flight (drivers -> cores -> eMMC) and Idle (heartbeats, Stop, Arm)"

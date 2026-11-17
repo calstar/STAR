@@ -1,0 +1,2 @@
+Velocity prediction sign reversed in temporary copy; unit tests correctly failed.
+Assertion failed: (fabs(f.x[0] - .5f * a) < .002f && fabs(f.x[1] - a) < .002f), function motion_and_faults, file test_fusion.c, line 67.

@@ -1,0 +1,48 @@
+{
+  "flight-data.csv": {
+    "source": "simulation/fusion/data/flight-data.csv",
+    "highg_axes": null,
+    "sha256": "296e7d8cc48ac9ad176bd5983784fdcc82528b92b9e2857b17ed1999e709b9a2",
+    "records_by_type": {
+      "16": 28,
+      "17": 28,
+      "18": 28
+    },
+    "imu_samples": 28,
+    "duration_s": 24.381643,
+    "median_imu_gap_s": 0.9026059999999999,
+    "max_imu_gap_s": 0.903785,
+    "gaps_over_50ms": 27,
+    "python_outputs": 0,
+    "c_outputs": 0,
+    "comparison": "C/Python agree; no resampling or invented measurements",
+    "accuracy_verdict": "NOT VALIDATED: no known-height truth or full-rate inertial stream",
+    "barometric_relative_height_range_m": [
+      -1.3285668933361516,
+      0.747393336737473
+    ]
+  },
+  "flight-data2.csv": {
+    "source": "simulation/fusion/data/flight-data2.csv",
+    "highg_axes": null,
+    "sha256": "fa4c0e70c824c8b9a8608684c301aa2983bff4baebb1d38317cdd41c44457f0b",
+    "records_by_type": {
+      "16": 34,
+      "17": 34,
+      "18": 34
+    },
+    "imu_samples": 34,
+    "duration_s": 29.826138,
+    "median_imu_gap_s": 0.9038729999999999,
+    "max_imu_gap_s": 0.905071,
+    "gaps_over_50ms": 33,
+    "python_outputs": 0,
+    "c_outputs": 0,
+    "comparison": "C/Python agree; no resampling or invented measurements",
+    "accuracy_verdict": "NOT VALIDATED: no known-height truth or full-rate inertial stream",
+    "barometric_relative_height_range_m": [
+      -1.6613035366219098,
+      0.4984427225562671
+    ]
+  }
+}
