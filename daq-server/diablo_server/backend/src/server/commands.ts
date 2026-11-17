@@ -7,8 +7,9 @@
  * EXTEND_FIRE) through sequencer-client, which never rejects — each caller answers the sender with
  * `ERROR "<Action> failed: <refusalText(reply)>"`. An abort is a state_transition and passes the
  * same control gate. Cross-module writes go through the owners' setters: setDebugMode,
- * setCountdownTarget (DESIGN-WP6 §6.2, 2.2). State-id resolution is split with engine-state until
- * step 2.9 (resolveTransitionTarget).
+ * setCountdownTarget (DESIGN-WP6 §6.2, 2.2). What a state id means is engine-state's
+ * (resolveTransitionTarget, step 2.9); this module keeps the warning, the ERROR text, the holdMs
+ * check and the TRANSITION line format.
  *
  * Event-loop only, called from ws-connection's message listener. No effect at import (M1). Never
  * imports api-server.ts or api/*; ws-connection is its only importer.
@@ -22,17 +23,16 @@
 import WebSocket from 'ws';
 import { handleCalibrationCommand } from '../calibration-handler.js';
 import { getStateTransitions } from '../state-csv/state-transitions.js';
-import { readConfig } from '../routes/config.js';
 import { refusalText } from '../refusal-text.js';
 import { valvePlanSuffix } from '../valve-plan.js';
 import { sendToSequencer } from '../sequencer-client.js';
 import { sessionManager } from '../session-manager.js';
 import { ConfigIssuesError } from '../config-validation.js';
 import { countByLevel } from '../../../shared/config-validation.js';
-import { MessageType, SystemState } from '../../../shared/types.js';
+import { MessageType } from '../../../shared/types.js';
 import type { CommandPayload, QueryHistoricalRequest } from '../../../shared/types.js';
 import { type WsWithControl, send } from './ws-clients.js';
-import { configStateName, setDebugMode, broadcastStateUpdate } from './engine-state.js';
+import { resolveTransitionTarget, setDebugMode, broadcastStateUpdate } from './engine-state.js';
 import { setCountdownTarget } from './mission-time.js';
 import { sendHistoricalData } from './history.js';
 import { calibrationHost } from './calibration-state.js';
@@ -41,19 +41,6 @@ import { broadcastConnectionStatus } from './elodin-link.js';
 // Command types that actuate/transition the engine — gated by the operator
 // unlock. Read-only queries and countdown display are not.
 const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
-
-const STATE_TO_CSV_NAME: Record<string, string> = {
-  IDLE: 'Idle', ARMED: 'Armed', FUEL_FILL: 'Fuel Fill', OX_FILL: 'Ox Fill',
-  PRESS_STANDBY: 'Press Standby',
-  GN2_LOW_PRESS: 'GN2 Low Press', GN2_VENT: 'GN2 Low Vent',
-  FUEL_PRESS: 'Fuel Press', FUEL_VENT: 'Fuel Vent',
-  OX_PRESS: 'Ox Press', OX_VENT: 'Ox Vent',
-  GN2_HIGH_PRESS: 'GN2 High Press', GN2_HIGH_VENT: 'GN2 High Vent',
-  CALIBRATE: 'Calibrate', READY: 'Ready', FIRE: 'Fire', VENT: 'Vent',
-  ENGINE_ABORT: 'Engine Abort', GSE_ABORT: 'GSE Abort',
-  EMERGENCY_ABORT: 'Emergency Abort', ABORT: 'Emergency Abort',
-  DEBUG: 'Idle',
-};
 
 // ── Message handling ─────────────────────────────────────────────────────────
 
@@ -99,33 +86,13 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
   switch (command.commandType) {
     case 'state_transition': {
       const targetState = command.data.state!;
-      const declaredName = configStateName(targetState);
-      // Resolve the id through the config the sequencer itself loaded, not the compiled enum.
-      // The GUI sends a [[states]] id; SystemState is a fixed table that only agrees with it on a
-      // rig that never renumbered. On one that did, every id from the first divergence up named a
-      // different state: id 7 is Vent in config and FUEL_PRESS in the enum, so pressing Vent sent
-      // TRANSITION:Fuel Press — and because Fuel Press is a real state here, fromName() resolved
-      // it and the sequencer would have run it. A vent request executing a press is not a failure
-      // mode worth keeping for the sake of a fallback.
-      //
-      // So once the config declares a [[states]] list it is the sole authority: an id it does not
-      // declare is rejected, not rewritten through the enum. The enum fallback below stands only
-      // when the config declares no states at all (legacy / unconfigured rig).
-      const cfgStates = (() => {
-        try {
-          const r = (readConfig() as any)?.states;
-          return Array.isArray(r) ? r : null;
-        } catch {
-          return null;
-        }
-      })();
-      if (cfgStates && cfgStates.length > 0 && declaredName === null) {
+      const target = resolveTransitionTarget(targetState);
+      if (!target.ok) {
         console.warn(`[ThinServer] state_transition rejected: id ${targetState} not in active config [[states]]`);
         send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition rejected: id ${targetState} is not a state in the active config` } });
         break;
       }
-      const stateName = declaredName ?? SystemState[targetState] ?? String(targetState);
-      const csvName = declaredName ?? STATE_TO_CSV_NAME[stateName] ?? stateName;
+      const { stateName, csvName } = target;
       // Optional timed hold. Only appended when it is a sane integer, so a malformed value never
       // reaches the wire and every existing client stays byte-for-byte identical. This check is
       // convenience, not safety: the sequencer validates independently and is the authority on
