@@ -67,6 +67,11 @@ P = {
         (22, "P_SIMCAP_SKIP"),
         (23, "P_SIMCAP_BSS"),
         (24, "P_SIMCAP_BV"),
+        # the sequencer's and the controller's command ports in the signals scenario (the
+        # P_DEAD_* ones above are what the backend dials with nothing listening)
+        (25, "P_SEQ"),
+        (26, "P_CTRL"),
+        (27, "P_CTRL_NODB"),
     ]
 }
 FSW_PORT, OTA_BOARD_PORT = 5008, 3232
@@ -1578,6 +1583,316 @@ def sigint_each(r: Run):
     )
 
 
+# ── signals: SIGPIPE disposition, handler lines, the three services shutdown() does not cover ──
+#
+# DESIGN-WP8 §7.2 gaps 1-3 and LEDGER D65(6): every C++ service started alone against a fresh
+# elodin-db, each signal sent only after the service's own ready line (the one it prints after
+# installing its handlers, §1.2 of the note), so a kill before installation — legitimate, and
+# -15/-2 — cannot be mistaken for a handler that is missing.
+
+# What the handler prints, matched by shape only: the exact bytes are frozen in the golden, not
+# here. t7_bridge's handler prints nothing.
+HANDLER_RX = re.compile(r"Shutting down|Caught signal")
+# The sequencer's exit after a signal: select 10 ms; shutdown(SHUT_RDWR) wakes the held client's
+# recv (SO_RCVTIMEO 5 s) before the join — joining first would wait the 5 s out, which is what
+# this bound catches (D65(6)); then the destructor: command worker notified, Elodin retry thread
+# 100 ms slices, ActuatorCommander loop 100 x 10 ms, PressureFeed kRecvTimeoutMs 200.
+SEQ_EXIT = [
+    bound(
+        0,
+        1.0,
+        "shutdown() wakes the held client before the join; 10 ms select + 100 ms slices + 200 ms recv, + 0.5 s",
+    )
+]
+# t7_bridge --fake: the stand-in device blocks a read for one 50 ms block (scan_rate_hz 100 / 20
+# scans per read), the loop checks g_running between reads, nap() in 100 ms slices.
+T7_EXIT = [bound(0, 1.0, "50 ms fake read block + 100 ms nap slice, + 0.8 s")]
+# controller_service with elodin-db unreachable: the subscriber loop sleeps 20 x 100 ms between
+# connect attempts checking running_, main polls g_running every 100 ms, the 100 Hz loop joins.
+CTL_EXIT_NODB = [
+    bound(
+        0, 1.0, "100 ms main poll + 100 ms subscriber retry slice + 10 ms loop, + 0.8 s"
+    )
+]
+# controller_service with elodin-db up: ControllerService::stop() joins the Elodin subscriber
+# thread, which is blocked in read_exact() on a socket with no receive timeout (TCPClient sets
+# only SO_SNDTIMEO; the controller never calls set_recv_timeout_ms on its subscriber), so it
+# returns only when the db sends it something. LEDGER C4-5's ">3 s" is this. Checked after 3 s,
+# then the process is killed.
+CTL_HANG_S = 3.0
+
+
+# Post-signal lines that witness a side effect, checked as an ordered subsequence of the lines
+# after the handler's (these, in this order; other lines ignored) — LEDGER D89. Texts are main's
+# own; the work dir is masked by Run.emit.
+def ordered_for(name: str, work: str) -> list[str]:
+    return {
+        "calibration_service": [
+            f"[Cal] Saved robust adjustments on shutdown \u2192 {work}/adj_sig.json"
+        ],
+        "daq_bridge": [
+            "[DAQ Bridge] Shutdown complete",
+            "[ElodinClient] \u2705 Disconnected",
+        ],
+    }.get(name, [])
+
+
+def in_order(lines: list[str], wanted: list[str]) -> bool:
+    it = iter(lines)
+    return all(any(w == ln for ln in it) for w in wanted)
+
+
+def handler_tail(before: str, after: str, ordered: list[str] = ()) -> list[str]:
+    """The handler's line (with its leading newline, as the handler writes it), the service's
+    final line, and — where a side effect is to be witnessed — whether `ordered` appears after
+    the handler's line in that order (D89). Nothing else the service prints after the signal is
+    frozen: running loops and the db keep logging on their own clocks."""
+    tail = after[len(before) :].split("\n")
+    nonempty = [ln for ln in tail if ln]
+    idx = next((i for i, ln in enumerate(tail) if HANDLER_RX.search(ln)), None)
+    if idx is None:
+        out = ["  handler line: none"]
+        rest = nonempty
+    else:
+        lead = "\n" if idx > 0 and tail[idx - 1] == "" else ""
+        out = [f"  handler line: {ascii(lead + tail[idx])}"]
+        rest = [ln for ln in tail[idx + 1 :] if ln]
+    out.append(f"  final line: {ascii(nonempty[-1]) if nonempty else 'none'}")
+    if ordered:
+        out.append(
+            "  after it, in order: "
+            + ", ".join(ascii(w) for w in ordered)
+            + f": {in_order(rest, ordered)}"
+        )
+    return out
+
+
+def signals(r: Run):
+    g = "shutdown"
+    el = r.start(
+        "sig_elodin",
+        [r.elodin, "run", f"127.0.0.1:{P['P_ELODIN']}", os.path.join(r.work, "db_sig")],
+    )
+    stack.wait_tcp(P["P_ELODIN"], 15)
+    cfg_t7 = stack.build_config(
+        os.path.join(r.work, "lifecycle_t7.toml"), P, True, BOARDS, keep_t7=True
+    )
+    elodin_cli = ["--elodin-host", "127.0.0.1", "--elodin-port", str(P["P_ELODIN"])]
+    dead_db = ["--elodin-host", "127.0.0.1", "--elodin-port", str(P["P_DEAD_CTRL"])]
+    adj_path = os.path.join(r.work, "adj_sig.json")
+    # name, argv, the ready line printed after the handlers are installed
+    specs = {
+        "heartbeat_service": (
+            ["--config", r.cfg, *elodin_cli],
+            r"\[HeartbeatService\] Started",
+        ),
+        "stacklight_service": (["--config", r.cfg], r"\[StacklightService\] Started"),
+        "config_broadcast_service": (
+            ["--config", r.cfg],
+            r"\[ConfigBroadcast\] Started",
+        ),
+        "ota_service": (
+            ["--port", str(P["P_OTA"]), "--config", r.cfg],
+            r"\[OTAService\] Listening on port",
+        ),
+        "calibration_service": (
+            ["--config", r.cfg, "--adjustments", adj_path] + elodin_cli,
+            r"\[Cal\] Connected to Elodin, registered calibrated VTables, subscribed\.",
+        ),
+        "daq_bridge": ([r.cfg], r"Listening for DiabloAvionics packets"),
+        "sequencer_service": (
+            ["--config", r.cfg, "--port", str(P["P_SEQ"])],
+            r"\[Sequencer\] Listening on port",
+        ),
+        "controller_service": (
+            ["--config", r.cfg, *elodin_cli, "--control-port", str(P["P_CTRL"])],
+            r"Controller running\. PWM gated to FIRE state",
+        ),
+        "controller_service (elodin-db unreachable)": (
+            ["--config", r.cfg, *dead_db, "--control-port", str(P["P_CTRL_NODB"])],
+            r"Controller running\. PWM gated to FIRE state",
+        ),
+        # its start line `[t7_bridge] N T7(s), Elodin` follows the handlers, but the board thread
+        # then connects and registers 40-odd tables; wait for that so the tail is the exit alone
+        "t7_bridge --fake": (
+            ["--config", cfg_t7, "--fake", *elodin_cli],
+            r"\[t7_bridge boards\.labjack_1\] Elodin connected, tables registered",
+        ),
+    }
+    exit_bounds = {
+        "heartbeat_service": [
+            bound(0, 3.6, "kElodinRecvTimeoutMs 3000 + 100 ms loop, + 0.5 s")
+        ],
+        "stacklight_service": [
+            bound(0, 1.2, "kStacklightRecvTimeoutMs 500 + 100 ms loop, + 0.6 s")
+        ],
+        "config_broadcast_service": [
+            bound(0, 0.6, "exits on its next loop check (<= 100 ms), + 0.5 s")
+        ],
+        "ota_service": [bound(0, 1.6, "select timeout 1 s, + 0.6 s")],
+        "calibration_service": [bound(0, 3.5, "timing assumption, README")],
+        "daq_bridge": [
+            bound(0, 0.6, "exits on its next loop check (<= 100 ms), + 0.5 s")
+        ],
+        "sequencer_service": SEQ_EXIT,
+        "controller_service (elodin-db unreachable)": CTL_EXIT_NODB,
+        "t7_bridge --fake": T7_EXIT,
+    }
+    held_on = {
+        "sequencer_service": "P_SEQ",
+        "controller_service": "P_CTRL",
+        "controller_service (elodin-db unreachable)": "P_CTRL_NODB",
+    }
+
+    def start(tag, names):
+        procs = []
+        for n in names:
+            argv, ready = specs[n]
+            binary = n.split()[0]
+            log_name = re.sub(r"[^A-Za-z0-9_]+", "_", f"{tag}_{n}").strip("_")
+            if n == "calibration_service" and os.path.exists(adj_path):
+                os.remove(
+                    adj_path
+                )  # so "written" below can only mean written on this exit
+            pr = r.svc(log_name, binary, *argv)
+            procs.append((n, pr, ready))
+        for n, pr, ready in procs:
+            if not pr.wait_log(ready, 20):
+                r.emit(g, f"  {n}: ready line not seen (alive: {pr.alive()})")
+            if n in held_on:
+                # The controller's ready line is printed when the control thread is spawned, not
+                # when it has bound; the sequencer's after its listen().
+                stack.wait_tcp(P[held_on[n]], 5)
+        return procs
+
+    def hold_idle(n):
+        """One idle client on the service's command port, connected just before the signal and
+        never written to, so it is still held when the signal lands (the per-client reader's
+        SO_RCVTIMEO is 5 s; stopping the services before this one in the pass takes longer).
+        """
+        if n not in held_on:
+            return None
+        s = socket.create_connection(("127.0.0.1", P[held_on[n]]), timeout=5)
+        s.settimeout(2.0)
+        # the accept loop (10 ms select) has spawned the client thread
+        time.sleep(0.3)
+        return s
+
+    def idle_outcome(s):
+        try:
+            data = s.recv(16)
+        except OSError as e:
+            return f"error {type(e).__name__}"
+        finally:
+            s.close()
+        return "EOF" if data == b"" else ascii(data)
+
+    def stop_one(n, pr, sig, label):
+        before = pr.output()
+        if n == "controller_service":
+            pr.signal(sig)
+            rc, dt = pr.wait(CTL_HANG_S)
+            if rc is None:
+                r.emit(
+                    g,
+                    f"  still running {CTL_HANG_S:g} s after {label}: True (C4-5: stop() joins the Elodin subscriber, blocked in read_exact with no receive timeout); killed",
+                )
+                # the lines after the handler's are the harness killing it, not the service's exit
+                tail = handler_tail(before, pr.output())
+                pr.reap()
+                for ln in tail[:1]:
+                    r.emit(g, ln)
+                return
+            else:
+                r.emit(
+                    g,
+                    f"  exit {rc} within {N.bucket(dt, [bound(0, CTL_HANG_S, 'the db sent the subscriber something')])}",
+                )
+        else:
+            rc, dt = r.stop(pr, sig, timeout=max(hi for _, hi, _ in exit_bounds[n]) + 2)
+            r.emit(
+                g,
+                f"  exit {rc} within {N.bucket(dt if dt is not None else 99, exit_bounds[n])}",
+            )
+        for ln in handler_tail(before, pr.output(), ordered_for(n, r.work)):
+            r.emit(g, ln)
+        if n == "calibration_service":
+            r.emit(g, f"  adjustments file written: {os.path.exists(adj_path)}")
+
+    nine = [n for n in specs if n != "controller_service (elodin-db unreachable)"]
+
+    # ── gap 1: SIGPIPE ──
+    r.emit(
+        g,
+        "== SIGPIPE, each service started alone against a fresh elodin-db, sent after its ready line",
+    )
+    procs = start("pipe", nine)
+    for n, pr, _ in procs:
+        pr.signal(signal.SIGPIPE)
+        rc, dt = pr.wait(1.0)
+        if rc is None:
+            rc2, _ = r.stop(pr)
+            r.emit(
+                g,
+                f"  {n}: alive 1 s after SIGPIPE: ignored (signal(SIGPIPE, SIG_IGN)); SIGTERM -> exit {rc2}",
+            )
+        else:
+            r.emit(
+                g,
+                f"  {n}: exit {rc} within {N.bucket(dt, [bound(0, 1.0, 'default disposition: killed on delivery, + 1 s')])}",
+            )
+
+    # ── gaps 2 and 3: SIGTERM, one idle client held on each command port ──
+    for sig, label in ((signal.SIGTERM, "SIGTERM"), (signal.SIGINT, "SIGINT")):
+        names = (
+            nine + ["controller_service (elodin-db unreachable)"]
+            if sig == signal.SIGTERM
+            else [
+                "sequencer_service",
+                "controller_service",
+                "controller_service (elodin-db unreachable)",
+                "t7_bridge --fake",
+            ]
+        )
+        r.emit(
+            g,
+            f"== {label}, each service started alone (one at a time) against a fresh elodin-db, sent after its ready line;"
+            " one idle client held on the sequencer's and the controller's command port",
+        )
+        # One at a time, so the lines after the handler are the service's own exit: a service
+        # fed by another (calibration logging its first ten packets from a t7_bridge) is not alone.
+        for n in names:
+            ((_, pr, _),) = start(label.lower(), [n])
+            r.emit(g, f"-- {label} {n}")
+            sock = hold_idle(n)
+            stop_one(n, pr, sig, label)
+            if sock is not None:
+                r.emit(g, f"  idle client on {held_on[n]} sees: {idle_outcome(sock)}")
+
+    # ── gap 2: a second SIGTERM while the first is being handled ──
+    r.emit(
+        g,
+        "== SIGTERM twice, 50 ms apart, heartbeat_service alone (a handler reset to default would make the second one fatal, -15)",
+    )
+    (n, pr, _), *_ = start("twice", ["heartbeat_service"])
+    pr.signal(signal.SIGTERM)
+    time.sleep(0.05)
+    pr.signal(signal.SIGTERM)
+    rc, dt = pr.wait(6.0)
+    if rc is None:
+        pr.reap()
+    r.emit(
+        g,
+        f"  exit {rc} within {N.bucket(dt if dt is not None else 99, exit_bounds[n])}",
+    )
+
+    rc, dt = r.stop(el)
+    r.emit(
+        g,
+        f"  elodin-db: exit {rc} within {N.bucket(dt if dt is not None else 99, [bound(0, 5.0, 'not our code: timing assumption, README')])}",
+    )
+
+
 # ── main ─────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -1636,6 +1951,7 @@ def main() -> int:
         bridge_only_heartbeat(r)
         session(r)
         sigint_each(r)
+        signals(r)
         sim_board(r)
         ball_valve_heartbeat_loss(r)
     finally:

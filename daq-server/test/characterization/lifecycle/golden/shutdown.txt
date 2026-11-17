@@ -39,3 +39,81 @@
   daq_bridge: exit 0 within [0, 4] s: slowest loop: kElodinRecvTimeoutMs 3000, + 1 s
   backend (node server.ts): exit -2 within [0, 1] s: no signal handler: default action
   elodin-db: exit -2 within [0, 5] s: not our code: timing assumption, README
+== SIGPIPE, each service started alone against a fresh elodin-db, sent after its ready line
+  heartbeat_service: exit -13 within [0, 1] s: default disposition: killed on delivery, + 1 s
+  stacklight_service: exit -13 within [0, 1] s: default disposition: killed on delivery, + 1 s
+  config_broadcast_service: exit -13 within [0, 1] s: default disposition: killed on delivery, + 1 s
+  ota_service: alive 1 s after SIGPIPE: ignored (signal(SIGPIPE, SIG_IGN)); SIGTERM -> exit 0
+  calibration_service: exit -13 within [0, 1] s: default disposition: killed on delivery, + 1 s
+  daq_bridge: alive 1 s after SIGPIPE: ignored (signal(SIGPIPE, SIG_IGN)); SIGTERM -> exit 0
+  sequencer_service: alive 1 s after SIGPIPE: ignored (signal(SIGPIPE, SIG_IGN)); SIGTERM -> exit 0
+  controller_service: exit -13 within [0, 1] s: default disposition: killed on delivery, + 1 s
+  t7_bridge --fake: alive 1 s after SIGPIPE: ignored (signal(SIGPIPE, SIG_IGN)); SIGTERM -> exit 0
+== SIGTERM, each service started alone (one at a time) against a fresh elodin-db, sent after its ready line; one idle client held on the sequencer's and the controller's command port
+-- SIGTERM heartbeat_service
+  exit 0 within [0, 3.6] s: kElodinRecvTimeoutMs 3000 + 100 ms loop, + 0.5 s
+  handler line: '\n[HeartbeatService] Shutting down...'
+  final line: '[HeartbeatService] Stopped.'
+-- SIGTERM stacklight_service
+  exit 0 within [0, 1.2] s: kStacklightRecvTimeoutMs 500 + 100 ms loop, + 0.6 s
+  handler line: '\n[StacklightService] Shutting down...'
+  final line: '[StacklightService] Stopped.'
+-- SIGTERM config_broadcast_service
+  exit 0 within [0, 0.6] s: exits on its next loop check (<= 100 ms), + 0.5 s
+  handler line: '\n[ConfigBroadcast] Shutting down...'
+  final line: '[ConfigBroadcast] Stopped.'
+-- SIGTERM ota_service
+  exit 0 within [0, 1.6] s: select timeout 1 s, + 0.6 s
+  handler line: '\n[OTAService] Shutting down...'
+  final line: '[OTAService] Stopped.'
+-- SIGTERM calibration_service
+  exit 0 within [0, 3.5] s: timing assumption, README
+  handler line: '\n[CalibrationService] Caught signal, shutting down...'
+  final line: '[ElodinClient] \u2705 Disconnected'
+  after it, in order: '[Cal] Saved robust adjustments on shutdown \u2192 <WORK>/adj_sig.json': True
+  adjustments file written: True
+-- SIGTERM daq_bridge
+  exit 0 within [0, 0.6] s: exits on its next loop check (<= 100 ms), + 0.5 s
+  handler line: '\n[DAQ Bridge] Shutting down...'
+  final line: '[ElodinClient] \u2705 Disconnected'
+  after it, in order: '[DAQ Bridge] Shutdown complete', '[ElodinClient] \u2705 Disconnected': True
+-- SIGTERM sequencer_service
+  exit 0 within [0, 1] s: shutdown() wakes the held client before the join; 10 ms select + 100 ms slices + 200 ms recv, + 0.5 s
+  handler line: '\n[Sequencer] Shutting down...'
+  final line: '[ElodinClient] \u2705 Disconnected'
+  idle client on P_SEQ sees: EOF
+-- SIGTERM controller_service
+  still running 3 s after SIGTERM: True (C4-5: stop() joins the Elodin subscriber, blocked in read_exact with no receive timeout); killed
+  handler line: '\n[controller_service] Caught signal, shutting down\u2026'
+  idle client on P_CTRL sees: EOF
+-- SIGTERM t7_bridge --fake
+  exit 0 within [0, 1] s: 50 ms fake read block + 100 ms nap slice, + 0.8 s
+  handler line: none
+  final line: '[ElodinClient] \u2705 Disconnected'
+-- SIGTERM controller_service (elodin-db unreachable)
+  exit 0 within [0, 1] s: 100 ms main poll + 100 ms subscriber retry slice + 10 ms loop, + 0.8 s
+  handler line: '\n[controller_service] Caught signal, shutting down\u2026'
+  final line: '\u2705 Controller service stopped.'
+  idle client on P_CTRL_NODB sees: EOF
+== SIGINT, each service started alone (one at a time) against a fresh elodin-db, sent after its ready line; one idle client held on the sequencer's and the controller's command port
+-- SIGINT sequencer_service
+  exit 0 within [0, 1] s: shutdown() wakes the held client before the join; 10 ms select + 100 ms slices + 200 ms recv, + 0.5 s
+  handler line: '\n[Sequencer] Shutting down...'
+  final line: '[ElodinClient] \u2705 Disconnected'
+  idle client on P_SEQ sees: EOF
+-- SIGINT controller_service
+  still running 3 s after SIGINT: True (C4-5: stop() joins the Elodin subscriber, blocked in read_exact with no receive timeout); killed
+  handler line: '\n[controller_service] Caught signal, shutting down\u2026'
+  idle client on P_CTRL sees: EOF
+-- SIGINT controller_service (elodin-db unreachable)
+  exit 0 within [0, 1] s: 100 ms main poll + 100 ms subscriber retry slice + 10 ms loop, + 0.8 s
+  handler line: '\n[controller_service] Caught signal, shutting down\u2026'
+  final line: '\u2705 Controller service stopped.'
+  idle client on P_CTRL_NODB sees: EOF
+-- SIGINT t7_bridge --fake
+  exit 0 within [0, 1] s: 50 ms fake read block + 100 ms nap slice, + 0.8 s
+  handler line: none
+  final line: '[ElodinClient] \u2705 Disconnected'
+== SIGTERM twice, 50 ms apart, heartbeat_service alone (a handler reset to default would make the second one fatal, -15)
+  exit 0 within [0, 3.6] s: kElodinRecvTimeoutMs 3000 + 100 ms loop, + 0.5 s
+  elodin-db: exit -15 within [0, 5] s: not our code: timing assumption, README
