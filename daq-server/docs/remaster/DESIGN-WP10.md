@@ -445,8 +445,9 @@ baseline: the pre-WP tip, as for the move-only item). Content:
 Not in cleanup (parked or forbidden): fixing C4-1/C4-2/C4-3/C1-10/C4-4/C4-5/C6-1/C6-3/C1-12; a
 shared registration helper for daq_bridge (§4.2); replacing the republish 10 ms slices with a
 condition variable (`ActuatorCommander.cpp:652-654` defers it; it changes timing); B4 encoders;
-unifying `toLower`/`trimVal`/`trim`; the `fire_start_time_` and `elodin_` pointer races; adopting
-WP3's `table_id_for` (none required; candidates in history).
+unifying `toLower`/`trimVal`/`trim`; the `fire_start_time_` and `elodin_` pointer races; a shared
+table-id helper (WP3's `table_id_for` was dropped by D62, DESIGN-WP3 §2.5; the candidates in
+history are for a D-SLOT package).
 
 ### 6.3 Sizes (STYLE-S33: C++ TU ≤ 700; no waiver)
 

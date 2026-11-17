@@ -226,9 +226,8 @@ two TUs nothing; a forward declaration in their headers would add a non-dimmed l
 does not list. So `CalibrationCommands.hpp` and `RawStream.hpp` include `CalibrationActions.hpp`.
 `AbortThresholds.{hpp,cpp}` is dropped for the same reason: one consumer (D17(d)), and 532-594 +
 1032-1108 are 140 lines that keep `CalibrationActions.cpp` at ~505 (428 moved lines plus the file
-comment, includes and namespace), under S33's 700. `table_id_for` (DESIGN-WP3 §2.5) is
-not adopted: calibration derives `cal_lo = type_lo + 0x10` (1966-1968) and the slot by the inverse
-(490, 517); neither is the same integer expression.
+comment, includes and namespace), under S33's 700. No shared table-id helper is adopted (WP3's `table_id_for` was dropped by D62; DESIGN-WP3 §2.5): calibration derives `cal_lo = type_lo + 0x10` (1966-1968) and the slot by the inverse
+(490, 517); neither is the same integer expression as the registrars', so the copies stay where they are.
 
 Declaration-only stubs, clang-format 19 clean, in `docs/remaster/design-stubs/cpp/services/
 calibration/`: `Conversions.hpp`, `SensorModels.hpp`, `CalibrationActions.hpp` (with the
