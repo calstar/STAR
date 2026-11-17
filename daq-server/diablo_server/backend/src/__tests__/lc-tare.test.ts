@@ -196,7 +196,14 @@ describe('live stream and reconnect backfill agree', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'server.ts'), 'utf8');
     expect(src).toContain('expandWithTare(parseElodinPacket(');
 
-    const drain = src.slice(src.indexOf('cs.outbox.drain()'), src.indexOf('cs.pacer.noteFlush'));
+    // The drain loop lives in server/ws-clients.ts (WP6 1.3). Both anchors must be found, or
+    // the slice is empty and the two assertions below pass on nothing.
+    const wsClients = fs.readFileSync(path.join(__dirname, '..', 'server', 'ws-clients.ts'), 'utf8');
+    const drainStart = wsClients.indexOf('cs.outbox.drain()');
+    const drainEnd = wsClients.indexOf('cs.pacer.noteFlush');
+    expect(drainStart).toBeGreaterThan(-1);
+    expect(drainEnd).toBeGreaterThan(-1);
+    const drain = wsClients.slice(drainStart, drainEnd);
     expect(drain).not.toContain('force_kg_tared');
     expect(drain).not.toContain('tareOffset');
   });
