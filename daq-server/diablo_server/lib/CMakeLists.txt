@@ -16,6 +16,7 @@ set(FSW_SOURCES
     src/config/SensorTables.cpp
     src/script/Lexer.cpp
     src/script/Parser.cpp
+    src/script/Printer.cpp
     src/script/Validate.cpp
     src/script/Slug.cpp
     src/script/ScriptConfig.cpp
