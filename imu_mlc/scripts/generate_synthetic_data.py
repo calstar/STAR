@@ -27,14 +27,17 @@ import sys
 
 # Auto-bootstrap .venv if launched outside the virtual environment
 if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
-    venv_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".venv", "bin", "python"))
-    if os.path.exists(venv_py) and os.path.realpath(sys.executable) != os.path.realpath(venv_py):
+    venv_py = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", ".venv", "bin", "python")
+    )
+    if os.path.exists(venv_py) and os.path.realpath(sys.executable) != os.path.realpath(
+        venv_py
+    ):
         os.execv(venv_py, [venv_py] + sys.argv)
 
 import argparse
 import numpy as np
 import pandas as pd
-
 
 
 def simulate_flight_profile(
@@ -59,7 +62,13 @@ def simulate_flight_profile(
     landed_dur = 5.0
 
     total_dur = (
-        pad_dur + boost_dur + coast_dur + apogee_dur + drogue_dur + main_dur + landed_dur
+        pad_dur
+        + boost_dur
+        + coast_dur
+        + apogee_dur
+        + drogue_dur
+        + main_dur
+        + landed_dur
     )
     n_samples = int(total_dur * sample_rate_hz)
     time = np.linspace(0, total_dur, n_samples, endpoint=False)
@@ -139,8 +148,16 @@ def simulate_flight_profile(
 
             # Mag rotates around Z axis due to roll
             roll_angle = 0.5 * 120.0 * progress * (t - t_pad_end) * (np.pi / 180.0)
-            mag_x[i] = b_earth[0] * np.cos(roll_angle) - b_earth[1] * np.sin(roll_angle) + rng.normal(0, 0.006)
-            mag_y[i] = b_earth[0] * np.sin(roll_angle) + b_earth[1] * np.cos(roll_angle) + rng.normal(0, 0.006)
+            mag_x[i] = (
+                b_earth[0] * np.cos(roll_angle)
+                - b_earth[1] * np.sin(roll_angle)
+                + rng.normal(0, 0.006)
+            )
+            mag_y[i] = (
+                b_earth[0] * np.sin(roll_angle)
+                + b_earth[1] * np.cos(roll_angle)
+                + rng.normal(0, 0.006)
+            )
             mag_z[i] = b_earth[2] + rng.normal(0, 0.005)
 
         # 3. COAST (Motor burnout, drag deceleration decaying toward near 0g)
@@ -216,9 +233,17 @@ def simulate_flight_profile(
 
             # Attitude flip shifts magnetic vector projection
             pitch_angle = progress * np.pi
-            mag_x[i] = b_earth[0] * np.cos(pitch_angle) - b_earth[2] * np.sin(pitch_angle) + rng.normal(0, 0.005)
+            mag_x[i] = (
+                b_earth[0] * np.cos(pitch_angle)
+                - b_earth[2] * np.sin(pitch_angle)
+                + rng.normal(0, 0.005)
+            )
             mag_y[i] = b_earth[1] + rng.normal(0, 0.005)
-            mag_z[i] = b_earth[0] * np.sin(pitch_angle) + b_earth[2] * np.cos(pitch_angle) + rng.normal(0, 0.005)
+            mag_z[i] = (
+                b_earth[0] * np.sin(pitch_angle)
+                + b_earth[2] * np.cos(pitch_angle)
+                + rng.normal(0, 0.005)
+            )
 
             apogee_turnover[i] = 1
 
@@ -315,7 +340,9 @@ def simulate_flight_profile(
                 # Resting on ground tilted (e.g. 45 deg tilt on hillside)
                 accel_x[i] = 0.65 + rng.normal(0.0, 0.005)
                 accel_y[i] = 0.20 + rng.normal(0.0, 0.005)
-                accel_z[i] = 0.73 + rng.normal(0.0, 0.006)  # norm = sqrt(0.65^2 + 0.2^2 + 0.73^2) ~ 1.0g
+                accel_z[i] = 0.73 + rng.normal(
+                    0.0, 0.006
+                )  # norm = sqrt(0.65^2 + 0.2^2 + 0.73^2) ~ 1.0g
 
                 gyro_x[i] = rng.normal(0.0, 0.25)
                 gyro_y[i] = rng.normal(0.0, 0.25)
@@ -366,21 +393,43 @@ def generate_flight_dataset(
 
     profiles = [
         # Flight 1: Clean nominal flight profile
-        {"has_tumbling_anomaly": False, "has_antenna_misalignment": False, "has_emergency_abort": False},
+        {
+            "has_tumbling_anomaly": False,
+            "has_antenna_misalignment": False,
+            "has_emergency_abort": False,
+        },
         # Flight 2: Flight with severe tumbling anomaly in coast (>1000 dps abort)
-        {"has_tumbling_anomaly": True, "has_antenna_misalignment": True, "has_emergency_abort": True},
+        {
+            "has_tumbling_anomaly": True,
+            "has_antenna_misalignment": True,
+            "has_emergency_abort": True,
+        },
         # Flight 3: Flight with attitude misalignment & signal drop risk
-        {"has_tumbling_anomaly": False, "has_antenna_misalignment": True, "has_emergency_abort": False},
+        {
+            "has_tumbling_anomaly": False,
+            "has_antenna_misalignment": True,
+            "has_emergency_abort": False,
+        },
         # Flight 4: Flight with moderate tumbling and emergency recovery trigger
-        {"has_tumbling_anomaly": True, "has_antenna_misalignment": True, "has_emergency_abort": True},
+        {
+            "has_tumbling_anomaly": True,
+            "has_antenna_misalignment": True,
+            "has_emergency_abort": True,
+        },
         # Flight 5: Secondary nominal profile with windy drift
-        {"has_tumbling_anomaly": False, "has_antenna_misalignment": False, "has_emergency_abort": False},
+        {
+            "has_tumbling_anomaly": False,
+            "has_antenna_misalignment": False,
+            "has_emergency_abort": False,
+        },
     ]
 
     all_dfs = []
     base_time_offset = 0.0
 
-    print(f"Generating synthetic 6-DOF IMU + Magnetometer flight data ({len(profiles)} profiles at 100 Hz)...")
+    print(
+        f"Generating synthetic 6-DOF IMU + Magnetometer flight data ({len(profiles)} profiles at 100 Hz)..."
+    )
     for idx, cfg in enumerate(profiles):
         df_profile = simulate_flight_profile(
             profile_id=idx + 1,
@@ -389,15 +438,21 @@ def generate_flight_dataset(
             has_emergency_abort=cfg["has_emergency_abort"],
             seed=seed + idx * 37,
         )
-        df_profile["timestamp"] = np.round(df_profile["timestamp"] + base_time_offset, 3)
+        df_profile["timestamp"] = np.round(
+            df_profile["timestamp"] + base_time_offset, 3
+        )
         base_time_offset = df_profile["timestamp"].iloc[-1] + 1.0
         all_dfs.append(df_profile)
 
     combined_df = pd.concat(all_dfs, ignore_index=True)
     combined_df.to_csv(output_path, index=False)
-    print(f"Saved {len(combined_df):,} samples across {len(profiles)} flights to '{output_path}'.")
+    print(
+        f"Saved {len(combined_df):,} samples across {len(profiles)} flights to '{output_path}'."
+    )
     print(f"Channels: accel [x,y,z], gyro [x,y,z], mag [x,y,z]")
-    print(f"Phase distribution:\n{combined_df['flight_phase'].value_counts().to_string()}")
+    print(
+        f"Phase distribution:\n{combined_df['flight_phase'].value_counts().to_string()}"
+    )
     print("Anomaly flags summary:")
     for col in [
         "signal_drop_risk",
@@ -408,13 +463,17 @@ def generate_flight_dataset(
         "extreme_tumbling",
         "emergency_chute_trigger",
     ]:
-        print(f"  - {col}: {combined_df[col].sum()} positive samples ({combined_df[col].mean()*100:.2f}%)")
+        print(
+            f"  - {col}: {combined_df[col].sum()} positive samples ({combined_df[col].mean()*100:.2f}%)"
+        )
 
     return combined_df
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate synthetic rocket IMU + Magnetometer flight logs.")
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic rocket IMU + Magnetometer flight logs."
+    )
     parser.add_argument(
         "--output",
         type=str,
@@ -434,7 +493,9 @@ def main():
         help="Random seed for reproducibility",
     )
     args = parser.parse_args()
-    generate_flight_dataset(output_path=args.output, n_profiles=args.profiles, seed=args.seed)
+    generate_flight_dataset(
+        output_path=args.output, n_profiles=args.profiles, seed=args.seed
+    )
 
 
 if __name__ == "__main__":
