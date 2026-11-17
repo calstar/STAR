@@ -2,7 +2,8 @@
  * server/engine-state.ts — the sequencer's state as the backend reports it.
  *
  * Owns `currentState`, `debugMode`, the advertised-allowed bitmask and the per-state refusal
- * reasons, and the CSV-derived commanded positions (`stateActuatorMap`, rebuilt by
+ * reasons, what a state id means (configStateName, resolveTransitionTarget with STATE_TO_CSV_NAME,
+ * step 2.9) and the CSV-derived commanded positions (`stateActuatorMap`, rebuilt by
  * reloadStateActuatorMap() at startup — a throw there kills the process before the crash guards
  * exist, as today — and at the two deploy callbacks, which keep their own try/catch and warning
  * text). applySequencerState() is the only path that moves the state (the `_SEQUENCER_STATE`
@@ -187,4 +188,54 @@ export function applySequencerState(parsedList: ParsedSensorData[]): void {
   debugMode = debugModeVal === 1;
   broadcastStateUpdate();
   broadcastCommandedActuatorsForState(currentState);
+}
+
+const STATE_TO_CSV_NAME: Record<string, string> = {
+  IDLE: 'Idle', ARMED: 'Armed', FUEL_FILL: 'Fuel Fill', OX_FILL: 'Ox Fill',
+  PRESS_STANDBY: 'Press Standby',
+  GN2_LOW_PRESS: 'GN2 Low Press', GN2_VENT: 'GN2 Low Vent',
+  FUEL_PRESS: 'Fuel Press', FUEL_VENT: 'Fuel Vent',
+  OX_PRESS: 'Ox Press', OX_VENT: 'Ox Vent',
+  GN2_HIGH_PRESS: 'GN2 High Press', GN2_HIGH_VENT: 'GN2 High Vent',
+  CALIBRATE: 'Calibrate', READY: 'Ready', FIRE: 'Fire', VENT: 'Vent',
+  ENGINE_ABORT: 'Engine Abort', GSE_ABORT: 'GSE Abort',
+  EMERGENCY_ABORT: 'Emergency Abort', ABORT: 'Emergency Abort',
+  DEBUG: 'Idle',
+};
+
+export type TransitionTarget =
+  | { ok: true; stateName: string; csvName: string }
+  /** The active config declares [[states]] and not this id: refuse, never fall back to the enum. */
+  | { ok: false };
+
+/**
+ * Resolve a state_transition id (commands.ts, step 2.9). Reads in today's order: configStateName(id)
+ * — the deployed-config cache — then readConfig().states (a read error reads as "declares none").
+ *
+ * Resolve the id through the config the sequencer itself loaded, not the compiled enum.
+ * The GUI sends a [[states]] id; SystemState is a fixed table that only agrees with it on a
+ * rig that never renumbered. On one that did, every id from the first divergence up named a
+ * different state: id 7 is Vent in config and FUEL_PRESS in the enum, so pressing Vent sent
+ * TRANSITION:Fuel Press — and because Fuel Press is a real state here, fromName() resolved
+ * it and the sequencer would have run it. A vent request executing a press is not a failure
+ * mode worth keeping for the sake of a fallback.
+ *
+ * So once the config declares a [[states]] list it is the sole authority: an id it does not
+ * declare is rejected, not rewritten through the enum. The enum fallback below stands only
+ * when the config declares no states at all (legacy / unconfigured rig).
+ */
+export function resolveTransitionTarget(id: number): TransitionTarget {
+  const declaredName = configStateName(id);
+  const cfgStates = (() => {
+    try {
+      const r = (readConfig() as any)?.states;
+      return Array.isArray(r) ? r : null;
+    } catch {
+      return null;
+    }
+  })();
+  if (cfgStates && cfgStates.length > 0 && declaredName === null) return { ok: false };
+  const stateName = declaredName ?? SystemState[id] ?? String(id);
+  const csvName = declaredName ?? STATE_TO_CSV_NAME[stateName] ?? stateName;
+  return { ok: true, stateName, csvName };
 }
