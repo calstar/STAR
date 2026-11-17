@@ -645,6 +645,11 @@ def main():
                     continue
                 lines.append((m["type"], f"< {client} {dumps(norm_event(n, m))}"))
             ev.extend(order_cross_path(lines))
+        # P13. A step's own notes: categorical lines the session derived from its stamps (a reply
+        # inside its bound or not). Only the holds session writes any; a capture without the key
+        # (every other session) prints nothing here.
+        for text in st.get("notes", []):
+            ev.append(f"= {text}")
         ev.append("")
     ev.append(
         "## board-health notifications seen (any step, any client; P1, reset flaps P1b)"

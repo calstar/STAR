@@ -3,7 +3,7 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator]
+ *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds]
  *
  * pt: the full scripted session against the one routed PT board. boards: every simulated board
  * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
@@ -11,12 +11,16 @@
  * stalesub: run.sh has arranged the D-SUB window (README "The stalesub session"); this only watches
  * what PT board 22 delivers, channel by channel, live and from history. operator: one client whose
  * upgrade carries an X-Auth-Email that is in operators.txt (README "The operator session").
+ * what PT board 22 delivers, channel by channel, live and from history. holds: one accepted timed
+ * hold, then the sequencer stalled (SIGSTOP) and gone (SIGTERM) under the backend's :9998 client;
+ * run.sh hands over the sequencer's PID in <CHAR_FIXTURE>/ports.json (README "The holds session").
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
 import WebSocket from 'ws';
 import * as fs from 'fs';
 import * as http from 'http';
+import * as net from 'net';
 import { spawn } from 'child_process';
 
 const PORT = parseInt(process.argv[2] ?? '', 10);
@@ -33,7 +37,9 @@ interface HttpRec {
   method: string; path: string; reqHeaders: Record<string, string>; reqBody: string | null;
   status: number; headers: Record<string, string | string[] | undefined>; body: string;
 }
-interface Step { name: string; t0: number; t1: number; frames: Frame[]; sent: Sent[]; http: HttpRec[] }
+/** `notes`: lines the session itself derives from its own stamps (a bound met or not), printed
+ *  under the step in ws_events.txt (characterize.py P13). Categorical only -- never a raw ms. */
+interface Step { name: string; t0: number; t1: number; frames: Frame[]; sent: Sent[]; http: HttpRec[]; notes: string[] }
 
 const capture = { wsPort: PORT, steps: [] as Step[] };
 let cur: Step | null = null;
@@ -41,7 +47,7 @@ const clients = new Map<string, WebSocket>();
 
 function step(name: string): void {
   if (cur) cur.t1 = Date.now();
-  cur = { name, t0: Date.now(), t1: 0, frames: [], sent: [], http: [] };
+  cur = { name, t0: Date.now(), t1: 0, frames: [], sent: [], http: [], notes: [] };
   capture.steps.push(cur);
   console.log(`[session] ${name}`);
 }
@@ -529,7 +535,97 @@ async function operator(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
-(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub() : MODE === 'operator' ? operator() : main()).then(() => process.exit(0)).catch((err) => {
+/** The :9998 line client's three replies that no other session takes (DESIGN-WP5 §6 G4, LEDGER
+ *  D70). Accepted hold: `state_transition {state: 21, holdMs: 800}` into the fixture's Flow Test
+ *  (run.sh holds) is answered `OK:<ms>` -- no error frame, the state_update into 21 and, after the
+ *  800 ms hold plus the gate's 0.4 s stagger, the auto-return to Press Standby. Stalled: with the
+ *  sequencer SIGSTOPped a self-transition on the hub (Press Standby -> Press Standby; the diagonal
+ *  is 1, so the line changes no state when it is finally read) gets `State transition failed:
+ *  timeout` after the client's 2000 ms socket timeout -- bounded here at 2.8 s (D34's macOS timer
+ *  overshoot fits; a 3000 ms timeout does not), as a per-step note; then SIGCONT, and whatever the
+ *  resumed sequencer does with the line still in its listen backlog (D-LATE) lands in this step.
+ *  Down: SIGTERM, wait until :9998 refuses, then the same transition -> `connect ECONNREFUSED`,
+ *  and a `debug_mode` whose failure has no reply at all. Nothing else, so a change elsewhere in
+ *  the WS/HTTP surface cannot fail this golden. */
+async function holds(): Promise<void> {
+  const ports = JSON.parse(fs.readFileSync(`${process.env.CHAR_FIXTURE}/ports.json`, 'utf8'));
+  const seqPid: number = ports.sequencer_pid;
+  const seqPort: number = ports.sequencer;
+  if (!Number.isInteger(seqPid) || !Number.isInteger(seqPort)) throw new Error('ports.json lacks sequencer_pid / sequencer');
+  const TIMEOUT_BOUND_MS = 2800;
+
+  step('readiness');
+  await waitForData(60000);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A', OPERATOR);
+  await settle(2500);
+
+  step('unlock');
+  send('A', { type: 'control_unlock', payload: {} });
+  await settle(600);
+
+  step('park_on_hub');
+  // Idle -> Armed -> Press Standby: the transitions CSV's only route to the hub Flow Test hangs off.
+  command('A', 'state_transition', { state: 2 });
+  await settle(2500);
+  command('A', 'state_transition', { state: 20 });
+  await settle(2500);
+
+  step('hold_accepted');
+  command('A', 'state_transition', { state: 21, holdMs: 800 });
+  await settle(2500);
+
+  step('sequencer_stalled');
+  process.kill(seqPid, 'SIGSTOP');
+  command('A', 'state_transition', { state: 20 });
+  const sentAt = cur!.sent[cur!.sent.length - 1].t;
+  const isTimeoutError = (f: Frame) => {
+    try {
+      const m = JSON.parse(f.raw);
+      return m.type === 'error' && String(m.payload?.message ?? '').endsWith(': timeout');
+    } catch { return false; }
+  };
+  // Wait for the reply itself (bounded well past the bound) rather than for quiet, so the note
+  // judges the reply's arrival and not the end of the step.
+  const replyBy = Date.now() + 8000;
+  while (!cur!.frames.some(isTimeoutError) && Date.now() < replyBy) await sleep(50);
+  const reply = cur!.frames.find(isTimeoutError);
+  cur!.notes.push(`timeout_reply_within_${TIMEOUT_BOUND_MS}ms: ${reply && reply.t - sentAt <= TIMEOUT_BOUND_MS ? 'yes' : 'no'}`);
+  process.kill(seqPid, 'SIGCONT');
+  await settle(1500);
+
+  step('sequencer_down');
+  process.kill(seqPid, 'SIGTERM');
+  // The sequencer is run.sh's child, so after it exits it is a zombie until run.sh reaps it and
+  // a signal-0 probe would keep succeeding: wait for its port to refuse instead, which is the
+  // precondition this half records.
+  const refusedBy = Date.now() + 15000;
+  for (;;) {
+    const refused = await new Promise<boolean>((resolve) => {
+      const s = net.connect({ host: '127.0.0.1', port: seqPort });
+      s.once('connect', () => { s.destroy(); resolve(false); });
+      s.once('error', (e: NodeJS.ErrnoException) => resolve(e.code === 'ECONNREFUSED'));
+    });
+    if (refused) break;
+    if (Date.now() > refusedBy) throw new Error('sequencer still listening 15 s after SIGTERM');
+    await sleep(100);
+  }
+  command('A', 'state_transition', { state: 20 });
+  await settle(1000);
+  command('A', 'debug_mode', { debugMode: true });
+  await settle(1000);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub() : MODE === 'operator' ? operator() : MODE === 'holds' ? holds() : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);
