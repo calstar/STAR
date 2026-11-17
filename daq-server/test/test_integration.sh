@@ -292,7 +292,7 @@ sleep 0.5
 # ── Build C++ binaries ───────────────────────────────────────────────────────
 
 # Full build via the canonical script, NOT a hand-maintained --target list.
-# A previous targeted list here omitted fake_packet_generator, so the test ran
+# A previous targeted list here omitted fake_packet_generator (since deleted), so the test ran
 # a STALE packet generator against fresh services after transport changes —
 # the classic "int fails until you run build first" bug. Full incremental
 # builds cost seconds and can never skip a binary the test uses.
@@ -364,9 +364,9 @@ else
 fi
 
 # Data source: board_simulator.py (speaks the current daq-protocol protocol).
-# NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA
-# magic + XOR framing the current daq_bridge cannot parse) with no CMake
-# target — never use it here even if someone makes it buildable again.
+# NOTE: the old fake_packet_generator.cpp (pre-DAQv2: 0xAA magic + XOR framing the
+# current daq_bridge cannot parse; deleted by WP2) was never a data source here —
+# never reintroduce a hand-built packet generator even if someone writes one.
 BOARD_SIM="$REPO_ROOT/sim/board_simulator.py"
 [ -f "$BOARD_SIM" ] || fail "board_simulator.py not found"
 echo "  ✅ board_simulator: $BOARD_SIM"
