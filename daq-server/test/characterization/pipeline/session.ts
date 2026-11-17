@@ -3,13 +3,14 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub]
+ *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator]
  *
  * pt: the full scripted session against the one routed PT board. boards: every simulated board
  * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
  * by sim/board_startup_sim.py: BOARD_STARTUP_SIM, PYTHON_BIN, CHAR_DAQ_UDP_PORT, CHAR_STARTUP_PORT).
  * stalesub: run.sh has arranged the D-SUB window (README "The stalesub session"); this only watches
- * what PT board 22 delivers, channel by channel, live and from history.
+ * what PT board 22 delivers, channel by channel, live and from history. operator: one client whose
+ * upgrade carries an X-Auth-Email that is in operators.txt (README "The operator session").
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
@@ -520,7 +521,36 @@ async function stalesub(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
-(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub() : main()).then(() => process.exit(0)).catch((err) => {
+/** The WS operator allowlist's positive half (H8b, LEDGER D84): a client whose upgrade request
+ *  carries an X-Auth-Email that IS in operators.txt. server.ts reads the header at the upgrade and
+ *  answers control_status with operator:true and the email; its control_unlock is then ok. The pt
+ *  session freezes the other two cases (no header: operator:true, email null; a viewer: operator:
+ *  false, not_operator) but never this one, so a backend that made every non-empty header a
+ *  viewer stayed green. Its own session, so the pt goldens (ws_streams.txt's P12 "paths checked"
+ *  line counts every client's handshake) keep every line. Nothing is commanded: the unlock's
+ *  reply is the observable, and a transition would move the sequencer. */
+async function operator(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A', OPERATOR);
+  await settle(2500);
+
+  step('unlock');
+  send('A', { type: 'control_unlock', payload: {} });
+  await settle(600);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub() : MODE === 'operator' ? operator() : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);

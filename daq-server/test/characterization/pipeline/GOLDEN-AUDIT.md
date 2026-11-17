@@ -55,3 +55,17 @@ section in `golden/http.txt` (eight viewer 403s and five witness GETs, README "O
 the viewer") and its empty header in `golden/ws_events.txt`. The six viewer 403s already in
 `http_errors`, and client B's WS lines (`ws_handshake.txt` `control_status`, `ws_events.txt`
 `viewer_client`), are untouched.
+
+## char/c0-h8b (H8b: the WS operator allowlist's positive half)
+
+```bash
+git diff char/c0-h8...char/c0-h8b -- 'daq-server/test/characterization/pipeline/golden/*' | grep '^-[^-]'
+```
+
+Zero lines removed, zero modified. The branch only adds `golden/operator/` (README "The operator
+session"): one client whose upgrade carries `X-Auth-Email: operator@example.com`, its
+`control_status` `operator: true` with the email and its `control_unlock_result` `ok`. It is a
+separate session so that the pt goldens keep every line -- in particular `ws_streams.txt`'s P12
+`paths checked:` line, which names every client's handshake replay and would gain a client if the
+operator connected inside the pt session. `golden/`, `golden/boards/`, `golden/nocal/` and
+`golden/stalesub/` are byte-identical to `char/c0-h8`.
