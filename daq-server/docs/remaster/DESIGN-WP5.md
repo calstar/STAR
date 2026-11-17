@@ -346,7 +346,7 @@ directly, so the registry gaining a `sensor-config` import adds no module to its
   to 3000 → the reply lands after the bound → red. (DESIGN-WP6's G4 bullet said only "after ~2 s",
   which a 3000 would pass.)
 
-**G4 = pipeline mode `holds`** (C0 test-only package, before 5.6 and WP6 1.15; D70). What it is,
+**G4 = pipeline mode `holds`** (C0 test-only package, before 5.6 and WP6 1.15; D70). What it is, *(D85: on main ten transition rows are one cell short, so `run.sh holds` pads each transitions row with `0` to the header width before appending the Flow Test column; product-neutral.)*
 fixed here so the C0 agent and the WP5 agent read the same thing:
 
 - *Fixture.* `run.sh` accepts `holds` beside `pt|nocal|boards` (`:45`), maps it to `pt` for
