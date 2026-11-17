@@ -140,6 +140,8 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
         ::close(listen_fd);
         return;
     }
+    // Kept: D-CTL (D17) — control/startup: S14, listen() status dropped, the service runs on with
+    // no TCP fire gate; loud half: none (the ready line below prints regardless; gap 6)
     ::listen(listen_fd, 4);
     std::cout << "[ControllerService] 🎮 Control server on TCP :" << port
               << "  (FIRE_START | FIRE_STOP)" << std::endl;
