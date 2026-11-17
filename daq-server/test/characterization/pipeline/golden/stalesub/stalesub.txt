@@ -1,0 +1,48 @@
+## D-SUB: a VTableStream accepted while its table was being re-registered (D41)
+registrar A (calibration_service, [boards.integration_startup] only): slot-10 config error logged: yes; ✅ Registered 1 CALIBRATED VTables
+daq_bridge: ✅ Registered 48 CALIBRATED VTables
+calibration_service: ✅ Registered 48 CALIBRATED VTables
+elodin-db: vtable [32, 49] inserted 5 times ([0x20,0x31]: PT10_Cal.CH1 / PT2_Cal.CH1)
+elodin-db: vtable [32, 50] inserted 2 times ([0x20,0x32]: PT2_Cal.CH2, the control)
+backend: gave up on [0x20, 0x31] (refusals exhausted): 0 time(s)
+
+## sensor_update, client A, 2 x RESUBSCRIBE_MIN_MS (server.ts 5000) + 2 s from PT2_Cal.CH2's first sample; board 22 channel by channel (P7 values)
+PT2.CH1.raw_adc_counts  value=577243604
+PT2_Cal.CH1.pressure_psi  absent (no frame carried it)
+PT2_Cal.CH1.raw_adc  absent (no frame carried it)
+PT2_Cal.CH1.raw_adc_counts  absent (no frame carried it)
+PT2.CH2.raw_adc_counts  value=560750930
+PT2_Cal.CH2.pressure_psi  value=450
+PT2_Cal.CH2.raw_adc  value=560750930
+PT2_Cal.CH2.raw_adc_counts  value=560750930
+PT2.CH3.raw_adc_counts  value=570646534
+PT2_Cal.CH3.pressure_psi  value=480
+PT2_Cal.CH3.raw_adc  value=570646534
+PT2_Cal.CH3.raw_adc_counts  value=570646534
+PT2.CH4.raw_adc_counts  value=544258255
+PT2_Cal.CH4.pressure_psi  value=400
+PT2_Cal.CH4.raw_adc  value=544258255
+PT2_Cal.CH4.raw_adc_counts  value=544258255
+
+## historical_data, client A: board 22 series on connect, then the 12 s query
+# connect: 13 PT2* series
+  PT2.CH1.raw_adc_counts {577243604}
+  PT2_Cal.CH1.pressure_psi absent
+  PT2_Cal.CH1.raw_adc absent
+  PT2_Cal.CH1.raw_adc_counts absent
+  PT2.CH2.raw_adc_counts {560750930}
+  PT2_Cal.CH2.pressure_psi {450}
+  PT2_Cal.CH2.raw_adc {560750930}
+  PT2_Cal.CH2.raw_adc_counts {560750930}
+  PT2.CH3.raw_adc_counts {570646534}
+  PT2_Cal.CH3.pressure_psi {480}
+  PT2_Cal.CH3.raw_adc {570646534}
+  PT2_Cal.CH3.raw_adc_counts {570646534}
+  PT2.CH4.raw_adc_counts {544258255}
+  PT2_Cal.CH4.pressure_psi {400}
+  PT2_Cal.CH4.raw_adc {544258255}
+  PT2_Cal.CH4.raw_adc_counts {544258255}
+# history: 2 PT2* series
+  PT2.CH1.raw_adc_counts {577243604}
+  PT2_Cal.CH1.pressure_psi absent
+  PT2_Cal.CH2.pressure_psi {450}
