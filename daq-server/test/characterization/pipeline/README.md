@@ -11,6 +11,7 @@ bash test/characterization/pipeline/run.sh holds       # an accepted timed hold,
 bash test/characterization/pipeline/run.sh startlog    # the backend alone, its startup log (G12) → golden/startlog/
 bash test/characterization/pipeline/run.sh selftest    # one failed self-test connector (G2) → golden/selftest/
 bash test/characterization/pipeline/run.sh unrecognized  # a board the backend does not expect (G3) → golden/unrecognized/
+bash test/characterization/pipeline/run.sh mismatch    # the ball valve against its CLOSE row (G1) → golden/mismatch/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
@@ -288,9 +289,9 @@ No `git grep` of the other goldens finds any of these lines: this is the only pl
 (`shared-types.ts`'s top-level `await`, WP5 5.4), a reordered startup row (WP6 §1.2) or a loader's
 import-time read moving out of import time shows.
 
-### The WP6 gap sessions (`run.sh selftest|unrecognized` → `golden/<mode>/`)
+### The WP6 gap sessions (`run.sh selftest|unrecognized|mismatch` → `golden/<mode>/`)
 
-`DESIGN-WP6.md` §7's G2, G3 and G1 (LEDGER D48): three notifications no other golden raised (G1 follows), each
+`DESIGN-WP6.md` §7's G2, G3 and G1 (LEDGER D48): three notifications no other golden raised, each
 in a session cut to its one path so a change elsewhere on the WS/HTTP surface cannot fail it, and
 each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate difference:
 
@@ -314,6 +315,25 @@ each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate di
   `boardNumber` is `null`, its type comes from the heartbeat. Not an empty `[boards]` (that trips
   the registry's 1..255 heartbeat fallback). WS only: the HTTP routes read `board_id` too, with
   their own defaults for a board that lacks it, and those shapes are not what this session freezes.
+- **mismatch (G1, `actuator_mismatch`).** The fixture names the ball valve — `"Main Ball Valve" =
+  ["NC", 1, 71]` in `[actuator_roles]`, a CLOSE-in-every-state row in the actuators CSV and a 0 row
+  in the delays CSV, exactly as `test/test_integration.sh` adds them, as copies beside the
+  originals with `[state_machine]` repointed by the same relative form — and the simulator runs
+  pt_board plus `ball_valve_board` (71, from 127.0.0.71: that alias is checked first on macOS).
+  A ball valve is the one actuator the simulated stack reports a sensed position for
+  (`BV1_Cal.CH1.position_pct` → sensed `BV1.CH1`, `ball-valve.ts`; an ACTUATOR board's current is a
+  free sine). Unlock → debug on → `actuator "Main Ball Valve" 1` → 4.5 s (3 s of travel,
+  `BALL_VALVE_TRAVEL_S`) → debug on **again**: `doSetDebugMode(true)` publishes state without
+  clearing overrides (`SequencerService.cpp`), and that `_SEQUENCER_STATE` row is what schedules
+  the backend's 5 s check → `actuator_mismatch ongoing: true` "Actuator mismatch in Idle: BV1.CH1
+  (expected CLOSED, sensed OPEN)" → `actuator 0`: the valve travels back, each sensed change with
+  the key active reschedules the check → "Actuator positions match expected" `ongoing: false` →
+  debug off. The two notifications are waited for by predicate with a bound (12 s / 15 s), not by
+  quiet, so the 5 s timer cannot straddle a step boundary under load; a late or missing one is a
+  frame in the wrong step, which the golden shows. (Debug off first does not work: it clears
+  overrides before publishing, so the valve closes before the check runs.) The valve never hears a
+  SERVER_HEARTBEAT here (daq_bridge sends them to `broadcast_ip`:hb_udp, the valve listens on
+  127.0.0.71:act_udp), so the simulator's failsafe-open never arms.
 ## The scripted session (`session.ts`)
 
 GET sweep → connect A → 3 s live → viewer client B (`X-Auth-Email`, not an operator) → unknown `subscribe`, non-JSON, `get_state_transitions` →

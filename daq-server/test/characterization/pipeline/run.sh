@@ -19,9 +19,11 @@
 #                                                        # connector (self_test_fail_<id>) → golden/selftest/
 #   bash test/characterization/pipeline/run.sh unrecognized  # a heartbeating board the backend's config
 #                                                        # does not expect (unrecognized_<id>) → golden/unrecognized/
+#   bash test/characterization/pipeline/run.sh mismatch   # the ball valve opened in debug mode against a
+#                                                        # CLOSE row: actuator_mismatch raised and cleared → golden/mismatch/
 #
 # "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
-# 127.0.0.22); it fails, never skips, when one is missing. Linux has all of 127/8.
+# 127.0.0.22, "mismatch" 127.0.0.71); it fails, never skips, when one is missing. Linux has all of 127/8.
 #
 # Takes the machine-wide stack lock itself (re-entrant under gate.sh / run.sh). Off the stand
 # only. Every service runs against a private fixture tree in .tmp/char_pipeline_<pid>/ with its
@@ -58,10 +60,11 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" startlog || rc=1
   bash "$HERE/run.sh" selftest || rc=1
   bash "$HERE/run.sh" unrecognized || rc=1
+  bash "$HERE/run.sh" mismatch || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized) ;;
-  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized|mismatch) ;;
+  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized|mismatch]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -71,10 +74,11 @@ fi
 
 # The boards session sends as every simulated board from 127.0.0.<board_id>. Same list as
 # test/test_integration.sh: every board_id octet in config_base.toml plus the startup board (60).
-# stalesub sends only as pt_board_2 (22).
-if { [ "$MODE" = boards ] || [ "$MODE" = stalesub ]; } && [ "$(uname)" = "Darwin" ]; then
+# stalesub sends only as pt_board_2 (22); mismatch adds the ball valve (71) to pt's board.
+if { [ "$MODE" = boards ] || [ "$MODE" = stalesub ] || [ "$MODE" = mismatch ]; } && [ "$(uname)" = "Darwin" ]; then
   missing=()
   ALIASES="11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71"; [ "$MODE" = stalesub ] && ALIASES=22
+  [ "$MODE" = mismatch ] && ALIASES=71
   for i in $ALIASES; do
     ifconfig lo0 2>/dev/null | grep -q "inet 127\.0\.0\.$i " || missing+=("127.0.0.$i")
   done
@@ -459,7 +463,7 @@ if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog -x selftest -x unrecognized "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog -x selftest -x unrecognized -x mismatch "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
