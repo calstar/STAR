@@ -3,7 +3,7 @@
 # This script intentionally delays the DAQ Bridge to test if the Relay
 # recovers after several failed subscription attempts.
 #
-# Usage: bash scripts/debug/repro_relay_race.sh
+# Usage: bash tools/debug/repro_relay_race.sh
 
 PROJECT="/home/aidan/Diablo-FSW"
 mkdir -p /tmp/race_logs
