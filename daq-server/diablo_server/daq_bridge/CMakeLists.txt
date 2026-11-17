@@ -1,6 +1,6 @@
 # DAQ Bridge: listens for sensor UDP packets, publishes to Elodin DB
 
-add_executable(daq_bridge daq_bridge_main.cpp)
+add_executable(daq_bridge daq_bridge_main.cpp BoardMap.cpp)
 
 target_include_directories(daq_bridge PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/include

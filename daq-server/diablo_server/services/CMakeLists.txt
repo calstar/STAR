@@ -10,17 +10,7 @@ find_package(Eigen3 REQUIRED)
 
 # ── Sequencer Service ─────────────────────────────────────────────────────────
 # State machine, actuator commanding, abort, FIRE lifecycle
-add_executable(sequencer_service
-    sequencer/sequencer_main.cpp
-    sequencer/SequencerService.cpp
-    sequencer/StateMachine.cpp
-    sequencer/ActuatorCommander.cpp
-    sequencer/AbortBroadcaster.cpp
-    sequencer/HoldTimer.cpp
-    sequencer/ScriptStates.cpp
-    sequencer/ScriptRunner.cpp
-    sequencer/PressureFeed.cpp
-)
+add_executable(sequencer_service sequencer/sequencer_main.cpp ${SEQUENCER_SOURCES})
 target_include_directories(sequencer_service PRIVATE ${COMMON_INCLUDES})
 target_link_libraries(sequencer_service
     fsw_daq_lib daq_comms_lib daqv2_comms
