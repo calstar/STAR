@@ -11,6 +11,8 @@
 #                                                        # re-registration window → golden/stalesub/
 #   bash test/characterization/pipeline/run.sh operator   # a WS client whose X-Auth-Email is in
 #                                                        # operators.txt (H8b) → golden/operator/
+#   bash test/characterization/pipeline/run.sh holds      # an accepted timed hold (OK:<ms>), then
+#                                                        # :9998 stalled and down → golden/holds/
 #
 # "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
 # 127.0.0.22); it fails, never skips, when one is missing. Linux has all of 127/8.
@@ -46,9 +48,10 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" boards || rc=1
   bash "$HERE/run.sh" stalesub || rc=1
   bash "$HERE/run.sh" operator || rc=1
+  bash "$HERE/run.sh" holds || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards|stalesub|operator) ;; *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub|operator|holds) ;; *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -131,8 +134,89 @@ cat > "$FX/ports.json" <<EOF
  "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-FXMODE="$MODE"; case "$MODE" in nocal|operator) FXMODE=pt ;; esac  # the pt fixture, one routed board
+FXMODE="$MODE"; case "$MODE" in nocal|operator|holds) FXMODE=pt ;; esac  # the pt fixture, one routed board
 "$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$FXMODE"
+
+if [ "$MODE" = holds ]; then
+  # A state that takes a timed hold. The shipped config has none (test_integration.sh builds one
+  # too, for the same reason: a reference stand config should not grow a state so CI can measure
+  # one), so the fixture's CSVs get a `Flow Test` column -- reachable from Press Standby and back,
+  # the gate valve open, staggered 0.4 s on the way in -- and config.toml the `[[states]]` +
+  # `[flow]` block exactly as test/test_integration.sh writes it (id 21, 800 ms, max 5000). One
+  # step test_integration.sh does not take: ten rows of the shipped state_transitions.csv are a
+  # cell short (NEEDS-REPAIR.md; both parsers read a row left-aligned and a missing cell as "not
+  # allowed"), so a column appended to such a row lands under the previous header -- Press Standby's
+  # `1` under Emergency Abort, and the hold is refused. test_integration.sh never sees that because
+  # it enters Flow Test with debug mode on, which bypasses the table (SequencerService.cpp). Here
+  # every row is first padded with `0` to the header's width, which neither parser can tell from a
+  # missing cell, so the new column is the only change the sequencer reads. The
+  # three patched CSVs are copies beside the originals under config/, and [state_machine] points
+  # at them by the same relative form: the C++ services resolve it against cwd (the fixture) and
+  # the backend's loaders against cwd/../.. (char/backend), whereas an absolute path is found by
+  # the sequencer only (make_fixture.py, README "Frozen behaviour"), which would freeze a backend
+  # that never learned the column.
+  "$PY" - "$FX/config" <<'PYEOF'
+import csv, os, sys
+cfg_dir = sys.argv[1]
+
+def load(name):
+    with open(os.path.join(cfg_dir, name)) as f:
+        return [r for r in csv.reader(f)]
+
+def save(name, rows):
+    with open(os.path.join(cfg_dir, name), 'w', newline='') as f:
+        csv.writer(f).writerows(rows)
+
+NAME = 'Flow Test'
+RETURN = 'Press Standby'
+GATE = 'Fuel Main'
+GATE_DELAY = '0.4'
+
+# Transitions: reachable only from the hub, and able to get back to it -- the sequencer refuses to
+# make a state holdable at all if it cannot reach its return target.
+t = load('state_transitions.csv')
+width = len(t[0])
+t[0].append(NAME)
+for r in t[1:]:
+    r.extend(['0'] * (width - len(r)))  # the short rows (see above), to the header's width
+    r.append('1' if r[0] == RETURN else '0')
+t.append([NAME] + ['1' if h in (RETURN, NAME) else '0' for h in t[0][1:]])
+save('holds_state_transitions.csv', t)
+
+# Actuators: the gate opens, everything else stays shut.
+a = load('state_machine_actuators.csv')
+a[0].append(NAME)
+for r in a[1:]:
+    r.append('OPEN' if r[0] == GATE else 'CLOSE')
+save('holds_state_machine_actuators.csv', a)
+
+# Delays: the gate is staggered on the way IN only, so the hold comes out as requested + gate delay.
+d = load('state_machine_actuator_delays.csv')
+d[0].append(NAME)
+for r in d[1:]:
+    r.append(GATE_DELAY if r[0] == GATE else '0')
+save('holds_state_machine_actuator_delays.csv', d)
+PYEOF
+  CFG="$FX/config/config.toml"
+  sed -i.bak \
+    -e 's|^transitions_csv = .*|transitions_csv = "config/holds_state_transitions.csv"|' \
+    -e 's|^actuator_csv = .*|actuator_csv = "config/holds_state_machine_actuators.csv"|' \
+    -e 's|^actuator_delay_csv = .*|actuator_delay_csv = "config/holds_state_machine_actuator_delays.csv"|' \
+    "$CFG" && rm -f "$CFG.bak"
+  cat >> "$CFG" <<EOF
+
+[[states]]
+id = 21
+name = "Flow Test"
+is_flow = true
+
+[flow]
+return_target = "Press Standby"
+duration_ms = 800
+max_ms = 5000
+gate_actuator = "Fuel Main"
+EOF
+fi
 
 # The backend runs from a copy of its own source under the fixture (srv/, the same layout as
 # daq-server/), so everything it resolves relative to its own file lands in the fixture rather
@@ -190,7 +274,13 @@ wait_log() {  # pid name fixed-string seconds -- the service's own line, or a lo
 PIDS+=($!); wait_port $P_ELODIN elodin 15
 
 (cd "$FX" && exec "$BIN/sequencer_service" --config "$CFG" --port $P_SEQ) > "$FX/logs/sequencer.log" 2>&1 &
-PIDS+=($!); wait_port $P_SEQ sequencer 15
+PIDS+=($!); SEQ_PID=$!; wait_port $P_SEQ sequencer 15
+# The holds session stops, resumes and finally terminates the sequencer itself (session.ts holds):
+# it learns the PID from ports.json, rewritten here because the file is written -- and read by
+# make_fixture.py -- before the sequencer exists. context.json's port inversion below leaves this
+# key out, or every PID-valued number in the capture would be rewritten as a port.
+"$PY" -c 'import json, sys; p = sys.argv[1]; d = json.load(open(p)); d["sequencer_pid"] = int(sys.argv[2]); json.dump(d, open(p, "w"))' \
+  "$FX/ports.json" "$SEQ_PID"
 # At boot the sequencer publishes every valve de-energized (ActuatorCommander publishInitialState:
 # a normally-open valve reads 1) and then applies the boot state's column (Fuel Main → 0). Whether
 # the backend, subscribing a moment later, records that transient 1 in its history was a race
@@ -301,7 +391,7 @@ cat > "$FX/context.json" <<EOF
  "gui_points_per_second": $(sed -n "/^\[gui\]/,/^\[/s/^points_per_second = \([0-9.]*\)/\1/p" "$CFG"),
  "paths": {"$FX/config": "<cfgdir>", "$FX/home": "<home>", "$FX": "<fx>",
            "$ROOT": "<daq>"},
- "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))'),
+ "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items() if k != "sequencer_pid"}))'),
  "under_load": $([ "${CHAR_UNDER_LOAD:-0}" = 1 ] && echo true || echo false),
  "selftest_expected": $("$PY" "$HERE/selftest_expected.py" "$FX/sim_config.toml" "$CFG")}
 EOF
@@ -319,7 +409,7 @@ if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal -x stalesub -x operator "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub -x operator -x holds "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
