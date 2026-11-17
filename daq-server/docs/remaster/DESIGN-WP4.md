@@ -3,13 +3,14 @@
 The "as decided" execution note for WP4: what an implementer deletes or edits, in what order, with
 the repo-wide evidence for each file. Scope: BLOAT-MAP §2d, §6 and the WP4 row; LEDGER WP4 row
 (H-1 done; the reviewer's alias item, §5); D42(e)/D49 (`test_duplicate_subscription.ts` is parked);
-WP2-EVIDENCE.md (the `send_fake_pt` scripts, the two `test_integration.sh` fossil comments);
+D68 (`test_stacklight.sh` is deleted, not wired — D67(2) reversed); WP2-EVIDENCE.md (the `send_fake_pt` scripts, the two `test_integration.sh` fossil comments);
 WP1-EVIDENCE.md §1 (`test_ota_flash.py:57`). No product code changes: nothing here is launched by
 a systemd unit, `dev.sh`, CI or the gate, so the frozen contract (D5) is untouched by construction
 and the oracle (`test_integration.sh`) loses only a branch that has not been runnable.
 
 **Baseline.** Every line number is `git show backend-remastered:daq-server/<path>` at
-`backend-remastered` @ **`d20852e9`**. Under `deploy/`, `sim/`, `archive/`, `tools/` and `test/`
+`backend-remastered` @ **`45b91dc5`** (no change under the listed dirs since `d20852e9`, where this
+note was first anchored). Under `deploy/`, `sim/`, `archive/`, `tools/` and `test/`
 (outside `test/characterization/`) that tree equals `main` @ `15b5a0c5` except two files:
 `test/test_integration.sh` (H1 `f47aa8e3`, H2 `07cecad5`/`9d029561`) and `test/ws_data_flow_test.ts`
 (H2). BLOAT-MAP's `test_integration.sh:21,42,824-837` is therefore stale: at the tip the flag arm
@@ -33,6 +34,9 @@ oracle is edited), D25, D42(e), D49; STYLE-S15, S35, S38, S39.
 ---
 
 ## 1. What WP4 deletes
+
+**28 files**: 7 launchers and 2 sim network scripts (§1.1), 7 broken test scripts (§1.2), 10
+superseded probes (§1.3), the orphan `test_stacklight.sh` (§3, D68) and the Python data logger (§1.4).
 
 ### 1.1 Launchers (`deploy/startup/`, `sim/`)
 
@@ -69,6 +73,7 @@ line 35 goes (§2.2).
 | `test/test_system.sh` | 70 | `:41` `./build.sh`, `:50` `source startup.sh`, `:51-52` `cd shell && source startup_db.sh`, `:67` `./shell/tmux_start_sensors.sh` — none exist | `.github/workflows/daq-server-ci.yml:571-572` (orchestrator, §6) |
 | `test/test_calibration_system.py` | 130 | `from scripts.channel_plotter import …` — no `channel_plotter` in the tree | none |
 | `test/test_human_input_system.py` | 181 | same import | none |
+| `test/test_robustness_system.py` | 371 | `:19-32` `from calibration_robustness import …` with no `sys.path` insert (none anywhere in the file) and no `chdir`: the module is `tools/calibration/calibration_robustness.py`, so run from `test/` — or from anywhere but `tools/calibration/` — the import fails and `:30-32` exits 1. It was written to exercise a parked tree (WP11 §2) and would write `./test_backups`, `./test_logs` | none |
 
 ### 1.3 Test scripts under `test/` (working ad-hoc probes, superseded)
 
@@ -86,7 +91,6 @@ same things, and the characterization areas freeze the bytes (`packets/`, `pipel
 | `test/verify_packet_reception.sh` | 90 | `README.md:50` (tree listing; WP12) |
 | `test/capture_raw_packets.py` | 80 | none |
 | `test/send_sensor_config_manual.py` | 71 | none (its own usage line says `scripts/test/…`) |
-| `test/test_robustness_system.py` | 371 | none (tests `tools/calibration/calibration_robustness.py`, a parked tree; writes `./test_backups`, `./test_logs`) |
 | `test/test_udp_receive.py` | 44 | none |
 | `test/ws_rate_probe.ts` | 96 | none (`:11-15` documents running it by hand from `diablo_server/backend`) |
 
@@ -171,70 +175,49 @@ candidates in `find_ota_service()`, 50-69). WP1 deleted `build-ci/`; CI sets `OT
 puts the binary at the first candidate `build/bin/ota_service` (WP1-EVIDENCE.md §1). The not-found
 message (63-67) prints the remaining two candidates. No black on an existing file (S39).
 
-### 2.6 `test/test_integration.sh:296-297, 368-370` — the two fossil comments (comment-only commit)
+### 2.6 `test/test_integration.sh:297, 369-371` (tip) = `295, 367-369` after commit 4 — the two fossil comments (comment-only commit)
 
 WP2 deletes `archive/legacy/pre-daqv2-tools/fake_packet_generator.cpp` and hands these to WP4
 (WP2-EVIDENCE.md:58). Keep both warnings — they explain two rules the script still follows — and
-mark the file deleted:
+mark the file deleted. **Line numbers:** at the tip the one-line edit is 297 and the NOTE is
+369-371 (D67's 296 / 368-370 were off by one). Commit 4 deletes lines 21 and 42 above them, so when
+commit 5 is cut they are **295** and **367-369**; re-anchor with `grep -n fake_packet_generator`.
 
-- 296: `# A previous targeted list here omitted fake_packet_generator, so the test ran` →
+- 297 → 295: `# A previous targeted list here omitted fake_packet_generator, so the test ran` →
   `# A previous targeted list here omitted fake_packet_generator (since deleted), so the test ran`
-- 368-370: `# NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA` /
+- 369-371 → 367-369: `# NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA` /
   `# magic + XOR framing the current daq_bridge cannot parse) with no CMake` /
   `# target — never use it here even if someone makes it buildable again.` →
   `# NOTE: the old fake_packet_generator.cpp (pre-DAQv2: 0xAA magic + XOR framing the` /
   `# current daq_bridge cannot parse; deleted by WP2) was never a data source here —` /
   `# never reintroduce a hand-built packet generator even if someone writes one.`
 
-### 2.7 `test/test_stacklight.sh` — wire it (see §3)
+### 2.7 `test/test_stacklight.sh` — deleted (see §3)
 
 ---
 
-## 3. The orphan test: `test/test_stacklight.sh`
+## 3. The orphan test: `test/test_stacklight.sh` — **deleted** (D68; D67(2) reversed)
 
-61 lines; nothing runs it (`git grep test_stacklight` → nothing). Hermetic: `--force-state <n>
---config /dev/null --target-ip 127.0.0.1 --target-port 5099 --interval-ms 200` (13-14), then a
-Python receiver asserts `len == 10`, `data[0] == 14` and `data[6:] == red,yellow,green,buzzer` for
-14 states (40-53). Every flag exists (`stacklight_service_main.cpp:188-201`); `--force-state` skips
-the Elodin thread (290-293); `/dev/null` yields no overrides (`getTomlValue` returns `""`, 239-261);
-the first send is immediate (`last_send` initialised one interval back, 307). Port 5099 is bound by
-nothing else in the repo.
+61 lines; nothing runs it (`git grep test_stacklight` → only its own `:3` usage line). It starts
+`stacklight_service --force-state <n>` and asserts the light bytes per state for 14 states. D67(2)
+wired it as a ctest on the premise that the `--force-state` path was tested nowhere else. That
+premise was false, and D68 reverses the ruling: `git rm test/test_stacklight.sh` in commit 2, no
+CMake edit, no new ctest.
 
-**Overlap, stated.** C1's `packets/golden/service_stacklight.txt` (merged) already freezes the exact
-STACKLIGHT_COMMAND bytes for every state 0-25, 254, 255, reached black-box through a stand-in
-Elodin; its light bytes agree with all 14 expectations here (e.g. state 1 → `00 00 01 00`, 16-19 →
-`01 00 00 01`, 255 → `01 01 01 01`). `config/bin_dump.py:184-190` already runs the binary with
-`--force-state 1` for its startup lines. What this script alone covers is the `--force-state` →
-packet path (golden: Elodin-row → packet; bin_dump: `--force-state` → startup log). That is a real
-but thin margin; §7 asks the orchestrator to drop the registration under D49 if it is judged not to
-earn a fixed-port ctest.
+**Already frozen, black-box, in merged areas:**
 
-**Registration (decided: wire it).** `diablo_server/services/CMakeLists.txt`, after line 65 (the
-`stacklight_service` link block; the Python find and the `add_test` shape are
-`services/t7_bridge/CMakeLists.txt:34-43`):
+- the `--force-state` path: the config area runs `stacklight_service --force-state 1` against
+  every staged `config/config.toml` (`test/characterization/config/bin_dump.py:184-190`) and
+  freezes its output for all 28 configs under `config/golden/bin/stacklight/` — e.g.
+  `config_base.toml.txt:3` `[StacklightService] --force-state 1: skipping Elodin`;
+- the light bytes per state: C1's `test/characterization/packets/golden/service_stacklight.txt`
+  freezes the exact STACKLIGHT_COMMAND datagram for every state 0-25, 254, 255, reached through a
+  stand-in Elodin, and agrees with all 14 of the script's expectations.
 
-```cmake
-# Hermetic: --force-state, UDP to 127.0.0.1:5099, no Elodin. Lights per state are also frozen
-# black-box in test/characterization/packets/golden/service_stacklight.txt.
-find_package(Python3 COMPONENTS Interpreter)
-if(Python3_Interpreter_FOUND)
-    add_test(NAME stacklight_force_state
-             COMMAND ${CMAKE_COMMAND} -E env
-                     STACKLIGHT_BIN=$<TARGET_FILE:stacklight_service>
-                     bash ${CMAKE_SOURCE_DIR}/test/test_stacklight.sh)
-    set_tests_properties(stacklight_force_state PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
-endif()
-```
-
-`${CMAKE_SOURCE_DIR}` is `daq-server/` (the top-level `CMakeLists.txt:63-66` runs
-`enable_testing()` before `add_subdirectory(diablo_server)`, and t7 uses the same root). TIMEOUT
-(D38): 14 states x (start + ≤ 5 s receive) worst case 70 s. RUN_SERIAL: a fixed port, like
-`t7_integration`. The script's own `python3` on `PATH` is what every other harness assumes.
-Ownership: BLOAT-MAP gives CMake to WP8's slot only to avoid a concurrent editor; D25 serializes
-WPs, so WP4 edits `services/CMakeLists.txt` alone. No other CMake file changes. Not a timing test
-(`timing_ctests.txt` unchanged); not added to `baseline_ctest_failures.txt` — if it is red on the
-pre-WP tip, that is a defect of the script or the service, reported, and the registration is
-dropped from the item (§7).
+What the script added over those two was a fixed-port (5099), 14-process, RUN_SERIAL ctest in every
+gate and CI run (D49) for a margin both areas already cover between them. **DoD item** "wire the
+real orphan test": recorded as **superseded by C1 and the config area**. The script leaves the tree
+with the other superseded probes (§1.3's class), not unwired.
 
 ---
 
@@ -243,7 +226,7 @@ dropped from the item (§7).
 Branch from the tip after WP2 merges; one queue item (D25); every commit leaves `bash -n` clean on
 every touched shell file and `python3 -m py_compile test/test_ota_flash.py` clean. Plain one-line
 messages (AGENT-RULES 3). Nothing under `test/characterization/**` or `docs/remaster/**` is edited
-by WP4 (C0 owns them; §6 hands the two lines to the orchestrator).
+by WP4 (C0 owns them; §6 hands its lines to the orchestrator). No CMake file is edited (§3).
 
 **Commit 1 — delete the launchers and the sim network scripts.**
 
@@ -253,7 +236,7 @@ by WP4 (C0 owns them; §6 hands the two lines to the orchestrator).
 
 **Commit 2 — delete the broken and superseded test scripts.**
 
-- [ ] `git rm test/{test_fsw_elodin,test_pt_db,test_elodin_groundstation,test_system,debug_packet_reception,diagnose_network,test_network_connectivity,test_packet_reception,test_udp_reception,verify_packet_reception}.sh`
+- [ ] `git rm test/{test_fsw_elodin,test_pt_db,test_elodin_groundstation,test_system,debug_packet_reception,diagnose_network,test_network_connectivity,test_packet_reception,test_udp_reception,verify_packet_reception,test_stacklight}.sh`
 - [ ] `git rm test/{capture_raw_packets,send_sensor_config_manual,test_calibration_system,test_human_input_system,test_robustness_system,test_udp_receive}.py test/ws_rate_probe.ts`
 - [ ] **Not** `test/test_duplicate_subscription.ts` (§5). **Not** `test/test_udp_simple.py`,
       `scripts/test_udp.py` (Parked: `deploy/setup/fix_board_ip.sh:65`, `scripts/README.md:18`).
@@ -264,25 +247,23 @@ by WP4 (C0 owns them; §6 hands the two lines to the orchestrator).
 - [ ] `archive/legacy/python-services/README.md`: delete 22-29 (§2.3).
 
 **Commit 4 — `test_integration.sh`: remove the `--legacy` branch** (§2.1 table; nothing else in
-the file).
+the file). Run the §4.1 byte check **immediately after this commit**, while it is `HEAD` — commit 5
+edits the same file, and the check's `sed` addresses are the parent's line numbers.
 
-**Commit 5 — `test_integration.sh`: the two fossil comments** (§2.6; comments only).
+**Commit 5 — `test_integration.sh`: the two fossil comments** (§2.6; comments only; lines 295 and
+367-369 after commit 4).
 
 **Commit 6 — `test_ota_flash.py:57`** (§2.5).
 
-**Commit 7 — register `test_stacklight.sh`** (§3 CMake block). Before committing, run the script by
-hand against the pre-WP build (`STACKLIGHT_BIN=build/bin/stacklight_service bash
-test/test_stacklight.sh`, under the stack lock: it binds 5099) and record the 14 `PASS` lines in
-the merge row. Mutation (each red, then reverted, recorded): (a) `stacklight_service_main.cpp:50`
-`cmd.green = 1;` → `cmd.yellow = 1;` (IDLE goes `FAIL … expected 0,0,1,0`); (b) in the script, line
-49 `FIRE 16 1,0,0,1` → `1,0,0,0` (the test must be able to fail on its own table too).
+(No commit 7: `test_stacklight.sh` goes in commit 2, §3. §7.1's alias fix, if taken, is commit 7.)
 
 ### 4.1 Verify (D19: the oracle is edited, so the full gate with integration and the Linux leg)
 
 - [ ] Per commit: `bash -n` on every touched `.sh`; `git grep -n -I -F -e <stem>` for every deleted
       basename over the whole repo (the §1 method) returns **exactly** the §6 residual list — a
       deterministic diff, not a judgment.
-- [ ] Commit 4 byte check, from the parent commit's file:
+- [ ] Commit 4 byte check, run with commit 4 as `HEAD` (before commit 5 or any later commit
+      touches the file), from the parent commit's file:
       ```
       git show HEAD~1:daq-server/test/test_integration.sh \
         | sed -e '843,858d' -e '833d' -e '42d' -e '21d' -e '19s/ \[--legacy\]//' -e '834,842s/^  //' \
@@ -290,25 +271,25 @@ the merge row. Mutation (each red, then reverted, recorded): (a) `stacklight_ser
               -e '763s/.*/# commands here. Reads Elodin port from the test config./' \
         | diff - daq-server/test/test_integration.sh && echo IDENTICAL
       ```
-      (dry-run on the tip: 1224 → 1205 lines, parses). Re-anchor the numbers if H-series commits
-      moved them; the pattern grep in the Baseline finds every site.
+      (dry-run on the tip: 1224 → 1205 lines, parses; in the result `fake_packet_generator` is at
+      295 and 367, the alias echo at 253-257). Re-anchor the numbers if H-series commits moved them;
+      the pattern grep in the Baseline finds every site.
 - [ ] `bash daq-server/test/characterization/with_stack_lock.sh bash daq-server/test/test_integration.sh`
       on the item's tip: `PASS`, 0 failed; the header still prints `[backend: thin]`; `sha256sum
       scripts/calibration/calibrations/abort_thresholds.txt` identical before and after (H-1).
 - [ ] `bash test/test_integration.sh --legacy` is no longer special: the arg falls through the
       `case` (no `*)` arm) and the run is the default run. Record that in the row — it is the one
       observable change to the script.
-- [ ] `ctest -R stacklight_force_state` under the lock (commit 7), macOS and the Linux leg.
 - [ ] `python3 test/test_ota_flash.py` with `OTA_SERVICE_BIN` unset and `build/bin/ota_service`
       present (first candidate); and with it absent, the not-found text lists two candidates.
 - [ ] Full gate (`gate.sh`, with integration) and `linux/linux_gate.sh` (arm64 full) on the item's
       tip. **One CI dispatch, recorded in the row** (D1): D34 does not demand it (nothing under the
-      sequencer or scripts moves), but the queue item edits `daq-server-ci.yml` (§6) and adds a
-      ctest the `test` job runs on x86 — the dispatch shows the yml still parses, the job without
-      the deleted step, and `stacklight_force_state` passing on a runner.
+      sequencer or scripts moves), but the queue item edits `daq-server-ci.yml` (§6) — the dispatch
+      shows the yml still parses and the `test` job runs without the deleted step.
 - [ ] `git diff --stat backend-remastered...HEAD -- ':!daq-server/test' ':!daq-server/deploy'
-      ':!daq-server/sim' ':!daq-server/archive' ':!daq-server/diablo_server/services/CMakeLists.txt'`
-      is empty.
+      ':!daq-server/sim' ':!daq-server/archive'` is empty. Run on the **WP4 branch, before** the
+      orchestrator's `daq-server-ci.yml` edit (§6): WP4 commits nothing outside `daq-server/`
+      (AGENT-RULES 10), so on the branch the only files touched are under those four dirs.
 
 ---
 
@@ -325,7 +306,7 @@ the merge row. Mutation (each red, then reverted, recorded): (a) `stacklight_ser
 | `test_integration.sh` H1 park/restore (85, 185-189, 913), H2 startup board + `[Config] ERROR` guard, the alias block (239-262, §7 Q1), every log line a harness reads (S15) | merged harness fixes; the gate fails on a dirty tracked file |
 | `config/config_base.toml:23` `[data_logger_service]` | config loading is frozen (D5); D21 records it unused |
 | `test/characterization/**`, `docs/remaster/**` | C0 |
-| `tools/postprocessing/**`, `tools/calibration/**` (incl. `calibration_robustness.py`, which the deleted `test_robustness_system.py` exercised) | WP11 parks them |
+| `tools/postprocessing/**`, `tools/calibration/**` (incl. `calibration_robustness.py`, which the deleted `test_robustness_system.py` was written to exercise, §1.2) | WP11 parks them |
 
 LEDGER WP4 row's "incl. H-1 done": H1 (`f47aa8e3`) already parks and restores
 `abort_thresholds.txt`; nothing remains for WP4 but the sha256 check above.
@@ -339,6 +320,7 @@ LEDGER WP4 row's "incl. H-1 done": H1 (`f47aa8e3`) already parks and restores
 | `.github/workflows/daq-server-ci.yml` (job `test`, "Run Tests") | 569-576 | the step `Run integration tests`: `if [ -f "test/test_system.sh" ]; then chmod +x …; echo "Running smoke tests..."; fi`, `continue-on-error: true` — a no-op today, and with `test_system.sh` gone the `if` is false; delete the whole step in WP4's queue item | orchestrator (outside `daq-server/`) |
 | `test/characterization/pipeline/README.md` | 173-175 | cites `archive/legacy/python-services/data_logger_service.py` as the archived (binary `.sensorlog`) logger behind D21; after commit 3 append "(deleted by WP4; `git show <pre-WP4 tip>:…`)" or leave as history — comment-only, D18 | orchestrator (C0) |
 | `docs/remaster/LEDGER.md` D21 | — | same citation; add the deleting commit | orchestrator |
+| `test/characterization/gate.sh` | 9 | the header comment says `test_integration.sh (58/58)` — stale (the suite is 167 checks and the gate requires the script's own `PASS`, LEDGER Baseline); C0's file, comment-only | orchestrator (C0) |
 | `README.md:50`; `scripts/README.md:24`; `docs/ACTUATOR_PIPELINE_AND_TMUX.md:7,27-28`; `docs/ELODIN_GROUNDSTATION_SETUP.md:18,39`; `tools/gui/README.md:60,160` | — | the residual references to deleted files (the expected output of the §4.1 grep after commit 3) | WP12 |
 | `SETUP.md:353` (root) | — | "must pass 58/58" — stale before WP4 (the suite is 167 checks, LEDGER Baseline); not WP4's | orchestrator / WP12 |
 
@@ -352,22 +334,19 @@ targets no shell or Python here; `firmware/Flight_Computer/flight_test:4` only m
 
 ## 7. Open questions
 
-1. **The alias false-✅ (LEDGER WP4 row, reviewer).** `test_integration.sh:255-259`: on macOS a
+1. **The alias false-✅ (LEDGER WP4 row, reviewer).** `test_integration.sh:255-259` at the tip =
+   **253-257 after commit 4** (the fix is cut after the `--legacy` removal; re-verify with `grep -n
+   'Loopback aliases added'`): on macOS a
    missing loopback alias triggers `sudo ifconfig lo0 alias … || true` per octet and then prints
    `✅ Loopback aliases added` whether or not sudo succeeded; the stack then fails later on a bind.
    The fix is a re-check after the loop that lists the still-missing `127.0.0.<i>` and exits 1
-   (before anything is launched — the `EXIT` trap at 202 runs `cleanup`, which kills nothing of
-   ours). It contradicts BLOAT-MAP's DoD "default path byte-identical except the removed branch"
-   only on a misconfigured host, and never on Linux (the block is Darwin-only, 245). Proposed as a
-   separate **commit 8**, taken or dropped by the orchestrator: mutation = add octet `99` to
+   (before anything is launched — the `EXIT` trap at 202, 200 after commit 4, runs `cleanup`, which
+   kills nothing of ours). It contradicts BLOAT-MAP's DoD "default path byte-identical except the
+   removed branch" only on a misconfigured host, and never on Linux (the block is Darwin-only, 245 →
+   243). Proposed as a separate **commit 7**, taken or dropped by the orchestrator: mutation = add octet `99` to
    `LOOPBACK_IPS` and run with `sudo` shadowed by a stub that exits 1
    (`mkdir -p /tmp/stub && printf '#!/bin/sh\nexit 1\n' > /tmp/stub/sudo && chmod +x /tmp/stub/sudo;
    PATH=/tmp/stub:$PATH bash test/test_integration.sh`) → exits non-zero naming `127.0.0.99`
    before any port is bound; revert.
-2. **`stacklight_force_state` under D49.** Its marginal coverage over `service_stacklight.txt` and
-   `bin_dump.py` is the `--force-state` → packet path alone (§3). If the orchestrator judges that
-   not worth a fixed-port ctest, commit 7 becomes `git rm test/test_stacklight.sh` with the overlap
-   recorded in the merge row, and the DoD "wire the real orphan test" is closed as "superseded by
-   C1". Either way the script does not stay unwired.
-3. **`[data_logger_service]` in `config_base.toml:23`** stays because config loading is frozen;
+2. **`[data_logger_service]` in `config_base.toml:23`** stays because config loading is frozen;
    whether the team wants the section gone is a config change for the team (D21), not WP4.

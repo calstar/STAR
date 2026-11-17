@@ -4,11 +4,17 @@ The "as decided" execution note for WP11 as the LEDGER narrowed it (WP11 row: "f
 documented paths only; GUI deletions parked (operator-facing, team decision)"). Scope: BLOAT-MAP §8
 and the WP11 row, minus every deletion. Nothing under `tools/` is launched by a systemd unit,
 `dev.sh`, CI or the gate (BLOAT-MAP §8: "No `procedures/*.md`, `dev.sh`, `check_env.sh`, backend
-route or C++ service invokes anything in `tools/`"), so WP11 cannot touch the frozen contract (D5);
-it edits comments and three shell/yaml path strings whose only reader is a person.
+route or C++ service invokes anything in `tools/`"), so WP11 cannot touch the frozen contract (D5).
+Twelve of its 24 line edits are **executed**: the `python -m scripts.` → `tools.` module paths
+(`generate_engine_and_policy_lut.sh:32,41,58,65`, `generate_and_export_policy_lut.sh:25,31`) and the
+YAML paths assigned to `ENGINE_CONFIG`/`POLICY_CONFIG`/`LUT_CONFIG` (`:16,17,19,20` / `:13,15`); they
+take the two LUT drivers from crashing on their first `python -m` to runnable, which is the intended
+outcome. The remaining twelve (usage comments, docstrings, a YAML comment, one `echo`) are read only
+by people.
 
 **Baseline.** Line numbers are `git show backend-remastered:daq-server/<path>` at `backend-remastered`
-@ **`d20852e9`**; `tools/` there is byte-identical to `main` @ `15b5a0c5`. WP4 lands first (DAG
+@ **`45b91dc5`** (no change under the listed dirs since `d20852e9`, where this note was first
+anchored); `tools/` there is byte-identical to `main` @ `15b5a0c5`. WP4 lands first (DAG
 `WP4 → WP11`): `deploy/startup/start_calibration_stack.sh`, which `tools/gui/README.md:60,160`
 names, is gone by then (WP12 fixes the README).
 
@@ -86,7 +92,7 @@ WP11 takes them; BLOAT-MAP's PARK of `tools/postprocessing/**` was about deletio
 | file:line | today | after |
 |---|---|---|
 | `export_elodin_db.sh:12` (comment) | `# Data rates (see scripts/postprocessing/README.md):` | `tools/postprocessing/README.md` |
-| `export_elodin_db.sh:69` (`echo`, usage text on a bad invocation) | `echo "See scripts/postprocessing/README.md for full docs."` | `tools/postprocessing/README.md` — the one observable string change in WP11; no harness or test reads it (`git grep 'for full docs'` → only this line) |
+| `export_elodin_db.sh:69` (`echo`, usage text on a bad invocation) | `echo "See scripts/postprocessing/README.md for full docs."` | `tools/postprocessing/README.md` — the one change to a string a script prints (the LUT drivers' executed edits, §1.1, change what they *run*); no harness or test reads it (`git grep 'for full docs'` → only this line) |
 | `validate_export.py:5` (docstring) | `Use after: FORMAT=csv ./scripts/postprocessing/export_elodin_db.sh <DB_PATH> ./export_csv` | `./tools/postprocessing/export_elodin_db.sh` |
 
 **Recorded, not changed** (a path edit cannot make them work; they are relay-era, and the relay is
@@ -137,11 +143,17 @@ One queue item, one commit (D25; nothing here needs bisecting):
 
 ### 3.1 Verify
 
-- [ ] `git diff --stat backend-remastered...HEAD` lists exactly the 11 files above; `git diff -w` is
-      path strings and comments only (plus the one `echo` string, §1.3);
+- [ ] `git diff --stat backend-remastered...HEAD` lists exactly the **10 files** above (4
+      `controller_lut`, 4 `debug`, 2 `postprocessing`), **24 line edits** (17 + 4 + 3); `git diff -w`
+      is `scripts` → `tools` path strings only — the twelve executed ones (module paths and
+      `*_CONFIG=` assignments, §1.1), usage comments, docstrings, the YAML comment and the one `echo`
+      string (§1.3) — nothing else;
       `git grep -n -E 'scripts/(postprocessing|calibration|debug|controller_lut|gui)|scripts\.(postprocessing|calibration|controller_lut)' -- daq-server/tools`
       → exactly `calibration_server.py:20,23,27,31` (parked, §2) and nothing else.
-- [ ] `bash -n` on the three `.sh`; `python3 -m py_compile` on the two `.py`.
+- [ ] `bash -n` on the five `.sh` (`controller_lut/generate_engine_and_policy_lut.sh`,
+      `controller_lut/generate_and_export_policy_lut.sh`, `debug/repro_relay_race.sh`,
+      `debug/start_manual_no_tmux.sh`, `postprocessing/export_elodin_db.sh`); `python3 -m py_compile`
+      on the two `.py`.
 - [ ] Resolution without running the tools' dependencies (numpy/yaml may be absent): from
       `daq-server/`, for each of `extract_thrust_curve_from_config`, `generate_controller_lut`,
       `export_lut_for_fsw`:
