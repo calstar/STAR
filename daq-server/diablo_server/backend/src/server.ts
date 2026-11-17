@@ -64,51 +64,11 @@ const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_f
 const BOARD_STATUS_HZ = 1;     // broadcast rate for board status
 /** Board marked disconnected if no Elodin [0x10] heartbeat for this long. Too low causes UI flap when DB or TCP jitters; heartbeats are usually multi-Hz but not hard-real-time. */
 const BOARD_HEARTBEAT_STALE_MS = 5000;
-/** Min interval between WS SENSOR_UPDATE broadcasts for high-rate DAQ streams only.
- *  50 ms caps at ~20 Hz per key — comfortably passes 10 Hz sources even with
- *  network jitter and Date.now() quantization. */
-const BROADCAST_MIN_MS = 50;
-
-/** Which rate budget a stream is downsampled against, or null to pass through.
- *
- *  'gui'     — PT/TC/RTD/LC raw+cal and actuator raw+state ([0x20]–[0x23],
- *              [0x30]–[0x31]), the bulk of the traffic.
- *  'encoder' — encoder ([0x24]). Given its OWN, much higher budget rather than
- *              the GUI one: OscopeTriggerPlot measures valve actuation timing
- *              from these (inter-encoder skew, plateau detection), and a 100 ms
- *              GUI window would quantize that measurement away. At the boards'
- *              ~48 Hz the encoder window holds ~1 sample, so min == max and
- *              points pass through untouched — this is a ceiling against a
- *              faster board being fitted later, not a downsample of today.
- *  null      — heartbeats ([0x10]), self-test ([0x60]), controller
- *              ([0x40]–[0x44]), sequencer/PSM ([0x50]): event-like, low-rate,
- *              every update goes out immediately.
- */
-type StreamBudget = 'gui' | 'encoder' | null;
-function streamBudgetFor(high: number, _low: number): StreamBudget {
-  if (high === 0x20 || high === 0x21 || high === 0x22 || high === 0x23) return 'gui';
-  if (high === 0x26) return 'gui';  // LabJack T7 (t7_bridge), raw and calibrated
-  if (high === 0x30 || high === 0x31) return 'gui';
-  if (high === 0x33 || high === 0x34) return 'gui';  // ball valve position
-  if (high === 0x24) return 'encoder';
-  return null;
-}
-
-const broadcastLastTime = new Map<string, number>();  // per-key throttle gate (legacy mode)
-
 setInterval(pruneHistory, 60_000);
 
 // ── GUI stream downsampling (config.toml [gui]; see gui-stream.ts) ───────────
 
-let guiStreamConfig: GuiStreamConfig = parseGuiStreamConfig(safeReadConfigForGui());
-const envelope = new EnvelopeAccumulator(envelopeWindowMs(guiStreamConfig));
-const encoderEnvelope = new EnvelopeAccumulator(encoderWindowMs(guiStreamConfig));
-console.log(`[ThinServer] GUI downsampling: ${guiStreamConfig.mode} @ ${guiStreamConfig.pointsPerSecond} pts/s per stream`
-  + ` (encoders @ ${guiStreamConfig.encoderPointsPerSecond} pts/s)`);
-
-function safeReadConfigForGui(): unknown {
-  try { return readConfig(); } catch { return null; }
-}
+initGuiStream();
 
 /**
  * Name of a state id as the ACTIVE config declares it, or null if the config declares no [[states]]
@@ -130,64 +90,11 @@ function configStateName(id: number): string | null {
   }
 }
 
-/** Re-read [gui] settings after a config save (wired via onConfigUpdated). */
-function reloadGuiStreamConfig(): void {
-  const next = parseGuiStreamConfig(safeReadConfigForGui());
-  if (next.mode !== guiStreamConfig.mode
-      || next.pointsPerSecond !== guiStreamConfig.pointsPerSecond
-      || next.encoderPointsPerSecond !== guiStreamConfig.encoderPointsPerSecond) {
-    console.log(`[ThinServer] GUI downsampling changed: ${next.mode} @ ${next.pointsPerSecond} pts/s per stream`
-      + ` (encoders @ ${next.encoderPointsPerSecond} pts/s)`);
-  }
-  guiStreamConfig = next;
-  envelope.setWindowMs(envelopeWindowMs(next));
-  encoderEnvelope.setWindowMs(encoderWindowMs(next));
-}
-
-/** Sample timestamps are forwarded from Elodin (bridge receipt, epoch ms). A
- *  publisher on the wrong clock (e.g. steady_clock) would poison plots, so
- *  anything implausibly far from the backend's clock falls back to receipt
- *  time — worst case is exactly the pre-refactor behavior. */
-const MAX_SAMPLE_TS_SKEW_MS = 60_000;
-function saneSampleTimeMs(tsMs: number, fallbackMs: number): number {
-  return Number.isFinite(tsMs) && Math.abs(tsMs - fallbackMs) <= MAX_SAMPLE_TS_SKEW_MS
-    ? tsMs : fallbackMs;
-}
-
-/** Single exit point for streams that bypass downsampling (event-like: state,
- *  self-test, controller, sequencer). Broadcast immediately, never staged. */
-function emitSensorPoint(key: string, entity: string, component: string, value: number, tMs: number): void {
-  history.record(key, tMs, value);
-  stats.sensorUpdatesBroadcast++;
-  const update: SensorUpdate = { entity, component, value, timestamp: tMs };
-  broadcast({ type: MessageType.SENSOR_UPDATE, timestamp: Date.now(), payload: update });
-}
-
-/** Single exit point for downsampled sensor streams: history, then per-client
- *  staging. One call per closed envelope window (1–2 points, chronological). */
-function emitSensorWindow(key: string, entity: string, component: string, points: EnvelopePoint[]): void {
-  if (points.length === 0) return;
-  for (const p of points) history.record(key, p.tMs, p.value);
-  stats.sensorUpdatesBroadcast += points.length;
-  for (const cs of clientStreams.values()) cs.outbox.push(key, entity, component, points);
-}
-
 setInterval(flushClientOutboxes, 100);
 
 setInterval(resetOutboxStats, 10_000);
 
-// Timer flush so trickling/stopped streams don't hold their last window open.
-// Runs regardless of mode so a runtime envelope→throttle switch drains any
-// still-open windows instead of dropping them (map is empty in throttle mode).
-setInterval(() => {
-  const nowMs = Date.now();
-  for (const closed of envelope.flushOlderThan(nowMs)) {
-    emitSensorWindow(closed.key, closed.entity, closed.component, closed.points);
-  }
-  for (const closed of encoderEnvelope.flushOlderThan(nowMs)) {
-    emitSensorWindow(closed.key, closed.entity, closed.component, closed.points);
-  }
-}, 50);
+setInterval(flushEnvelopes, 50);
 
 // ── Mission time ─────────────────────────────────────────────────────────────
 
@@ -204,6 +111,7 @@ import { type WsWithControl, wss, attachWebSocketServer, broadcast, send, client
 import { activeNotificationKeys, notificationBuffer, pruneNotificationBuffer, broadcastNotification } from './server/notifications.js';
 import { history, pruneHistory, sendHistoricalData } from './server/history.js';
 import { firstPacketTimeMs, countdownTargetMs, initMissionTime, setFirstPacketTimeMs, setCountdownTargetMs } from './server/mission-time.js';
+import { guiStreamConfig, envelope, encoderEnvelope, broadcastLastTime, BROADCAST_MIN_MS, streamBudgetFor, saneSampleTimeMs, initGuiStream, reloadGuiStreamConfig, emitSensorPoint, emitSensorWindow, flushEnvelopes } from './server/sensor-stream.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
