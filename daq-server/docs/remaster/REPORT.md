@@ -28,29 +28,29 @@ because it overwrote a live stand file. Everything in §1 and §4 is therefore s
 Stand-safety and security items, in the order the team should look at them. Not fixed unless the
 line says so.
 
-1. **SEC-1 (CRITICAL).** Direct `:8081` is "operator". The backend treats an absent `X-Auth-Email`
+2. **SEC-1 (CRITICAL).** Direct `:8081` is "operator". The backend treats an absent `X-Auth-Email`
    as operator (`server.ts:978-979` WS, `api-server.ts:345-347` HTTP), listens on all interfaces
    (`server.ts:1861`), and `deploy/bootstrap_daq.sh:199-202` opens 8081 (and 3000) to any
    source. Any device that can route to the stand host — including one on the `192.168.2.0/24`
    board LAN — gets full control, bypassing Caddy's login.
 
-2. **SEC-3 (CRITICAL).** OTA `projectPath` is code execution. `api-server.ts:1200-1206` passes a
+3. **SEC-3 (CRITICAL).** OTA `projectPath` is code execution. `api-server.ts:1200-1206` passes a
    caller-supplied path to `ota_service`, which runs `pio run` on it
    (`ota_service_main.cpp:232-243`); a `platformio.ini` `extra_scripts` runs arbitrary code as
    the service user. Latent on a systemd stand (no OTA unit, `install_services.sh:10-12`); live
    on the tmux/dev stack and on flash days.
 
-3. **SEC-4 (HIGH).** The sequencer `:9998`, controller `:9999` and OTA `:9997` command ports
+4. **SEC-4 (HIGH).** The sequencer `:9998`, controller `:9999` and OTA `:9997` command ports
    bind `INADDR_ANY` with no authentication (`sequencer_main.cpp:264`,
    `controller_main.cpp:139`, `ota_service_main.cpp:422`). With the host firewall off, a LAN
    device can command states and fire.
 
-4. **SEC-2 = D-OTA (CRITICAL, ledger lead).** `POST /api/ota-flash` (`api-server.ts:1169`) and
+5. **SEC-2 = D-OTA (CRITICAL, ledger lead).** `POST /api/ota-flash` (`api-server.ts:1169`) and
    `POST /api/ota-flash/flash-all` (`:1101`) have no operator gate: behind Caddy a signed-in
    non-operator can reflash board firmware; `flash-all` reflashes every enabled board. H8
    freezes the viewer's 200 on `ota-flash` so the hole stays visible to the suite (D84).
 
-5. **D-CTRLSTOP — S1 if the stand runs `controller_service` under systemd with elodin-db up at
+6. **D-CTRLSTOP — S1 if the stand runs `controller_service` under systemd with elodin-db up at
    stop time.** With elodin-db up, `controller_service` never exits on SIGTERM or SIGINT:
    `ControllerService::stop()` joins the Elodin subscriber thread, which blocks in
    `TCPClient::read_exact()` on a socket with no receive timeout (`TCPClient::connect` sets only
@@ -61,11 +61,12 @@ line says so.
    Kept, not fixed (D17); its exit code and the SIGKILL-or-timeout outcome are frozen as-is
    (D89). The ledger does not record the unit's `TimeoutStopSec` value.
 
-6. **What the controller leaves on the wire when SIGKILLed mid-PWM** — the ledger does not settle
+7. **What the controller leaves on the wire when SIGKILLed mid-PWM** — the ledger does not settle
    this (D-CTRLSTOP entry, star-f9 note). **To verify against the stand config:** whether the
    stop path is reachable there, and what PWM the boards hold after the kill.
 
-7. **D-LATE.** A transition the operator was told failed can still happen later. When the
+7. **D-WP9-FMA — abort-threshold math depends on the compiler's inlining (S1-adjacent, numerics).** `invert_abort_psi_to_adc` and `select_pt_psi` in `services/calibration/calibration_main.cpp` turn abort thresholds into ADC counts. On Linux gcc-12, how many multiply-adds the compiler fuses in them changes when unrelated code in the file moves: taking a sensor-model global out of its anonymous namespace took `invert_abort_psi_to_adc` from 4 fused ops to 2. Fused and unfused arithmetic can differ in the last bits, so any future edit to that file can silently change abort thresholds. The refactor therefore left calibration_main.cpp unsplit (WP9 parked; LEDGER D111-D113). Recommendation: pin the numerics, either with a value golden that drives these functions with inputs where fused and unfused results differ (C0 G1 is the start) or with an explicit contraction policy for the calibration build.
+8. **D-LATE.** A transition the operator was told failed can still happen later. When the
    sequencer stalls, the backend's `:9998` request times out and the GUI shows "State transition
    failed: timeout", but the sequencer keeps the backlogged `TRANSITION:` line and executes it
    when it resumes (SIGPIPE ignored, `sequencer_main.cpp:243`; the reply to the dead peer uses
@@ -73,35 +74,35 @@ line says so.
    believes was rejected. Characterized in pipeline mode `holds` via a self-transition only, so
    the golden does not move the rig (D70, D85).
 
-8. **C4-1.** Entering a dynamic state refused at load deadlocks the sequencer's command worker
+9. **C4-1.** Entering a dynamic state refused at load deadlocks the sequencer's command worker
    whenever Elodin is connected: `doTransitionTo` holds `config_mutex_` while `publishState()`
    locks it again (the 716-730 block, D42). Every later command — aborts included — waits the
    10 s timeout and fails; SIGTERM does not exit it. Frozen (`ERR` after 10 s). Proposal: move
    `publishState()` out of the locked block (Team proposals; D47).
 
-9. **D-HB.** SERVER_HEARTBEAT keeps flowing while the sequencer is wedged by C4-1, so the boards'
+10. **D-HB.** SERVER_HEARTBEAT keeps flowing while the sequencer is wedged by C4-1, so the boards'
    heartbeat watchdog — the independent safety layer, abort 15 s after the last heartbeat (5 s
    timeout + 10 s grace, `actuator_config.h:10-12`; D46 corrected the research's "5 s") — never
    trips while the server cannot abort. The watchdog is armed per board boot, so on a warm stand
    a `heartbeat_service` that fails to start aborts the stand at 15 s (D46). Proposal: heartbeat
    only while the sequencer worker is alive; the trade is TQ1 (D46).
 
-10. **C4-3.** An abort does not cancel a pending staged command: abort entry uses
+11. **C4-3.** An abort does not cancel a pending staged command: abort entry uses
     `is_transition=false`, so the previous state's stage lands +100 ms after the abort's batch
     (golden; the ledger's first "+0.2 s" was corrected), and the abort batch skips any role still
     waiting on its delay (`ActuatorCommander.cpp:492-495`) because aborts do not bump
     `schedule_gen_`. A valve can move after the abort, in the pre-abort state's direction.
     Proposal: `cancelPendingStages()` on abort entry plus the 835 call (D47).
 
-11. **C1-10.** Each abort sends 8 ABORTs (2 × 4 repeats) then 4 ABORT_DONEs: `triggerAbort` runs
+12. **C1-10.** Each abort sends 8 ABORTs (2 × 4 repeats) then 4 ABORT_DONEs: `triggerAbort` runs
     twice. The second call joins the first's ABORT_DONE thread, which waits out a 50 ms step, so
     the abort state reaches Elodin and the GUI 37–79 ms after the valves are commanded (non-abort
     entries 3–17 ms) (D50). Frozen.
 
-12. **C1-9.** CLEAR_ABORT is never sent: nothing calls `AbortBroadcaster::sendClearAbort`. Boards
+13. **C1-9.** CLEAR_ABORT is never sent: nothing calls `AbortBroadcaster::sendClearAbort`. Boards
     are never told the abort is cleared. Frozen.
 
-13. **D-SLOT.** A board configured in slot > 8 only warns (`Config.cpp:49-53`) and its uint8 table
+14. **D-SLOT.** A board configured in slot > 8 only warns (`Config.cpp:49-53`) and its uint8 table
     id wraps (`DatabaseConfig.cpp:272/371`, `(slot-1)*0x20+ch`): slot 10 lands on PT2.CH1.
     `ControllerService.cpp:772-775` subscribes calibrated PT tables for boards 1-10 × ch 1-10, so
     slots 9-10 wrap onto PT1/PT2 at run time. A mistyped `board_id` silently corrupts or steals a
@@ -110,32 +111,32 @@ line says so.
     the run on `[Config] ERROR` — the product still accepts the config (D41). Proposal:
     fail-fast config, exit 78 with `RestartPreventExitStatus=78` (STYLE S11; D46, D56).
 
-14. **D-SUB.** A backend subscription made while a table is being re-registered is accepted but
+15. **D-SUB.** A backend subscription made while a table is being re-registered is accepted but
     receives 0 packets forever; the backend retries only *refused* subscriptions
     (`elodin-vtable-registry.ts` `noteSubscriptionRejected`). Window ~130 ms on Linux arm64,
     ~3 ms on macOS (D41). After a startup or reconnect race a live channel can go permanently
     dead on the GUI with no error. It was the root cause of the Linux `PT2_Cal.CH1` integration
     miss (D41). D-ECHO (unconfirmed) names the signal that would detect it.
 
-15. **C6-3.** Nothing detects loss of the server heartbeat: when `heartbeat_service` dies,
+16. **C6-3.** Nothing detects loss of the server heartbeat: when `heartbeat_service` dies,
     `daq_bridge` does not take over (`send_from_daq_bridge` fixed at startup). Past 15 s the
     actuator boards abort (D-HB).
 
-16. **C6-6.** `config_broadcast` sends nothing unless an ACTUATOR board is the designated
+17. **C6-6.** `config_broadcast` sends nothing unless an ACTUATOR board is the designated
     survivor — including ACTUATOR_CONFIG, which carries the abort-PT thresholds (C1-7).
 
-17. **C6-1.** `daq_bridge` logs "✅ Proactive SENSOR_CONFIG sent to N sense boards" but
+18. **C6-1.** `daq_bridge` logs "✅ Proactive SENSOR_CONFIG sent to N sense boards" but
     `FSWConfigManager` sends nothing (0 packets).
 
-18. **C6-4.** A board that sends data but no heartbeats is marked disconnected while its data is
+19. **C6-4.** A board that sends data but no heartbeats is marked disconnected while its data is
     still shown.
 
-19. **SEC-5 (HIGH).** WS `CALIBRATION_COMMAND` has no operator gate (`server.ts:1225`): a
+20. **SEC-5 (HIGH).** WS `CALIBRATION_COMMAND` has no operator gate (`server.ts:1225`): a
     non-operator can alter calibration mid-test. **SEC-6 (HIGH).** Cross-site WS hijack /
     `Access-Control-Allow-Origin: *` on direct `:8081` (`server.ts:901`, `api-server.ts:376`).
     **SEC-8 (MED).** `set_countdown_target` skips the arm gate (`server.ts:1360`).
 
-20. **Lead-marked data and configuration items (S2, full table in §4.2):** C3-3 — the backend
+21. **Lead-marked data and configuration items (S2, full table in §4.2):** C3-3 — the backend
     picks its PT calibration file by mtime among 13 tracked files, so after a pull/checkout/rsync
     the GUI's calibration panel can report, and its save command write from, a different file;
     live PT pressures are not affected (`calculatePressure` has no caller). C2-4 — a malformed or
@@ -144,7 +145,7 @@ line says so.
     shipped profile configs (they are directories now), so C2-3 (`1_000` read as 1) is
     unguarded.
 
-21. **H-1 (fixed; harness).** `test/test_integration.sh` parked `cubic_calibration.json` and
+22. **H-1 (fixed; harness).** `test/test_integration.sh` parked `cubic_calibration.json` and
     `lc_tare.json` but not `scripts/calibration/calibrations/abort_thresholds.txt`; its
     `calibration_service` regenerated the live tracked file in place (2026-11-15, ADC values
     858993460→901943133). On the stand, an integration run overwrote the live abort thresholds.
