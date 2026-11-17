@@ -3,7 +3,9 @@
 `bash run.sh` (takes the stack lock). `CHAR_UPDATE=1` rewrites `golden/`. Loopback only; see the
 module docstrings of `lifecycle.py` and `stack.py` for the config patching and isolation.
 
-Goldens: `startup`, `shutdown`, `reconnect`, `dupsub`, `hbloss`, `ota`, `sim_board`.
+Goldens: `startup`, `shutdown`, `reconnect`, `dupsub`, `hbloss`, `ota`, `sim_board`. `ota` ends with
+`POST /api/ota-flash` sent as a viewer (`X-Auth-Email` not in `operators.txt`): the route has no
+operator gate (LEDGER D-OTA / SEC-2), so its 200 is frozen as today's behaviour, to stay visible.
 
 ## Exact
 
