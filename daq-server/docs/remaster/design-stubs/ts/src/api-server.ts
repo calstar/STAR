@@ -13,10 +13,17 @@
  * profiles, history, gui-config, board-logs, debug, calibration, feed-char, ota — always awaited
  * (STYLE-S28: an unawaited group turns a 500 into a hang); then the 404.
  *
- * Imports: all of today's imports in today's positions (WP7-S2), an import step 1 leaves without
- * a value use rewritten as a bare `import './x.js';` at its position when the module-order diff
- * shows it evaluating there (WP7 [B1]; never for the already-elided `./elodin-query.js`, `http`),
- * then the `./api/*.js` imports. Must not know about: `server/*` (STYLE-S31).
+ * Imports: all of today's imports in today's positions (WP7-S2), then the `./api/*.js` imports.
+ * Exactly seven go bare (`import './x.js';` at the same line, WP7-S2a, each in the commit that
+ * moves its last value user out): `operators` (1.1), `routes/script-check` (1.4),
+ * `routes/config-profiles` (1.5), `board-logs` (1.8), `session-manager` (1.11), `ota-build` and
+ * `ota-service-cmd` (1.12). None for `config-validation` (already evaluated inside
+ * `session-manager`'s subtree), for anything `server.ts:29-31` evaluated first, or for the
+ * type-only `./elodin-query.js`, `./shared-types.js`, `./video/service.js`, `http` (a bare import
+ * there would add a module). Commit 1.13 deletes the dead `__dirname` const with the four builtin
+ * imports (`fs`, `os`, `path`, `url`). Step 2.4 labels the seven. The esbuild module-order diff
+ * against the parent commit (filtered on `src/api/`) is the check. Must not know about:
+ * `server/*` (STYLE-S31).
  * Path-coupled users: `server.ts:35`, `__tests__/config-profile-create-calibration.test.ts`
  * (`createAPIHandler`), `__tests__/t7.test.ts` (`buildSensorConfig`) — hence the re-exports.
  * Import-time effects: none of its own.

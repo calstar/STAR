@@ -18,7 +18,8 @@ import type { APIHandlerOptions } from './http.js';
  * - `GET /api/states` — the **active profile**'s `[[states]]` and `[flow]`.
  * - `GET /api/state-csv`, `POST /api/state-csv` — gate; deployed → `setImmediate(onStateCsvUpdated)`.
  * - `GET /api/state-script` (missing name → 200, empty body; C5-6, kept), `POST /api/state-script`
- *   (gate; `checkStateScript` before save), `POST /api/state-script/check` (no gate, no write).
+ *   (gate; `checkStateScript` before save), `POST /api/state-script/check` (no gate, unbounded
+ *   body, a process per call — SEC-9, kept verbatim; no write).
  */
 export function handleStatesRequest(req: IncomingMessage, res: ServerResponse, url: URL, opts: APIHandlerOptions): Promise<boolean> {
   throw new Error('stub');
