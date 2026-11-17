@@ -4,10 +4,14 @@
  * Owns: the OTA temp directories for the duration of one request; `MAX_BODY` and the SSE closure
  * move inside the body unchanged. Must not know about: `server/*`, sessions. Talks to
  * `ota_service` through `ota-service-cmd.ts`. Contract: `lifecycle/golden/ota.txt` (6 cases),
- * `http.txt` (400s); the H8 package freezes both POST routes **as the viewer, as today's 200**
- * (`flash-all` only against a config with no enabled boards; `/api/ota-flash` with
- * `firmwareBase64` in lifecycle's fake-board case) so SEC-2 stays visible. Defects kept, bodies
- * verbatim: SEC-2 (no gate), SEC-3 (`projectPath` reaches `pio run` as the caller sent it).
+ * `http.txt` (400s); the viewer's 200 is pinned on both POST routes so SEC-2 stays visible —
+ * `/api/ota-flash` with `firmwareBase64` by the H8 package (a viewer-header variant of lifecycle's
+ * fake-board case; `stack.http()` gains a test-only `headers` parameter), `flash-all` by H9's
+ * vitest against a temp CONFIG_PATH with no enabled boards (D72; no harness has such a config,
+ * and lifecycle's live `ota_service` would flash its four boards). H9 sends `{}` to
+ * `/api/ota-flash` (→ 400 `Missing or invalid ip`); an empty body is 500 `Unexpected end of JSON
+ * input` from `JSON.parse('')` in the `req.on('end')` catch. Defects kept, bodies verbatim: SEC-2
+ * (no gate), SEC-3 (`projectPath` reaches `pio run` as the caller sent it).
  * Import-time effects: none.
  */
 

@@ -6,7 +6,9 @@
  * `opts.onConfigUpdated`), other groups. Callback timing (STYLE-S29): the response is written
  * first, `onConfigUpdated` runs on the next `setImmediate`, and only when no session is active.
  * Contract: `pipeline/golden/http.txt` (GETs, 403s); H1 freezes the write success paths and their
- * `config_updated` / `board_status_update` frames before step 1. Import-time effects: none.
+ * `config_updated` / `board_status_update` frames before step 1; the deferral itself is H1's
+ * ordering vitest (D72): `res.writableEnded === true` inside a mocked `onConfigUpdated` at save
+ * (435) and import (492). Import-time effects: none.
  */
 
 import type { IncomingMessage, ServerResponse } from '../product-types.js';
