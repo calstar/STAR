@@ -49,9 +49,9 @@ thread **and the send path it calls (`sendBatch`, `sendUDP`)** stay in core
 ## 0. Boundary with WP8 (lands first)
 
 WP8 owns process plumbing in the mains (stop flag, `installStopHandlers` with the per-service
-SIGPIPE setting, `serveTcpClients`, `follow_sequencer_state`; listener and UDP socket setup stays
-in each main — DESIGN-WP8 §0, debate verdict D54). It rejects a generic `SubscriberLoop`, a shared
-argv parser and every UDP helper, so every
+SIGPIPE setting, `serveTcpClients`; listener and UDP socket setup stays in each main — DESIGN-WP8
+§0, debate verdict D54; the heartbeat/stacklight followers stay in their mains too, D57). It
+rejects a generic `SubscriberLoop`, a shared argv parser and every UDP helper, so every
 Elodin loop below stays its owner's code. WP10 does not touch `sequencer_main.cpp` or
 `controller_main.cpp`.
 
