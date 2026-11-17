@@ -5,6 +5,9 @@ set(ACTUATOR_COMMANDER_SOURCES
     ${SEQ_SRC_DIR}/ActuatorCommander_load.cpp)
 set(SEQUENCER_SOURCES
     ${SEQ_SRC_DIR}/SequencerService.cpp
+    ${SEQ_SRC_DIR}/SequencerService_config.cpp
+    ${SEQ_SRC_DIR}/SequencerService_controller_notify.cpp
+    ${SEQ_SRC_DIR}/SequencerService_elodin.cpp
     ${SEQ_SRC_DIR}/StateMachine.cpp
     ${ACTUATOR_COMMANDER_SOURCES}
     ${SEQ_SRC_DIR}/AbortBroadcaster.cpp
