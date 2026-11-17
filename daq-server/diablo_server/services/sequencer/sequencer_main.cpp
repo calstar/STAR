@@ -46,9 +46,10 @@
 #include "control/HoldParse.hpp"
 #include "control/SequencerService.hpp"
 #include "control/ValvePlan.hpp"
+#include "service/StopSignals.hpp"
 
 namespace {
-std::atomic<bool> g_running{true};
+auto& g_running = fsw::service::running();
 
 // Concurrent TCP clients accepted. The backend is the real client and holds one connection at a
 // time, so this is a guard against runaway thread creation, not a capacity target — set well
@@ -56,11 +57,6 @@ std::atomic<bool> g_running{true};
 constexpr size_t kMaxClients = 64;
 // Longest command accepted before the connection is dropped, matching the old per-client cap.
 constexpr size_t kMaxLineBytes = 512;
-
-void signalHandler(int /*sig*/) {
-    std::cout << "\n[Sequencer] Shutting down..." << std::endl;
-    g_running = false;
-}
 
 std::string trim(const std::string& s) {
     size_t a = s.find_first_not_of(" \t\r\n");
@@ -267,9 +263,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
-    signal(SIGPIPE, SIG_IGN);  // don't crash on broken TCP connections
+    fsw::service::installStopHandlers(
+        fsw::service::ShutdownNotice::kPrintThenStop, "\n[Sequencer] Shutting down...",
+        fsw::service::Sigpipe::kIgnore);  // don't crash on broken TCP connections
 
     sequencer::SequencerService svc;
     if (!svc.init(config_path)) {
