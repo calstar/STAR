@@ -1383,6 +1383,99 @@ POST /api/config/profiles/switch  body='{"name":"default"}'
   access-control-allow-headers: Content-Type
   body: {"error": "Cannot switch config while a session is running"}
 
+## http_viewer_gates
+POST /api/state-script?name=viewer.script&state=Idle  [as viewer@example.com]  body='delay(1)'
+  status 403
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"error": "Not an approved operator"}
+POST /api/config/profiles/create  [as viewer@example.com]  body='{"name":"viewer-made"}'
+  status 403
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"error": "Not an approved operator"}
+POST /api/config/profiles/rename  [as viewer@example.com]  body='{"name":"default","newName":"viewer-renamed"}'
+  status 403
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"error": "Not an approved operator"}
+POST /api/config/profiles/delete  [as viewer@example.com]  body='{"name":"default"}'
+  status 403
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"error": "Not an approved operator"}
+POST /api/ball_valve_cal  [as viewer@example.com]  body='{"entity":"BV1_Cal.CH1","action":"clear"}'
+  status 403
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"error": "Not an approved operator"}
+POST /api/feed-char/results  [as viewer@example.com]  body='{"cda":1.5}'
+  status 403
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"error": "Not an approved operator"}
+POST /api/calibration_profiles/load  [as viewer@example.com]  body='{"name":"default"}'
+  status 403
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"error": "Not an approved operator"}
+POST /api/calibration_profiles/new_blank  [as viewer@example.com]  body='{"name":"viewer-blank"}'
+  status 403
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"error": "Not an approved operator"}
+GET /api/config/profiles
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"active": "default", "profiles": [{"active": true, "name": "default"}], "sessionActive": true, "undeployed": []}
+GET /api/state-script?name=viewer.script
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"name": "viewer.script", "source": ""}
+GET /api/ball_valve_cal
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+GET /api/feed-char/results
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"dbDir": "<home>/.local/share/elodin/daq_<stamp>", "results": []}
+GET /api/calibration_profiles
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: same as the earlier identical request
+
 ## http_errors
 GET /nope
   status 404
