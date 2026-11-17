@@ -3,41 +3,17 @@
  * Exports a request handler to be mounted on an existing HTTP server.
  */
 
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
 import { IncomingMessage, ServerResponse } from 'http';
 
-// ESM has no __dirname global. tsx injects one in dev, but `node dist/server.js` (the systemd sim)
-// does not — so the __dirname candidates below would throw ReferenceError. Define it explicitly.
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-import { readConfig, readDeployedConfig, writeConfig, getConfigPath, getRunningConfigPath, patchBoardField, validateControllerActuators } from './routes/config.js';
 import './routes/config-profiles.js';
 import './routes/script-check.js';
-import {
-  listCalibrationProfiles,
-  saveCalibrationProfile,
-  loadCalibrationProfile,
-  createCalibrationProfile,
-  removeCalibrationProfile,
-  newBlankCalibration,
-} from './routes/calibration-profiles.js';
-import { buildSensorConfig } from './sensor-config.js';
 import './session-manager.js';
-import { validateActiveProfile } from './config-validation.js';
 import './operators.js';
 import './ota-build.js';
 import './ota-service-cmd.js';
-import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import './board-logs.js';
-import type { SensorUpdate } from './shared-types.js';
-import { currentTares } from './lc-tare.js';
-import { t7Channels } from '../../shared/config-validation.js';
 import { handleVideoRequest } from './video/routes.js';
-import type { VideoService } from './video/service.js';
-import { captureEndpoint, clearEndpoints, valveCalibrationSnapshot } from './ball-valve-cal.js';
-import { isConfigWriteAuthorized, readJsonBody, type APIHandlerOptions } from './api/http.js';
+import type { APIHandlerOptions } from './api/http.js';
 export type { APIHandlerOptions, BoardScanRateHz, DebugInfo } from './api/http.js';
 export { buildSensorConfig, type SensorConfigEntry } from './sensor-config.js';
 import { handleConfigRequest } from './api/config.js';
