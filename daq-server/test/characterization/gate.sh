@@ -23,6 +23,15 @@ if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr
   exit 3
 fi
 
+# A modified calibration store taints the run before any step: the lifecycle goldens take HEAD's
+# blobs, but the integration stack's services read the live files (LEDGER D103). Refuse up front.
+dirty_cal="$(git -C "$ROOT" status --porcelain -- scripts/calibration/calibrations)"
+if [ -n "$dirty_cal" ]; then
+  echo "gate: scripts/calibration/calibrations is modified; commit or restore it before a gate:" >&2
+  echo "$dirty_cal" >&2
+  exit 3
+fi
+
 load_1m() { uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/'; }
 
 # Every run keeps its evidence: .tmp/runs/<sha>-<time>/ holds the step logs and steps.txt, the
