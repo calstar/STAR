@@ -16,9 +16,8 @@
 # Browser / Playwright E2E is separate: bash test/e2e_guitest_playwright.sh (not run by this script).
 #
 # Usage:
-#   bash test/test_integration.sh [-v|--verbose] [--legacy] [--only=<ids>]
+#   bash test/test_integration.sh [-v|--verbose] [--only=<ids>]
 #
-#   --legacy   Use server-legacy.ts instead of server.ts (default: thin backend).
 #
 # Running only some WS checks (still starts the full stack unless you hack the script):
 #   bash test/test_integration.sh --only=sensor_data
@@ -39,7 +38,6 @@ ONLY_FLAG=""
 for arg in "$@"; do
   case "$arg" in
     -v|--verbose) VERBOSE=1 ;;
-    --legacy) BACKEND=legacy ;;
     --only=*) ONLY_FLAG="$arg" ;;
   esac
 done
@@ -256,6 +254,21 @@ if [ "$(uname)" = "Darwin" ]; then
     for i in "${LOOPBACK_IPS[@]}"; do
       sudo ifconfig lo0 alias "127.0.0.$i" up 2>/dev/null || true
     done
+    # Re-check after the loop: sudo can fail (no tty, denied, wrong password) and the `|| true`
+    # above hides it. This used to print the ✅ below regardless and the run died minutes later on
+    # a bind deep in the stack. Fail here, before anything is launched, naming what is missing.
+    # (A string, not an array: an empty array expansion under set -u errors on macOS bash 3.2.)
+    MISSING_ALIASES=""
+    for i in "${LOOPBACK_IPS[@]}"; do
+      if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then
+        MISSING_ALIASES="$MISSING_ALIASES 127.0.0.$i"
+      fi
+    done
+    if [ -n "$MISSING_ALIASES" ]; then
+      echo "  ❌ Loopback aliases still missing:$MISSING_ALIASES"
+      echo "     Add them by hand: sudo ifconfig lo0 alias 127.0.0.<octet> up  (for each octet above)"
+      fail "macOS loopback aliases missing — sudo ifconfig failed"
+    fi
     echo "  ✅ Loopback aliases added (127.0.0.{board_id octets})"
   fi
 fi
@@ -294,7 +307,7 @@ sleep 0.5
 # ── Build C++ binaries ───────────────────────────────────────────────────────
 
 # Full build via the canonical script, NOT a hand-maintained --target list.
-# A previous targeted list here omitted fake_packet_generator, so the test ran
+# A previous targeted list here omitted fake_packet_generator (since deleted), so the test ran
 # a STALE packet generator against fresh services after transport changes —
 # the classic "int fails until you run build first" bug. Full incremental
 # builds cost seconds and can never skip a binary the test uses.
@@ -366,9 +379,9 @@ else
 fi
 
 # Data source: board_simulator.py (speaks the current daq-protocol protocol).
-# NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA
-# magic + XOR framing the current daq_bridge cannot parse) with no CMake
-# target — never use it here even if someone makes it buildable again.
+# NOTE: the old fake_packet_generator.cpp (pre-DAQv2: 0xAA magic + XOR framing the
+# current daq_bridge cannot parse; deleted by WP2) was never a data source here —
+# never reintroduce a hand-built packet generator even if someone writes one.
 BOARD_SIM="$REPO_ROOT/sim/board_simulator.py"
 [ -f "$BOARD_SIM" ] || fail "board_simulator.py not found"
 echo "  ✅ board_simulator: $BOARD_SIM"
@@ -759,8 +772,8 @@ wait_for_port "$TEST_ELODIN_PORT" "Elodin DB" 10 || {
 echo "  ✅ Elodin DB started (PID ${PIDS[-1]})"
 
 # ── Start sequencer_service ──────────────────────────────────────────────────
-# Provides TCP command endpoint on :9998. Both thin and legacy backends forward
-# state/actuator commands here. Reads Elodin port from the test config.
+# Provides TCP command endpoint on :9998. The backend forwards state/actuator
+# commands here. Reads Elodin port from the test config.
 
 if [ -n "$SEQ_SVC" ]; then
   echo "⚙️  Starting sequencer_service..."
@@ -830,32 +843,15 @@ fi
 
 # ── Start Backend Server ─────────────────────────────────────────────────────
 
-if [ "$BACKEND" = "thin" ]; then
-  echo "🖥️  Starting Backend server (server.ts)..."
-  (cd "$REPO_ROOT/diablo_server/backend" && \
-    WS_PORT=$TEST_BACKEND_WS_PORT \
-    ELODIN_HOST=127.0.0.1 \
-    ELODIN_PORT=$TEST_ELODIN_PORT \
-    ACTUATOR_SERVICE_PORT=9998 \
-    CONFIG_PATH="$TEST_CONFIG" \
-    LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
-    npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
-else
-  echo "🖥️  Starting Backend server (server-legacy.ts)..."
-  (cd "$REPO_ROOT/diablo_server/backend" && \
-    WS_PORT=$TEST_BACKEND_WS_PORT \
-    API_PORT=$TEST_BACKEND_API_PORT \
-    ELODIN_HOST=127.0.0.1 \
-    ELODIN_PORT=$TEST_ELODIN_PORT \
-    ELODIN_RELAY_WS_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
-    ACTUATOR_SERVICE_ENABLED=false \
-    ACTUATOR_SERVICE_PORT=9998 \
-    USE_CALIBRATION_SERVICE_CALIBRATED=false \
-    USE_DIRECT_DAQ=false \
-    USE_CPP_CONTROLLER=true \
-    CONFIG_PATH="$TEST_CONFIG" \
-    npx tsx src/server-legacy.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
-fi
+echo "🖥️  Starting Backend server (server.ts)..."
+(cd "$REPO_ROOT/diablo_server/backend" && \
+  WS_PORT=$TEST_BACKEND_WS_PORT \
+  ELODIN_HOST=127.0.0.1 \
+  ELODIN_PORT=$TEST_ELODIN_PORT \
+  ACTUATOR_SERVICE_PORT=9998 \
+  CONFIG_PATH="$TEST_CONFIG" \
+  LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
+  npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 PIDS+=($!)
 
 wait_for_port "$TEST_BACKEND_WS_PORT" "Backend WS" 15 || {
