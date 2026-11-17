@@ -406,7 +406,9 @@ backfill horizon (`history-backfill.ts HISTORY_CONNECT_SPAN_MS`); at ~60 s, wher
 whether the one-shot self-test series made the cut depended on the machine's speed.
 
 There is no subscription protocol in the thin backend (every client gets every stream); the
-`subscribe` step records that an unknown message type gets no reply.
+`subscribe` step records that an unknown message type gets no reply, and (G10, `DESIGN-WP6.md` §7)
+that a well-formed message whose handler throws — `{"type":"send_command"}` with no payload — is
+caught at the WS boundary (`Bad message` log) and gets no reply either.
 
 ## Goldens
 

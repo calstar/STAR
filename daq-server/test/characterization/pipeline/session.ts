@@ -229,6 +229,9 @@ async function main(): Promise<void> {
   send('A', { type: 'subscribe', payload: { keys: ['PT1.CH1.raw_adc_counts'] } });
   send('A', 'not json');
   send('A', { type: 'get_state_transitions' });
+  // G10 (DESIGN-WP6 §7): a well-formed message whose handler throws -- send_command with no payload
+  // -- is caught at the WS boundary ("Bad message" log) and gets no reply either.
+  send('A', { type: 'send_command' });
   await settle(1000);
 
   step('history');
