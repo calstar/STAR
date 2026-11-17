@@ -129,6 +129,13 @@
 
 ## http_errors
 
+## http_operator_writes
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+
 ## disconnect
 
 ## board-health notifications seen (any step, any client; P1, reset flaps P1b)

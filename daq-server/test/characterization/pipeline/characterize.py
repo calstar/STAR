@@ -767,16 +767,33 @@ def main():
         "location",
         "cache-control",
     )
-    out, csv_out, first_body = [], [], {}
+    out, csv_out, first_body, file_seen, last_req = [], [], {}, {}, ""
     for st, _ in steps:
         if not st["http"]:
             continue
         out.append(f"## {st['name']}")
         for h in st["http"]:
+            if "file" in h:
+                # A fixture file read by session.ts at this point (H1): what a write left on disk,
+                # normalised like a body. A content already printed is named by the FILE line
+                # that first showed it (its path and the request it followed), not repeated.
+                out.append(f"FILE {h['file']}")
+                if h["content"] is None:
+                    out.append("  (absent)")
+                    continue
+                text = n.text(h["content"])
+                if text in file_seen:
+                    out.append(f"  content: same as FILE {file_seen[text]}")
+                else:
+                    file_seen[text] = f"{h['file']} after {last_req}"
+                    out.append("  content:")
+                    out.extend("    | " + ln for ln in text.rstrip("\n").split("\n"))
+                continue
             who = h["reqHeaders"].get("X-Auth-Email")
             line = f"{h['method']} {n.text(h['path'])}" + (
                 f"  [as {who}]" if who else ""
             )
+            last_req = line
             if h["reqBody"] is not None:
                 line += f"  body={n.text(h['reqBody'])!r}"
             out.append(line)
@@ -791,7 +808,29 @@ def main():
                 rendered = "(empty)"
             elif ctype.startswith("application/json"):
                 obj = json.loads(body)
-                if path in schema_only or path.startswith("/api/board-logs"):
+                if path == "/api/debug" and h["path"].endswith("?values"):
+                    # P14. The same body as P9's schema, plus the values of the keys that say how
+                    # the backend is wired rather than how much it has counted (D64(3)).
+                    sp = defaultdict(set)
+                    schema_paths(obj, "", sp)
+                    ws = obj.get("wsClients")
+                    rendered = (
+                        "schema "
+                        + dumps({k: sorted(v) for k, v in sp.items()})
+                        + " values "
+                        + dumps(
+                            {
+                                "ingestConnected": obj.get("ingestConnected"),
+                                "useRelay": obj.get("useRelay"),
+                                "wsClients": (
+                                    ">=1"
+                                    if isinstance(ws, (int, float)) and ws >= 1
+                                    else ws
+                                ),
+                            }
+                        )
+                    )
+                elif path in schema_only or path.startswith("/api/board-logs"):
                     sp = defaultdict(set)
                     schema_paths(obj, "", sp)
                     if path.startswith("/api/board-logs"):
