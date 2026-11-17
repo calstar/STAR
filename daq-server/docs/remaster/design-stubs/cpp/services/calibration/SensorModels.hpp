@@ -6,9 +6,12 @@
 //
 // Owns:       move-only: the file-scope globals of calibration_main.cpp 80-150 (except the three
 //             stream globals, which go to RawStream.cpp), now `extern` here and defined in
-//             SensorModels.cpp — default-constructed containers, no dynamic-init dependency (no
-//             reader before main; STYLE-S26 holds because nothing initialises from another TU).
-//             Cleanup C2: they become one SensorModels value owned by main and referenced from
+//             SensorModels.cpp. STYLE-S26 EXCEPTION, recorded (D58; DESIGN-WP9 §6.1 step 2): these
+//             are namespace-scope std containers with dynamic initialisation in a new TU, which
+//             S26 forbids; WP9 does not claim compliance. Harmless because every one is
+//             default-constructed (no cross-TU initialisation-order dependency), nothing reads
+//             them before main (the load_* fills are the first writers), and cleanup C2 removes
+//             them: they become one SensorModels value owned by main and referenced from
 //             CalibrationContext; the externs go away.
 // Threads:    one (the service's only thread). No locks.
 // Errors:     unknown model strings parse to today's defaults; missing per-uid entries fall back
@@ -55,7 +58,8 @@ extern std::unordered_map<uint16_t, double> g_lc_pga_gain;
 extern std::set<uint16_t> g_lc_uids;
 extern std::set<uint8_t> g_lc_board_ids;
 
-// ── lookups and selection (header-inline; 156-261, 286-329) ──
+// ── lookups and selection (header-inline; 156-261, 280-329 — the 280-285 comment moves with
+// select_pt_psi, STYLE-S38) ──
 inline bool verbose();
 inline bool env_flag_true(const char* name);
 inline PtModel parse_pt_model(const std::string& s);
@@ -75,7 +79,8 @@ inline double select_pt_psi(uint16_t uid, double psi_fac, double psi_rob, double
 inline double select_lc_kg(uint16_t uid, double kg_fit, double kg_phys, bool fit_ok);
 
 // ── construction-time fills (SensorModels.cpp; called at today's positions in main) ──
-/** 773-879: env override, PT and LC per-sensor models/params into the state above. */
+/** 764-879 (the 764-772 comment with the env override at 773, STYLE-S38): env override, PT and LC
+ *  per-sensor models/params into the state above. 761-762 (the LC default print) stays in main. */
 void load_pt_lc_models(const ::fsw::config::Config& cal_cfg);
 /** 894-911: T7 models; prints the T7 count (910-911). Called after main builds t7_map (889-893). */
 void load_t7_models(const ::fsw::config::Config& cal_cfg, const fsw::t7::T7CalibrationMap& t7_map);
