@@ -9,7 +9,7 @@ import path from 'path';
 const tmp = path.join(os.tmpdir(), `daq-operators-test-${process.pid}.txt`);
 process.env.DAQ_OPERATORS_FILE = tmp;
 
-const { isOperator } = await import('./operators.js');
+const { isOperator } = await import('../operators.js');
 
 function writeRoster(contents: string, atMsFromNow = 0): void {
   fs.writeFileSync(tmp, contents);
