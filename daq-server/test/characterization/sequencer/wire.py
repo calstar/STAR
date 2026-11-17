@@ -42,6 +42,11 @@ TICK_AGE_NS = (
 BOUNDARY_LOOKAHEAD_NS = (
     60_000_000  # N5: entry sends precede the transition publish by < 60 ms
 )
+# N5: an abort entry's publish waits one more step. doTransitionTo's second triggerAbort() runs
+# after the column is sent and before publishStateTransition(), and joins the ABORT_DONE thread the
+# first one started; AbortBroadcaster::waitAndSendAbortDone only sees the cancel after its current
+# 50 ms sleep_for step. So an abort entry's sends precede its publish by < 60 ms + one 50 ms step.
+ABORT_DONE_STEP_NS = 50_000_000
 
 
 def masked(raw: bytes) -> bytes:
@@ -210,12 +215,17 @@ def to_sends(packets: list[tuple[int, bytes, str]]) -> list[Send]:
     return sends
 
 
-def mark_ticks(sends: list[Send], boundaries: list[tuple[int, str]]) -> None:
-    """N5: flag 1 Hz republishes. `boundaries` = [(t_ns, state)] in time order, boot first."""
+def mark_ticks(sends: list[Send], boundaries: list[tuple[int, str]], *, aborts) -> None:
+    """N5: flag 1 Hz republishes. `boundaries` = [(t_ns, state)] in time order, boot first.
+
+    A send belongs to the latest boundary it precedes by less than the lookahead: an entry's sends
+    go out before its transition publish. `aborts` = the abort states, whose lookahead is one
+    ABORT_DONE step longer (see ABORT_DONE_STEP_NS)."""
     for s in sends:
         idx = 0
-        for i, (b, _st) in enumerate(boundaries):
-            if b <= s.t + BOUNDARY_LOOKAHEAD_NS:
+        for i, (b, st) in enumerate(boundaries):
+            ahead = BOUNDARY_LOOKAHEAD_NS + (ABORT_DONE_STEP_NS if st in aborts else 0)
+            if b <= s.t + ahead:
                 idx = i
         s.loop = idx
         s.age = s.t - boundaries[idx][0]
