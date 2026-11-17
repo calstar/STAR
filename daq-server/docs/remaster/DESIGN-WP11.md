@@ -75,6 +75,20 @@ correct; WP12 owns `tools/**/*.md`).
 
 `check_ws_broadcast.js` has no usage line (nothing to fix).
 
+### 1.3 `tools/postprocessing/` loose scripts — three more `scripts/postprocessing/` strings
+
+The whole-tree grep (`git grep -n -E 'scripts/(postprocessing|calibration|debug|controller_lut|gui)|scripts\.(postprocessing|calibration|controller_lut)' -- daq-server/tools`)
+finds, outside §1.1/§1.2 and `calibration_server.py:20-31` (§2), exactly three stale strings in the
+LIVE DEV loose scripts (BLOAT-MAP §8: `tools/postprocessing/*` loose = live dev; only the webviewer
+is production and it is untouched). Same class of fix — a path whose only reader is a person — so
+WP11 takes them; BLOAT-MAP's PARK of `tools/postprocessing/**` was about deletion.
+
+| file:line | today | after |
+|---|---|---|
+| `export_elodin_db.sh:12` (comment) | `# Data rates (see scripts/postprocessing/README.md):` | `tools/postprocessing/README.md` |
+| `export_elodin_db.sh:69` (`echo`, usage text on a bad invocation) | `echo "See scripts/postprocessing/README.md for full docs."` | `tools/postprocessing/README.md` — the one observable string change in WP11; no harness or test reads it (`git grep 'for full docs'` → only this line) |
+| `validate_export.py:5` (docstring) | `Use after: FORMAT=csv ./scripts/postprocessing/export_elodin_db.sh <DB_PATH> ./export_csv` | `./tools/postprocessing/export_elodin_db.sh` |
+
 **Recorded, not changed** (a path edit cannot make them work; they are relay-era, and the relay is
 Parked): `repro_relay_race.sh:8` and `start_manual_no_tmux.sh:5` `PROJECT="/home/aidan/Diablo-FSW"`;
 `:15`/`:12` `/home/aidan/.cargo/bin/elodin-db`; `:37`/`:32` `./build/FSW/daq_bridge` (binaries
@@ -102,7 +116,7 @@ another survey:
 | `tools/calibration/{accelerometer,gyroscope,magnetometer}_calibration.py` | — | none import them; each `:15` imports `imu_calibration` (which stays); documented by `tools/calibration/README_IMU.md:9-11,19,29,38` as run from the directory | |
 | `tools/calibration/calibration_server.py` (the Python sidecar) | — | `:20-31` `from scripts.calibration.*` — the package no longer exists, so it cannot start (BLOAT-MAP defect 1); its launchers are all deleted by WP4; `stop_tmux.sh:40` still pkills it | **decision recorded:** stays parked with its import defect; `scripts.` → `tools.` here would revive a dormant service (behaviour), not fix a documented path |
 | rest of `tools/calibration/**` (28 files, 14,771 lines) and `tools/calibration/calibrations/*` (third calibration store, BLOAT-MAP defect 5) | | `calibration_orchestrator.py:76,81`, `calibration_orchestrator_gui.py:20`, `imu_calibration_gui.py:32` import siblings | dormant; `tools/calibration/AUTONOMOUS_CALIBRATION.md:162` repeats the false daq_bridge claim (WP12) |
-| `tools/postprocessing/**` | 10,403 + 698 | **live**: the webviewer is a production service (`daq-server-ci.yml:1045`, `publish-apps.yml:25,72`, `docker-compose.yml:417,449`, `deploy/caddy/Caddyfile:188-190` per BLOAT-MAP §8, `design-mcp/star_design_mcp/tools/daq.py:1`); `replay_past_db.sh:99` runs `npm run relay` (the consumer WP5's relay PARK was waiting to hear about) | out of scope; `rename_hashes.py` "likely dead" (BLOAT-MAP) — unverified, parked |
+| `tools/postprocessing/**` | 10,403 + 698 | **live**: the webviewer is a production service (`daq-server-ci.yml:1045`, `publish-apps.yml:25,72`, `docker-compose.yml:417,449`, `deploy/caddy/Caddyfile:188-190` per BLOAT-MAP §8, `design-mcp/star_design_mcp/tools/daq.py:1`); `replay_past_db.sh:99` runs `npm run relay` (the consumer WP5's relay PARK was waiting to hear about) | out of scope except the three path strings of §1.3; `rename_hashes.py` "likely dead" (BLOAT-MAP) — unverified, parked |
 | `tools/aliases.sh` | 11 | `scripts/setup_common.sh:300,306` greps users' rc files for it | keep |
 
 ---
@@ -117,26 +131,33 @@ One queue item, one commit (D25; nothing here needs bisecting):
 - [ ] `tools/controller_lut/export_lut_for_fsw.py:13` docstring; `engine_lut_config.yaml:6-7`
       comment.
 - [ ] `tools/debug/{compute_elodin_ids.js:2,test_vtable_subscription.js:2,repro_relay_race.sh:6,start_manual_no_tmux.sh:3}`.
+- [ ] `tools/postprocessing/export_elodin_db.sh:12,69`, `tools/postprocessing/validate_export.py:5` (§1.3).
 - [ ] Nothing deleted; no file outside `tools/` touched; no formatter run (S39: black only on new
-      Python, and the `.py` edit is one docstring line).
+      Python, and the two `.py` edits are docstring lines).
 
 ### 3.1 Verify
 
-- [ ] `git diff --stat backend-remastered...HEAD` lists exactly the 8 files above; `git diff -w` is
-      path strings and comments only; `grep -rn 'scripts\.controller_lut\|scripts/controller_lut\|scripts/debug' daq-server/tools` → nothing.
-- [ ] `bash -n` on both `.sh`; `python3 -m py_compile tools/controller_lut/export_lut_for_fsw.py`.
+- [ ] `git diff --stat backend-remastered...HEAD` lists exactly the 11 files above; `git diff -w` is
+      path strings and comments only (plus the one `echo` string, §1.3);
+      `git grep -n -E 'scripts/(postprocessing|calibration|debug|controller_lut|gui)|scripts\.(postprocessing|calibration|controller_lut)' -- daq-server/tools`
+      → exactly `calibration_server.py:20,23,27,31` (parked, §2) and nothing else.
+- [ ] `bash -n` on the three `.sh`; `python3 -m py_compile` on the two `.py`.
 - [ ] Resolution without running the tools' dependencies (numpy/yaml may be absent): from
       `daq-server/`, for each of `extract_thrust_curve_from_config`, `generate_controller_lut`,
       `export_lut_for_fsw`:
-      `python3 -c "import importlib.util as u, sys; print(u.find_spec('tools.controller_lut.<m>').origin)"`
-      prints the file (the `controller_lut/__init__.py` docstring imports nothing, so `find_spec`
-      needs no third-party module); `test -f tools/controller_lut/{engine_lut_config,engine_lut_config_small,policy_lut_fsw,policy_lut_fsw_small}.yaml`;
+      `python3 -c "import importlib.util as u; o=u.find_spec('tools.controller_lut.<m>').origin; assert o.endswith('daq-server/tools/controller_lut/<m>.py'), o; print(o)"`
+      — the assert matters: a regular `tools` package anywhere on `sys.path` (a site-packages
+      `tools/__init__.py`) beats the namespace package in PEP 420 scan order and would make
+      `python -m tools.controller_lut.…` fail on that box; the `controller_lut/__init__.py` docstring
+      imports nothing, so `find_spec` needs no third-party module.
+      `test -f tools/controller_lut/{engine_lut_config,engine_lut_config_small,policy_lut_fsw,policy_lut_fsw_small}.yaml`;
       `test -f engine_sim/configs/default.yaml` (through the symlink).
-- [ ] Documented commands resolve (the DoD): every `tools/…` path and every `python -m tools.…`
-      module named in `tools/controller_lut/README.md`, the two `.sh` headers, the four `tools/debug`
-      usage lines and `docs/DEBUGGING_AND_TESTING_SCRIPTS.md:15,23,31,40` exists — a ~15-line check
-      under `test/remaster-checks/` is fine (D44(4) precedent), or run the `test -f` list by hand and
-      paste it into the merge row.
+- [ ] Documented commands resolve (the DoD, read as: every `tools/…` path and every
+      `python -m tools.…` module named in `tools/controller_lut/README.md`, the three `.sh` headers,
+      the four `tools/debug` usage lines, `validate_export.py:5` and
+      `docs/DEBUGGING_AND_TESTING_SCRIPTS.md:15,23,31,40` exists — **except** the parked
+      `calibration_server.py:20-31` imports, §2) — a ~15-line check under `test/remaster-checks/` is
+      fine (D44(4) precedent), or run the `test -f` list by hand and paste it into the merge row.
 - [ ] If numpy and pyyaml are installed: `python3 -m tools.controller_lut.generate_controller_lut --help`
       and `python3 -m tools.controller_lut.export_lut_for_fsw --help` exit 0 from `daq-server/`
       (the first `python -m` that failed before). No LUT is generated; `output/lut/` is untouched
