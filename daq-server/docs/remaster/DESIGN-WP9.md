@@ -12,7 +12,9 @@ calibration-save walkthrough — is preserved verbatim in
 **Baseline.** Every line number below is from `git show backend-remastered:daq-server/<path>` at
 `backend-remastered` @ **`e5e257cc`**, whose `diablo_server/` is byte-identical to `main` @
 `15b5a0c5` (and to `b2599617`, the reviewed note's anchor). Paths are relative to
-`daq-server/diablo_server/` unless they start with `test/`, `docs/` or `lib/CMakeLists.txt`; a
+`daq-server/diablo_server/` unless they start with `test/`, `docs/` or `lib/CMakeLists.txt`;
+harness files named bare (`service_run.py`, `lifecycle.py`, `golden/stack.txt`,
+`calibration/CMakeLists.txt`, `baseline_warnings.txt`) are under `test/characterization/`; a
 bare number is `services/calibration/calibration_main.cpp` (2139 lines). WP8 does not edit this
 file; if WP3 lands first, re-anchor with `grep -n`: the function names, not the numbers, are the
 contract.
@@ -349,8 +351,8 @@ of the same name. New names: `CalibrationContext`, `StreamState`, `load_pt_lc_mo
 Rule: cut and paste. Allowed edits are only: `static` → `inline` for functions moved into a
 header; `static` kept for functions that stay TU-private; lambda → function signature with the
 captured locals reached through `ctx.`/`st.`/`stream.`; `continue` → `return` as listed in §4;
-added `#include`s, namespace wrappers and `using` declarations; the `StreamState` initialiser of
-§3. No expression, literal, string, loop or statement order changes. No reformatting beyond what
+added `#include`s, namespace wrappers and `using` declarations; the `CalibrationContext` and
+`StreamState` initialisers of §3. No expression, literal, string, loop or statement order changes. No reformatting beyond what
 clang-format 19 does to the moved text (include regrouping and rewraps are expected non-dimmed
 lines, D43(6)).
 
@@ -362,6 +364,7 @@ bash daq-server/test/characterization/with_stack_lock.sh \
   python3 daq-server/test/characterization/calibration/service_run.py \
     --cal daq-server/build-gate/bin/calibration_service \
     --fixtures daq-server/test/characterization/calibration/fixtures > /tmp/wp9-pre-1.txt
+# keep each run's <work>/cal.log beside its output (/tmp/wp9-pre-1.cal.log);
 # a second time, same binary → /tmp/wp9-pre-2.txt; the Linux leg likewise, twice:
 bash daq-server/test/characterization/linux/linux_gate.sh --areas calibration <rev>
 grep -o '"\([^"\\]\|\\.\)*"' .../calibration_main.cpp | sort > /tmp/wp9-literals-pre.txt
@@ -440,8 +443,10 @@ Steps (each compiles; commit per step):
 Release; the lib is `SHARED` (`lib/CMakeLists.txt:45`) and the service is one TU today
 (`services/CMakeLists.txt:45`), so every service-binary census covers exactly the moved code):
 
-- **(a) `cmp`.** `service_run.py` post on the same machine and the same leg, masked by the
-  pre/pre mask only, `cmp` byte-identical with the pre run.
+- **(a) `cmp`.** `service_run.py`'s output **and** the run's `cal.log` (which `:245` excludes
+  from that output; normalised by the C0 package's normaliser — timestamps, the Elodin port),
+  post on the same machine and the same leg, masked by the pre/pre mask only, both `cmp`
+  byte-identical with the pre run. The `cal.log` half is the one guard on startup print order.
 - **(b) Per-symbol FMA census.** `objdump -d` split on `<…>:`, then
   `grep -cE 'fmadd|fmsub|fnmadd|fnmsub|fmla|fmls'` per symbol that contains moved code: equal
   pre/post. A total count can stay equal while a fusion moves between symbols; per symbol it
@@ -469,9 +474,10 @@ Release; the lib is `SHARED` (`lib/CMakeLists.txt:45`) and the service is one TU
   non-dimmed line is a review stop. The ~126 prefixed lines (60 actions, 13 commands, 53 stream)
   are thereby a script result, not a reading task.
 - **(i) Goldens.** Both goldens (`stack.txt`, `lib.txt`) on both legs, plus the `-O0` rebuild
-  (`-DCMAKE_BUILD_TYPE=` empty) run once on macOS (D22's one-golden-for-every-build rule). A red
-  `robust-prediction` or `published-*` family is a contract change until proven otherwise: stop
-  and report.
+  (`-DCMAKE_BUILD_TYPE=` empty) run once on macOS (D22's one-golden-for-every-build rule), plus
+  the calibration area on the emulated amd64 gcc-12 leg (`CHAR_EMULATED=1`, as C3 ran it, D28;
+  D55 keeps calibration in that leg's scope; native amd64 is CI's). A red `robust-prediction` or
+  `published-*` family is a contract change until proven otherwise: stop and report.
 
 **Fallback** (§0): a diff at checkpoint 2 only → re-cut to steps 1-5, `main` ~730, S33 waiver in
 the LEDGER (orchestrator), step 6 not queued; a diff at checkpoint 1 → the package stops. The
