@@ -4,7 +4,9 @@ The "as decided" execution note for WP9 (D17(a)): what an implementer does, in w
 why. Decisions: D39 (review; the `main < 400` waiver to ~430), D43(3) (a method-less carrier is
 not an abstraction), D45 (deepening; the class lost), and the debate verdict
 (`debates/WP9/verdict.md`, ratified under D39; LEDGER **D56**, which also carries the ~730
-fallback waiver). How it got here — the reviewed text, its amendments, the alternatives (B a
+fallback waiver), and the simplicity round 1 rulings (LEDGER **D58**: `AbortThresholds` and
+`CalibrationContext` folded into `CalibrationActions`, the censuses restated, three C0 gates). How
+it got here — the reviewed text, its amendments, the alternatives (B a
 `CalibrationService` class, C a one-header minimal split), the stub table and the
 calibration-save walkthrough — is preserved verbatim in
 [`debates/WP9/history.md`](debates/WP9/history.md).
@@ -20,9 +22,11 @@ file; if WP3 lands first, re-anchor with `grep -n`: the function names, not the 
 contract.
 
 **Prerequisites.** C1 (`packets/`, `elodin/`) merged into `backend-remastered` (it is on the
-tip); WP8 pass 1 merged; the five C0 packages of §7.2 merged and gated (they are test-only,
-D32-batchable, and start now in parallel with WP8); DESIGN-WP8 gap 1 (`kill -PIPE`) before
-cleanup C1. If only G1 is not green when the rest is, the orchestrator may run WP10 first and
+tip); the three C0 packages of §7.2 merged and gated (they are test-only, D32-batchable, and
+start now in parallel with WP8); DESIGN-WP8 gap 1 (`kill -PIPE`) before cleanup C1. WP8 pass 1 is
+**not** a technical prerequisite of the move-only item — nothing it moves touches the signal
+plumbing; only cleanup C1 adopts `installStopHandlers` — but the queue order still follows the
+DAG (D58). If only G1 is not green when the rest is, the orchestrator may run WP10 first and
 queue WP9 after it.
 
 **Scope.** WP3 → WP8 → **WP9** → WP10. WP9 edits `services/calibration/calibration_main.cpp`,
@@ -33,7 +37,8 @@ file is re-pointed; a harness diff in a WP9 package is a review stop.
 **Rules applied:** D5, D12(e), D17, D18/D20, D22 and the LEDGER WP9 row (no arithmetic
 reordering; robust predictions at abs 1e-9 psi, 8e-10 measured), D31/D34, D32, D47 (Tier 0:
 free functions and carrier structs); STYLE-S1 (`services/calibration` is snake_case), S2, S7,
-S26, S27, S33 (waivers recorded), S34 (D43(3)), S38; Parked SIGPIPE (calibration dies on
+S26 (one exception recorded, §6.1 step 2), S27, S33 (waivers recorded), S34 (D43(3)), S38;
+Parked SIGPIPE (calibration dies on
 SIGPIPE; kept), C3-1 (robust predictions depend on wall-clock time; kept), C6-9 (exit 1 when
 Elodin is not up; kept). Defects are reported, never fixed (AGENT-RULES 6).
 
@@ -43,20 +48,21 @@ Elodin is not up; kept). Defects are reported, never fixed (AGENT-RULES 6).
 argv, construction in today's statement order, the loop head with dispatch, and shutdown (~430
 lines after move-only). The lambdas become free functions over a `CalibrationContext&`; the loop
 locals two handlers share become a `StreamState`. Carriers, not a class: construction order
-stays `main`'s statements; nothing owns anything it did not own today. Eight files (§2):
+stays `main`'s statements; nothing owns anything it did not own today. Six files (§2):
 `Conversions.hpp` (header-only, `inline`), `SensorModels.hpp/.cpp` (`extern` globals until C2;
-`select_*` header-inline), `CalibrationContext.hpp`, `CalibrationActions.hpp/.cpp`,
-`AbortThresholds.hpp/.cpp`, `CalibrationCommands.hpp/.cpp`, `RawStream.hpp/.cpp` and
+`select_*` header-inline), `CalibrationActions.hpp/.cpp` (the `CalibrationContext` struct, the
+actions, and the abort-threshold writer as file-statics — D58 folded `AbortThresholds` and
+`CalibrationContext.hpp` into it), `CalibrationCommands.hpp/.cpp`, `RawStream.hpp/.cpp` and
 `calibration_main.cpp`, all under `services/calibration/`, compiled into `calibration_service`
 only, namespace `fsw::calibration_service` (the lib uses `fsw::calibration`). BLOAT-MAP's
 `lib/src/calibration/{Conversions,SensorModelRegistry,CalibrationController}` was rejected at
 review: one consumer each (D17(d)), and service state does not belong in the lib.
 
 **Queue.** One move-only queue item with two internal checkpoints (the D49(10) shape), then a
-separate cleanup item (D12(e)). Checkpoint 1 = steps 1-5 of §6.1; checkpoint 2 = step 6
+separate cleanup item (D12(e)). Checkpoint 1 = steps 1-4 of §6.1; checkpoint 2 = step 5
 (`RawStream`) on top. The checks of §6.1 run at both. **Fallback:** a diff at checkpoint 2 only
-→ the package is re-cut to steps 1-5, `main` ~730 (the T7 and ESP32 branches stay in it), an
-S33 waiver recorded in the LEDGER, and step 6 is "not queued" until a package has a reason to
+→ the package is re-cut to steps 1-4, `main` ~730 (the T7 and ESP32 branches stay in it), an
+S33 waiver recorded in the LEDGER, and step 5 is "not queued" until a package has a reason to
 move it (D-SLOT's fix is the candidate; `RawStream` is Tier 0 code, so D47's collaborator
 admission rule does not bind it, but a move with a reason is still the only way it leaves). A
 diff at checkpoint 1 → the package stops and reports. **The compare is never loosened** to admit
@@ -88,7 +94,8 @@ Rejected, with the reason kept so a later package does not reintroduce it:
   includers): GCC's `-Wunused-function` fires on an unused header `static` in every including TU,
   and `baseline_warnings.txt` is clang/macOS only (D4). Adopted from C: the two GCC inlining
   mechanisms (§6.3), which made the censuses necessary; the cleanup deletions with proofs (§6.2);
-  the prerequisite ledger stated as five packages (§7.2).
+  the prerequisite ledger stated as separate test-only packages (§7.2; five at the verdict, three
+  after D58 folded tares-before-reload into the `cal.log` golden and demoted G5).
 - **The stage pipeline** (`PacketSource → Decoder → Converter → Publisher`): a rewrite of the
   float path the LEDGER WP9 row protects, for interfaces with one implementation each.
 
@@ -197,29 +204,37 @@ curve → `cubic_store.save` → `save_adjustments` → `write_abort_thresholds`
 
 | file | contents (moved verbatim) | public interface | users |
 |---|---|---|---|
-| `Conversions.hpp` | 263-278, 331-457, 464-477 (the 464-466 comment with `mono_ns`), 479-530 | `inline` `convert_ratiometric_pt_to_pressure`, `convert_hp_pt_to_pressure`, `convert_tc_adc_to_temp_c`, `clamp_tc_rtd_temp_publish_c`, `convert_rtd_adc_to_temp_c`, `convert_act_adc_to_current`, `convert_lc_adc_to_force`, `unix_now`, `mono_ns`, `resolve_pt_sensor_uid`, `resolve_lc_sensor_uid`; `kRatiometricPtZeroFrac/SpanFrac` | RawStream, AbortThresholds, CalibrationActions |
-| `SensorModels.hpp` / `.cpp` | enums 91, 127; globals 80-150 except the three stream globals (`extern` in the header, defined in the `.cpp`); 156-261 and 286-329 header-`inline`; 773-879 → `load_pt_lc_models(cfg)`; 894-911 → `load_t7_models(cfg, t7_map)` (889-893 stay in `main` between them); 943-992 → `register_store_channels(cubic_store, pt_boards, lc_boards, t7_map)`; 1436-1472 → `print_model_summary()` | the above | main, RawStream, AbortThresholds, CalibrationActions, CalibrationCommands |
-| `CalibrationContext.hpp` | `struct CalibrationContext` (§3): references only, no methods | the struct | CalibrationActions, AbortThresholds, CalibrationCommands, RawStream |
-| `CalibrationActions.hpp` / `.cpp` | 727-732 (`current_loop_board`, now `const PtBoardConfig* current_loop_board(const CalibrationContext&, uint8_t)`), 999-1259, 1294-1391 → free functions in the same textual order | `sample_robust_curve`, `lc_eval_for`, `recompute_tare`, `recompute_all_tares`, `take_capture`, `capture_detail` (no context), `is_lc_uid`, `apply_capture`, `apply_clear`, `reload_live_store`, `current_loop_board` (also used at 1973); `apply_pt_*`/`apply_lc_*` file-`static` | main, CalibrationCommands, AbortThresholds, RawStream |
-| `AbortThresholds.hpp` / `.cpp` | 532-594 file-`static`; 1032-1108 | `void write_abort_thresholds(CalibrationContext&)` | CalibrationActions (capture, clear, reload) |
+| `Conversions.hpp` | 263-278, 331-457, 464-477 (the 464-466 comment with `mono_ns`), 479-530 | `inline` `convert_ratiometric_pt_to_pressure`, `convert_hp_pt_to_pressure`, `convert_tc_adc_to_temp_c`, `clamp_tc_rtd_temp_publish_c`, `convert_rtd_adc_to_temp_c`, `convert_act_adc_to_current`, `convert_lc_adc_to_force`, `unix_now`, `mono_ns`, `resolve_pt_sensor_uid`, `resolve_lc_sensor_uid`; `kRatiometricPtZeroFrac/SpanFrac` | RawStream, CalibrationActions, CalibrationCommands (`unix_now` 1732), main (the step-1 include) |
+| `SensorModels.hpp` / `.cpp` | enums 91, 127; globals 80-150 except the three stream globals (`extern` in the header, defined in the `.cpp`); 156-261 and 280-329 (the 280-285 comment with `select_pt_psi`, S38) header-`inline`; 764-879 (the 764-772 comment with the env override at 773, S38) → `load_pt_lc_models(cfg)`; 894-911 → `load_t7_models(cfg, t7_map)` (889-893 stay in `main` between them); 943-992 → `register_store_channels(cubic_store, pt_boards, lc_boards, t7_map)`; 1436-1472 → `print_model_summary()` | the above | main, RawStream, CalibrationActions, CalibrationCommands |
+| `CalibrationActions.hpp` / `.cpp` | `struct CalibrationContext` (§3; references only, no methods) in the header; in the `.cpp`, in today's textual order: 532-594 file-`static` (`kMinAbortCalPoints`, `invert_abort_psi_to_adc`), 727-732 (`current_loop_board`, now `const PtBoardConfig* current_loop_board(const CalibrationContext&, uint8_t)`), 999-1259 (1032-1108 `write_abort_thresholds` file-`static`: its three callers 1124, 1241, 1385 are all in this TU), 1294-1391 → free functions | the struct; `sample_robust_curve`, `lc_eval_for`, `recompute_tare`, `recompute_all_tares`, `take_capture`, `capture_detail` (no context), `is_lc_uid`, `apply_capture`, `apply_clear`, `reload_live_store`, `current_loop_board` (also used at 1973); `apply_pt_*`/`apply_lc_*`, `write_abort_thresholds`, `invert_abort_psi_to_adc`, `kMinAbortCalPoints` file-`static` | main, CalibrationCommands, RawStream |
 | `CalibrationCommands.hpp` / `.cpp` | 1631-1819 (inside `if (type_hi == 0x46)`) | `void handle_calibration_command(CalibrationContext&, fsw::calibration::CommandDedupe&, const uint8_t* pkt_buf, ssize_t pkt_len)` | main loop |
 | `RawStream.hpp` / `.cpp` | 1827-1910, 1913-2127; `g_hp_ma_live`, `g_pt_smoother`, `g_t7_cold_junction_c` in `RawStream.cpp`'s anonymous namespace | `struct StreamState`; `handle_t7_raw(CalibrationContext&, StreamState&, const uint8_t*, ssize_t, uint8_t type_lo)`; `handle_esp32_raw(…, uint8_t type_hi, uint8_t type_lo)` | main loop |
-| `calibration_main.cpp` | keeps 1-71 (trimmed includes), 154, 459-462, 596-760, 889-893, 913-938, 1261-1283, 1393-1435 with calls in place of moved bodies, 1474-1627, the three dispatches, 2130-2139 | `main` | — |
+| `calibration_main.cpp` | keeps 1-71 (trimmed includes), 154, 459-462, 596-762 (the LC default print 761-762 stays), 889-893, 913-942 (the `capture_window` construction 939-942 stays: `CalibrationContext` references it), 1261-1283, 1393-1435 with calls in place of moved bodies, 1474-1627, the three dispatches, 2130-2139 | `main` | — |
 
 Why none of this is a single-user abstraction (S34, D43(3)): the files are translation units.
 `CalibrationContext` and `StreamState` are method-less carriers of `main`'s existing locals; the
-functions that replace the lambdas live in four TUs and read the same locals those lambdas
+functions that replace the lambdas live in three TUs and read the same locals those lambdas
 captured. `Conversions.hpp` and `SensorModels.hpp` each have ≥ 3 including TUs.
-`CalibrationContext` gets its own header because four headers take it; in `CalibrationActions.hpp`
-it would make `AbortThresholds.hpp` include the whole actions API for one type while
-`CalibrationActions.cpp` includes `AbortThresholds.hpp` back. `table_id_for` (DESIGN-WP3 §2.5) is
+**`CalibrationContext` lives in `CalibrationActions.hpp`, not its own header (D58).** The
+verdict gave it its own header so that `AbortThresholds.hpp` would not include the whole actions
+API for one type while `CalibrationActions.cpp` included `AbortThresholds.hpp` back; with
+`write_abort_thresholds` a file-static of `CalibrationActions.cpp` (its only consumer) that cycle
+is gone, and the two remaining takers of the type both include `CalibrationActions.hpp` anyway —
+`CalibrationCommands.cpp` for `apply_capture`/`apply_clear`/`take_capture`/`reload_live_store`,
+`RawStream.cpp` for `current_loop_board` (1973). A separate header would add a file to save those
+two TUs nothing; a forward declaration in their headers would add a non-dimmed line type check (h)
+does not list. So `CalibrationCommands.hpp` and `RawStream.hpp` include `CalibrationActions.hpp`.
+`AbortThresholds.{hpp,cpp}` is dropped for the same reason: one consumer (D17(d)), and 532-594 +
+1032-1108 are 140 lines that keep `CalibrationActions.cpp` at ~505 (428 moved lines plus the file
+comment, includes and namespace), under S33's 700. `table_id_for` (DESIGN-WP3 §2.5) is
 not adopted: calibration derives `cal_lo = type_lo + 0x10` (1966-1968) and the slot by the inverse
 (490, 517); neither is the same integer expression.
 
 Declaration-only stubs, clang-format 19 clean, in `docs/remaster/design-stubs/cpp/services/
-calibration/`: `Conversions.hpp`, `SensorModels.hpp`, `CalibrationContext.hpp`,
-`CalibrationActions.hpp`, `AbortThresholds.hpp`, `CalibrationCommands.hpp`, `RawStream.hpp`
-(`on_elodin_reconnected` marked cleanup-only). Frozen once step 1 starts.
+calibration/`: `Conversions.hpp`, `SensorModels.hpp`, `CalibrationActions.hpp` (with the
+`CalibrationContext` struct), `CalibrationCommands.hpp`, `RawStream.hpp` (`on_elodin_reconnected`
+marked cleanup-only). `CalibrationContext.hpp` and `AbortThresholds.hpp` were removed under D58.
+Frozen once step 1 starts.
 
 ## 3. Ownership and data flow
 
@@ -229,7 +244,7 @@ Immediately after the last `register_store_channels` call (old 992), before the 
 builds:
 
 ```cpp
-// CalibrationContext.hpp
+// CalibrationActions.hpp (D58: no separate CalibrationContext.hpp)
 struct CalibrationContext {
     const fsw::config::Config& cal_cfg;
     const std::map<uint8_t, fsw::config::PtBoardConfig>& pt_board_configs;
@@ -267,7 +282,8 @@ Data flow per loop iteration is unchanged:
 
 ```
 main loop head (reconnect / due re-subscribe / read / ErrorResponse / header filter / debug log)
-  ├─ type_hi 0x46     → handle_calibration_command → CalibrationActions → AbortThresholds
+  ├─ type_hi 0x46     → handle_calibration_command → CalibrationActions (incl. the file-static
+  │                                                   write_abort_thresholds)
   │                                                 → files: cubic_calibration.json,
   │                                                   adjustments, abort_thresholds.txt, lc_tare.json
   ├─ type_hi 0x26     → handle_t7_raw     → begin_batch, publish, flush_batch, ++packet_count
@@ -317,8 +333,9 @@ How it stays identical: every branch moves with its body. **Only the `continue`s
 read loop that sit inside moved code become `return`**, exactly these: **1637, 1829, 1838, 1841,
 1845, 1910, 1915, 1922, 1924, 1930, 1939**. The handler call is the last statement of its branch
 in `main`, followed by `continue`, so control reaches the same next statement. **1673, 1789 and
-1796 are `continue`s of inner `for` loops inside the 0x46 handler: they stay `continue`.** 1601,
-1608, 1617 (loop head) and 1820 (after the 0x46 dispatch) stay in `main` as `continue`.
+1796 are `continue`s of inner `for` loops inside the 0x46 handler: they stay `continue`.** 1578
+(after the reconnect block), 1599 (`pkt_len <= 0`), 1601, 1608, 1617 (loop head) and 1820 (after
+the 0x46 dispatch) stay in `main` as `continue`.
 
 **1673 and 1796 are unexercised by today's `stack.txt`.** `burst()`
 (`service_run.py:430-446`) ticks 10 s and sends 10 fresh samples per uid in `every` (`:509-518`)
@@ -350,11 +367,12 @@ of the same name. New names: `CalibrationContext`, `StreamState`, `load_pt_lc_mo
 
 Rule: cut and paste. Allowed edits are only: `static` → `inline` for functions moved into a
 header; `static` kept for functions that stay TU-private; lambda → function signature with the
-captured locals reached through `ctx.`/`st.`/`stream.`; `continue` → `return` as listed in §4;
-added `#include`s, namespace wrappers and `using` declarations; the `CalibrationContext` and
-`StreamState` initialisers of §3. No expression, literal, string, loop or statement order changes. No reformatting beyond what
-clang-format 19 does to the moved text (include regrouping and rewraps are expected non-dimmed
-lines, D43(6)).
+captured locals reached through `ctx.`/`stream.` (the two carrier parameters are named `ctx` and
+`stream`, the latter matching `main`'s local; there is no `st.`); `continue` → `return` as listed
+in §4; added `#include`s, include guards, namespace wrappers, `extern` declarations and `using`
+declarations; the `CalibrationContext` and `StreamState` initialisers of §3. No expression,
+literal, string, loop or statement order changes. No reformatting beyond what clang-format 19 does
+to the moved text (include regrouping and rewraps are expected non-dimmed lines, D43(6)).
 
 **Before step 1, on the unchanged tree** (Release, under the stack lock, per leg — macOS and the
 Linux arm64 gcc-12 container):
@@ -367,11 +385,14 @@ bash daq-server/test/characterization/with_stack_lock.sh \
 # keep each run's <work>/cal.log beside its output (/tmp/wp9-pre-1.cal.log);
 # a second time, same binary → /tmp/wp9-pre-2.txt; the Linux leg likewise, twice:
 bash daq-server/test/characterization/linux/linux_gate.sh --areas calibration <rev>
-grep -o '"\([^"\\]\|\\.\)*"' .../calibration_main.cpp | sort > /tmp/wp9-literals-pre.txt
-grep -oE '[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?' .../calibration_main.cpp | sort > /tmp/wp9-floats-pre.txt
+# literals: drop the #include lines first (post, the new `#include "Conversions.hpp"` etc. would
+# otherwise add their file names to the multiset; D58 check (e)) — same filter pre and post
+grep -v '^#include' .../calibration_main.cpp | grep -o '"\([^"\\]\|\\.\)*"' | sort > /tmp/wp9-literals-pre.txt
+grep -v '^#include' .../calibration_main.cpp | grep -oE '[0-9]+\.[0-9]+([eE][-+]?[0-9]+)?' | sort > /tmp/wp9-floats-pre.txt
 nm -C --undefined-only calibration_service | sort > /tmp/wp9-undef-pre.txt
 nm -C --defined-only calibration_service | sort > /tmp/wp9-def-pre.txt
 objdump -d calibration_service > /tmp/wp9-asm-pre.txt
+grep -cE 'fmadd|fmsub|fnmadd|fnmsub|fmla|fmls' /tmp/wp9-asm-pre.txt > /tmp/wp9-fma-total-pre.txt
 ```
 
 **Pre/pre first** (verdict fact 9). Byte-identity of `service_run.py`'s output pre/post was
@@ -388,33 +409,44 @@ evidence; the goldens' 4 ULP is the gate's floor, the masked `cmp` is the packag
 
 Steps (each compiles; commit per step):
 
-1. **`Conversions.hpp`** (§2 row 1): `static` → `inline` (≥ 3 includers from step 3; a header
-   `static` would draw GCC's `-Wunused-function` in every including TU on the Linux leg; the
-   inline-budget change this makes is what the censuses watch). Includes: `<algorithm> <array>
-   <chrono> <cmath> <cstdint> <cstdlib> <vector>`, `"calibration/SensorCalibration.hpp"`,
-   `"calibration/TypeK.hpp"`, `"config/LoadActiveBoards.hpp"`, `"elodin/DatabaseConfig.hpp"`. In
-   `calibration_main.cpp`, `#include "Conversions.hpp"` and `using namespace
-   fsw::calibration_service;` after the includes.
+1. **`Conversions.hpp`** (§2 row 1): `static` → `inline` (≥ 3 includers by checkpoint 1 — `main`
+   from this step, `CalibrationActions.cpp` from step 3, `CalibrationCommands.cpp` from step 4,
+   `RawStream.cpp` from step 5; a header `static` would draw GCC's `-Wunused-function` in every
+   including TU on the Linux leg; the inline-budget change this makes is what the censuses
+   watch). Includes: `<algorithm> <array> <chrono> <cmath> <cstdint> <cstdlib> <vector>`,
+   `"calibration/SensorCalibration.hpp"`, `"calibration/TypeK.hpp"`,
+   `"config/LoadActiveBoards.hpp"`, `"elodin/DatabaseConfig.hpp"`. In `calibration_main.cpp`,
+   `#include "Conversions.hpp"` and `using namespace fsw::calibration_service;` after the
+   includes.
 2. **`SensorModels.hpp/.cpp`** (§2 row 2; gated by G1 — line 300 moves here — and by the `cal.log`
    golden — the fills and the summary print): the `extern` globals keep their types and
-   initialisers (default-constructed, no cross-TU init dependency, nothing reads them before
-   `main`; S26); `verbose`, `env_flag_true` go header-inline with the helpers; **889-893 stay in
+   initialisers; `verbose`, `env_flag_true` go header-inline with the helpers; **889-893 stay in
    `main` between `load_pt_lc_models` and `load_t7_models`**; the T7 count print 910-911 goes
-   with `load_t7_models`.
-3. **`CalibrationContext.hpp` + `CalibrationActions.hpp/.cpp`** (§2 rows 3-4; gated by
-   tares-before-reload and G5 — 1294-1391 moves here): the struct of §3, built in `main`
-   immediately after the last `register_store_channels` call (old 992), before the seed block;
-   the functions in **the same textual order** as today; `capture_detail` takes no context;
+   with `load_t7_models`. **S26 exception, recorded (D58):** S26 forbids a namespace-scope object
+   with dynamic initialisation in a new TU, and the eleven `extern` definitions `SensorModels.cpp`
+   receives (80-150 minus the three stream globals) are `std::unordered_map`/`std::set`/
+   `std::optional` — as are `RawStream.cpp`'s three anonymous-namespace globals at step 5. WP9
+   does not claim compliance; it records the exception as harmless: every one is
+   default-constructed (no constructor runs user code, no cross-TU initialisation-order
+   dependency), nothing reads any of them before `main` (the fills at 773-911 are the first
+   writers), they go from internal to external linkage and nothing else, and cleanup C2 removes
+   them (§6.2). The move-only pass is not the place to introduce the owner value that would make
+   them compliant (D47).
+3. **`CalibrationActions.hpp/.cpp`** (§2 row 3; gated by the `cal.log` golden's tare-order
+   mutation — 1294-1391 moves here): the `CalibrationContext` struct of §3 in the header, built in
+   `main` immediately after the last `register_store_channels` call (old 992), before the seed
+   block; in the `.cpp`, 532-594 first (file-`static`, as today's textual order has it before
+   `main`), then the functions in **the same textual order** as today, with 1032-1108
+   (`write_abort_thresholds`) file-`static` among them; `capture_detail` takes no context;
    `lc_eval_for` returns `[&ctx, uid](double adc) -> double {…}` with the body verbatim.
-4. **`AbortThresholds.hpp/.cpp`** (§2 row 5). `CalibrationActions.cpp` includes its header.
-5. **`CalibrationCommands.hpp/.cpp`** (§2 row 6; gated by the stale-uid case — 1673/1796 move
+4. **`CalibrationCommands.hpp/.cpp`** (§2 row 4; gated by the stale-uid case — 1673/1796 move
    here): the `continue` at 1637 → `return`; 1673, 1789, 1796 stay `continue`. **→ Checkpoint 1:
    every check below.**
-6. **`RawStream.hpp/.cpp`** (§2 row 7): `static int ch_mismatch_warn` stays function-local in
+5. **`RawStream.hpp/.cpp`** (§2 row 5): `static int ch_mismatch_warn` stays function-local in
    `handle_esp32_raw`; the `reinterpret_cast` loads at 1944, 1960, 1961 are unchanged (same
    alignment: the buffer is still `main`'s stack array); `main` initialises `StreamState` at old
    1557 with `last_save{steady_clock::now()}` (§3). **→ Checkpoint 2: every check below.**
-7. **`calibration_main.cpp`** keeps §2's list. Order of calls in `main`, which **must equal
+6. **`calibration_main.cpp`** keeps §2's list. Order of calls in `main`, which **must equal
    today's order of side effects**: argv → adjustments discovery → banner → `std::signal` ×2 →
    config load → managers + loads + 4 prints → active boards → pt board configs → HP prints →
    defaults prints → `load_pt_lc_models` → `t7_map` + T7 errors → `load_t7_models` → `uid_role`
@@ -422,13 +454,12 @@ Steps (each compiles; commit per step):
    adjustments path prints → **`lc_tare_store.load()`** → **`reload_live_store(ctx, true)`** →
    stale audit → `cubic_store.save()` → `print_model_summary()` → verbose line → Elodin client,
    lambdas, `connect_and_register` / `return 1` → recv timeout → `StreamState` → loop → shutdown.
-8. **CMake** (`services/CMakeLists.txt:45`):
+7. **CMake** (`services/CMakeLists.txt:45`):
    ```cmake
    add_executable(calibration_service
        calibration/calibration_main.cpp
        calibration/SensorModels.cpp
        calibration/CalibrationActions.cpp
-       calibration/AbortThresholds.cpp
        calibration/CalibrationCommands.cpp
        calibration/RawStream.cpp)
    target_include_directories(calibration_service PRIVATE ${COMMON_INCLUDES}
@@ -437,7 +468,7 @@ Steps (each compiles; commit per step):
    No compile option added or removed; the new TUs get exactly the flags `calibration_main.cpp`
    gets. `lib/CMakeLists.txt` is not touched. Root `format.sh` (orchestrator-owned): check that
    `services/calibration/*.{hpp,cpp}` are matched; ask if not.
-9. Format only the touched files with the pinned clang-format 19.1.7.
+8. Format only the touched files with the pinned clang-format 19.1.7.
 
 **Checks at each checkpoint, all required** (both legs: macOS Release and Linux arm64 gcc-12
 Release; the lib is `SHARED` (`lib/CMakeLists.txt:45`) and the service is one TU today
@@ -447,40 +478,72 @@ Release; the lib is `SHARED` (`lib/CMakeLists.txt:45`) and the service is one TU
   from that output; normalised by the C0 package's normaliser — timestamps, the Elodin port),
   post on the same machine and the same leg, masked by the pre/pre mask only, both `cmp`
   byte-identical with the pre run. The `cal.log` half is the one guard on startup print order.
-- **(b) Per-symbol FMA census.** `objdump -d` split on `<…>:`, then
-  `grep -cE 'fmadd|fmsub|fnmadd|fnmsub|fmla|fmls'` per symbol that contains moved code: equal
-  pre/post. A total count can stay equal while a fusion moves between symbols; per symbol it
-  cannot.
-- **(c) Defined-symbol census.** `nm -C --defined-only` filtered to the moved function names,
-  compared **demangled and unqualified**: pre they are `_ZL…` (`t`, file-local), post
-  `fsw::calibration_service::…` (`W`, inline with an out-of-line copy). The *set* of moved
-  functions that have an out-of-line copy must match pre/post; the kind change `t` → `W` is
-  accepted. This is where C's two inlining mechanisms (§6.3) would show.
+- **(b) FMA census (D58).** Two counts over `objdump -d` of the whole `calibration_service`
+  binary. **Total:** `grep -cE 'fmadd|fmsub|fnmadd|fnmsub|fmla|fmls'` over the entire
+  disassembly, equal pre/post (the file `/tmp/wp9-fma-total-pre.txt` above). **Per symbol:**
+  split the disassembly on `<…>:`, demangle, strip the namespace qualifier, count per symbol,
+  and require equality **only for names present on both sides** — with one expected exception:
+  `main`. The move relocates symbols, so a per-symbol-for-every-symbol compare cannot pass by
+  construction: pre, the Blend (300) and `PtSmoother::step` (1879, 2015) sites are inlined into
+  `main` and the bisection's forward lambda into `main`'s `write_abort_thresholds` lambda (an
+  `operator()` symbol or inlined into `main`); post, the same sites are inlined into
+  `handle_t7_raw`, `handle_esp32_raw` and the file-static `write_abort_thresholds` /
+  `invert_abort_psi_to_adc`, none of which exist pre. `main`'s count therefore drops by exactly
+  the sum of the counts of the new symbols (`handle_t7_raw` + `handle_esp32_raw` +
+  `write_abort_thresholds` + `invert_abort_psi_to_adc` if it keeps an out-of-line copy), which
+  the total-count equality already enforces; every other name present on both sides (`convert_*`,
+  `select_*`, `sample_robust_curve`, the lib symbols the binary carries) must be equal. A
+  symbol present on one side only is reported, not compared. What this catches: a contraction
+  appearing or vanishing anywhere in the binary (total), and one moving into or out of a body
+  that did not move (per symbol).
+- **(c) Defined-symbol census — informational (D58).** `nm -C --defined-only` filtered to the
+  moved function names, compared **demangled and unqualified**: pre they are `_ZL…` (`t`,
+  file-local), post `fsw::calibration_service::…` (`W`, inline with an out-of-line copy). Report
+  in the merge row the set of moved functions with an out-of-line copy pre and post and the
+  differences; the kind change `t` → `W` is expected. **It is never a stop:** a body gaining or
+  losing its out-of-line copy is the gcc-12 inlining budget doing what §6.3 predicts, and whether
+  that changed a value is what (a) and (b) decide.
 - **(d) External calls.** `nm -C --undefined-only | sort` identical (no lib function newly called
   or dropped: no math moved across the lib boundary).
-- **(e) Literal multisets.** Concatenate the new files and `calibration_main.cpp`, extract string
-  literals as above, sort, `diff` with `/tmp/wp9-literals-pre.txt`: identical (every log line,
-  path and key moved unchanged). Floating literals likewise.
-- **(f) Warnings.** `calibration_main.cpp: unused variable 'logged_ch5'` still present
-  (`baseline_warnings.txt:7`), nothing new, on both legs.
+- **(e) Literal multisets.** Concatenate the new files and `calibration_main.cpp`, **drop the
+  `#include` lines (`grep -v '^#include'`, exactly as the pre extraction did — D58)**, extract
+  string literals as above, sort, `diff` with `/tmp/wp9-literals-pre.txt`: identical (every log
+  line, path and key moved unchanged). Floating literals likewise. The filter is the same pre and
+  post; without it the new `#include "Conversions.hpp"` and its siblings would show as added
+  literals.
+- **(f) Warnings (D58).** On **macOS** (the leg `baseline_warnings.txt` describes, clang; D4):
+  `calibration_main.cpp: unused variable 'logged_ch5'` still present (`baseline_warnings.txt:7`),
+  nothing new against the baseline. On the **Linux** leg there is no baseline file: capture the
+  warning set of the pre build and the post build of the same configuration (Release, gcc-12) and
+  require them equal — `-Wunused-function` from a header `static` is what this would show.
 - **(g) Lib diff empty.** `git diff --stat backend-remastered...HEAD -- diablo_server/lib`.
-- **(h) Prefix-strip moved-code diff.** In a scratch copy, `sed -E -i 's/\b(ctx|st|stream)\.//g'`
-  over the new TUs and `calibration_main.cpp`, then `git diff -M --color-moved=dimmed-zebra
-  --color-moved-ws=allow-indentation-change backend-remastered...HEAD --
-  diablo_server/services/calibration`. Every line **not** dimmed must be one of: an `#include`; a
-  namespace line; `static` → `inline`; a function signature replacing a lambda head (15 heads, 3
-  handler signatures) or a `{`/`}` closing it; one of the 11 `continue` → `return` lines (§4); the
-  `StreamState`/`CalibrationContext` initialisers; CMake; clang-format's regrouping. Any other
-  non-dimmed line is a review stop. The ~126 prefixed lines (60 actions, 13 commands, 53 stream)
-  are thereby a script result, not a reading task.
+- **(h) Prefix-strip moved-code diff.** In a scratch copy, over the new TUs and
+  `calibration_main.cpp`:
+  ```
+  sed -E -i 's/\b(ctx|stream)\.//g; s/\(ctx, /(/g; s/\(ctx\)/()/g; s/, stream\b//g'
+  ```
+  (GNU sed — the Linux leg, or `gsed` on this Mac; BSD sed has no `\b`), then `git diff -M
+  --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change backend-remastered...HEAD
+  -- diablo_server/services/calibration`. The second and third expressions turn
+  `write_abort_thresholds(ctx)` / `sample_robust_curve(ctx, uid)` back into today's
+  `write_abort_thresholds()` / `sample_robust_curve(uid)` so moved call lines dim too. Every line
+  **not** dimmed must be one of: an `#include` or include guard; a namespace line; `static` →
+  `inline`; an `extern` declaration or a `using` line; a function signature replacing a lambda
+  head (**16 heads**: 727, 999, 1032, 1110, 1130, 1164, 1169, 1178, 1194, 1205, 1216, 1220,
+  1228, 1243, 1254, 1294; 3 handler signatures) or a `{`/`}` closing it; a `SensorModels`
+  signature (`load_pt_lc_models`, `load_t7_models`, `register_store_channels`,
+  `print_model_summary`) or its call in `main`; one of the 11 `continue` → `return` lines (§4);
+  the `StreamState`/`CalibrationContext` initialisers; CMake; clang-format's regrouping. Any
+  other non-dimmed line is a review stop. The ~126 prefixed lines (60 actions, 13 commands, 53
+  stream) are thereby a script result, not a reading task.
 - **(i) Goldens.** Both goldens (`stack.txt`, `lib.txt`) on both legs, plus the `-O0` rebuild
   (`-DCMAKE_BUILD_TYPE=` empty) run once on macOS (D22's one-golden-for-every-build rule), plus
   the calibration area on the emulated amd64 gcc-12 leg (`CHAR_EMULATED=1`, as C3 ran it, D28;
   D55 keeps calibration in that leg's scope; native amd64 is CI's). A red `robust-prediction` or
   `published-*` family is a contract change until proven otherwise: stop and report.
 
-**Fallback** (§0): a diff at checkpoint 2 only → re-cut to steps 1-5, `main` ~730, S33 waiver in
-the LEDGER (orchestrator), step 6 not queued; a diff at checkpoint 1 → the package stops. The
+**Fallback** (§0): a diff at checkpoint 2 only → re-cut to steps 1-4, `main` ~730, S33 waiver in
+the LEDGER (orchestrator), step 5 not queued; a diff at checkpoint 1 → the package stops. The
 compare is never loosened; the mask is never widened after the pre/pre run.
 
 ### 6.2 Cleanup pass (separate queue item, each item its own commit, each gated by §7)
@@ -560,14 +623,15 @@ caller is throttled, and the callers shrink from a ~1,540-line `main` to a 215-l
 `max-inline-insns-auto` Init(15), `large-function-insns` 2700, `large-function-growth` 100 %
 (the single = declared-inline / auto = the rest scoping is the manual's `--param` prose; verify
 on the leg with `g++-12 -O2 -Q --help=params`). Both change which `convert_*`/`select_*` inlines
-on gcc-12, not the expression trees. **The censuses (b)-(d) of §6.1, not this table, are the
-evidence**: the defined-symbol census sees a body gaining or losing its out-of-line copy, the
-per-symbol FMA census sees a contraction appearing or vanishing, and the masked `cmp` sees the
-value.
+on gcc-12, not the expression trees. **The checks of §6.1, not this table, are the evidence**:
+the defined-symbol census (c) reports a body gaining or losing its out-of-line copy, the FMA
+census (b) sees a contraction appearing or vanishing (total) or moving into a body that did not
+move (per symbol), and the masked `cmp` (a) sees the value. (b) and (a) gate; (c) informs (D58).
 
 Where the two contractible expressions stay: `select_pt_psi` header-`inline` (never out of line
 in another TU, never in the lib), still inlined into `handle_t7_raw`, `handle_esp32_raw` and the
-bisection's forward lambda (565-578), its three call sites today; `PtSmoother::step` in the same
+bisection's forward lambda (565-578, now inside the file-static `invert_abort_psi_to_adc` of
+`CalibrationActions.cpp`), its three call sites today; `PtSmoother::step` in the same
 statement sequence in the same function body (now `handle_*_raw`), in a TU built with the same
 flags. **Coverage:** the Blend expression is in no golden today; G1 (§7.2) closes before step 2
 with a reseed case such that changing `kFactoryWeight` 0.25 → 0.75 (line 299) goes red.
@@ -581,7 +645,7 @@ with a reseed case such that changing `kFactoryWeight` 0.25 → 0.75 (line 299) 
 | conversions, model selection, cal_status | `calibration/golden/stack.txt` (published float32 at 4 ULP; `published-near-zero` abs 1e-12) | `fixtures/stack_config.toml`: cubic + physics ratiometric PTs, 4-20 mA PTs (hysteresis, per-role full scale and shunt), LC linear/cubic/physics, TC poly + physics, RTD, ACT incl. offsets 0x0B/0x0F, ball valve, T7 PT/TC/RTD/LC/cubic PT |
 | abort thresholds | `stack.txt` snapshots of `abort_thresholds.txt` (cubic, physics, loop, sparse fallback, T7 rejection, unknown role); `generated_unix` normalised | |
 | captures, clears, zero/zero-all, tares, reload (cmd 7), dedupe, refused captures, unknown cmd 9, uid 9999 | `stack.txt` published frames + snapshots of cubic store, `lc_tare.json`, `adj.json` (robust parameters rel 1e-2) | `fitCurve[].psi` masked (C3-1); **not** the refused branches inside Zero All / Tare All (§4) |
-| seed from `cubic_calibration.default.json`; tare-before-reload ordering | `stack.txt` "after startup" (`:681`) and "after restart" snapshots | the ordering mistake is visible only if the restart's curve differs from the one the tare was taken on — hence §7.2's package |
+| seed from `cubic_calibration.default.json`; tare-before-reload ordering | `stack.txt` "after startup" (`:681`) and "after restart" snapshots | the ordering mistake is visible in `stack.txt` only if the restart's curve differs from the one the tare was taken on; in `cal.log` it is visible as line order — hence the tare-order mutation of §7.2's `cal.log` golden |
 | startup print order | **nothing today** (verdict fact 1): `cal.log` is not in any golden | §7.2's `cal.log` golden |
 | SIGTERM exit code, restart | `stack.txt` `service exit code 0`; lifecycle `shutdown.txt`: exit 0 within [0, 3.5] s, `'Saved robust adjustments on shutdown' logged`, `'[Cal] Stopped.' logged`, adjustments written; SIGINT alone: exit 0 within [0, 4] s | log lines tests read: exactly those two (`lifecycle.py:1438-1440`) plus `wait_log(r"Elodin\|subscrib")` on startup (`:890`) |
 | registration + subscription order and bytes | elodin `## calibration` section (`schema_config_base.txt`, `schema_profile_default.txt`) and `stack.txt` startup frames | C1 is on the tip |
@@ -594,25 +658,30 @@ White-box hooks: **none for this file.** `calibration/README.md` and
 built binary; `config/char_config_services.cpp` includes the daq_bridge, stacklight and
 config_broadcast mains, not this one. WP9 re-points no harness file.
 
-### 7.2 C0 prerequisites (five test-only packages; all gate checkpoint 1)
+### 7.2 C0 prerequisites (three test-only packages; all gate checkpoint 1)
 
-All five are test-only, D32-batchable (`calibration/` only), start now in parallel with WP8, and
+All three are test-only, D32-batchable (`calibration/` only), start now in parallel with WP8, and
 each is tied to the step that moves the line it guards. Each is proven by its mutation going red
-before it is trusted (AGENT-RULES: a test that cannot fail is not a test).
+before it is trusted (AGENT-RULES: a test that cannot fail is not a test). The verdict listed
+five; D58 folded tares-before-reload into the `cal.log` golden (its proof is a mutation of that
+golden, so it was never a separate test) and moved G5 to §7.3 (nothing WP9 moves can change it).
 
 | package | guards | moved by | the case |
 |---|---|---|---|
-| **`cal.log` golden + pre/post `cmp`** | startup print order; 1404 before 1410 (`LC tare: resumed` before `Cubic: resumed`) | steps 2-3 | `cal.log` normalised (timestamps, the Elodin port masked), frozen as a golden; **one malformed-config run** so `Config.cpp:447`'s `[Config] TOML parse error` line has a position to hold; the move-only package also `cmp`s pre/post `cal.log` per leg |
-| **stale-uid Zero All / Tare All** | 1673, 1796 stay `continue` | step 5 | cmd 0 and cmd 8 with one uid whose last sample is stale: the refused uid is logged `REJECTED` and the loop goes on to the next uid; a `return` there skips the rest and goes red |
-| **tares-before-reload** | 1404 → 1410 | step 3 | run the mutation "`lc_tare_store.load()` after the first `reload_live_store()`" against `stack.txt`; if it stays green, add a "profile swapped on disk while the service is down, then start" case whose restart curve differs from the tare's |
-| **G5 Elodin down at start (C6-9)** | 1385-1389 (the reload tail that writes the two files), 1544 | step 3 | exit code 1, with `abort_thresholds.txt` and the cubic store written first, and no `adj.json` |
+| **`cal.log` golden + pre/post `cmp`** | startup print order; 1404 before 1410 (`LC tare: resumed` 1406 before `Cubic: resumed` 1412) | steps 2-3 | `cal.log` normalised (timestamps, the Elodin port masked), frozen as a golden; **one malformed-config run** so `Config.cpp:447`'s `[Config] TOML parse error` line has a position to hold; **the tare-order mutation**: `service_run.py:557` copies `lc_tare.json` into place before the first `r.start()` at `:566`, so the golden's startup block reads `[Calibration] LC tare: resumed N` before `[Calibration] Cubic: resumed M`; swapping 1404 below 1410 ("load tares after the first reload") swaps those two lines and the golden goes red — that mutation is the package's proof for step 3. Optional hardening, not required: a `stack.txt` case "profile swapped on disk while the service is down, then start", whose restart curve differs from the tare's, so the ordering also shows in the recomputed tare kilograms. The move-only package also `cmp`s pre/post `cal.log` per leg |
+| **stale-uid Zero All / Tare All** | 1673, 1796 stay `continue` | step 4 | cmd 0 and cmd 8 with one uid whose last sample is stale: the refused uid is logged `REJECTED` and the loop goes on to the next uid; a `return` there skips the rest and goes red |
 | **G1 Blend reseed** | line 300 | step 2 | a Blend role whose published value is frozen after a reseed with no learning (Robust values are wall-clock dependent, C3-1: freeze `cal_status`, the frame set, and Blend/Robust values only where `has_robust` is false or after the reseed; mask the rest as `fitCurve` is masked); mutation `kFactoryWeight` 0.25 → 0.75 (299) goes red |
 
-G1 is the expensive one. If it alone is not green when the other four are, the orchestrator may
+G1 is the expensive one. If it alone is not green when the other two are, the orchestrator may
 run WP10 first and queue WP9 after it (Prerequisites).
 
 ### 7.3 Other gaps (accepted; worth writing, not gating)
 
+**G5** Elodin down at start (C6-9): exit code 1, with `abort_thresholds.txt` and the cubic store
+written first (the reload tail 1385-1389 runs before `connect_and_register` fails at 1544), and no
+`adj.json`. Worth writing; not a gate (D58): the move keeps 1385-1389 inside `reload_live_store`
+and 1544 in `main`, in the same order, and the `cal.log` golden already holds the startup
+sequence up to the connect, so nothing WP9 moves can change what this case would observe.
 **G2** env overrides `CAL_USE_FACTORY_PT` / `CAL_USE_ROBUST_BLEND` / `CAL_USE_ROBUST_PT`
 (precedence 773-778, summary line 1436-1441, abort model 1073), `CAL_HP_MA_HYST=0`. **G3**
 reconnect: the stand-in drops the connection; expect re-registration, re-subscription, and a
@@ -629,8 +698,8 @@ by any test; held by the literal multiset (e) and, from §7.2 on, the `cal.log` 
 - **Order of side effects at startup.** The trap the reviewed note named worst, and nothing
   froze it until §7.2's `cal.log` golden. Build the context struct from references to locals
   constructed at today's positions; never let a struct constructor own and construct them. Tare
-  load before first reload (1404 → 1410) is asserted by the code's own audit log (1424-1429), the
-  `cal.log` golden and the tares-before-reload package.
+  load before first reload (1404 → 1410) is asserted by the code's own audit log (1424-1429) and
+  the `cal.log` golden, whose tare-order mutation is the proof (§7.2).
 - **`last_save`.** A bare `StreamState` member is the epoch and the first ESP32 packet saves
   (§3). The initialiser at old 1557 is a permitted non-dimmed line; it is checked by reading.
 - **Hidden control flow in the loop.** The `continue` → `return` mapping (§4); 1673/1796
@@ -642,7 +711,8 @@ by any test; held by the literal multiset (e) and, from §7.2 on, the `cal.log` 
   honest — a field that differs between two runs of the same binary is masked before, not after.
 - **Concurrency and static init.** Single thread; no new thread (forbidden), lock order unchanged
   (§1.4), evaluator body verbatim. Globals go from internal to external linkage in move-only (C2
-  removes them); default-constructed containers, no dynamic-init dependency on another TU.
+  removes them); default-constructed containers, no dynamic-init dependency on another TU — the
+  recorded S26 exception (§6.1 step 2), not a claim of compliance.
 - **Warnings baseline.** `logged_ch5` stays in `calibration_main.cpp` or the warning moves to
   another file and the gate reads it as new + missing; `inline`, not `static`, in headers keeps
   the Linux leg's warning set unchanged.
@@ -654,8 +724,10 @@ by any test; held by the literal multiset (e) and, from §7.2 on, the `cal.log` 
 ## Open items
 
 Closed by the verdict: question 1 (the two carriers `CalibrationContext`, `StreamState` stand;
-A′ over B and C), question 3 (tares-before-reload is a C0 gate), question 4 (the < 400 DoD is
-waived; no C1b).
+A′ over B and C), question 3 (tares-before-reload is a C0 gate — D58 folds it into the `cal.log`
+golden as that golden's tare-order mutation, still gating step 3), question 4 (the < 400 DoD is
+waived; no C1b). Closed by D58: `AbortThresholds` and `CalibrationContext.hpp` folded into
+`CalibrationActions` (§2); G5 worth writing, not gating (§7.3).
 
 Team questions (verdict §5):
 
