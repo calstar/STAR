@@ -3,7 +3,7 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds|selftest|unrecognized|mismatch]
+ *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds|selftest|unrecognized|mismatch|statecsv]
  *
  * pt: the full scripted session against the one routed PT board. boards: every simulated board
  * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
@@ -15,7 +15,8 @@
  * hold, then the sequencer stalled (SIGSTOP) and gone (SIGTERM) under the backend's :9998 client;
  * run.sh hands over the sequencer's PID in <CHAR_FIXTURE>/ports.json (README "The holds session").
  * selftest, unrecognized, mismatch: the three WP6 gaps (DESIGN-WP6 §7 G2, G3, G1), each a session
- * cut to its one notification (README "The WP6 gap sessions").
+ * cut to its one notification; statecsv: G8, an idle-mode state-CSV deploy and what the next client
+ * is handed (README "The WP6 gap sessions").
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
@@ -826,10 +827,55 @@ async function mismatch(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
+/** G8 (DESIGN-WP6 §7, LEDGER D105): an idle-mode POST /api/state-csv, as the operator, with the
+ *  actuators CSV changed in one cell -- Fuel Vent's Idle column, CLOSE -> OPEN -- and what the
+ *  always-on backend does with it: writeStateCsv deploys it (no session), setImmediate fires
+ *  onStateCsvUpdated (server.ts), which rebuilds STATE_ACTUATOR_MAP and broadcasts one
+ *  `config_updated` to client A -- and nothing else to A: its commanded snapshot was sent at
+ *  connect and is not re-sent. The rebuild is observable only through the next client: B's connect
+ *  burst (ws_handshake.txt) carries ACT_CMD.B2.CH2 (Fuel Vent, board 12 channel 2) = 1 where A's
+ *  carried 0. The GETs before and after are the witnesses in http.txt / csv.txt. The body is built
+ *  from the GET so the fixture's CSV, not a copy of it, is what is deployed. */
+async function statecsv(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A');
+  await settle(2500);
+
+  step('state_csv_deploy');
+  const before = await request('GET', '/api/state-csv?name=actuators');
+  const rows = before.body.split('\n');
+  const i = rows.findIndex((r) => r.startsWith('Fuel Vent,'));
+  if (i < 0) throw new Error('actuators CSV has no Fuel Vent row');
+  const cells = rows[i].split(',');
+  if (cells[1] !== 'CLOSE') throw new Error(`Fuel Vent Idle is ${cells[1]}, expected CLOSE`);
+  cells[1] = 'OPEN';
+  rows[i] = cells.join(',');
+  await request('POST', '/api/state-csv?name=actuators', { headers: OPERATOR, body: rows.join('\n') });
+  await settle(1500);
+  await request('GET', '/api/state-csv?name=actuators');
+
+  step('late_client');
+  await openClient('B');
+  await settle(1500);
+  await closeClient('B');
+  await settle(300);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
 (MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub()
   : MODE === 'operator' ? operator() : MODE === 'holds' ? holds()
   : MODE === 'selftest' ? selftest() : MODE === 'unrecognized' ? unrecognized() : MODE === 'mismatch' ? mismatch()
-  : main()).then(() => process.exit(0)).catch((err) => {
+  : MODE === 'statecsv' ? statecsv() : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);

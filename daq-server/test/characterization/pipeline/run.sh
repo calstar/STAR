@@ -21,6 +21,8 @@
 #                                                        # does not expect (unrecognized_<id>) → golden/unrecognized/
 #   bash test/characterization/pipeline/run.sh mismatch   # the ball valve opened in debug mode against a
 #                                                        # CLOSE row: actuator_mismatch raised and cleared → golden/mismatch/
+#   bash test/characterization/pipeline/run.sh statecsv   # an idle-mode POST /api/state-csv deploy: config_updated,
+#                                                        # the next client's commanded snapshot → golden/statecsv/
 #
 # "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
 # 127.0.0.22, "mismatch" 127.0.0.71); it fails, never skips, when one is missing. Linux has all of 127/8.
@@ -61,10 +63,11 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" selftest || rc=1
   bash "$HERE/run.sh" unrecognized || rc=1
   bash "$HERE/run.sh" mismatch || rc=1
+  bash "$HERE/run.sh" statecsv || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized|mismatch) ;;
-  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized|mismatch]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized|mismatch|statecsv) ;;
+  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized|mismatch|statecsv]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -148,7 +151,7 @@ cat > "$FX/ports.json" <<EOF
  "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-FXMODE="$MODE"; case "$MODE" in nocal|operator|holds|startlog|selftest) FXMODE=pt ;; esac  # the pt fixture, one routed board
+FXMODE="$MODE"; case "$MODE" in nocal|operator|holds|startlog|selftest|statecsv) FXMODE=pt ;; esac  # the pt fixture, one routed board
 "$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$FXMODE"
 # selftest: the simulator reports pt_board's connector 3 as failed (--fail-connector, opt-in,
 # LEDGER D48(1)); its default packet is proven byte-identical first, with no ports involved.
@@ -463,7 +466,7 @@ if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog -x selftest -x unrecognized -x mismatch "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog -x selftest -x unrecognized -x mismatch -x statecsv "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
