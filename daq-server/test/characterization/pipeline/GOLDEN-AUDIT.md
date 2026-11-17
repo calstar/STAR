@@ -31,3 +31,15 @@ refer to `README.md`.
 | 16 | OTA `body: {"projects": [Actuator_Hotfire, BallValve_Hotfire, …]}` (http.txt) | 1 | **Covered:** `{"projects": [LC_Hotfire (Group/), PT_Hotfire]}` from the fixture's fixed `firmware/Hotfire_Code`. It exercises the same discovery rules: nesting, the `Hotfire_Tests` exclusion, `.pio` skipped. **Dropped:** the repo's actual project list. It came from the checkout, changes with every firmware project, and was absent from partial exports. |
 
 Total removed: 11 + 33 + 22 + 59 + 3 + 2 + 1 + 2 + 5 + 1 + 6 + 2 + 3 + 1 + 1 = 152.
+
+## char/pipeline-slot10 (D41 harness fix + the stalesub session)
+
+```bash
+git diff backend-remastered...char/pipeline-slot10 -- 'daq-server/test/characterization/pipeline/golden/*' | grep '^-[^-]'
+```
+
+Zero lines removed, zero modified. `golden/`, `golden/boards/` and `golden/nocal/` are byte-identical
+to `backend-remastered`; the branch only adds `golden/stalesub/stalesub.txt` (the D-SUB case, README
+"The stalesub session"). Board 60 stays in the boards fixture, so every line that freezes D-SLOT
+(`boards/http.txt` validator slot-10 error, `boards/ws_events.txt` setup-stuck / lost / connected,
+`boards/ws_streams.txt` board 60 self-test) is untouched.

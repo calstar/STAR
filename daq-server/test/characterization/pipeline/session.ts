@@ -3,11 +3,13 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json> [pt|boards]
+ *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub]
  *
  * pt: the full scripted session against the one routed PT board. boards: every simulated board
  * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
  * by sim/board_startup_sim.py: BOARD_STARTUP_SIM, PYTHON_BIN, CHAR_DAQ_UDP_PORT, CHAR_STARTUP_PORT).
+ * stalesub: run.sh has arranged the D-SUB window (README "The stalesub session"); this only watches
+ * what PT board 22 delivers, channel by channel, live and from history.
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
@@ -437,7 +439,46 @@ async function nocal(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
-(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : main()).then(() => process.exit(0)).catch((err) => {
+/** The D-SUB window, arranged by run.sh: the backend's VTableStream for [0x20,0x31] was accepted
+ *  while that table was PT10_Cal.CH1 and the table has since been re-registered as PT2_Cal.CH1.
+ *  Watch PT board 22 for 2 x RESUBSCRIBE_MIN_MS (server.ts, 5000) + 2 s from the moment its
+ *  untouched channel 2 first arrives calibrated: two resubscribe passes have run by then, so a
+ *  backend that re-sent a silent pair would have had its chance. Then history, both ways. */
+async function stalesub(): Promise<void> {
+  step('readiness');
+  const deadline = Date.now() + 60000;
+  let seen = false;
+  const probe = new WebSocket(`ws://127.0.0.1:${PORT}`);
+  probe.on('message', (d) => {
+    try {
+      const m = JSON.parse(d.toString());
+      if (m.type === 'sensor_update' && m.payload?.entity === 'PT2_Cal.CH2') seen = true;
+    } catch { /* ignore */ }
+  });
+  while (Date.now() < deadline && !seen) await sleep(100);
+  probe.close();
+  if (!seen) throw new Error('pipeline not delivering PT2_Cal.CH2 (the control channel)');
+
+  step('connect');
+  await openClient('A');
+  await sleep(2 * 5000 + 2000);
+
+  step('history');
+  send('A', { type: 'query_historical', payload: {
+    keys: ['PT2.CH1.raw_adc_counts', 'PT2_Cal.CH1.pressure_psi', 'PT2_Cal.CH2.pressure_psi'],
+    sinceMs: Date.now() - 12000,
+  } });
+  await settle(1500);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub() : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);
