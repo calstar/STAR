@@ -215,6 +215,7 @@ import { sendToSequencer, SEQUENCER_PORT } from './sequencer-client.js';
 import { WS_PORT, GUI_PORT, ELODIN_HOST, ELODIN_PORT, THIN_VERBOSE_CONNECTION_LOG, THIN_HEARTBEAT_DIAG_LOG, THIN_STATS_LOG } from './server/env.js';
 import { stats, initStats } from './server/stats.js';
 import { type WsWithControl, wss, attachWebSocketServer, broadcast, send, clientStreams, clientStreamStatus, flushClientOutboxes, resetOutboxStats, reapUnresponsiveClients, KEEPALIVE_MS } from './server/ws-clients.js';
+import { activeNotificationKeys, notificationBuffer, pruneNotificationBuffer, broadcastNotification } from './server/notifications.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -538,32 +539,10 @@ const SETUP_STUCK_THRESHOLD_MS = 4000;
 
 const prevConnectedState = new Map<number, boolean>();
 const boardFirstSeenSetupMs = new Map<number, number>();
-const activeNotificationKeys = new Set<string>();
 const selfTestNotifiedBoards = new Set<number>();
 /** Latest self-test results — key = "SELF_TEST.BOARD_{id}.sensor_{n}", value = 0|1.
  *  Replayed as SENSOR_UPDATE on WS connect so late-connecting browsers see results. */
 const selfTestLatest = new Map<string, SensorUpdate>();
-
-// Rolling notification history so a reloaded/late-connecting browser recovers the
-// last few minutes of warnings/info instead of starting blank. Replayed on connect.
-const NOTIFICATION_BUFFER_MS = 5 * 60 * 1000;
-const NOTIFICATION_BUFFER_MAX = 500; // hard cap so a flapping alert can't grow it unbounded
-const notificationBuffer: { at: number; payload: NotificationPayload }[] = [];
-
-function pruneNotificationBuffer(now: number): void {
-  const cutoff = now - NOTIFICATION_BUFFER_MS;
-  while (notificationBuffer.length > 0 && notificationBuffer[0].at < cutoff) notificationBuffer.shift();
-  if (notificationBuffer.length > NOTIFICATION_BUFFER_MAX) {
-    notificationBuffer.splice(0, notificationBuffer.length - NOTIFICATION_BUFFER_MAX);
-  }
-}
-
-function broadcastNotification(payload: NotificationPayload): void {
-  const at = Date.now();
-  notificationBuffer.push({ at, payload });
-  pruneNotificationBuffer(at);
-  broadcast({ type: MessageType.NOTIFICATION, timestamp: at, payload });
-}
 
 function boardLabel(status: BoardStatus): string {
   const num = status.boardNumber ?? status.id;
