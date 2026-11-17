@@ -13,8 +13,11 @@
 //             (STYLE-S12): DatabaseConfig passes "[DatabaseConfig] Failed to encode message",
 //             ControllerService passes nullptr. Never throws beyond what encode_vec/send_msg throw.
 // Must not know: which tables exist, ids, entity names (DatabaseConfig's and ControllerService's).
-//             Lib-private: it includes db.hpp, whose include directory is SYSTEM PRIVATE to
-//             fsw_daq_lib (DESIGN-WP3 §2.2), so no service or harness may include this header.
+//             Lib-private by mechanism, not by directory: lib/src is on fsw_daq_lib's PUBLIC
+//             include list, so any consumer can resolve this path, but the header's own
+//             #include "db.hpp" resolves only on fsw_daq_lib's SYSTEM PRIVATE directory
+//             (DESIGN-WP3 §2.2, §2.3). A service or harness TU that includes it fails to
+//             compile ("db.hpp not found").
 // Contract:   the Elodin MSG bytes — elodin/golden/schema_{config_base,profile_default}.txt (every
 //             service's registration stream, byte for byte).
 // Static init: none (STYLE-S26).
