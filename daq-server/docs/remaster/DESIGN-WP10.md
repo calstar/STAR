@@ -431,7 +431,10 @@ baseline: the pre-WP tip, as for the move-only item). Content:
       `load_board_map_from_config`); `test/characterization/packets/README.md:37` and
       `test/characterization/config/README.md:40` (the BoardMap functions are no longer
       file-static helpers of a main); `lib/include/control/ScriptStates.hpp:60` (cites
-      `SequencerService.cpp:384-445`, which moves to `SequencerService_config.cpp`). The harness
+      `SequencerService.cpp:384-445`, which moves to `SequencerService_config.cpp`); and, once WP8 pass 2 has
+      landed, the `Conn` comment WP8 moved verbatim into `lib/src/net/TcpCommandServer.cpp` (from
+      `sequencer_main.cpp:282-283`; it names `svc` and `main()`, neither of which exists there — DESIGN-WP8
+      §6.2 "Stale after pass 2"). The harness
       comment edits are allowed under D18 (goldens byte-identical; the orchestrator reviews).
 - [ ] **daq_bridge extractions** (§4.3): `print_board_routing_table`, `publish_self_tests`,
       `publish_raw_batch`; `ElodinPublish.cpp` added to `daq_bridge/CMakeLists.txt`. The harness
