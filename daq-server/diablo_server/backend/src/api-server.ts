@@ -44,6 +44,7 @@ export { buildSensorConfig, type SensorConfigEntry } from './sensor-config.js';
 import { handleConfigRequest } from './api/config.js';
 import { handleStatesRequest } from './api/states.js';
 import { handleProfilesRequest } from './api/profiles.js';
+import { handleHistoryRequest } from './api/history.js';
 
 /**
  * Create an HTTP request handler for all /api/* routes.
@@ -79,38 +80,8 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
       if (await handleConfigRequest(req, res, url, opts)) return true;
       if (await handleStatesRequest(req, res, url, opts)) return true;
       if (await handleProfilesRequest(req, res, url, opts)) return true;
-      if (url.pathname === '/api/query' && req.method === 'GET') {
-        // Query historical data from Elodin DB
-        const currentQueryClient = getQueryClient ? getQueryClient() : null;
-        if (!currentQueryClient) {
-          res.writeHead(503, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Query client not available' }));
-          return true;
-        }
-
-        const packetIdHigh = parseInt(url.searchParams.get('packet_id_high') || '0x20', 16);
-        const packetIdLow = parseInt(url.searchParams.get('packet_id_low') || '0x11', 16);
-        const startTime = url.searchParams.get('start_time') ? parseInt(url.searchParams.get('start_time')!) : undefined;
-        const endTime = url.searchParams.get('end_time') ? parseInt(url.searchParams.get('end_time')!) : undefined;
-        const limit = url.searchParams.get('limit') ? parseInt(url.searchParams.get('limit')!) : 1000;
-
-        const queryOptions: QueryOptions = {
-          packetId: [packetIdHigh, packetIdLow],
-          startTime,
-          endTime,
-          limit,
-        };
-
-        currentQueryClient.query(queryOptions)
-          .then((response) => {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(response));
-          })
-          .catch((error: any) => {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message }));
-          });
-      } else if (url.pathname === '/api/pressure-limits' && req.method === 'GET') {
+      if (await handleHistoryRequest(req, res, url, opts)) return true;
+      if (url.pathname === '/api/pressure-limits' && req.method === 'GET') {
         // Return pressure limits from config.toml (NOP, MEOP, POP per fluid system).
         // Cached until the next deploy — config cannot change during a session.
         const config = readDeployedConfig();
@@ -143,35 +114,6 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         const sensorConfig = buildSensorConfig();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ sensors: sensorConfig }));
-      } else if (url.pathname === '/api/sensors' && req.method === 'GET') {
-        // List all available sensors (subscribed packet IDs)
-        const currentQueryClient = getQueryClient ? getQueryClient() : null;
-        if (!currentQueryClient) {
-          res.writeHead(503, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Query client not available' }));
-          return true;
-        }
-
-        const packetIds = currentQueryClient.getSubscribedPacketIds();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          sensors: packetIds.map(([high, low]) => ({
-            packet_id: [high, low],
-            packet_id_hex: `0x${high.toString(16).padStart(2, '0')},0x${low.toString(16).padStart(2, '0')}`,
-          }))
-        }));
-      } else if (url.pathname.startsWith('/api/sensors/') && req.method === 'GET') {
-        // Get latest value for a specific entity
-        // Format: /api/sensors/PT_Cal.PT_CH1
-        const entity = url.pathname.replace('/api/sensors/', '');
-
-        // This would require access to sensor cache from server
-        // For now, return a placeholder
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          entity,
-          message: 'Use WebSocket for real-time data. Historical queries via /api/query',
-        }));
       } else if (url.pathname === '/api/board-logs' && req.method === 'GET') {
         // Recent cached board diagnostic logs (in-memory, session-scoped).
         // Optional ?board=<id> and ?limit=<n>. Lets a freshly-opened GUI backfill.
