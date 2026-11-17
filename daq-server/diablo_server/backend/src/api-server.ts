@@ -44,6 +44,7 @@ import { handleConfigRequest } from './api/config.js';
 import { handleStatesRequest } from './api/states.js';
 import { handleProfilesRequest } from './api/profiles.js';
 import { handleHistoryRequest } from './api/history.js';
+import { handleGuiConfigRequest } from './api/gui-config.js';
 
 /**
  * Create an HTTP request handler for all /api/* routes.
@@ -80,40 +81,8 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
       if (await handleStatesRequest(req, res, url, opts)) return true;
       if (await handleProfilesRequest(req, res, url, opts)) return true;
       if (await handleHistoryRequest(req, res, url, opts)) return true;
-      if (url.pathname === '/api/pressure-limits' && req.method === 'GET') {
-        // Return pressure limits from config.toml (NOP, MEOP, POP per fluid system).
-        // Cached until the next deploy — config cannot change during a session.
-        const config = readDeployedConfig();
-        const limits = config.pressure_limits || {};
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ pressure_limits: limits }));
-      } else if (url.pathname === '/api/gui-config' && req.method === 'GET') {
-        // GUI-driven config lists from config.toml [gui]: the ordered top-bar pressure gauges
-        // ([[gui.pressure_bars]]) and the tab-bar tabs+order (gui.tabs). Bar NOP/MEOP come from
-        // [pressure_limits]; tab ids index the frontend view catalog.
-        //
-        // Served from the deployed-config cache, not re-read per request. GUI config is frozen
-        // during a session like everything else; the browser is told to refetch by the
-        // CONFIG_UPDATED broadcast when a deploy actually happens.
-        const config = readDeployedConfig();
-        const gui = config.gui ?? {};
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          pressure_bars: gui.pressure_bars ?? [],
-          tabs: gui.tabs ?? [],
-          // [gui.groups]: page name → ordered role-name list (explicit sensor→page membership).
-          groups: gui.groups ?? {},
-          // The state diagram's grid size (frontend lib/panel-layout.ts); absent = fit the states.
-          state_grid_rows: gui.state_grid_rows,
-          state_grid_cols: gui.state_grid_cols,
-        }));
-      } else if (url.pathname === '/api/sensor-config' && req.method === 'GET') {
-        // Return sensor configuration derived from config.toml:
-        // role names, board assignments, entity strings, calibration flags
-        const sensorConfig = buildSensorConfig();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ sensors: sensorConfig }));
-      } else if (url.pathname === '/api/board-logs' && req.method === 'GET') {
+      if (await handleGuiConfigRequest(req, res, url, opts)) return true;
+      if (url.pathname === '/api/board-logs' && req.method === 'GET') {
         // Recent cached board diagnostic logs (in-memory, session-scoped).
         // Optional ?board=<id> and ?limit=<n>. Lets a freshly-opened GUI backfill.
         const boardRaw = url.searchParams.get('board');
