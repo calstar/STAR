@@ -77,8 +77,9 @@ git diff backend-remastered...char/c0-wp7 -- 'daq-server/test/characterization/p
 ```
 
 Zero lines removed, zero modified. The branch adds the `http_operator_writes` step (a new section
-in `golden/http.txt` with its `FILE` lines, its `config_updated` frames in `golden/ws_events.txt`,
-the reloaded board list in `golden/ws_streams.txt`, the cut-down actuator CSV in `golden/csv.txt`),
+in `golden/http.txt` with its `FILE` lines, its five `config_updated` frames in
+`golden/ws_events.txt`, the cut-down actuator CSV in `golden/csv.txt`; the board list each deploy
+re-broadcasts is the same config's, so `golden/ws_streams.txt` gains nothing),
 two GETs inside `transition_armed` and `GET /api/debug?values` in both sweeps (`golden/http.txt`).
 The sweeps' existing `/api/debug` (P9) and `/api/engine_state` lines are untouched: `http.txt`
 compares a repeat against the first body with the same signature, and the new requests have their
