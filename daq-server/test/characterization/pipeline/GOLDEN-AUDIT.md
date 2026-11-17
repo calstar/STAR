@@ -69,3 +69,17 @@ separate session so that the pt goldens keep every line -- in particular `ws_str
 `paths checked:` line, which names every client's handshake replay and would gain a client if the
 operator connected inside the pt session. `golden/`, `golden/boards/`, `golden/nocal/` and
 `golden/stalesub/` are byte-identical to `char/c0-h8`.
+
+## char/c0-wp7 (H1's golden half, D64(3))
+
+```bash
+git diff backend-remastered...char/c0-wp7 -- 'daq-server/test/characterization/pipeline/golden/*' | grep '^-[^-]'
+```
+
+Zero lines removed, zero modified. The branch adds the `http_operator_writes` step (a new section
+in `golden/http.txt` with its `FILE` lines, its `config_updated` frames in `golden/ws_events.txt`,
+the reloaded board list in `golden/ws_streams.txt`, the cut-down actuator CSV in `golden/csv.txt`),
+two GETs inside `transition_armed` and `GET /api/debug?values` in both sweeps (`golden/http.txt`).
+The sweeps' existing `/api/debug` (P9) and `/api/engine_state` lines are untouched: `http.txt`
+compares a repeat against the first body with the same signature, and the new requests have their
+own. `golden/boards/`, `golden/nocal/` and `golden/stalesub/` are byte-identical.
