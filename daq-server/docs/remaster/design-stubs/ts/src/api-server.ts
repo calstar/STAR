@@ -20,8 +20,14 @@
  * `ota-service-cmd` (1.12). None for `config-validation` (already evaluated inside
  * `session-manager`'s subtree), for anything `server.ts:29-31` evaluated first, or for the
  * type-only `./elodin-query.js`, `./shared-types.js`, `./video/service.js`, `http` (a bare import
- * there would add a module). Commit 1.13 deletes the dead `__dirname` const with the four builtin
- * imports (`fs`, `os`, `path`, `url`). Step 2.4 labels the seven. The esbuild module-order diff
+ * there would add a module). Commit 1.13 (D72) deletes the dead `__dirname` const, the four
+ * builtin imports (`fs`, `os`, `path`, `url`) and the ten named-import declarations left without a
+ * value use — `routes/config`, `routes/calibration-profiles`, `sensor-config`, `config-validation`,
+ * `elodin-query`, `shared-types`, `lc-tare`, `../../shared/config-validation`, `video/service`,
+ * `ball-valve-cal` (17 lines, every one already elided at runtime; proof: tsc exit 0, the order
+ * diff empty, `grep -w` per name printing nothing). What remains below is the whole import block:
+ * `http` (the signature's types), the seven bare imports, `video/routes`, the ten `./api/*.js`
+ * imports, the two re-export lines. Step 2.4 labels the seven. The esbuild module-order diff
  * against the parent commit (filtered on `src/api/`) is the check. Must not know about:
  * `server/*` (STYLE-S31).
  * Path-coupled users: `server.ts:35`, `__tests__/config-profile-create-calibration.test.ts`

@@ -5,7 +5,8 @@
  * Owns: no state. Reads and writes through `routes/config-profiles.ts` (a CSV reader separate
  * from `state-csv/*`, by design); scripts are checked by `routes/script-check.ts`. Must not know
  * about: `server/*` (the rebuilt actuator map is `server.ts`'s, via `opts.onStateCsvUpdated`).
- * Contract: `pipeline/golden/csv.txt`, `http.txt`; H1/H8 before the moves.
+ * Contract: `pipeline/golden/csv.txt`, `http.txt`; H1/H8 before the moves; the `setImmediate`
+ * deferral of `onStateCsvUpdated` (601) is H1's ordering vitest (`res.writableEnded`, D72).
  * Import-time effects: none.
  */
 
