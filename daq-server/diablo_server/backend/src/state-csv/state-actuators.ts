@@ -11,6 +11,7 @@ import { SystemState } from '../../../shared/types.js';
 import { readConfig } from '../routes/config.js';
 import { csvStateMap } from './state-ids.js';
 import { ballValveBoardIds } from '../ball-valve.js';
+import { boardSlot } from '../sensor-config.js';
 
 // ES module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
@@ -119,8 +120,7 @@ export function resolveActuatorBoardSlotAndChannel(actuatorName: string): { bn: 
     const localCh = typeof entry[1] === 'number' ? entry[1] : Number(entry[1]);
     if (!Number.isFinite(localCh) || localCh < 1) return null;
     const boardId = entry.length >= 3 && typeof entry[2] === 'number' ? entry[2] : 12;
-    const mod = boardId % 10;
-    const bn = mod === 0 ? 10 : mod;
+    const bn = boardSlot(boardId);
     return { bn, localCh, ballValve: ballValveBoardIds(config).has(boardId) };
   } catch {
     return null;
