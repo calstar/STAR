@@ -293,3 +293,9 @@ def active_components(config):
 
 def nan_to(v: float, d: float = 0.0) -> float:
     return d if math.isnan(v) else v
+
+
+def is_perfect_finish(rocket) -> bool:
+    """Rocket.isPerfectFinish(). Shim: not stored in .ork (OpenRocket only sets it from
+    code), so a model without the accessor is a rocket with the default, false."""
+    return bool(_call(rocket, "is_perfect_finish", default=False))

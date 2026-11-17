@@ -147,8 +147,8 @@ class RocketComponent:
         from .assemblies import AxialStage
         if track_stage and isinstance(component, AxialStage):
             self.get_rocket().track_stage(component)
-        self._on_child_added(component)
         self._fire()  # fireAddRemoveEvent
+        self._on_child_added(component)
 
     def _on_child_added(self, component: "RocketComponent") -> None:
         pass

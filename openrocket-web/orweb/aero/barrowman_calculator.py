@@ -241,7 +241,7 @@ class BarrowmanCalculator:
         max_r, min_x, max_x = 0.0, 1.7976931348623157e308, 0.0
         roughness_limited: dict[str, float] = {}
         length_aero = configuration.get_length_aerodynamic()
-        perfect = bool(compat.get_rocket(configuration).is_perfect_finish())
+        perfect = compat.is_perfect_finish(compat.get_rocket(configuration))
 
         for c, contexts in imap.items():
             if not compat.is_aerodynamic(c):
@@ -299,7 +299,7 @@ class BarrowmanCalculator:
     def calculate_friction_coefficient(configuration, mach: float, re: float) -> float:
         c1 = 1.0
         c2 = 1.0
-        if compat.get_rocket(configuration).is_perfect_finish():
+        if compat.is_perfect_finish(compat.get_rocket(configuration)):
             # partial laminar layer; roughness limit is checked later
             if re < 1.0e4:
                 cf = 1.33e-2

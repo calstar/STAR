@@ -84,9 +84,10 @@ class Coordinate:
         )
 
     def equals(self, other: "Coordinate") -> bool:
-        """Coordinate.equals: exact field comparison."""
-        return (self.x == other.x and self.y == other.y and self.z == other.z
-                and self.weight == other.weight)
+        """Coordinate.equals: MathUtil.equals on every field."""
+        from .mathutil import equals as eq
+        return (eq(self.x, other.x) and eq(self.y, other.y) and eq(self.z, other.z)
+                and eq(self.weight, other.weight))
 
     # -- Python conveniences ---------------------------------------------------
     def __iter__(self):

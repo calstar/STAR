@@ -208,6 +208,66 @@ public class Oracle {
         }
         out.append("]");
 
+        // Every motor any flight configuration uses (not only the selected one), once per
+        // digest, and each configuration's launch/burnout mass: the bundled motor set and
+        // the configuration-switching tests are built from these.
+        java.util.LinkedHashMap<String, ThrustCurveMotor> all = new java.util.LinkedHashMap<>();
+        StringBuilder cfgs = new StringBuilder();
+        boolean firstCfg = true;
+        for (info.openrocket.core.rocketcomponent.FlightConfigurationId fcid : doc.getRocket().getIds()) {
+            FlightConfiguration fc = doc.getRocket().getFlightConfiguration(fcid);
+            for (RocketComponent c : doc.getRocket()) {
+                if (!(c instanceof info.openrocket.core.rocketcomponent.MotorMount)) continue;
+                info.openrocket.core.rocketcomponent.MotorMount mm = (info.openrocket.core.rocketcomponent.MotorMount) c;
+                if (!mm.isMotorMount()) continue;
+                MotorConfiguration mc = mm.getMotorConfig(fcid);
+                if (mc.isEmpty() || !(mc.getMotor() instanceof ThrustCurveMotor)) continue;
+                ThrustCurveMotor m = (ThrustCurveMotor) mc.getMotor();
+                all.putIfAbsent(m.getDigest(), m);
+            }
+            if (!firstCfg) cfgs.append(", ");
+            firstCfg = false;
+            cfgs.append("{\"id\": ").append(q(String.valueOf(fcid.key)))
+                .append(", \"launch\": ").append(body(MassCalculator.calculateLaunch(fc)))
+                .append(", \"burnout\": ").append(body(MassCalculator.calculateBurnout(fc)))
+                .append("}");
+        }
+        out.append(", \"configs\": [").append(cfgs).append("]");
+        out.append(", \"allMotors\": [");
+        first = true;
+        for (ThrustCurveMotor m : all.values()) {
+            if (!first) out.append(", ");
+            first = false;
+            out.append("{\"designation\": ").append(q(m.getDesignation()))
+                .append(", \"manufacturer\": ").append(q(m.getManufacturer().getSimpleName()))
+                .append(", \"digest\": ").append(q(m.getDigest()))
+                .append(", \"motorType\": ").append(q(m.getMotorType().name()))
+                .append(", \"commonName\": ").append(q(m.getCommonName()))
+                .append(", \"diameter\": ").append(n(m.getDiameter()))
+                .append(", \"length\": ").append(n(m.getLength()))
+                .append(", \"delays\": [");
+            double[] dl = m.getStandardDelays();
+            for (int i = 0; i < dl.length; i++) {
+                if (i > 0) out.append(", ");
+                out.append(n(dl[i]));
+            }
+            out.append("], \"time\": [");
+            double[] t = m.getTimePoints();
+            double[] th = m.getThrustPoints();
+            Coordinate[] cg = m.getCGPoints();
+            StringBuilder ts = new StringBuilder(), ths = new StringBuilder(), cgs = new StringBuilder(), ms = new StringBuilder();
+            for (int i = 0; i < t.length; i++) {
+                String sep = i > 0 ? ", " : "";
+                ts.append(sep).append(n(t[i]));
+                ths.append(sep).append(n(th[i]));
+                cgs.append(sep).append(n(cg[i].x));
+                ms.append(sep).append(n(cg[i].weight));
+            }
+            out.append(ts).append("], \"thrust\": [").append(ths).append("], \"cgx\": [").append(cgs)
+                .append("], \"mass\": [").append(ms).append("]}");
+        }
+        out.append("]");
+
         out.append(", \"cm\": [");
         first = true;
         for (Map.Entry<Integer, CMAnalysisEntry> e : MassCalculator.getCMAnalysis(cfg).entrySet()) {

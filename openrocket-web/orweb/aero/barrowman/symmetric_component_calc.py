@@ -30,7 +30,7 @@ def calculate_stagnation_cd(m: float) -> float:
         pressure = 1 + pow2(m) / 4 + pow2(pow2(m)) / 40
     else:
         pressure = 1.84 - 0.76 / pow2(m) + 0.166 / pow2(pow2(m)) + 0.035 / pow2(m * m * m)
-    return 0.85 * pressure
+    return 0.8500001 * pressure
 
 
 class SymmetricComponentCalc(RocketComponentCalc):

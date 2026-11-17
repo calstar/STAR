@@ -46,8 +46,11 @@ ROLL_FIELDS = {
 
 
 def load(name: str):
-    from tests.aero_loader import load_rocket  # noqa: PLC0415  (see that module)
-    return load_rocket(HERE / "rockets" / f"{name}.ork")
+    """The rocket through the real orweb model: .ork -> document -> components."""
+    from orweb.build import build_rocket
+    from orweb.ork import read_ork
+
+    return build_rocket(read_ork(HERE / "rockets" / f"{name}.ork"))
 
 
 def close(a, b) -> bool:
