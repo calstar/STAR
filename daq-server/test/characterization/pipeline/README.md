@@ -215,8 +215,9 @@ to a non-empty `X-Auth-Email` that is not in `operators.txt` (the fixture's list
 during the session, in the file's order: `POST /api/state-script`, `profiles/create`, `…/rename`,
 `…/delete`, `POST /api/ball_valve_cal`, `POST /api/feed-char/results` (the one that needs a
 session: without one it answers 409 before the gate), `calibration_profiles/load`, `…/new_blank`.
-Each body is one an operator would be allowed, so a dropped gate reads as a 200 and a changed file
-rather than a 400; the five GETs that follow (`/api/config/profiles`, `/api/state-script?name=
+Each body is well-formed, so a dropped gate reads as a non-403 -- for most a 200 and a changed
+file (rename and delete name the active profile, which their routes refuse with a 400) -- rather
+than as a parse error; the five GETs that follow (`/api/config/profiles`, `/api/state-script?name=
 viewer.script`, `/api/ball_valve_cal`, `/api/feed-char/results`, `/api/calibration_profiles`)
 witness that nothing was written, and `ws_events.txt` shows the step raised no `config_updated`.
 The WS half of the same gate is frozen where it already was: client B's `control_status`
