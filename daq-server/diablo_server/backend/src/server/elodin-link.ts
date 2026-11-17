@@ -11,8 +11,8 @@
  * here (no factory, no deps object, no clock seam — D48).
  *
  * Event-loop only. No effect at import (M1); USE_SIM is read per call in isSimulated(), verbatim
- * (D44(1)). In step 1 onElodinConnected still sets calibrationHost.elodin (R3); step 2.2 moves
- * that behind calibration-state.setCalibrationElodin(). Never imports api-server.ts or api/*.
+ * (D44(1)). onElodinConnected hands the client to calibration-state.setCalibrationElodin().
+ * Never imports api-server.ts or api/*.
  *
  * Contract: `Connected to Elodin, subscriptions sent.` is counted by lifecycle.py:1083 and frozen
  * in lifecycle/golden/reconnect.txt (STYLE-S15); `VTableStream: sent` / `queued for the next
@@ -28,7 +28,7 @@ import { sessionManager } from '../session-manager.js';
 import { MessageType } from '../../../shared/types.js';
 import { ELODIN_HOST, ELODIN_PORT } from './env.js';
 import { wss, send, clientStreamStatus } from './ws-clients.js';
-import { calibrationHost } from './calibration-state.js';
+import { setCalibrationElodin } from './calibration-state.js';
 import { refreshScriptStatus } from './engine-state.js';
 
 // Authoritative "data is actually flowing" signal: epoch-ms of the last entity we
@@ -137,7 +137,7 @@ export function onElodinConnected(): void {
 
   if (resubscribeTimer) { clearTimeout(resubscribeTimer); resubscribeTimer = null; }
 
-  calibrationHost.elodin = elodin;
+  setCalibrationElodin(elodin);
   registerVTables(elodin).then(() => {
     scheduleResubscribe();
   });

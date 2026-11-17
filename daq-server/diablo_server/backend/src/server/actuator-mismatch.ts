@@ -14,7 +14,7 @@
 
 import { SystemState } from '../../../shared/types.js';
 import { getExpectedPositions, configStateName } from './engine-state.js';
-import { activeNotificationKeys, broadcastNotification } from './notifications.js';
+import { activeNotificationKeys, raiseNotification, clearNotification } from './notifications.js';
 
 // ── Actuator state mismatch detection ────────────────────────────────────────
 
@@ -55,10 +55,8 @@ function checkActuatorMismatch(state: SystemState): void {
     const stateName = configStateName(state) ?? SystemState[state] ?? 'UNKNOWN';
     const msg = `Actuator mismatch in ${stateName}: ${mismatched.join(', ')}`;
     console.warn(`[ThinServer] ⚠️ ${msg}`);
-    broadcastNotification({ key, category: 'warning', message: msg, timestampMs: now, ongoing: true });
-    activeNotificationKeys.add(key);
+    raiseNotification({ key, category: 'warning', message: msg, timestampMs: now, ongoing: true });
   } else if (activeNotificationKeys.has(key)) {
-    broadcastNotification({ key, category: 'warning', message: 'Actuator positions match expected', timestampMs: now, ongoing: false });
-    activeNotificationKeys.delete(key);
+    clearNotification({ key, category: 'warning', message: 'Actuator positions match expected', timestampMs: now, ongoing: false });
   }
 }

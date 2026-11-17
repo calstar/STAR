@@ -29,7 +29,7 @@ import type { ParsedSensorData } from '../elodin-protocol.js';
 import { THIN_VERBOSE_CONNECTION_LOG, THIN_HEARTBEAT_DIAG_LOG, THIN_STATS_LOG } from './env.js';
 import { stats } from './stats.js';
 import { wss, broadcast } from './ws-clients.js';
-import { activeNotificationKeys, broadcastNotification } from './notifications.js';
+import { activeNotificationKeys, broadcastNotification, raiseNotification, clearNotification } from './notifications.js';
 import { _t7SlotToBoardId } from './config-caches.js';
 
 export const BOARD_STATUS_HZ = 1;     // broadcast rate for board status
@@ -196,14 +196,13 @@ export function noteSelfTestResults(boardId: number, rows: ParsedSensorData[], e
       selfTestNotifiedBoards.add(boardId);
       const status = boardsStatus.get(boardId);
       const label = status ? boardLabel(status) : `Board ${boardId}`;
-      broadcastNotification({
+      raiseNotification({
         key: `self_test_fail_${boardId}`,
         category: 'error',
         message: `${label} failed self-test`,
         timestampMs: epochNow,
         ongoing: true,
       });
-      activeNotificationKeys.add(`self_test_fail_${boardId}`);
       break;
     }
   }
@@ -232,11 +231,9 @@ export function markStaleBoards(): void {
     // Board connection lost
     const lostKey = `board_lost_${id}`;
     if (prev === true && !status.connected) {
-      broadcastNotification({ key: lostKey, category: 'error', message: `${label} connection lost`, timestampMs: now, ongoing: true });
-      activeNotificationKeys.add(lostKey);
+      raiseNotification({ key: lostKey, category: 'error', message: `${label} connection lost`, timestampMs: now, ongoing: true });
     } else if (status.connected && activeNotificationKeys.has(lostKey)) {
-      broadcastNotification({ key: lostKey, category: 'error', message: `${label} connection lost`, timestampMs: now, ongoing: false });
-      activeNotificationKeys.delete(lostKey);
+      clearNotification({ key: lostKey, category: 'error', message: `${label} connection lost`, timestampMs: now, ongoing: false });
     }
 
     // Board connected (one-shot)
@@ -251,14 +248,12 @@ export function markStaleBoards(): void {
       if (!boardFirstSeenSetupMs.has(id)) boardFirstSeenSetupMs.set(id, now);
       const first = boardFirstSeenSetupMs.get(id)!;
       if (now - first > SETUP_STUCK_THRESHOLD_MS && !activeNotificationKeys.has(stuckKey)) {
-        broadcastNotification({ key: stuckKey, category: 'error', message: `${label} stuck in setup`, timestampMs: first, ongoing: true });
-        activeNotificationKeys.add(stuckKey);
+        raiseNotification({ key: stuckKey, category: 'error', message: `${label} stuck in setup`, timestampMs: first, ongoing: true });
       }
     } else {
       boardFirstSeenSetupMs.delete(id);
       if (activeNotificationKeys.has(stuckKey)) {
-        broadcastNotification({ key: stuckKey, category: 'error', message: `${label} stuck in setup`, timestampMs: now, ongoing: false });
-        activeNotificationKeys.delete(stuckKey);
+        clearNotification({ key: stuckKey, category: 'error', message: `${label} stuck in setup`, timestampMs: now, ongoing: false });
       }
     }
 
@@ -266,12 +261,10 @@ export function markStaleBoards(): void {
     const unrecKey = `unrecognized_${id}`;
     if (status.connected && !status.expected) {
       if (!activeNotificationKeys.has(unrecKey)) {
-        broadcastNotification({ key: unrecKey, category: 'warning', message: `Unrecognized board at ${status.ip}`, timestampMs: now, ongoing: true });
-        activeNotificationKeys.add(unrecKey);
+        raiseNotification({ key: unrecKey, category: 'warning', message: `Unrecognized board at ${status.ip}`, timestampMs: now, ongoing: true });
       }
     } else if (!status.connected && activeNotificationKeys.has(unrecKey)) {
-      broadcastNotification({ key: unrecKey, category: 'warning', message: `Unrecognized board at ${status.ip}`, timestampMs: now, ongoing: false });
-      activeNotificationKeys.delete(unrecKey);
+      clearNotification({ key: unrecKey, category: 'warning', message: `Unrecognized board at ${status.ip}`, timestampMs: now, ongoing: false });
     }
 
     prevConnectedState.set(id, status.connected);

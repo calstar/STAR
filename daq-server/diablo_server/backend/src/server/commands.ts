@@ -7,7 +7,7 @@
  * EXTEND_FIRE) through sequencer-client, which never rejects — each caller answers the sender with
  * `ERROR "<Action> failed: <refusalText(reply)>"`. An abort is a state_transition and passes the
  * same control gate. Cross-module writes go through the owners' setters: setDebugMode,
- * setCountdownTargetMs (DESIGN-WP6 §6.2). State-id resolution is split with engine-state until
+ * setCountdownTarget (DESIGN-WP6 §6.2, 2.2). State-id resolution is split with engine-state until
  * step 2.9 (resolveTransitionTarget).
  *
  * Event-loop only, called from ws-connection's message listener. No effect at import (M1). Never
@@ -25,15 +25,14 @@ import { getStateTransitions } from '../state-csv/state-transitions.js';
 import { readConfig } from '../routes/config.js';
 import { refusalText } from '../refusal-text.js';
 import { sendToSequencer } from '../sequencer-client.js';
-import { saveCountdownTargetTimeMs } from '../countdown-state.js';
 import { sessionManager } from '../session-manager.js';
 import { ConfigIssuesError } from '../config-validation.js';
 import { countByLevel } from '../../../shared/config-validation.js';
 import { MessageType, SystemState } from '../../../shared/types.js';
 import type { CommandPayload, QueryHistoricalRequest } from '../../../shared/types.js';
-import { type WsWithControl, send, broadcast } from './ws-clients.js';
+import { type WsWithControl, send } from './ws-clients.js';
 import { configStateName, setDebugMode, broadcastStateUpdate } from './engine-state.js';
-import { countdownTargetMs, setCountdownTargetMs } from './mission-time.js';
+import { setCountdownTarget } from './mission-time.js';
 import { sendHistoricalData } from './history.js';
 import { calibrationHost } from './calibration-state.js';
 import { broadcastConnectionStatus } from './elodin-link.js';
@@ -180,9 +179,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       });
       break;
     case 'set_countdown_target':
-      setCountdownTargetMs(command.data.targetTimeMs ?? null);
-      saveCountdownTargetTimeMs(countdownTargetMs);
-      broadcast({ type: MessageType.COUNTDOWN_TARGET_UPDATE, timestamp: Date.now(), payload: { targetTimeMs: countdownTargetMs } });
+      setCountdownTarget(command.data.targetTimeMs ?? null);
       break;
     case 'session_start':
       sessionManager

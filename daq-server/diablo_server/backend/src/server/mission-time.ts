@@ -2,10 +2,9 @@
  * server/mission-time.ts — mission T+0 and the countdown target.
  *
  * Owns `firstPacketTimeMs` (set once, by noteFirstSample() on the first finite Elodin row) and
- * `countdownTargetMs` (read from countdown-state at startup, set by the operator's
- * set_countdown_target command). Both are `export let` live bindings; only the two setters here
- * assign them (STYLE-S32, DESIGN-WP6 §6.2) — ingest and commands call the setters and keep
- * their own broadcasts and the countdown-state save where they are today.
+ * `countdownTargetMs` (read from countdown-state at startup, set by setCountdownTarget() for the
+ * operator's set_countdown_target command, which also saves it and broadcasts the update). Both
+ * are `export let` live bindings assigned only in this module (STYLE-S32).
  *
  * initMissionTime() is the startup read (DESIGN-WP6 §1.2 row 6); nothing is read at import (M1).
  * Never imports api-server.ts or api/*.
@@ -14,7 +13,7 @@
  * connect burst are frozen in pipeline/golden/ws_handshake.txt and ws_events.txt (countdown).
  */
 
-import { loadCountdownTargetTimeMs } from '../countdown-state.js';
+import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from '../countdown-state.js';
 import { MessageType } from '../../../shared/types.js';
 import { THIN_VERBOSE_CONNECTION_LOG } from './env.js';
 import { broadcast } from './ws-clients.js';
@@ -26,12 +25,12 @@ export function initMissionTime(): void {
   countdownTargetMs = loadCountdownTargetTimeMs();
 }
 
-export function setFirstPacketTimeMs(ms: number): void {
-  firstPacketTimeMs = ms;
-}
-
-export function setCountdownTargetMs(ms: number | null): void {
+/** The set_countdown_target command's three statements, in order (commands.ts, step 2.2):
+ *  assign, save, broadcast countdown_target_update. */
+export function setCountdownTarget(ms: number | null): void {
   countdownTargetMs = ms;
+  saveCountdownTargetTimeMs(countdownTargetMs);
+  broadcast({ type: MessageType.COUNTDOWN_TARGET_UPDATE, timestamp: Date.now(), payload: { targetTimeMs: countdownTargetMs } });
 }
 
 /** Every finite row (ingest, step 2.1): if T+0 is unset, set it, log when verbose, broadcast mission_start_time. */
