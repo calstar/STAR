@@ -43,14 +43,10 @@ static inline void store_u32(uint8_t* dst, uint32_t v) {
 #include "daq-protocol.h"
 #include "config/SensorTables.hpp"
 #include "net/DaqInterface.hpp"
+#include "service/StopSignals.hpp"
 
 namespace {
-std::atomic<bool> g_running{true};
-
-void signalHandler(int /*sig*/) {
-    std::cout << "\n[ConfigBroadcast] Shutting down..." << std::endl;
-    g_running = false;
-}
+auto& g_running = fsw::service::running();
 
 constexpr uint8_t SENSOR_CONFIG = 5;
 constexpr uint8_t ACTUATOR_CONFIG = 6;
@@ -578,8 +574,9 @@ int main(int argc, char* argv[]) {
         interval_ms = std::max(500, static_cast<int>(cfg.config_broadcast_interval_ms));
     }
 
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
+    fsw::service::installStopHandlers(fsw::service::ShutdownNotice::kPrintThenStop,
+                                      "\n[ConfigBroadcast] Shutting down...",
+                                      fsw::service::Sigpipe::kDefault);
 
     // Packets (including abort thresholds) are rebuilt from the live config every cycle (below) so
     // board and calibration edits apply with no restart / no session.
