@@ -104,7 +104,8 @@ by asking first.
 
 ```bash
 cd build && ctest --output-on-failure --parallel $(nproc)   # C++
-cd diablo_server/frontend && npm test && npm run lint       # TS
+cd diablo_server/frontend && npm test && npm run lint       # TS (frontend)
+cd diablo_server/backend  && npm test                       # TS (backend, vitest)
 ```
 
 **`test/test_integration.sh` and `test/e2e_guitest_playwright.sh` launch the full stack and touch
@@ -116,6 +117,13 @@ touches the pipeline. Either way they move `scripts/calibration/calibrations/cub
 
 Do not run `npx playwright test` alone unless a stack is already up and you intend to hit only the
 browser tests.
+
+`test/characterization/` freezes `main`'s behaviour as goldens, area by area (config, packets,
+calibration, sequencer, pipeline, lifecycle, elodin). `bash test/characterization/run.sh` runs every
+area (`CHAR_AREAS=a,b` limits it), `gate.sh` is the full merge gate, and `linux/linux_gate.sh` runs the
+goldens in a Linux container. The sequencer, pipeline and lifecycle areas start services on test
+ports: off the stand only, and on the stand ask first like the integration test. `gate.sh` refuses
+to run on the stand. See `docs/remaster/REPORT.md` §3.
 
 Both scripts run the canonical full build (`bash scripts/build.sh`) themselves, so stale-binary
 flakiness is fixed — no manual pre-build needed. `USE_SIM` is a **runtime env var** consumed by the
