@@ -21,7 +21,6 @@
  *   NEXT_PUBLIC_WS_URL=ws://localhost:<WS_PORT>
  */
 
-import * as net from 'net';
 import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
@@ -74,8 +73,6 @@ type WsWithControl = WebSocket & {
 };
 const ELODIN_HOST = process.env.ELODIN_HOST ?? '127.0.0.1';
 const ELODIN_PORT = parseInt(process.env.ELODIN_PORT ?? '2240', 10);
-const ACT_SVC_PORT = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);
-const CTRL_SVC_PORT = parseInt(process.env.CONTROLLER_SERVICE_PORT ?? '9999', 10);
 const THIN_VERBOSE_CONNECTION_LOG = process.env.THIN_VERBOSE_CONNECTION_LOG === '1';
 const THIN_HEARTBEAT_DIAG_LOG = process.env.THIN_HEARTBEAT_DIAG_LOG === '1';
 const THIN_STATS_LOG = process.env.THIN_STATS_LOG === '1';
@@ -303,6 +300,7 @@ import { sessionManager } from './session-manager.js';
 import { ConfigIssuesError } from './config-validation.js';
 import { ballValveSensedEntity, sensedStateFromPosition } from './ball-valve.js';
 import { countByLevel, t7Channels } from '../../shared/config-validation.js';
+import { sendToSequencer, SEQUENCER_PORT } from './sequencer-client.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -1276,7 +1274,7 @@ function refreshScriptStatus(): void {
   // Between runs the sequencer is stopped on purpose; asking it anyway logged a connect error
   // every 15 s. Nothing is enterable then, and the bitmask already says so.
   if (!sessionManager.pipelineExpected()) return;
-  sendToActuatorService('SCRIPTS\n')
+  sendToSequencer('SCRIPTS\n')
     .then(({ reply }) => {
       stateRefusalReasons = parseScriptStatus(reply).reasons;
     })
@@ -1361,7 +1359,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       }
       // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
       // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
-      sendToActuatorService(`TRANSITION:${csvName}${holdSuffix}${valveSuffix}\n`).then(({ ok, reply }) => {
+      sendToSequencer(`TRANSITION:${csvName}${holdSuffix}${valveSuffix}\n`).then(({ ok, reply }) => {
         console.log(`[ThinServer] State transition ${stateName} → ${csvName}${holdSuffix}${valveSuffix}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (!ok) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${refusalText(reply)}` } });
@@ -1373,7 +1371,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       const open = command.data.actuatorState === 1 || command.data.actuatorState as unknown as string === 'open';
       const actuatorName = command.data.actuatorName!;
       // No optimistic update — real commanded state arrives via [0x32] packets from Elodin.
-      sendToActuatorService(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
+      sendToSequencer(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
         if (!ok) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${refusalText(reply)}` } });
         }
@@ -1382,7 +1380,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
     }
     case 'debug_mode': {
       const newDebug = !!command.data.debugMode;
-      sendToActuatorService(`DEBUG_MODE:${newDebug ? 1 : 0}\n`).then(({ ok, reply }) => {
+      sendToSequencer(`DEBUG_MODE:${newDebug ? 1 : 0}\n`).then(({ ok, reply }) => {
         console.log(`[ThinServer] Debug mode ${newDebug ? 'ON' : 'OFF'}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (ok) {
           debugMode = newDebug;
@@ -1392,7 +1390,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       break;
     }
     case 'extend_fire':
-      sendToActuatorService('EXTEND_FIRE\n').then(({ ok, reply }) => {
+      sendToSequencer('EXTEND_FIRE\n').then(({ ok, reply }) => {
         console.log(`[ThinServer] Extend fire: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (!ok) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Extend fire failed: ${refusalText(reply)}` } });
@@ -1446,66 +1444,6 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       // stub for unhandled commands (calibration, controller_frequency, etc.)
       send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Command not supported in thin backend: ${command.commandType}` } });
   }
-}
-
-// ── Actuator service TCP forwarding ─────────────────────────────────────────
-
-function sendToActuatorService(line: string): Promise<{ ok: boolean; reply: string }> {
-  return new Promise((resolve) => {
-    let replyData = '';
-    let resolved = false;
-    const done = (ok: boolean, reply: string) => {
-      if (resolved) return;
-      resolved = true;
-      resolve({ ok, reply });
-    };
-    const socket = net.connect({ host: '127.0.0.1', port: ACT_SVC_PORT }, () => {
-      console.log(`[ThinServer] → actuator_service: ${line.trim()}`);
-      socket.write(line);
-    });
-    socket.on('data', (data) => {
-      replyData += data.toString();
-      if (replyData.includes('\n')) {
-        socket.destroy();
-        const reply = replyData.trim();
-        // A hold transition answers OK:<accepted_ms> so the client can show the window the
-        // sequencer actually used rather than the one it asked for.
-        done(reply === 'OK' || reply.startsWith('OK:'), reply);
-      }
-    });
-    socket.on('close', () => done(false, replyData.trim() || 'connection closed'));
-    socket.on('error', (err) => {
-      console.warn(`[ThinServer] actuator_service connect error: ${err.message}`);
-      done(false, err.message);
-    });
-    socket.setTimeout(2000, () => { socket.destroy(); done(false, 'timeout'); });
-  });
-}
-
-function sendToControllerService(line: string): Promise<{ ok: boolean; reply: string }> {
-  return new Promise((resolve) => {
-    let replyData = '';
-    let resolved = false;
-    const done = (ok: boolean, reply: string) => {
-      if (resolved) return;
-      resolved = true;
-      resolve({ ok, reply });
-    };
-    const socket = net.connect({ host: '127.0.0.1', port: CTRL_SVC_PORT }, () => {
-      socket.write(line);
-    });
-    socket.on('data', (data) => {
-      replyData += data.toString();
-      if (replyData.includes('\n')) {
-        socket.destroy();
-        const reply = replyData.trim();
-        done(reply === 'OK', reply);
-      }
-    });
-    socket.on('close', () => done(false, replyData.trim() || 'connection closed'));
-    socket.on('error', (err) => done(false, err.message));
-    socket.setTimeout(2000, () => { socket.destroy(); done(false, 'timeout'); });
-  });
 }
 
 // ── Elodin DB connection ─────────────────────────────────────────────────────
@@ -1911,7 +1849,7 @@ startGuiStaticServer(GUI_PORT);
 httpServer.listen(WS_PORT, () => {
   console.log(`[ThinServer] WebSocket server listening on port ${WS_PORT}`);
   console.log(`[ThinServer] Elodin DB: ${ELODIN_HOST}:${ELODIN_PORT}`);
-  console.log(`[ThinServer] Actuator service: localhost:${ACT_SVC_PORT}`);
+  console.log(`[ThinServer] Actuator service: localhost:${SEQUENCER_PORT}`);
   // Init the run-session manager last, once broadcast/notify + wss are live.
   // No-op (enabled=false) unless SESSION_SERVICE_MODE is mock/systemd.
   // On run stop, re-baseline board status from config (clears stale heartbeat
