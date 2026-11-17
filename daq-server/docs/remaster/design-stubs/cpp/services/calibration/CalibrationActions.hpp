@@ -1,10 +1,35 @@
-// DESIGN STUB (DESIGN-WP9 §2, move-only step 3) — not compiled. Becomes
-// diablo_server/services/calibration/CalibrationActions.{hpp,cpp}. Bodies: calibration_main.cpp
-// 727-732 and 999-1259, 1294-1391, as functions in the same textual order; each lambda becomes a
-// function of the same name with the captured locals reached through `ctx.` (STYLE-S7: no renames).
+// DESIGN STUB (DESIGN-WP9 §2-§3, move-only step 3) — not compiled. Becomes
+// diablo_server/services/calibration/CalibrationActions.{hpp,cpp}. Bodies, in today's textual
+// order: calibration_main.cpp 532-594 (file-static kMinAbortCalPoints, invert_abort_psi_to_adc),
+// 727-732, 999-1259 (1032-1108 write_abort_thresholds file-static) and 1294-1391; each lambda
+// becomes a function of the same name with the captured locals reached through `ctx.` (STYLE-S7:
+// no renames). D58 folded AbortThresholds.{hpp,cpp} (one consumer: this TU, at 1124, 1241, 1385)
+// and CalibrationContext.hpp (its two other takers include this header anyway) into this file.
 //
-// Owns:       nothing; it acts on the objects CalibrationContext references.
-// Threads:    one (the read loop's), plus the LcTareStore nesting described in CalibrationContext.
+// ── CalibrationContext ──
+// A method-less carrier of the main() locals that today's 16 capture/clear/reload lambdas captured
+// by reference, so the functions that replace them can live in three TUs. Not an abstraction
+// (STYLE-S34, D43(3)): no methods, no constructor logic, no ownership.
+// Owns:       nothing. Every member is a reference to an object main constructed at today's line
+//             position (construction has side effects: prints, path registration; DESIGN-WP9 §8).
+//             main builds the context immediately after the last register_store_channels call
+//             (old 992) and it lives in main's frame for the process lifetime; evaluators returned
+//             by lc_eval_for capture it by reference and are used only during LcTareStore calls.
+// Threads:    one. The lib objects' own mutexes are taken per call, uncontended; the only nesting
+//             is LcTareStore::mutex_ → the evaluator, which must touch only lc_calibration and
+//             t7_map (DESIGN-WP9 §1.4).
+// Must not know: Elodin, the read loop, StreamState.
+// Why here, not its own header (D58): the verdict's reason for a separate header was that
+//             AbortThresholds.hpp should not pull the whole actions API in for one type while
+//             CalibrationActions.cpp included AbortThresholds.hpp back. With write_abort_thresholds
+//             a file-static here, that cycle is gone, and both remaining takers of the type —
+//             CalibrationCommands.cpp (apply_capture, apply_clear, take_capture,
+//             reload_live_store) and RawStream.cpp (current_loop_board at 1973) — include this
+//             header regardless. A separate file would save them nothing.
+//
+// ── the actions ──
+// Owns:       nothing; they act on the objects CalibrationContext references.
+// Threads:    one (the read loop's), plus the LcTareStore nesting above.
 // Order:      apply_capture → apply_pt_capture: cubic_store.add_point (fit, lib) →
 //             pt_calibration.set_calibration → robust_manager.update_calibration →
 //             cubic_store.set_fit_curve(sample_robust_curve) → cubic_store.save() →
@@ -16,22 +41,63 @@
 // Must not know: the Elodin client, packet layouts, StreamState, the 0x46 command encoding.
 // Contract:   cubic_calibration.json, adjustments, lc_tare.json snapshots and the published frames
 //             after each command — calibration/golden/stack.txt (fitCurve masked: C3-1).
-// File-static in the .cpp (not declared here): apply_pt_capture, apply_lc_capture, apply_pt_clear,
-//             apply_lc_clear.
+//
+// ── write_abort_thresholds (file-static; was AbortThresholds.{hpp,cpp} before D58) ──
+// The one writer of abort_thresholds.txt: for each abort role, invert the role's psi threshold to
+// an ADC code by bisection over the active forward model (select_pt_psi, header-inline; D22: the
+// bisection's forward lambda 565-578 is one of its three call sites), falling back to the physics
+// model when the fit has fewer than kMinAbortCalPoints points; write via `.tmp` + rename. Called
+// from apply_pt_capture, apply_pt_clear and reload_live_store only.
+// Owns:       the file's content and its temporary; nothing in memory.
+// Errors:     unknown role / T7 role / no mapping → one stderr line per role, role omitted; write
+//             failure → stderr `abort_thresholds write failed: …`, continue. Never fatal.
+// Must not know: who reads the file. config_broadcast_service re-reads it every cycle and puts
+//             the thresholds in ACTUATOR_CONFIG (only to a designated survivor, C6-6; abort IPs
+//             reversed, C1-2): a pull, by design — no notification is added (DESIGN-WP9
+//             walkthrough (d) step 15, debates/WP9/history.md).
+// Contract:   abort_thresholds.txt snapshots in calibration/golden/stack.txt (generated_unix
+//             normalised); packets/golden/service_config_broadcast.txt downstream. H-1: the
+//             integration harness parks and restores the live file.
+//
+// File-static in the .cpp (not declared here): kMinAbortCalPoints, invert_abort_psi_to_adc,
+//             write_abort_thresholds, apply_pt_capture, apply_lc_capture, apply_pt_clear,
+//             apply_lc_clear. Size: ~505 lines (428 moved + file comment, includes, namespace),
+//             under STYLE-S33's 700.
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "CalibrationContext.hpp"
 #include "calibration/CaptureWindow.hpp"
+#include "calibration/CubicCalibrationStore.hpp"
 #include "calibration/LcTareStore.hpp"
+#include "calibration/PTCalibration.hpp"
+#include "calibration/RobustCalibrationManager.hpp"
+#include "calibration/SensorCalibration.hpp"
+#include "config/Config.hpp"
 #include "config/LoadActiveBoards.hpp"
+#include "t7/T7Calibration.hpp"
 
 namespace fsw::calibration_service {
+
+struct CalibrationContext {
+    const ::fsw::config::Config& cal_cfg;
+    const std::map<uint8_t, ::fsw::config::PtBoardConfig>& pt_board_configs;
+    const fsw::t7::T7CalibrationMap& t7_map;
+    const std::map<uint16_t, std::string>& uid_role;
+    const std::string& adjustments_path;
+    fsw::calibration::PTCalibrationManager& pt_calibration;
+    fsw::calibration::RobustCalibrationManager& robust_manager;
+    fsw::calibration::SensorCalibrationManager& lc_calibration;
+    fsw::calibration::CubicCalibrationStore& cubic_store;
+    fsw::calibration::LcTareStore& lc_tare_store;
+    fsw::calibration::CaptureWindow& capture_window;
+    const double lc_sensitivity_mv_per_v, lc_pga_gain, lc_full_scale_value;
+};
 
 /** 727-732. Also used by RawStream's ESP32 PT path (1973). */
 const ::fsw::config::PtBoardConfig* current_loop_board(const CalibrationContext& ctx,

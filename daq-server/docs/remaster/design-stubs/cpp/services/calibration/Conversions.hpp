@@ -12,11 +12,13 @@
 // D22:        header-inline on purpose: these are inlined at today's call sites. None of the
 //             expressions here is FMA-contractible (DESIGN-WP9 §6.3 table); the contractible ones
 //             (Blend, PtSmoother::step) live in SensorModels.hpp / the lib and stay inline too.
-// inline, not static (verdict fact 8): this header has >= 3 including TUs from move-only step 3
-//             on, and GCC's -Wunused-function fires on an unused header `static` in every
-//             including TU (baseline_warnings.txt is clang/macOS only, D4). `inline` changes the
-//             gcc-12 inlining budget (max-inline-insns-auto -> -single); the per-symbol FMA and
-//             defined-symbol censuses of DESIGN-WP9 §6.1 are what catch that, not this comment.
+// inline, not static (verdict fact 8): this header has >= 3 including TUs by checkpoint 1 (main
+//             from step 1, CalibrationActions.cpp from step 3, CalibrationCommands.cpp from step
+//             4; RawStream.cpp from step 5), and GCC's -Wunused-function fires on an unused header
+//             `static` in every including TU (baseline_warnings.txt is clang/macOS only, D4).
+//             `inline` changes the gcc-12 inlining budget (max-inline-insns-auto -> -single); the
+//             FMA census (total + per surviving symbol) and the masked cmp of DESIGN-WP9 §6.1 are
+//             what gate that, the defined-symbol census reports it (D58), not this comment.
 // Must not know: Elodin, files, the stores, the sensor-model globals (SensorModels.hpp), main's
 //             locals. resolve_pt_sensor_uid / resolve_lc_sensor_uid stay two functions (identical
 //             bodies; the duplication is documented at 505-509; DESIGN-WP9 open question 2).
