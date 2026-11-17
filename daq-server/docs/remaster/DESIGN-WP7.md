@@ -1,59 +1,40 @@
 # DESIGN-WP7 — split `diablo_server/backend/src/api-server.ts`
 
-Target-design note required by LEDGER D17(a) before the WP7 split. Design only: nothing here has
-been executed. Paths are relative to `daq-server/diablo_server/backend/src/` unless stated.
+The WP7 design as decided (LEDGER D39, D40, D42-D44, the simplicity rulings of D63, the D64
+red-team and the security findings' ruling). It says what an implementer must do and why. Design
+only: nothing here has been executed. Paths are relative to `daq-server/diablo_server/backend/src/`
+unless stated. How the design got here — the amendments B1-B4, the import-closure grep, the
+import-pruning item, the open questions, the alternatives, the walkthroughs, the interfaces
+write-up — is in `debates/WP7/history.md`.
 
-**Baseline.** Line numbers are `api-server.ts` on `backend-remastered` @ `b2599617` (1269 lines).
-WP7 runs after WP5 (which adds `boardSlot()` to `sensor-config.ts`) and may run in parallel with WP6;
-WP5 does not edit this file, so these line numbers stay valid. Read with `DESIGN-WP6.md` §3.4: the
-seam between the two is `createAPIHandler(opts)`.
+**Baseline.** Line numbers are `api-server.ts` on `backend-remastered` @ `b2599617` (1269 lines; the
+same blob at `f13468e2`), re-verified against
+`git show backend-remastered:daq-server/diablo_server/backend/src/api-server.ts`. WP7 runs after WP5
+(which adds `boardSlot()` to `sensor-config.ts` and renames `legacy/` → `state-csv/`) and may run in
+parallel with WP6; WP5 does not edit this file, so these line numbers stay valid. The seam between
+WP6 and WP7 is `createAPIHandler(opts)` (DESIGN-WP6 §2 import edges, §3.1).
 
-**Prerequisites.** C1 merged on `backend-remastered`, and `npx tsc --noEmit` in
-`diablo_server/backend/` added to `gate.sh` as a merge-gate step (orchestrator). WP5 merged (WP7
-appends to WP5's `sensor-config.ts`).
-
-**Amendments (design/ts2, 2026-11-16).** The deeper pass (alternatives, interface stubs,
-walkthroughs — sections at the end), the research notes merged at 963e81b9 (LEDGER D42) and
-STYLE.md (55d140ef, LEDGER D43) changed the following; each changed place is marked with its tag.
-Rules are cited as `STYLE-S<n>`, `WP7-S1`, `WP6-R1`.
-
-- **[B1]** WP7-S2's evaluation-order argument was textual. tsc/tsx/vitest elide an import whose
-  specifiers are unused as values (`research/node-realtime-backend.md` §1; today `api-server.ts`
-  already loses `elodin-query.ts` and `http` at runtime). When step 1 moves the last value user of
-  `sessionManager`, `routes/config-profiles`, `ota-*`, … out of `api-server.ts`, those modules
-  start evaluating from inside the first `api/*` file that uses them. WP7-S2 now adds the bare-import
-  rule and the esbuild module-order diff (WP6-R1a/R1b, DESIGN-WP6 §6.3 item 6); never
-  `verbatimModuleSyntax`.
-- **[B2]** Walkthrough (d) found two owners of "where the live cubic store is":
-  `routes/calibration-profiles.livePath()` (honours `DAQ_CALIBRATIONS_DIR`) and the four
-  `__dirname`/`cwd` candidates of `GET /api/cubic_calibration` (ignore it — C5-5). Unifying them is
-  the C5-5 fix, a behaviour change: **kept**, labelled at the site in cleanup (STYLE-S37), Parked.
-- **[B3]** Research §5's route-dispatch vitest is adopted as gap **H9** (should, before step 1); its
-  ESLint `no-restricted-syntax` guard for `sendJson` is not (STYLE-S40: no linter is tracked; a
-  ~20-line grep check in the package's scripts encodes the same eligibility rule instead).
-- **[B4]** STYLE conformance (D43): `SRC_DIR` from `import.meta.url` is allowed at module top level
-  (STYLE-S30); in the move-only review, lines that only re-indent a moved body (`} else if (COND) {`
-  → `if (COND) {` one level shallower) are expected non-dimmed lines (D43(6)); size targets are per
-  WP (STYLE-S33). `api/*` and `server/*` never import each other (STYLE-S31).
-
-**Orchestrator decisions (design review, 2026-11-16), recorded here:**
-
-- D-a: route handlers live in `src/api/`, not `src/routes/` (accepted).
-- D-b: `buildSensorConfig` and `SensorConfigEntry` go into the existing `sensor-config.ts`; WP7 runs
-  after WP5 (accepted). The orchestrator amends BLOAT-MAP's WP7 file list.
-- `npx tsc --noEmit` is a merge-gate step and a required check for every WP7 commit (§6.1).
-- Step 2.3 (`isOperatorRequest` in `operators.ts`) is done only after both WP6 and WP7 have merged;
-  the WS path keeps `authEmail` for `CONTROL_STATUS`.
-- Step 1 (move-only) and step 2 (cleanup) are **separate queue items**, each fully gated.
+**Prerequisites.** C1 and WP5 merged on `backend-remastered`; `npx tsc --noEmit` in
+`diablo_server/backend/` is a merge-gate step (D40) and a required check for every WP7 commit; the
+gaps of §7 that guard a step exist before it — in particular the operator-gate package (H8, widened
+by the security ruling) before step 1.
 
 **Contract (frozen, D5/D17).** Every path, method, status code, `Content-Type`,
 `Content-Disposition`, the three CORS headers, JSON body shape and error text; first-match routing,
 including that a known path with the wrong method is **404 `{"error":"Not found"}`, never 405**
 (golden `PUT /api/config`, `DELETE /api/states`) — except `/api/feed-char/results`, which matches
 every method and answers 405 itself; the two 404 shapes (bare 404 for non-`/api`, JSON for unknown
-`/api/*`); the operator gate (`X-Auth-Email`); what each write does on disk and which callback it
-fires, when; the exports `createAPIHandler` (server.ts, `config-profile-create-calibration.test.ts`)
-and `buildSensorConfig` + `SensorConfigEntry` (`t7.test.ts`) from `./api-server.js`.
+`/api/*`); the operator gate (`X-Auth-Email`) on exactly the 14 routes that have it today and its
+absence on the two OTA routes (SEC-2); what each write does on disk and which callback it fires,
+when; the exports `createAPIHandler` (server.ts, `config-profile-create-calibration.test.ts`) and
+`buildSensorConfig` + `SensorConfigEntry` (`t7.test.ts`) from `./api-server.js`.
+
+**Shape.** The 860-line route ladder is cut into ten route-group modules under `src/api/`, one
+`handle<Group>Request` each, plus `api/http.ts` for what they share; `buildSensorConfig` goes to
+the existing `sensor-config.ts`; `api-server.ts` is left as the router (~90 lines). Step 1 moves
+code only; step 2 is a short list of cleanups. They are **separate queue items, each fully gated**.
+Route handlers live in `src/api/`, not `src/routes/` (D-a); `buildSensorConfig` goes into the
+existing `sensor-config.ts` (D-b); step 2.3 waits until both WP6 and WP7 have merged.
 
 ---
 
@@ -77,7 +58,7 @@ which it hands to `video/routes.ts`.
 | 363-386 | router prelude | `createAPIHandler`: destructure options; non-`/api/` → `false`; set CORS on every `/api/*` response; `OPTIONS` → 200 empty; parse `URL` |
 | 388-393 | video | `/api/video/*` → `handleVideoRequest` (only when `opts.video` is set) |
 | 394-507 | config | `GET /api/config` (active profile), `GET /api/config/running`, `POST /api/config` (403 gate, PWM check → 400, save profile, deploy when idle, `setImmediate(onConfigUpdated)`), `GET /api/config/export`, `POST /api/config/import` (403, write, parse, PWM check, rollback on error, deploy when idle) |
-| 508-684 | states | `GET /api/states` (+ `[flow]`), `GET`/`POST /api/state-csv` (deploy when idle → `setImmediate(onStateCsvUpdated)`), `GET`/`POST /api/state-script` (checked by `checkStateScript` before save), `POST /api/state-script/check` |
+| 508-684 | states | `GET /api/states` (+ `[flow]`), `GET`/`POST /api/state-csv` (deploy when idle → `setImmediate(onStateCsvUpdated)`), `GET`/`POST /api/state-script` (checked by `checkStateScript` before save), `POST /api/state-script/check` (no gate, SEC-9) |
 | 685-690 | config | `GET /api/config/validate` |
 | 691-784 | profiles | `GET /api/config/profiles` (calls `ensureSeeded()` — a GET that may write), `POST …/switch` (409 during a session, `setImmediate(onConfigUpdated)`), `…/create` (with optional calibration profile, rolled back if the config create fails), `…/rename`, `…/delete` |
 | 785-815 | history | `GET /api/query` → 503 without `getQueryClient` |
@@ -89,10 +70,17 @@ which it hands to `video/routes.ts`.
 | 999-1055 | feed characterization | `/api/feed-char/results`: no session → 409 (any method); `GET` reads the run's JSONL; `POST` (403 gate) appends; else 405 |
 | 1056-1092 | calibration profiles | `GET /api/calibration_profiles`, `POST …/save`, `…/load` (`onCalibrationReload`), `…/new_blank` (`onCalibrationReload`) |
 | 1093-1096 | stub | `GET /api/config_packets` → `{packets: []}` |
-| 1097-1256 | OTA | `GET /api/ota-flash/projects`, `POST /api/ota-flash/flash-all` (Server-Sent Events, sequential `otaBuildFlash` per enabled board), `POST /api/ota-flash` (4 MB cap, `projectPath` build+flash or base64 file flash through a temp dir) |
+| 1097-1256 | OTA | `GET /api/ota-flash/projects`, `POST /api/ota-flash/flash-all` (Server-Sent Events, sequential `otaBuildFlash` per enabled board; **no gate**, SEC-2), `POST /api/ota-flash` (4 MB cap, `projectPath` build+flash or base64 file flash through a temp dir; **no gate**, SEC-2; the caller's `projectPath` reaches `pio run`, SEC-3) |
 | 1257-1260 | fallthrough | 404 `{"error":"Not found"}` |
 | 1261-1265 | catch-all | 500 `{"error": <message>}`, logged `API error:` |
 | 1267 | | `return true` |
+
+The 14 operator gates (`if (!isConfigWriteAuthorized(req)) {`, each writing the literal 403):
+408 `POST /api/config`, 465 `POST /api/config/import`, 582 `POST /api/state-csv`, 632
+`POST /api/state-script`, 705 `profiles/switch`, 726 `…/create`, 756 `…/rename`, 771 `…/delete`,
+903 `POST /api/board-log-mode`, 966 `POST /api/ball_valve_cal`, 1036 `POST /api/feed-char/results`,
+1061 `calibration_profiles/save`, 1071 `…/load`, 1082 `…/new_blank`. Today's goldens freeze a
+viewer 403 on six of them (`http.txt` 1414, 1421, 1428, 1463, 1505, 1540); §7 H8 freezes all 14.
 
 ### 1.2 Shared mutable state
 
@@ -127,7 +115,8 @@ type RouteHandler = (req: IncomingMessage, res: ServerResponse, url: URL,
                      opts: APIHandlerOptions) => Promise<boolean>;
 ```
 
-(That type is documentation; nothing new needs to be declared beyond `APIHandlerOptions`.)
+(That type is documentation; nothing new needs to be declared beyond `APIHandlerOptions` —
+STYLE-S34.)
 
 | module | single responsibility | public interface | routes (today's lines) |
 |---|---|---|---|
@@ -148,13 +137,14 @@ type RouteHandler = (req: IncomingMessage, res: ServerResponse, url: URL,
 `buildSensorConfig` goes into the existing `sensor-config.ts`, not a new `sensor-config-build.ts`
 (the WP table's name): that module already holds `isCurrentLoopBoard`, the per-board role maps and,
 after WP5, `boardSlot()`; a second "sensor config" module would split one concern in two and hide
-the overlap BLOAT-MAP §3 points at ("both read config, both build sensor/board maps"). See Q1.
+the overlap BLOAT-MAP §3 points at ("both read config, both build sensor/board maps").
 
 Import edges: `api-server.ts` → `api/*`, `video/routes.ts`, `sensor-config.ts` (re-export).
 `api/*` → `api/http.ts` and existing domain modules. **`api/*` never imports `api-server.ts`**
 (types live in `api/http.ts`, so not even a type-only cycle), and never imports `server/*` (WP6);
-the WS side is reached only through `opts`. `api/*` modules have no import-time effects (DESIGN-WP6
-rule M1).
+the WS side is reached only through `opts` (STYLE-S31). `api/*` modules have no import-time effects
+(DESIGN-WP6 rule M1, STYLE-S30); `api/calibration.ts`'s `SRC_DIR` from `import.meta.url` is allowed
+at module top level.
 
 **Why `api/` and not `routes/`** (the WP table's directory): `routes/config.ts`,
 `routes/config-profiles.ts`, `routes/calibration-profiles.ts`, `routes/script-check.ts` are domain
@@ -162,6 +152,9 @@ libraries, imported by the config and calibration characterization harnesses by 
 (`config/ts_dump.ts:53-69`, `calibration/ts_harness.mts:95`). Handlers named `routes/states.ts`
 beside library `routes/config.ts` would make the directory mean two things; renaming the libraries
 would edit two harnesses (D18/D20). `api/` matches `api-server.ts` and the `/api/*` paths.
+
+Expected sizes (per WP, STYLE-S33): `api-server.ts` ~90 lines; the largest group `api/ota.ts`
+~170; `sensor-config.ts` grows to ~570.
 
 ---
 
@@ -197,7 +190,7 @@ imports directly.
 Neither passes through WP7's modules. They touch the HTTP side only through state both read
 (`sessionManager`, config files) and through the callbacks an HTTP write fires into the WS side:
 
-| HTTP write | callback | effect on the WS / Elodin side (`DESIGN-WP6.md` §3.4) |
+| HTTP write | callback | effect on the WS / Elodin side (DESIGN-WP6 §2, `server.ts`'s `applyDeployedConfigChange`) |
 |---|---|---|
 | `POST /api/config`, `POST /api/config/import` (idle), `POST /api/config/profiles/switch` | `setImmediate(onConfigUpdated)` | `applyDeployedConfigChange()`: GUI stream, calibration entity map, hot-path caches, state-actuator map, board list reloaded; `board_status_update`; `config_updated` broadcast |
 | `POST /api/state-csv` (deployed) | `setImmediate(onStateCsvUpdated)` | state-actuator map rebuilt; `config_updated` broadcast |
@@ -205,7 +198,8 @@ Neither passes through WP7's modules. They touch the HTTP side only through stat
 | `GET /api/debug`, `/api/engine_state` | `getDebugInfo()`, `getEngineState()` | read-only |
 
 WP7 must not change when these fire (deferred vs synchronous) or under which condition
-(`deployed` for state-csv, `!sessionActive` for config).
+(`deployed` for state-csv, `!sessionActive` for config). H1 records the frames before the response
+to see the deferral (D64(15)).
 
 ---
 
@@ -234,6 +228,15 @@ WP7 must not change when these fire (deferred vs synchronous) or under which con
   (`return handleX(…)`) would let a rejection escape the catch — a 500 would become a hang.
 - Bodies move verbatim, including their inner try/catch, their `req.on('data'|'end')` structure and
   their `readJsonBody` vs hand-parse choice, so the 400/500 split above is unchanged.
+- **Awaits before a body attaches its listeners.** Today every `req.on('data', …)` (and every
+  `readJsonBody`) is registered synchronously in the same tick that `server.ts` awaited the handler.
+  After the split, up to nine resolved `await`s precede it (a group that does not match returns
+  `false` from an `async` function; the OTA group is dispatched tenth). This is safe twice over:
+  each `await` of an already-resolved promise is a microtask, and the whole chain drains before the
+  event loop can run an I/O callback; and independently an `IncomingMessage` starts paused and
+  buffers anything that arrives before a `'data'` listener attaches — `'data'`/`'end'` are emitted
+  from the I/O phase (macrotasks), never from the microtask queue, and `'end'` cannot fire before
+  the buffer has been drained by a listener. No chunk is lost and no status changes.
 - CORS headers stay set in the router before dispatch (every golden `/api/*` response carries them,
   including 404, 403 and 500).
 
@@ -252,16 +255,18 @@ golden freezes yet (gap H3).
 ## 5. Naming conventions
 
 - **Files:** `src/api/<group>.ts`, kebab-case, named for the resource group (`states`, `profiles`,
-  `calibration`, `ota`), not for the URL prefix. `api/http.ts` for the shared request helpers.
+  `calibration`, `ota`), not for the URL prefix. `api/http.ts` for the shared request helpers
+  (STYLE-S5).
 - **Functions:** one exported `handle<Group>Request(req, res, url, opts)` per module, as
-  `handleVideoRequest`; private helpers camelCase verbs (`readJsonBody`, `isConfigWriteAuthorized`).
-  Step 2: `sendJson(res, status, body)` (same name and body as `video/routes.ts:38`),
-  `denyUnlessOperator(req, res): boolean` (writes the 403 and returns `true` when it denied).
+  `handleVideoRequest` (STYLE-S6); private helpers camelCase verbs (`readJsonBody`,
+  `isConfigWriteAuthorized`). Step 2: `sendJson(res, status, body)` (same name and body as
+  `video/routes.ts:38`), `denyUnlessOperator(req, res): boolean` (writes the 403 and returns `true`
+  when it denied).
 - **Types:** existing names kept (`APIHandlerOptions`, `DebugInfo`, `SensorConfigEntry`,
   `BoardScanRateHz`).
-- **Not renamed:** every URL (including the mixed `snake_case` / `kebab-case` ones such as
-  `/api/ball_valve_cal` vs `/api/feed-char/results`), error texts, `Content-Disposition` filenames,
-  log texts (`📝 Config save → …`, `❌ OTA flash error:`, `API error:`).
+- **Not renamed** (STYLE-S7): every URL (including the mixed `snake_case` / `kebab-case` ones such
+  as `/api/ball_valve_cal` vs `/api/feed-char/results`), error texts, `Content-Disposition`
+  filenames, log texts (`📝 Config save → …`, `❌ OTA flash error:`, `API error:`).
 
 ---
 
@@ -280,74 +285,115 @@ Rules:
   and group order cannot change which body runs. Groups are still dispatched in today's
   first-occurrence order: config, states, profiles, history, gui-config, board-logs, debug,
   calibration, feed-char, ota.
-- **S2 (imports).** `api-server.ts` keeps all of today's import statements in step 1, in today's
-  order (it is imported by `server.ts:35`, early, and pulls in `session-manager`, `routes/*`, `ota-*`
-  — keeping its list keeps every module's evaluation order), and adds the new `./api/*.js` imports
-  **after** all of them. Group modules import what their bodies use, and (import closure, DoD
-  check) every module an `api/*` file imports must already be in `api-server.ts`'s import list, so
-  no `api/*` import is ever the first import of anything:
+- **S2 (imports and evaluation order).** `api-server.ts` keeps all of today's import statements in
+  step 1, in today's positions, and adds the new `./api/*.js` imports **after** all of them. But
+  tsc, tsx/esbuild and vitest **elide** an import none of whose specifiers is used as a value
+  (D42(a); today `api-server.ts` already loses `elodin-query.ts` and `http` at runtime), so the
+  text alone does not pin the order: when a commit moves the last value user of a module out of
+  `api-server.ts`, that module would start evaluating from inside the first `api/*` file that uses
+  it — after `video/*`, instead of at its line today. Hence S2a-S2c. There is no import-closure
+  grep (D63(1), as D49(2) for WP6): it reads source text, the runtime does not, and the order diff
+  below is the check that counts.
+- **S2a (bare import).** When a commit leaves an import in `api-server.ts` with no specifier used as
+  a value, rewrite that declaration as a bare side-effect import **at the same position**
+  (`import './session-manager.js';`). A bare import is never elided; this is a move-only edit. Do it
+  **only** for a module the measured order shows evaluating first at that line today — never for an
+  import already elided today (type-only or unused), where a bare import would **add** a module to
+  the evaluation set. Measured on the bundle (46 modules today, `api-server.ts` at position 31;
+  `server.ts:29-31` have already evaluated `routes/calibration-profiles`, `lc-tare`,
+  `ball-valve-cal`, `routes/config`, `sensor-config` and `shared/config-validation` before
+  `server.ts:35` imports `api-server.ts`), step 1 makes exactly **seven** bare imports, each in the
+  commit that moves its last value user out:
+
+  | line | module | last value user → commit | first evaluated here today? |
+  |---|---|---|---|
+  | 16-22 | `routes/config-profiles` | `profiles` (693-780) → **1.5** | yes (position 16) |
+  | 23 | `routes/script-check` | `states` (648, 677) → **1.4** | yes (17) |
+  | 33 | `session-manager` | `feed-char` (1009) → **1.11** | yes (21; its subtree brings `service-controller`, `session-state`, `config-validation`) |
+  | 35 | `operators` | `isConfigWriteAuthorized` (347) → **1.1** | yes (22) |
+  | 36 | `ota-build` | `ota` → **1.12** | yes (23) |
+  | 37 | `ota-service-cmd` | `ota` → **1.12** | yes (24) |
+  | 39 | `board-logs` | `board-logs` (885, 894) → **1.8** | yes (25; `server.ts:37` imports it later) |
+
+  Every other import needs **no** bare import, and must not get one:
+
+  | line | module | why not |
+  |---|---|---|
+  | 15 | `routes/config` | already evaluated (11) via `sensor-config` at `server.ts:31`; last user `board-logs` (917) → 1.8 |
+  | 24-31 | `routes/calibration-profiles` | already evaluated (3) via `lc-tare` at `server.ts:29`; last user `calibration` → 1.10 |
+  | 32 | `sensor-config` (`isCurrentLoopBoard`) | already evaluated (12) at `server.ts:31`; last user `buildSensorConfig` → 1.2 |
+  | 34 | `config-validation` | already evaluated (20) inside `session-manager`'s subtree, before line 34 is reached; eliding it after 1.3 (`validateActiveProfile`, 690) changes nothing |
+  | 41 | `lc-tare` | already evaluated (4) at `server.ts:29`; last user `calibration` (995) → 1.10 |
+  | 42 | `../../shared/config-validation` | already evaluated (9); `sensor-config.ts:7` imports it; last user `buildSensorConfig` (279) → 1.2 |
+  | 45 | `ball-valve-cal` | already evaluated (6) at `server.ts:30`; last user `calibration` → 1.10 |
+  | 43 | `video/routes` | keeps its value use (`handleVideoRequest` stays in the router) |
+  | 38, 40, 44, 10 | `elodin-query`, `shared-types`, `video/service`, `http` | type-only today, elided today; a bare import would **add** a module |
+  | 6-9 | `fs`, `os`, `path`, `url` | Node builtins: no import-time effect, not in the order list (packages external); `path`/`fileURLToPath` keep a value use (line 14) until 1.13 |
+
+  The resulting order: positions 1-30 unchanged, then the `api/*` modules (`api/http` first), then
+  `api-server` and the rest of `server.ts`'s list.
+- **S2b (runtime order — the check that counts).** Every commit diffs the esbuild bundle's module
+  order against its **parent commit** (DESIGN-WP6 §6.3 item 4, with `src/api/` filtered out instead
+  of `src/server/`). The only permitted difference is new `src/api/*` entries. No stored baseline
+  (D49(4)); the queue item's merge check runs the same diff on the item's tip against its base.
 
   ```bash
-  cd diablo_server/backend/src
-  have=$(grep -oE "from '\./[^']+'" api-server.ts | sed "s/from '\.\///; s/'$//" | sort -u)
-  need=$(grep -ohE "from '\.\./[^']+'" api/*.ts | sed "s/from '\.\.\///; s/'$//" | sort -u)
-  comm -13 <(echo "$have") <(echo "$need")   # prints nothing
+  cd diablo_server/backend
+  ESB=$PWD/node_modules/.bin/esbuild
+  order() { "$ESB" src/server.ts --bundle --platform=node --format=esm --packages=external \
+    --log-level=error | grep -E '^// (src|\.\./)' \
+    | awk '{last[$2]=NR; o[NR]=$2} END{for(i=1;i<=NR;i++) if(last[o[i]]==i) print o[i]}'; }
+  order > /tmp/order-after.txt
+  # the same in a scratch checkout of the parent (ln -s "$PWD/node_modules" <scratch>/daq-server/diablo_server/backend/node_modules) → /tmp/order-before.txt
+  diff <(grep -v '^src/api/' /tmp/order-before.txt) <(grep -v '^src/api/' /tmp/order-after.txt)   # prints nothing
   ```
-
-  (`api/*`'s `../../../shared/*` imports are compared the same way against `api-server.ts`'s
-  `../../shared/*` list; `api/http.ts`, imported only by `api/*` and `api-server.ts`, is effect-free.)
-
-  **[B1] Necessary, not sufficient.** The closure grep reads source text; the runtime evaluates only
-  imports with a specifier used as a value. So, per commit: (a) an import in `api-server.ts` that
-  the commit leaves with no value use becomes a bare `import './x.js';` **at the same position** — a
-  move-only edit — but only for a module the order list below shows evaluating first at that line
-  before the commit (never for `./elodin-query.js` or `http`, which are already elided today:
-  a bare import would *add* them); (b) the esbuild module-order diff of DESIGN-WP6 §6.3 item 6
-  (entry `src/server.ts`, which imports `api-server.ts`) must print nothing once `src/api/` entries
-  are filtered out; (c) no `verbatimModuleSyntax`. Today's order through the router, from research
-  §1: `api-server → routes/config-profiles → routes/script-check → session-manager → … → ota-build →
-  ota-service-cmd → board-logs → video/*` — after step 1 the same list, with `api/*` entries
-  interleaved.
+- **S2c.** Never enable `verbatimModuleSyntax` (or `isolatedModules`-driven `import type`
+  rewrites) to "pin" imports: it would add `elodin-query.ts` to today's evaluation set.
+  `api/history.ts` imports `ElodinQueryClient` and `QueryOptions` with `import type`, so it stays
+  elided there too.
 - **S3 (`__dirname`).** The only `__dirname` user is `/api/cubic_calibration` (941-946). In
   `api/calibration.ts` define `const SRC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');`
-  and replace the two `path.join(__dirname, …)` candidates with `path.join(SRC_DIR, …)`, same
-  strings. Do **not** move them unchanged: one level deeper, candidate 1 points at
+  and replace the two `path.join(__dirname, …)` candidates (942-943) with `path.join(SRC_DIR, …)`,
+  same strings. Do **not** move them unchanged: one level deeper, candidate 1 points at
   `diablo_server/scripts/…` (absent) and candidate 2 happens to hit the same file — identical output
-  today by accident, invisible to the golden (H6).
+  today by accident, invisible to the golden (H6). The `__dirname` const at line 14 is then dead;
+  commit 1.13 removes it.
 - **S4 (options).** Each group destructures the `opts` members its bodies name, at its top, so
   bodies are unchanged.
 
 | # | commit: create | cut from `api-server.ts` | notes |
 |---|---|---|---|
-| 1.1 | `api/http.ts` | 305-361 (types + `isConfigWriteAuthorized` + `readJsonBody`) | `api-server.ts` re-exports the three types |
+| 1.1 | `api/http.ts` | 305-361 (types + `isConfigWriteAuthorized` + `readJsonBody`) | `api-server.ts` re-exports the three types; `operators` goes bare (S2a) |
 | 1.2 | `sensor-config.ts` (append) | 47-303 | `api-server.ts`: `export { buildSensorConfig, type SensorConfigEntry } from './sensor-config.js';` — `t7.test.ts` unchanged. No import is added: `sensor-config.ts` already imports `readConfig` (`:6`) and `t7Channels` (`:7`), and `isCurrentLoopBoard` is defined there. The config characterization harness imports named functions from this file; adding exports does not change `config/golden/ts/` |
-| 1.3 | `api/config.ts` | 394-507, 685-690 | |
-| 1.4 | `api/states.ts` | 508-684 | |
-| 1.5 | `api/profiles.ts` | 691-784 | |
-| 1.6 | `api/history.ts` | 785-815, 849-877 | |
+| 1.3 | `api/config.ts` | 394-507, 685-690 | `config-validation` loses its value use; no bare import (S2a table) |
+| 1.4 | `api/states.ts` | 508-684 | `routes/script-check` goes bare |
+| 1.5 | `api/profiles.ts` | 691-784 | `routes/config-profiles` goes bare |
+| 1.6 | `api/history.ts` | 785-815, 849-877 | `import type` for `ElodinQueryClient`, `QueryOptions` (S2c) |
 | 1.7 | `api/gui-config.ts` | 816-848 | imports `buildSensorConfig` from `../sensor-config.js` |
-| 1.8 | `api/board-logs.ts` | 878-924 | the local `const history = getBoardLogHistory(…)` keeps its name (module-local; no clash) |
-| 1.9 | `api/debug.ts` | 925-932, 1093-1096 | |
-| 1.10 | `api/calibration.ts` | 933-998, 1056-1092 | S3 |
-| 1.11 | `api/feed-char.ts` | 999-1055 | |
-| 1.12 | `api/ota.ts` | 1097-1256 | the `MAX_BODY` constant and SSE closure move inside the body unchanged |
+| 1.8 | `api/board-logs.ts` | 878-924 | the local `const history = getBoardLogHistory(…)` keeps its name (module-local; no clash); `board-logs` goes bare |
+| 1.9 | `api/debug.ts` | 925-932, 1093-1096 | D64(3)'s value-level `/api/debug` and `transition_armed` `engine_state` lines exist first |
+| 1.10 | `api/calibration.ts` | 933-998, 1056-1092 | S3; D64(5)'s operator `onCalibrationReload` vitest exists first |
+| 1.11 | `api/feed-char.ts` | 999-1055 | `session-manager` goes bare |
+| 1.12 | `api/ota.ts` | 1097-1256 | the `MAX_BODY` constant and SSE closure move inside the body unchanged; `ota-build`, `ota-service-cmd` go bare |
+| 1.13 | cleanup: dead `__dirname` | delete 12-14 (the comment and `const __dirname = …`) and the four builtin imports 6-9 (`fs`, `os`, `path`, `url`), now without a value use | The only import deletion in WP7. Builtins have no import-time effect and no entry in the order list, so the S2b diff is trivially empty; `tsconfig` has no `noUnusedLocals`, so the proof is `grep -nE '\b(fs|os|path|fileURLToPath|__dirname)\b' src/api-server.ts` printing nothing plus `tsc` exit 0. Line 10 (`http` types) stays |
 
-After 1.12 `api-server.ts` is the router (~90 lines): imports, re-exports, `createAPIHandler` with
-363-393 verbatim (the `if (video && url.pathname.startsWith('/api/video/'))` guard kept verbatim,
-first inside the try), ten `if (await handle…Request(req, res, url, opts)) return true;` lines,
-1257-1267 verbatim.
+After 1.13 `api-server.ts` is the router (~90 lines): imports (seven of them bare), re-exports,
+`createAPIHandler` with 363-393 verbatim (the `if (video && url.pathname.startsWith('/api/video/'))`
+guard kept verbatim, first inside the try), ten `if (await handle…Request(req, res, url, opts))
+return true;` lines, 1257-1267 verbatim.
 
 **Checks for every commit** (no ports):
 
 1. `npx tsc --noEmit` in `diablo_server/backend/` — exit 0 (required; merge-gate step).
 2. Backend `npm test`, no failure outside `test/characterization/baseline_vitest_failures.txt`
    (`t7.test.ts`, `config-profile-create-calibration.test.ts` exercise the exports).
-3. Import closure (S2) and the cycle grep (§8).
+3. The module-order diff (S2b) and the cycle grep (§8).
 4. Route-table check, dispatch check and move-only check, below.
 
 Under the stack lock, at the end of the step (and at most at one midpoint, within AGENT-RULES rule
 7's hold limit): `pipeline/run.sh pt nocal boards` and `lifecycle/run.sh` (its `ota` golden drives
-`POST /api/ota-flash`). `test_integration.sh` runs in the merge queue's full gate.
+`POST /api/ota-flash`). `test_integration.sh` runs in the merge queue's full gate. There is no
+startup-log diff in WP7: nothing WP7 moves logs at import, and the order diff is the order check.
 
 **Route-table check** (the WP's DoD "path+method list diff empty"):
 
@@ -377,14 +423,26 @@ done                                                                    # must p
 (`api-server.ts` 394-1256 at `backend-remastered`) into branches at each line matching
 `^      (} else )?if \(` at the ladder's indentation; for each branch take `COND` (the header without
 the leading `} else `) and `BODY` (the lines up to the next header); strip leading whitespace from
-every line. Every branch's `[COND] + BODY` must occur as one contiguous run of lines, after the same
-stripping, in **exactly one** `api/*.ts` file (and nowhere twice). The only lines of an `api/*.ts`
-file outside such runs may be imports, the handler's signature, its `opts` destructuring (S4), the
-added `return true;` per branch, `return false;`, closing braces, and S3's `SRC_DIR` line plus its
-two candidate lines. A ~40-line Python script; WP7 commits it with the package's checks (outside
-`src/`).
+every line. **One substitution** is applied to the old text before comparing: in the
+`/api/cubic_calibration` branch (937-959) the two `path.join(__dirname, …)` candidates (942-943)
+become `path.join(SRC_DIR, …)` — the S3 rewrite, and the only non-verbatim edit of step 1. Every
+branch's `[COND] + BODY` must then occur as one contiguous run of lines, after the same stripping,
+in **exactly one** `api/*.ts` file (and nowhere twice). The only lines of an `api/*.ts` file
+outside such runs may be imports, the handler's signature, its `opts` destructuring (S4), the added
+`return true;` per branch, `return false;`, closing braces, and S3's `SRC_DIR` line. A ~40-line
+Python script; WP7 commits it with the package's checks (outside `src/`).
+
+**Review** with `git diff --color-moved=dimmed-zebra --color-moved-ws=allow-indentation-change
+backend-remastered -- diablo_server/backend/src`: in step 1 every non-dimmed line must be an import
+(including an S2a bare import), an `export` keyword or re-export line, a handler signature, an
+`opts` destructuring, a `return true;` / `return false;`, the `SRC_DIR` line and the two candidate
+lines, or a dispatch line in `api-server.ts`. A line that only re-indents a moved body
+(`} else if (COND) {` → `if (COND) {` one level shallower) is expected, not a stop (D43(6)).
 
 ### 6.2 Step 2 — cleanup toward the target
+
+Each is its own commit, with the per-commit checks of §6.1; `pipeline/run.sh pt nocal boards` and
+`lifecycle/run.sh` under the stack lock at the end. Numbering is kept from the reviewed note.
 
 1. **`sendJson` and `denyUnlessOperator`** in `api/http.ts`.
 
@@ -394,47 +452,69 @@ two candidate lines. A ~40-line Python script; WP7 commits it with the package's
    sent) and the request hangs. With `sendJson`, `<expr>` is evaluated first, so the same throw
    becomes a clean 500 — a silent defect fix. So `sendJson` may replace **only** a pair whose body
    argument is built from literals and already-evaluated locals (optional-chained reads such as
-   `error?.message` included), where nothing in the expression can throw. Eligible (today's line of
-   the `res.end`; each is directly preceded by `res.writeHead(<n>, { 'Content-Type':
-   'application/json' });`, checked mechanically):
+   `error?.message` and `??` defaults included), where nothing in the expression can throw. The
+   91 `writeHead(<n>, { 'Content-Type': 'application/json' })` / `end(JSON.stringify(…))` pairs of
+   the ladder, by today's line of the `res.end`:
 
-   410, 441, 467, 498, 559, 584, 606, 634, 679, 707, 714, 723, 728, 753, 758, 768, 773, 783, 790,
-   810, 822, 848, 854, 874, 890, 905, 919, 928, 932, 936, 968, 984, 1014, 1031, 1038, 1044, 1050,
-   1055, 1063, 1073, 1084, 1096, 1100, 1105, 1181, 1188, 1197, 1221, 1249, 1259 (50 sites).
+   **Eligible** (50; each directly preceded by its `writeHead`): 410, 441, 467, 498, 559, 584,
+   606, 634, 679, 707, 714, 723, 728, 753, 758, 768, 773, 783, 790, 810, 822, 848, 854, 874, 890,
+   905, 919, 928, 932, 936, 968, 984, 1014, 1031, 1038, 1044, 1050, 1055, 1063, 1073, 1084, 1096,
+   1100, 1105, 1181, 1188, 1197, 1221, 1249, 1259.
 
-   **Not eligible, keep the raw pair:**
-   - the body calls a function after `writeHead`: 398, 404, 426, 690, 695, 720, 750, 765, 780,
-     860, 894, 963, 977, 981, 995, 1059, 1069, 1080, 1092;
+   **Not eligible, keep the raw pair** (41):
+   - the body calls a function after `writeHead` (20): 398, 404, 426, 622 (the multi-line ternary
+     calling `listStateScripts()` / `readStateScript()`), 690, 695, 720, 750, 765, 780, 860, 894,
+     963, 977, 981, 1059, 1069, 1080, 1092, and the two multi-line OTA bodies 1208 and 1231
+     (`Date.now() - t0`);
    - the body reads a property of a local without `?.` (it throws if the local is
-     `null`/`undefined`, e.g. a thrown non-Error): 445, 459, 505, 562, 577, 613, 627, 651, 658, 666,
-     682, 814, 834, 922, 1254, 1264;
-   - not an adjacent pair: 955, 958, 997 (`writeHead` sits before an `if` or `try`);
-   - not JSON or not that header set: the CSV, text, SSE and `Content-Disposition` responses.
+     `null`/`undefined`, e.g. a thrown non-Error) (16): 445, 459, 505, 562, 577, 613, 627, 651, 658,
+     666, 682, 814, 834, 922, 1254, 1264;
+   - not an adjacent pair (4): 955, 958 (`writeHead` at 953 sits before an `if`/`try`), 995, 997
+     (`writeHead` at 993 sits before the `try`);
+   - outside the count: the CSV, text, SSE and `Content-Disposition` responses, the `OPTIONS`
+     `end()`, and 957 (`res.end(body)`, a raw file body under a JSON header).
+
+   The check script (the ~20-line grep check in the package's scripts, outside `src/`; no linter,
+   STYLE-S40) identifies sites **by content, not by these line numbers**: for every `sendJson(`
+   call in `api/*.ts` it takes the body argument (which may span lines), strips string literals
+   **but keeps template-literal `${…}` interpolations** (426 hides `pwmIssues.join('; ')` inside
+   one), and fails on a `(` (a call) or a `.` that is not part of `?.` (a property read). Run over
+   the 91 bodies at `b2599617`, that rule passes exactly the 50 eligible sites and every
+   function-call and property-read site fails it; of the four non-adjacent sites 995 fails it too
+   (`currentTares()`) and 955, 958, 997 pass by content and are excluded only by the second
+   condition, which is the reviewer's: each `sendJson` replaces exactly one adjacent pair — the
+   diff shows a `writeHead` line deleted directly above it and nothing else. Expected saving
+   ≈ 100 lines.
 
    `denyUnlessOperator(req, res)` replaces the 14 identical
    `if (!isConfigWriteAuthorized(req)) { 403 …; return true; }` blocks (their bodies are literals).
-   **Before 2.1** the 8 gates no golden covers yet get a viewer-403 line (H8): today only
-   `http.txt` 1413 (`/api/config`), 1420 (`/import`), 1427 (`/state-csv`), 1462 (`profiles/switch`),
-   1504 (`board-log-mode`) and 1539 (`calibration_profiles/save`) are covered.
-2. **Slot rule** (after H4 exists): `elodinSlotFromBoardId` (96-100, now in `sensor-config.ts`) →
-   WP5's `boardSlot()`. Equivalent for every number; `asBoardId` still guarantees one.
+   The widened H8 package (§7) already exists — it gates step 1 — so every one of the 14 is
+   frozen as a viewer 403 before this commit touches it.
+2. **Slot rule.** `elodinSlotFromBoardId` (96-100, now in `sensor-config.ts`) → WP5's
+   `boardSlot()`. DESIGN-WP5 fixes `boardSlot`'s body as literally
+   `const m = boardId % 10; return m === 0 ? 10 : m;` — byte-identical to lines 98-99 — so the
+   proof is a **diff, not a characterization** (D63(3)): the commit's review shows the deleted
+   helper's body equal to `boardSlot`'s, `asBoardId` still guarantees a number, and no validation
+   is added. H4 is worth writing but does not gate this commit.
 3. **One identity rule — after both WP6 and WP7 have merged** (decision): `isConfigWriteAuthorized`
    (345-348) and the WS control path (`server.ts:978-979`) compute the same thing. Move it to
    `operators.ts` as `isOperatorRequest(headers)` used by both. The WS path still computes and keeps
    `authEmail`, which `CONTROL_STATUS` sends (`email: authEmail || null`). Same result for every
-   header value.
-4. **Prune `api-server.ts`'s imports** to what the router uses. **Never drop a module with
-   import-time effects** (`session-manager.ts`, `legacy/state-actuators.ts` / `state-csv/`, anything
-   that reads config, logs or constructs a singleton at import) unless another import still
-   evaluates it at the same point. **[B1]** Pruning a specifier is free (an unused specifier is
-   already absent at runtime); deleting a bare import made in step 1 is not — keep them, and gate
-   on the module-order diff as well as the log diff below. The check: diff the first 60 lines of `backend.log` (a 5 s
-   backend-only start under the stack lock, as DESIGN-WP6 §6.3 item 5) before and after; any
-   difference beyond timestamps and PIDs fails the commit.
-Step 2 is its own queue item, gated in full like step 1.
+   header value. The WS half of the H8 package (the operator path, gating WP6 step 1) and the HTTP
+   half together freeze both sides first.
+4. **Label the bare imports.** One comment block above the seven S2a bare imports in
+   `api-server.ts`, naming what each pins (STYLE-S37): `session-manager` is the effectful one (it
+   constructs `sessionManager` at import and brings `config-validation` with it); the other six pin
+   today's evaluation order only. No import is added, deleted, reordered or rewritten; the order
+   diff is empty. Also `// Kept: C5-5 (D17)` at the cubic-store candidates in `api/calibration.ts`
+   (STYLE-S12/S37): `GET /api/cubic_calibration` resolves its own four candidates and ignores
+   `DAQ_CALIBRATIONS_DIR`, while `routes/calibration-profiles.livePath()` honours it — two owners
+   of one path, a behaviour change to unify, Parked.
 
-5. Not in WP7 (Parked): unifying body reading, removing the never-wired `getQueryClient` /
-   `getCalibrationStatus` options, renaming `routes/`.
+**Not in WP7** (D63; reasons in `debates/WP7/history.md`): pruning `api-server.ts`'s imports and
+its 5 s startup-log diff (the bare imports stay, labelled — D63(2), as D49(8)); unifying body
+reading; removing the never-wired `getQueryClient` / `getCalibrationStatus` options; renaming
+`routes/`; the C5-5 fix.
 
 ### 6.3 Deliberately NOT changed (observable)
 
@@ -448,10 +528,15 @@ Step 2 is its own queue item, gated in full like step 1.
   profile** while `/api/pressure-limits` and `/api/gui-config` read the **deployed** config.
 - `cubic_calibration` candidate order (S3) and its "partial/corrupt → `{"cubic_state":{}}`" fallback;
   that it ignores `DAQ_CALIBRATIONS_DIR` while `routes/calibration-profiles.livePath()` honours it
-  (C5-5, two owners of one path — [B2], Parked).
+  (C5-5, two owners of one path — labelled in 2.4, Parked).
 - SSE framing of `flash-all` (`event: …\ndata: …\n\n`), the sequential per-board flash, the OTA
   temp-dir lifecycle and 4 MB cap, the "port must be 3232" rule.
-- The absent operator gate on `/api/ota-flash*` (a defect, reported below, not fixed).
+- **The security findings WP7 must not change** (route bodies move verbatim; LEDGER SEC-*):
+  **SEC-2** the absent operator gate on `POST /api/ota-flash` (1169) and `…/flash-all` (1101);
+  **SEC-3** `projectPath` (1194-1206) handed to `ota_service` as the caller sent it, where `pio
+  run` executes it; **SEC-9** `POST /api/state-script/check` (669) ungated, with an unbounded body
+  and a process per call. The H8 package freezes the two OTA routes as the viewer's 200 so SEC-2
+  stays visible; a fix is the team's, after the remaster.
 
 ---
 
@@ -459,78 +544,98 @@ Step 2 is its own queue item, gated in full like step 1.
 
 | part | guarded by | notes |
 |---|---|---|
-| every GET route, idle and during a session (status, CORS, content-type, body or schema) | `pipeline/golden/http.txt` (`http_before_session`, `http_during_session`) | P9 schema for `/api/debug`, `/stats`, board logs |
+| every GET route, idle and during a session (status, CORS, content-type, body or schema) | `pipeline/golden/http.txt` (`http_before_session`, `http_during_session`) | P9 schema for `/api/debug`, `/stats`, board logs; D64(3) adds value-level `/api/debug` keys and `engine_state` during `transition_armed` |
 | GET routes with every board type | `pipeline/golden/boards/http.txt` (`/api/sensor-config` for PT 21/22, TC, RTD, LC, T7; `ball_valve_cal`, `lc_tare`, `board-logs*`, `debug`, `config/validate`, `gui-config`, `pressure-limits`, `engine_state`) | |
 | PT calibration file absent | `pipeline/golden/nocal/http.txt` | |
 | error shapes: 404 ×2, OPTIONS, wrong method, 403 on 6 of the 14 gated routes, 400s, 409s, OTA 400s, video | `http.txt` `http_errors` | mutation `feed-char 409 → 410` went red |
 | state CSV bodies | `pipeline/golden/csv.txt` | mutation (swap columns) went red |
 | `cubic_calibration` resolves the fixture's store | `http.txt` (`GET /api/cubic_calibration` body) | a wrong root falls back to `{"cubic_state":{}}` → red |
-| `POST /api/ota-flash` success and failure paths | `lifecycle/golden/ota.txt` ("backend POST /api/ota-flash: …", 6 cases) | |
+| `POST /api/ota-flash` success and failure paths | `lifecycle/golden/ota.txt` ("backend POST /api/ota-flash: …", 6 cases, against a fake board on 3232) | |
 | `buildSensorConfig` (T7 channels, RTD role) | `__tests__/t7.test.ts` | imports through `api-server.js` |
 | `profiles/create` success with calibration | `__tests__/config-profile-create-calibration.test.ts` | drives `createAPIHandler` |
 | route domain libraries | `config/golden/ts/*`, `calibration/golden/ts.txt` | untouched by WP7 |
 | `board-log-mode` success | `test/ws_data_flow_test.ts` `testBoardLogMode` | gate |
+| one raw body per HTTP route (key order) | D64(14), G9 widened | step 2.1 |
+
+Backend vitests do not discharge these rows; substituting a vitest for a row is a decision the
+orchestrator records per row, never a default.
 
 ### Gaps — a move could change these and no golden would notice
 
-H1-H3, H5 and H8 belong in `test/characterization/pipeline/` (C0-owned); H4 is pure-function
-characterization (D20 allows white-box for pure functions with a stable signature).
+H1-H3, H5 and H8 belong in `test/characterization/pipeline/` (C0-owned, test-only, adding golden
+lines only — D20); H4 is pure-function characterization (D20 allows white-box for pure functions
+with a stable signature); H9 is a backend vitest.
 
 | gap | priority (orchestrator) | must exist before |
 |---|---|---|
-| H1, H2 | MUST | step 1 (H2's `flash-all` only against a config with no enabled boards) |
-| H8 | MUST | step 2.1 (`denyUnlessOperator`) |
-| H4 | should | step 2.2, including negative and non-integer `board_id`s |
+| H8 (widened: all 14 HTTP gates + the two OTA routes; with the WS operator path for WP6) | MUST — C0 package | step 1 (and WP6 step 1) |
+| H1, H2 | MUST | step 1 (H2's `flash-all` only against a config with no enabled boards; its viewer cases are H8's) |
+| D64(3), D64(5) | MUST (C0) | 1.9, 1.10 |
+| H9 | should | step 1 |
 | H3 | should, only if `sendJson` survives review | step 2.1 |
+| H4 | worth writing, **not gating** (D63(3): 2.2 is proven by a diff) | — |
 | H5 | nice-to-have | — |
 | H6, H7 | accepted as documented | — |
-| H9 [B3] | should | step 1 |
 
+- **H8 Every operator gate, as the viewer** (`X-Auth-Email: viewer@example.com`, `session.ts:136`;
+  the security ruling on the coverage hole: no backend test or golden pins any 403, so a refactor
+  that dropped a gate would stay green). One package, C0, test-only: for each of the 14 gated
+  routes of §1.1 a request as the viewer, frozen as 403 `{"error":"Not an approved operator"}` with
+  no side effect (the file unchanged, no `config_updated` frame) — the six already frozen stay as
+  they are, the eight new ones are `POST /api/state-script`, `profiles/create`, `…/rename`,
+  `…/delete`, `POST /api/ball_valve_cal`, `POST /api/feed-char/results`,
+  `calibration_profiles/load`, `…/new_blank`. The `feed-char` one must run **during a session**:
+  without one the route answers 409 before it reaches the gate. Plus the two ungated OTA routes
+  **as the viewer, frozen as today's 200** so that D-OTA/SEC-2 stays visible until the team fixes
+  it: `POST /api/ota-flash/flash-all` against a config with no enabled boards → 200
+  `{"success":false,"message":"No enabled boards in config"}` (never against the pipeline fixture:
+  with boards it would flash them), and `POST /api/ota-flash` with `firmwareBase64` as a
+  **viewer-header variant** of lifecycle's fake-board case (`lifecycle.py:1340` sends no
+  `X-Auth-Email` today, so its existing 200 is the implicit operator's) → 200
+  `{"success":true,…}`. Plus, for WP6, the WS control-unlock/operator path.
+  Gates WP7 step 1 and WP6 step 1; mutation: drop one gate → its line goes red.
 - **H1 Success paths of the writes and their callbacks.** Only error shapes are frozen for
   `POST /api/config`, `/api/config/import`, `/api/state-csv`, `/api/state-script`,
   `profiles/switch|rename|delete`, `calibration_profiles/save`; `profiles/create` has a vitest.
   Add, idle, as the operator: each write's status/body, the file it changed (normalised), and the WS
-  frames that follow (`config_updated`, `board_status_update`). Include import with an invalid TOML
-  (400 + rollback: the profile file is unchanged). Shared with WP6's G7.
+  frames that follow (`config_updated`, `board_status_update`), recording the frames that arrive
+  **before** the response to see the `setImmediate` deferral (D64(15)). Include import with an
+  invalid TOML (400 + rollback: the profile file is unchanged). Shared with WP6's G7 (widened by
+  D64(10)).
 - **H2 Routes no request ever reaches.** `POST /api/calibration_profiles/load`,
   `POST /api/calibration_profiles/new_blank` and `POST /api/ota-flash/flash-all` appear in no golden,
   so a misrouted or dropped branch would go unnoticed (the route-table check in §6.1 is static
-  only). Add `load` and `new_blank` as the viewer (403, no side effect). `flash-all` has **no
-  operator gate** and would flash every enabled board; freeze it only against a config with no
-  enabled boards (`200 {"success":false,"message":"No enabled boards in config"}`), never against
-  the pipeline fixture.
+  only). Their viewer cases are H8's; the operator `load` / `new_blank` case, which is the only way
+  to see `onCalibrationReload` fire, is D64(5)'s vitest before 1.10.
 - **H3 Malformed JSON bodies.** Not sent anywhere. Freeze one per style: a `readJsonBody` route that
   answers 500 (`ball_valve_cal`), one that answers 400 (`profiles/rename`), and one hand-parsed route
   (`board-log-mode`, 400 with V8's message — normalise to the error class, as the calibration harness
   does for `JSON.parse`).
 - **H4 Slot 0 → 10 in `buildSensorConfig`.** No golden has a PT/TC/RTD/LC board with
-  `board_id % 10 == 0` (the boards session's sensor list is PT1, PT2, TC1, RTD1, LC2, T71). Freeze
-  `buildSensorConfig` for an injected config with board_ids 10, 20, 21, two RTD and two LC boards
-  without roles (`generatedRole` multi-board names), a disabled board, a non-numeric `board_id`
-  (`asBoardId` fallbacks 1/51/31/41), negative (`-21`) and non-integer (`21.5`) board_ids, and T7
-  channels — before step 2.2.
+  `board_id % 10 == 0` (the boards session's sensor list is PT1, PT2, TC1, RTD1, LC2, T71). Worth
+  freezing `buildSensorConfig` for an injected config with board_ids 10, 20, 21, two RTD and two LC
+  boards without roles (`generatedRole` multi-board names), a disabled board, a non-numeric
+  `board_id` (`asBoardId` fallbacks 1/51/31/41), negative (`-21`) and non-integer (`21.5`)
+  board_ids, and T7 channels. It does not gate 2.2 (D63(3)).
 - **H5 `PUT /api/feed-char/results` during a session (405)**: the no-session 409 (`POST`, `PUT`),
   the in-session `GET` (200, `results: []`) and `POST` (500 `ENOENT`, mock mode) are frozen; the
   405 branch is not.
-- **H8 The 8 operator gates without a viewer-403 line**: `POST /api/state-script`,
-  `POST /api/config/profiles/create`, `…/rename`, `…/delete`, `POST /api/ball_valve_cal`,
-  `POST /api/feed-char/results`, `POST /api/calibration_profiles/load`, `…/new_blank`. Freeze each
-  as the viewer (403, no side effect). The `feed-char` one must run **during a session**: without
-  one the route answers 409 before it reaches the gate.
 - **H6 `cubic_calibration` candidate order** cannot be observed (§6.1 S3); prescribed rather than
   tested.
-- **H9 Every route is dispatched** [B3] (`research/node-realtime-backend.md` §5). A backend vitest
+- **H7 SSE headers and framing** of `flash-all` — covered by H8's no-boards case only for the JSON
+  branch; the SSE branch stays unguarded (cannot be exercised safely on a shared machine without a
+  fake `ota_service`; lifecycle's fake board could host it later).
+- **H9 Every route is dispatched** (`research/node-realtime-backend.md` §5). A backend vitest
   that drives `createAPIHandler` with a temp-dir `CONFIG_PATH` (no enabled boards), a viewer
   `X-Auth-Email` and an empty or invalid body, for every `(method, path)` of a checked-in list
   generated from the route-table check, and asserts the answer is **not** the router's
   `404 {"error":"Not found"}` (and, for `/api/video/*`, that the video branch answered). Viewer
   identity makes every gated write a 403 with no side effect; the ungated OTA routes answer 400
   (missing ip) and, for `flash-all`, `200 {"success":false,"message":"No enabled boards in config"}`
-  — the same safe cases as H2. It closes "a group is never dispatched" before the moves instead of
-  by the static dispatch check alone, and it imports `api-server.ts` with no stack (no port).
-- **H7 SSE headers and framing** of `flash-all` — covered by H2's no-boards case only for the JSON
-  branch; the SSE branch stays unguarded (cannot be exercised safely on a shared machine without a
-  fake `ota_service`; lifecycle's fake board could host it later).
+  — the same safe cases as H8. It closes "a group is never dispatched" before the moves instead of
+  by the static dispatch check alone, and it imports `api-server.ts` with no stack (no port). Its
+  ESLint `no-restricted-syntax` guard for `sendJson` is not adopted (STYLE-S40: no linter; the
+  content check of §6.2 item 1 instead).
 
 ---
 
@@ -539,26 +644,32 @@ characterization (D20 allows white-box for pure functions with a stable signatur
 - **Shared state.** None in the file (§1.2). The risk is the callbacks: a moved body must call
   `onConfigUpdated` / `onStateCsvUpdated` under the same condition and through the same
   `setImmediate`; H1 is what would notice.
-- **Unrestricted `sendJson`** would turn today's hang-after-headers into a clean 500 on ~35 call
-  sites — a defect fix no golden notices. §6.2 item 1 restricts it to the listed sites.
-- **A group never dispatched** passes the route-table diff; the dispatch check of §6.1 catches it.
+- **A dropped gate.** Fourteen identical blocks move in nine commits and are rewritten in 2.1; no
+  golden saw eight of them until H8. H8 is the gate on step 1 for this reason.
+- **Unrestricted `sendJson`** would turn today's hang-after-headers into a clean 500 on 41 call
+  sites — a defect fix no golden notices. §6.2 item 1 restricts it to the 50 listed sites and the
+  check script enforces the rule by content.
+- **A group never dispatched** passes the route-table diff; the dispatch check of §6.1 catches it,
+  H9 before the moves.
 - **Import cycles.** Types in `api/http.ts`; `api/*` never imports `api-server.ts` or `server/*`. A
-  grep in the DoD: `grep -l "api-server\|\.\./server/" src/api/*.ts` prints nothing.
-- **Startup order.** `createAPIHandler` is called once, at `server.ts:784`, after `video.start()`;
-  group modules have no import-time effects, and S2 keeps `api-server.ts`'s import list (and so the
-  evaluation order of `session-manager`, `routes/*`, `ota-*`) unchanged in step 1.
+  grep in the DoD: `grep -lE "from '\.\./(api-server\.js|server/)" src/api/*.ts` prints nothing.
+- **Evaluation order.** `createAPIHandler` is called once, at `server.ts:784`, after `video.start()`;
+  group modules have no import-time effects. What can move is *when* `session-manager`,
+  `routes/config-profiles`, `routes/script-check`, `operators`, `ota-*` and `board-logs` evaluate
+  (S2): the seven bare imports pin them and the order diff proves it per commit. A bare import on
+  a type-only line would **add** a module (S2a's second table).
 - **Unawaited group calls** turn a 500 into a hang (§4.2). Reviewed per line; `tsc` does not catch it.
 - **`__dirname` depth** (S3, H6).
-- **The `legacy/` (`state-csv/` after WP5) state-CSV loaders.** `api-server.ts` does not import them;
+- **The `state-csv/` state-CSV loaders.** `api-server.ts` does not import them;
   `/api/state-csv` reads and writes through `routes/config-profiles.ts` — a separate CSV reader. What
   links the two is `onStateCsvUpdated`, which makes `server.ts` rebuild its `state-csv` map; WP7 keeps
   that callback's condition (`deployed`) and timing. The loaders' `__dirname`-relative paths are not
   touched (WP7 does not move them).
 - **The duplicated slot helper.** `elodinSlotFromBoardId` (96-100) is one of six copies of
-  `board_id % 10, 0 → 10` (BLOAT-MAP §3 lists five; `server.ts:344-345` is the sixth, DESIGN-WP6 R5).
-  WP5 does not own this copy; WP7 moves it with `buildSensorConfig` in step 1 and replaces it in step
-  2.2, after H4. The frontend copy (`frontend/lib/sensor-info-entities.ts:13`) stays (frontend out of
-  scope).
+  `board_id % 10, 0 → 10` (BLOAT-MAP §3 lists five; `server.ts:344-345` is the sixth, DESIGN-WP6 §8
+  R5). WP5 does not own this copy; WP7 moves it with `buildSensorConfig` in step 1 and replaces it
+  in step 2.2 by a diff against `boardSlot`. The frontend copy
+  (`frontend/lib/sensor-info-entities.ts:13`) stays (frontend out of scope).
 - **`sensor-config.ts` grows to ~570 lines** (under the 700-line god-file line). It is also WP5's
   file; WP7 must start after WP5 has merged (the DAG already says so).
 - **Harness imports by path.** `config/ts_dump.ts` and `calibration/ts_harness.mts` import
@@ -569,9 +680,15 @@ characterization (D20 allows white-box for pure functions with a stable signatur
 
 ## Defects found (report, not fix)
 
-- **`POST /api/ota-flash` and `POST /api/ota-flash/flash-all` have no operator gate.** Every other
-  write checks `isConfigWriteAuthorized`; behind Caddy a signed-in non-operator can flash board
-  firmware, and `flash-all` reflashes every enabled board.
+- **SEC-2 / D-OTA: `POST /api/ota-flash` (1169) and `POST /api/ota-flash/flash-all` (1101) have no
+  operator gate.** Every other write checks `isConfigWriteAuthorized`; behind Caddy a signed-in
+  non-operator can flash board firmware, and `flash-all` reflashes every enabled board. H8 freezes
+  the viewer's 200.
+- **SEC-3: `projectPath` → code execution.** `api-server.ts:1194-1206` passes a caller path to
+  `ota_service`, which runs `pio run`; a `platformio.ini` `extra_scripts` runs arbitrary code as the
+  service user. Moves verbatim into `api/ota.ts`.
+- **SEC-9: `POST /api/state-script/check` (669)** is ungated, reads an unbounded body and spawns a
+  process per call. Moves verbatim into `api/states.ts`.
 - `getQueryClient` and `getCalibrationStatus` are never provided, so `/api/query` and `/api/sensors`
   always answer 503 and `/api/calibration_status` always answers the error object;
   `/api/sensors/<entity>` is a placeholder.
@@ -580,192 +697,40 @@ characterization (D20 allows white-box for pure functions with a stable signatur
 - A throw inside a `req.on('end')` callback outside its own try, or after `flash-all` has sent its
   headers, leaves the request without a response.
 - `GET /api/config/profiles` can write (`ensureSeeded()`).
-
-## Open questions
-
-Q1 and Q2 are settled by the orchestrator's decisions at the top of this note (D-b, D-a); Q3 by the
-gap priority table in §7; Q4 by the decision that step 2.3 waits until both WP6 and WP7 have merged.
-
-- **Q1** `buildSensorConfig` into the existing `sensor-config.ts` (this note) or a new
-  `sensor-config-build.ts` (the WP table)?
-- **Q2** `src/api/` (this note) instead of handlers under `src/routes/` (the WP table)?
-- **Q3** H1-H3, H5 are characterization tests (C0-owned): before WP7 starts, or before the commit
-  that moves each group?
-- **Q4** Step 2.3 (one identity rule in `operators.ts`) touches both WP6's and WP7's files; which
-  package does it, after both have merged?
+- C5-5: `GET /api/cubic_calibration` and `routes/calibration-profiles.livePath()` disagree on where
+  the live cubic store is when `DAQ_CALIBRATIONS_DIR` is set.
 
 ---
 
-## Alternatives considered (design/ts2, 2026-11-16)
+## 9. Interface stubs and STYLE
 
-### A. Per-group handler files, one `handle<Group>Request` each (§2 — chosen)
+The public surface of every §2 module is written as type-checked stubs in
+`docs/remaster/design-stubs/ts/src/` (`api-server.ts`, `api/*.ts`, the `sensor-config.ts` delta;
+one header comment per module, STYLE-S36, listing each group's routes with their gates, error paths
+and callbacks), beside WP5's and WP6's. They are imported by nothing and excluded from the product's
+`tsc`:
 
-Eleven `api/*.ts` modules plus `api/http.ts`; the router calls each group in a fixed order inside
-its one try; a group answers `true` or `false`. Precedent: `video/routes.ts` `handleVideoRequest`.
+```bash
+cd daq-server/docs/remaster/design-stubs/ts
+npx --prefix ../../../../diablo_server/backend tsc --noEmit -p .    # exit 0
+```
 
-### B. A declarative route table
+**The stubs are frozen as of D63 and are not maintained once step 1 starts.** Where a stub and this
+note disagree, this note wins.
 
-`api-server.ts` holds `const ROUTES: Route[] = [{ method: 'GET', path: '/api/config', handler:
-getConfig }, …]` (≈60 entries) and dispatches on the first match; each branch body becomes a named
-handler `(req, res, url, opts) => Promise<void>`; the 404 is "no row matched".
+What writing them confirmed: the route-group signature stays documentation only (eleven modules
+share it, but a declared `RouteHandler` type would be a callback type no code consumes generically,
+STYLE-S34); `sendJson`'s body is fixed as `video/routes.ts:38`'s (`writeHead` before
+`JSON.stringify`), so the restriction, not the helper, carries the safety; `api/history.ts` keeps
+`ElodinQueryClient` type-only; `api/calibration.ts` owns `SRC_DIR` from `import.meta.url`
+(STYLE-S30, D43(7)).
 
-### C. Keep one file; extract only the helpers
-
-`buildSensorConfig` and its helpers to `sensor-config.ts`, the types and request helpers to
-`api/http.ts`, the OTA block (160 lines) to `api/ota.ts`; the ladder stays in `api-server.ts`
-(≈800 lines).
-
-### Comparison
-
-| | A (chosen) | B route table | C helpers only |
-|---|---|---|---|
-| clarity | a resource's routes are one file named for it; the router is ~90 lines and reads as the dispatch order | the table is the best route index (one line per route, method and path side by side); the bodies scatter into ≈60 named functions whose names add nothing over their paths | the 700-line ladder stays the place to read; above STYLE-S33's god-file line |
-| lines (net, steps 1+2) | step 1 ≈ +120 (per-group imports, signatures, `return true`); step 2 ≈ −90 (`sendJson` on 50 sites, `denyUnlessOperator` on 14) | ≈ +60 over A (table rows, a `Route` type, per-handler signatures) | ≈ 0 (moves only) |
-| move-only feasibility (WP7-S1) | exact: each `else if (COND) { BODY }` becomes `if (COND) { BODY return true; }`, COND and BODY byte-identical, checked by the scripted move-only check | **no**: COND does not map to `{method, path}` for three branches (the method-agnostic `/api/feed-char/results`, the prefix `/api/sensors/`, the `video &&` guard), and every body changes its exit (`return true` inside nested callbacks becomes `return`) | exact, but only for the few moved blocks |
-| testability | each group importable without effects (STYLE-S30); H9 drives the whole router | the table is data a test can enumerate — its one real gain; research §5 notes the same gain is had by H9 without a runtime abstraction | as today |
-| fit with characterization boundaries | goldens are black-box HTTP (`pipeline/golden/http.txt`, `boards/`, `nocal/`, `lifecycle/golden/ota.txt`); the path-coupled tests are `t7.test.ts` and `config-profile-create-calibration.test.ts`, which import `./api-server.js` — kept by re-exports; `routes/*.ts` (imported by `config/ts_dump.ts`, `calibration/ts_harness.mts`) untouched | same goldens; the same re-exports | same |
-| risk to the frozen contract | low: first-match order is irrelevant because the predicates are pairwise disjoint (WP7-S1), CORS and the single try stay in the router (§4.2), the 404-not-405 rule is the fall-through | medium: a table matcher must reproduce 404-not-405, the method-agnostic 405 of feed-char, and that `/api/video/*` is skipped when `video` is unset; each is a new line of matcher logic that no golden reads directly | none, but the WP's goal (router only) is not met |
-
-**Why A.** It is the only shape that is move-only for every branch and still ends with a router
-small enough to read. **B lost** on WP7-S1 (three branches have no `{method, path}` form, and every
-body's exit changes) and adds a `Route` type with one user (STYLE-S34); its one gain — a
-machine-readable route list — is obtained by H9 and the route-table check without a runtime
-abstraction (`research/node-realtime-backend.md` §5 reaches the same verdict, and notes that
-Fastify-style routers would also keep 404-not-405, which is reassurance, not a reason to adopt a
-framework). **C lost** on the WP's goal and on STYLE-S33.
-
-**Module list unchanged.** The deeper pass amends the reviewed design in places — [B1]-[B4] at
-the top (elided imports and bare imports, the kept two-owner cubic-store path, gap H9 and a grep
-check instead of ESLint, STYLE conformance); each is marked where it lands.
-
----
-
-## Walkthroughs (design/ts2, 2026-11-16)
-
-WP7's modules are on the HTTP side only. The WS command path (fire, abort) never enters them; the
-walkthroughs below trace what the HTTP side does around each flow and where it hands over to the
-WS side, which is only ever through an `APIHandlerOptions` callback built by `server.ts`
-(STYLE-S31).
-
-### (a) Around a fire command
-
-1. Before the operator can press Fire, the GUI loads the state panel: `GET /api/states` →
-   `server.ts` HTTP handler → **`api-server`** (prefix, CORS, URL) → **`api/states.handleStatesRequest`**
-   reads the **active profile**'s `[[states]]` (and `[flow]`) and answers. One owner.
-2. The GUI may poll `GET /api/engine_state` → **`api/debug`** → `opts.getEngineState()` →
-   `engine-state.currentState` (WP6). The option is the seam; `engine-state` owns the value.
-3. The fire command itself is WS (DESIGN-WP6 walkthrough (a)); WP7 is not on it.
-4. Editing a dynamic state's script before a run: `POST /api/state-script/check` (no gate, no
-   write) and `POST /api/state-script` (operator gate, `checkStateScript` then save) →
-   **`api/states`**; the sequencer reads scripts at the next session start. One owner.
-
-Finding (observation, frozen): `/api/states` serves the **active profile** while
-`engine-state` resolves ids against the **deployed** config (§6.3 already lists it). During a
-session with an unsaved-to-deploy draft the panel and the sequencer can disagree on a state's name;
-the sequencer refuses unknown names and the backend rejects undeclared ids, so the failure is a
-refusal, not a wrong state. Not two owners of one step: two documents by design.
-
-### (b) Around an abort
-
-1. The abort buttons come from the same `GET /api/states` (`isAbort` from the config); step (a) 1.
-2. Abort thresholds live in the config document: edited through `POST /api/config` (walkthrough
-   (c) below) and regenerated by `calibration_service` into `abort_thresholds.txt` (not WP7's).
-3. The operator gate. HTTP writes check `X-Auth-Email` in **`api/http.isConfigWriteAuthorized`**;
-   the WS control path checks the same header in **`ws-connection`** (WP6). *Two owners of one
-   identity rule* — already scheduled: step 2.3 moves it to `operators.isOperatorRequest(headers)`
-   after both WP6 and WP7 have merged. The abort itself needs the WS arming, not the HTTP rule.
-
-### (c) A board-status change through HTTP
-
-1. The operator enables a board in the config editor: `POST /api/config` → **`api-server`** →
-   **`api/config.handleConfigRequest`**: operator gate (403 before the body), body collected in
-   `req.on('end')`, PWM check (400), `writeActiveProfile`, and — only when no session is active —
-   `deployActiveProfile()` and `setImmediate(onConfigUpdated)`. The response is written before the
-   callback runs (STYLE-S29).
-2. `onConfigUpdated` is `server.ts`'s `applyDeployedConfigChange()` (WP6): GUI stream, calibration
-   entity map, hot-path caches, state-actuator map, then **`board-status.loadBoardsFromConfig()`**
-   and `broadcastBoardStatus()`, then `config_updated` to every browser. Owners: `api/config` for
-   the write and the deferral; `server.ts` for the reload sequence; `board-status` for the list.
-3. During a session the same request is a draft: saved to the profile, not deployed, no callback;
-   the board appears at the next session start, when `sessionManager.start` deploys and calls the
-   same `applyDeployedConfigChange` (the C5-1 flash). One deploy function
-   (`routes/config-profiles.deployActiveProfile`), two triggers.
-4. A board's log verbosity: `POST /api/board-log-mode` → **`api/board-logs`** → `patchBoardField`
-   writes `config.toml` and the profile directly, even during a session, and fires **no** callback
-   (`config_broadcast_service` re-reads the file). `GET /api/board-logs` reads the ring
-   `board-logs.ts` fills from daq_bridge's UDP forwarder. One owner each.
-
-No step with zero or two owners.
-
-### (d) A calibration save via HTTP
-
-1. `POST /api/calibration_profiles/save` → **`api-server`** → **`api/calibration.handleCalibrationRequest`**.
-2. Operator gate: `denyUnlessOperator(req, res)` (**`api/http`**, step 2.1) writes the literal 403.
-3. Body: `readJsonBody(req)` (**`api/http`**). Malformed JSON rejects into the router's catch → 500
-   `{"error":"Invalid JSON body"}` (frozen; H3).
-4. `saveCalibrationProfile(name)` — **`routes/calibration-profiles`** owns the store: it copies
-   `livePath()` (`cubic_calibration.json` under `getCalibrationsDir()`, which is `DAQ_CALIBRATIONS_DIR`
-   when set)
-   into `profiles/<name>.json`. A throw (bad name) → router catch → 500 `{"error": message}`.
-5. 200 with `listCalibrationProfiles()` — a function call in the body, so **not** `sendJson`
-   eligible (§6.2 item 1): the raw `writeHead`/`end` pair stays.
-6. `…/load` and `…/new_blank` swap the live store and then call `opts.onCalibrationReload()`
-   **synchronously, before** the response (STYLE-S29) → `server.ts` → `publishCalibrationReload`
-   → Elodin cmd 7 (DESIGN-WP6 walkthrough (d)). `calibration_service` re-reads the store.
-7. `GET /api/cubic_calibration` shows the result: **`api/calibration`** reads the live store from
-   its own four candidates (WP7-S3's `SRC_DIR`).
-
-Finding **[B2]**: steps 4 and 7 have **two owners of "where the live cubic store is"** —
-`livePath()` honours `DAQ_CALIBRATIONS_DIR`, the GET's candidates do not (C5-5: with the variable
-set, the panel shows a different file from the one a save copies). Moving the GET onto `livePath()`
-is the C5-5 fix and changes what the GET returns under that variable: not done in WP7 (STYLE-S8);
-labelled `// Kept: C5-5 (D17)` at the candidates in step 2 (STYLE-S12, S37) and Parked for the team.
-
-### Summary of ownership findings
-
-| step | owners | disposition |
-|---|---|---|
-| (b) 3 operator identity rule | `api/http` + `ws-connection` | step 2.3 (after WP6 and WP7) |
-| (d) 4/7 live cubic store path | `routes/calibration-profiles.livePath` + `api/calibration` | **kept** (C5-5), labelled, Parked [B2] |
-| (a) 1 states list vs id resolution | active profile vs deployed config | by design, frozen; observation |
-
----
-
-## Interfaces (design/ts2, 2026-11-16)
-
-Stubs in `docs/remaster/design-stubs/ts/src/` (how they are type-checked, and that nothing imports
-them: DESIGN-WP6 "Interfaces"). Each opens with the STYLE-S36 header: what it owns, what it must not
-know about, contract surfaces with their goldens, import-time effects; each group's handler doc
-lists its routes with their gates, error paths and callbacks.
-
-| stub | public surface |
-|---|---|
-| `api/http.ts` | `BoardScanRateHz`, `DebugInfo`, `APIHandlerOptions` (verbatim, with which options are never passed), `isConfigWriteAuthorized`, `readJsonBody`; step 2.1: `sendJson` (restricted to the 50 listed sites), `denyUnlessOperator` |
-| `api/config.ts` … `api/ota.ts` (10 groups) | one `handle<Group>Request(req, res, url, opts): Promise<boolean>` each |
-| `api-server.ts` | `createAPIHandler(opts?)`; re-exports `buildSensorConfig`, `SensorConfigEntry` (from `sensor-config.ts`), `APIHandlerOptions`, `BoardScanRateHz`, `DebugInfo` (from `api/http.ts`) |
-| `sensor-config.ts` (delta) | `SensorConfigEntry`, `buildSensorConfig(config?)` (WP7 1.2), beside WP5's `boardSlot` |
-
-What writing them confirmed or changed:
-
-- The route-group signature stays documentation only (WP7 §2): eleven modules share it, but a
-  declared `RouteHandler` type would be a callback type no code consumes generically (STYLE-S34).
-- `sendJson`'s body is fixed as `video/routes.ts:38`'s (`writeHead` before `JSON.stringify`), so even
-  inside the eligible list a `stringify` throw lands after the header exactly as today
-  (research `node-realtime-backend.md` §5); the restriction, not the helper, carries the safety.
-- `api/history.ts` keeps `ElodinQueryClient` type-only: it is elided at runtime today and must
-  stay elided ([B1]).
-- `api/calibration.ts` owns `SRC_DIR` from `import.meta.url` (STYLE-S30, D43(7)).
-
-### STYLE.md conformance (55d140ef; LEDGER D43)
-
-Applied: STYLE-S5 (`api/` = HTTP route handlers, `routes/` = domain libraries the harnesses import
-by path, untouched); S6 (`handle<Group>Request`); S7 (every URL, header, text and filename kept,
-including the mixed `snake_case`/`kebab-case` paths); S8/S10 (every frozen failure mode listed in
-the handlers' docs: the 500-vs-400 malformed-JSON split, the hang paths, the ungated OTA routes,
-the 503 stubs); S12/S37 (`// Kept: C5-5 (D17)` at the cubic store candidates in step 2, [B2]); S28
-(every group call awaited inside the one try); S29 (`setImmediate` deferral vs synchronous
-`onCalibrationReload`); S30, S31, S34, S36, S40 as for WP6.
-
-**Choices that need the orchestrator's check against STYLE:** none beyond DESIGN-WP6's list; the
-`sendJson` eligibility is enforced by a grep script rather than ESLint (STYLE-S40: no linter) —
-confirm that a ~20-line check script in the package (outside `src/`) is acceptable.
+STYLE applied: S5 (`api/` = HTTP route handlers, `routes/` = domain libraries the harnesses import
+by path, untouched); S6 (`handle<Group>Request`); S7 (every URL, header, text and filename kept);
+S8/S10 (every frozen failure mode listed in the handlers' docs: the 500-vs-400 malformed-JSON split,
+the hang paths, the ungated OTA routes, the 503 stubs); S12/S37 (`// Kept: C5-5 (D17)` in 2.4, the
+bare-import labels in 2.4 — comments land in step 2, not in a move-only commit, S38); S28 (every
+group call awaited inside the one try); S29 (`setImmediate` deferral vs synchronous
+`onCalibrationReload`); S30, S31, S33, S34, S36; S40 (no linter; the `sendJson` check is a script in
+the package, outside `src/`; 2 spaces, single quotes, semicolons in new files; moved code not
+reformatted).

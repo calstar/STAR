@@ -54,7 +54,9 @@ export interface APIHandlerOptions {
   video?: VideoService;
 }
 
-/** The operator gate for every gated write (14 routes; the two OTA routes have none — D-OTA). */
+/** The operator gate for every gated write (14 routes; the two OTA routes have none — D-OTA /
+ *  SEC-2, kept). All 14 and the two OTA routes are frozen as the viewer by the H8 package (C0,
+ *  gates step 1; security ruling) before any of them moves. */
 export function isConfigWriteAuthorized(req: IncomingMessage): boolean {
   throw new Error('stub');
 }
@@ -68,17 +70,21 @@ export function readJsonBody(req: IncomingMessage): Promise<any> {
 /**
  * [step 2.1] `writeHead(status, {'Content-Type':'application/json'})` then
  * `end(JSON.stringify(body))` — same body as `video/routes.ts:38` (WP7 §5), so `writeHead` still
- * runs before `stringify`. **Restricted** (WP7 §6.2, D39, STYLE-S10) to the 50 listed sites whose
- * `body` is built from literals and already-evaluated locals: anywhere else it would evaluate a
- * throwing expression before `writeHead` and silently turn today's hang (D-API3) into a 500.
- * A grep-based check in the package's scripts enforces the list (WP7 [B3]; no linter, STYLE-S40).
+ * runs before `stringify`. **Restricted** (WP7 §6.2, D39, STYLE-S10) to the 50 sites whose
+ * `body` is built from literals and already-evaluated locals (41 pairs keep the raw form):
+ * anywhere else it would evaluate a throwing expression before `writeHead` and silently turn
+ * today's hang (D-API3) into a 500. A check script in the package (no linter, STYLE-S40)
+ * identifies sites **by content**, not line number: the body argument, string literals stripped
+ * (template-literal `${…}` interpolations kept), may contain no `(` and no `.` outside `?.`; the
+ * reviewer confirms each call replaces exactly one adjacent `writeHead`/`end` pair.
  */
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   throw new Error('stub');
 }
 
 /** [step 2.1] If `!isConfigWriteAuthorized(req)`: write the literal 403 and return `true`
- *  (the caller then `return true`s); else `false`. Replaces 14 identical blocks; H8 first. */
+ *  (the caller then `return true`s); else `false`. Replaces 14 identical blocks, every one frozen
+ *  as a viewer 403 by the H8 package since before step 1. */
 export function denyUnlessOperator(req: IncomingMessage, res: ServerResponse): boolean {
   throw new Error('stub');
 }
