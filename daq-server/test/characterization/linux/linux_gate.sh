@@ -37,11 +37,13 @@ while load="$(uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/')" &&
   echo "linux_gate: load $load >= $NCPU cores, waiting" >&2; sleep 30
 done
 echo "linux_gate: $(git -C "$REPO" rev-parse --short "$REV") on $PLATFORM with $CC_KIND${AREAS:+, areas $AREAS only}"
-# Under the stack lock: the VM's CPU would otherwise overlap a stress pass or a gate (D27).
+# Under its own lock (LEDGER D90), not the stack lock: the container has its own network namespace and
+# mounts only its export and log dir, so it cannot collide with a host stack; one Linux leg at a time.
 LOGS="$(cd "$HERE/../../.." && pwd -P)/.tmp/linux-gate/${PLATFORM#linux/}"
 rm -rf "$LOGS"; mkdir -p "$LOGS"
 echo "linux_gate: full step logs in $LOGS"
-bash "$HERE/../with_stack_lock.sh" docker run --rm --security-opt seccomp=unconfined --platform "$PLATFORM" -v "$LOGS":/logs -v "$WORK":/src -w /src/daq-server "$TAG" bash -c "
+DAQ_STACK_LOCK="$(cd "$(git -C "$HERE" rev-parse --git-common-dir)" && pwd -P)/daq-linux.lock" \
+  bash "$HERE/../with_stack_lock.sh" docker run --rm --security-opt seccomp=unconfined --platform "$PLATFORM" -v "$LOGS":/logs -v "$WORK":/src -w /src/daq-server "$TAG" bash -c "
   set -uo pipefail; export $CCS; export DAQ_STACK_LOCK=/tmp/daq-stack.lock  # no .git in an export
   [ $FULL = 1 ] || export CHAR_EMULATED=1  # amd64 runs emulated: slow-start tests get their long timeout
   fails=()
