@@ -27,5 +27,7 @@ Off the stand only (`daq-server/CLAUDE.md`). Anything that binds ports runs unde
 - Normalisation (stack goldens): wall-clock timestamps, PIDs, ports, temp paths, session and
   request IDs are replaced with stable placeholders by `pipeline/normalize` rules, written once and
   shared. Anything else that varies run to run is a flake to fix, not to mask.
-- Every test was proven to fail: the mutation check in `docs/remaster/LEDGER.md` lists the
-  deliberate breakages each area catches.
+- Every test was proven to fail. The deliberate breakages an area catches are listed in that
+  area's README where it keeps one (`calibration`, `pipeline`, `sequencer`); for the others they are
+  in the package's merge-log row in `docs/remaster/LEDGER.md` (the mutations each queue item was
+  gated on). A test added later must bring its own: break the thing it guards, see it go red, revert.
