@@ -23,6 +23,8 @@
 // Static init: none (STYLE-S26).
 #pragma once
 
+#include <iostream>  // std::cerr for encode_failure_line; include what you use
+
 #include "db.hpp"  // vendored encoder (lib/third_party/elodin, SYSTEM PRIVATE)
 #include "elodin/ElodinClient.hpp"
 
