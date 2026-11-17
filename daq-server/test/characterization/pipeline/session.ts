@@ -301,6 +301,27 @@ async function main(): Promise<void> {
   await request('POST', '/api/feed-char/results', { body: JSON.stringify({ cda: 1.5 }) });
   await request('POST', '/api/config/profiles/switch', { body: JSON.stringify({ name: 'default' }) });
 
+  step('http_viewer_gates');
+  // H8 (DESIGN-WP7 §7): every operator gate api-server.ts has, as the viewer (a signed-in email
+  // that is not in operators.txt). The six gates http_errors freezes stay there; these are the
+  // other eight, in the file's order. Each body would be accepted from an operator, so a dropped
+  // gate shows as a 200 and a changed file, not as a 400. During the session on purpose:
+  // /api/feed-char/results answers 409 without one before it reaches its gate, and a session is
+  // when a stray write would matter most. The GETs after are the witnesses that nothing changed.
+  await request('POST', '/api/state-script?name=viewer.script&state=Idle', { headers: VIEWER, body: 'delay(1)' });
+  await request('POST', '/api/config/profiles/create', { headers: VIEWER, body: JSON.stringify({ name: 'viewer-made' }) });
+  await request('POST', '/api/config/profiles/rename', { headers: VIEWER, body: JSON.stringify({ name: 'default', newName: 'viewer-renamed' }) });
+  await request('POST', '/api/config/profiles/delete', { headers: VIEWER, body: JSON.stringify({ name: 'default' }) });
+  await request('POST', '/api/ball_valve_cal', { headers: VIEWER, body: JSON.stringify({ entity: 'BV1_Cal.CH1', action: 'clear' }) });
+  await request('POST', '/api/feed-char/results', { headers: VIEWER, body: JSON.stringify({ cda: 1.5 }) });
+  await request('POST', '/api/calibration_profiles/load', { headers: VIEWER, body: JSON.stringify({ name: 'default' }) });
+  await request('POST', '/api/calibration_profiles/new_blank', { headers: VIEWER, body: JSON.stringify({ name: 'viewer-blank' }) });
+  await request('GET', '/api/config/profiles');
+  await request('GET', '/api/state-script?name=viewer.script');
+  await request('GET', '/api/ball_valve_cal');
+  await request('GET', '/api/feed-char/results');
+  await request('GET', '/api/calibration_profiles');
+
   step('session_extend');
   command('A', 'session_extend', { addMs: 60000 });
   await settle(600);
