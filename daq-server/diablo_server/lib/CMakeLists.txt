@@ -51,12 +51,16 @@ target_include_directories(fsw_daq_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
 )
 
-# SYSTEM so the archived Elodin headers do not report warnings we are not going to act on — db.hpp
-# alone accounts for every -Wmissing-field-initializers left in the tree. Suppressing the warning
-# itself would have hidden the 22 live ones in SensorAssignment.cpp that turned out to be two
-# struct fields nothing reads; scoping it to the vendored header keeps the warning useful.
-target_include_directories(fsw_daq_lib SYSTEM PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../archive/legacy/utl
+# SYSTEM so the vendored Elodin encoder (third_party/elodin/db.hpp) does not report warnings we are
+# not going to act on: its designated initialisers omit fields, which gcc-12 and clang-18 (CI's
+# matrix, the Linux leg) report as -Wmissing-field-initializers and Apple clang >= 19 (where the
+# warning baseline is compared) does not. Suppressing the warning itself would hide the live ones in
+# our own code (two in baseline_warnings.txt today; 22 in SensorAssignment.cpp once turned out to be
+# two struct fields nothing reads), so it is scoped to the vendored header. Check it survived with
+# `ninja -t commands fsw_daq_lib | grep -c 'isystem *[^ ]*third_party/elodin'` (>= 1; 0 if dropped).
+# PRIVATE: only fsw_daq_lib's own sources include it (DatabaseConfig.cpp, ControllerService.cpp).
+target_include_directories(fsw_daq_lib SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/elodin
 )
 
 target_link_libraries(fsw_daq_lib

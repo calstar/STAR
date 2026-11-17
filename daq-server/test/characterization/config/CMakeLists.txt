@@ -7,7 +7,6 @@ set(_DS ${CMAKE_SOURCE_DIR}/diablo_server)
 set(_CFG_INCLUDES
     ${_DS}/lib/include
     ${_DS}/transport/include
-    ${_DS}/../archive/legacy/utl
 )
 
 # The sequencer's loaders are not in fsw_daq_lib; build the same sources in, as

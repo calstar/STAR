@@ -4,7 +4,6 @@
 set(COMMON_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/../lib/include
     ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../archive/legacy/utl
 )
 
 find_package(Eigen3 REQUIRED)
