@@ -28,6 +28,19 @@ export function isCurrentLoopBoard(board: any): boolean {
 }
 
 /**
+ * The Elodin board slot ("board number") of a board id: `board_id % 10`, with 0 → 10.
+ *
+ * One home for the rule every per-board map used to compute inline (the packet-ID scheme, the
+ * sensor role maps, the registry's subscription list, the state-CSV actuator resolution). No
+ * validation: callers keep their own guards (`-21 → -1`, `21.5 → 1.5`, `NaN → NaN`, exactly as
+ * each copy computed). The registry's `% 8` fold stays where it is, in `elodin-vtable-registry.ts`.
+ */
+export function boardSlot(boardId: number): number {
+    const m = boardId % 10;
+    return m === 0 ? 10 : m;
+}
+
+/**
  * Board-numbers (board_id % 10, with 0→10) of the PT boards that are high-pressure
  * 4-20 mA current-loop boards. Used by the Elodin decoder to pick unsigned-vs-signed raw-ADC
  * interpretation and by the GUI to label HP boards. `config` is optional so callers on the hot
@@ -56,8 +69,7 @@ export function hpBoardNumbers(config?: any): Set<number> {
         const boards = (cfg.boards || {}) as Record<string, any>;
         for (const board of Object.values(boards)) {
             if (!isCurrentLoopBoard(board) || typeof board?.board_id !== 'number') continue;
-            const mod = board.board_id % 10;
-            out.add(mod === 0 ? 10 : mod);
+            out.add(boardSlot(board.board_id));
         }
     } catch { /* empty set on config error */ }
     return out;
@@ -113,8 +125,7 @@ export function loadSensorRoleMap(): {
         for (const [boardKey, boardRaw] of Object.entries(boards)) {
             const board = boardRaw as any;
             if (board.type !== 'PT' || typeof board.board_id !== 'number') continue;
-            const mod = board.board_id % 10;
-            const boardNumber = mod === 0 ? 10 : mod;
+            const boardNumber = boardSlot(board.board_id);
             const roles = (config as any)[`sensor_roles_${boardKey}`] || {};
             for (const [roleName, channelId] of Object.entries(roles)) {
                 if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {

@@ -10,7 +10,7 @@
  *
  * Replies: "OK\n" or "ERR:<reason>\n"
  *
- * Protocol (matches ota-flash.ts):
+ * Protocol (board OTA listener):
  *   1. TCP connect to board_ip:3232
  *   2. Send 4-byte firmware size (big-endian)
  *   3. Send .bin in 4 KB chunks

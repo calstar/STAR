@@ -125,7 +125,7 @@ def main():
     )
     # [state_machine] keeps production's relative "config/<name>.csv" paths. The C++ services
     # resolve them against cwd (the fixture); the backend against its cwd's ../.. (run.sh starts
-    # it in char/backend). An absolute path is NOT equivalent: the backend's legacy loaders join
+    # it in char/backend). An absolute path is NOT equivalent: the backend's state-CSV loaders join
     # the configured path onto other directories, so an absolute one is never found.
     os.makedirs(os.path.join(root, "char", "backend"), exist_ok=True)
     if mode in ("boards", "stalesub"):

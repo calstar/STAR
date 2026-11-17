@@ -227,7 +227,7 @@ fi
 # than in the checkout: its PT calibration (calibration.ts: <srv>/calibration/*.json, newest by
 # mtime -- in a checkout every committed file shares one mtime, so the pick was filesystem order:
 # macOS got one dated file, a Linux export another with no coefficients), /api/cubic_calibration
-# (<srv>/scripts/calibration/calibrations), the legacy state-CSV loaders (<srv>/../config = the
+# (<srv>/scripts/calibration/calibrations), the state-CSV loaders (<srv>/../config = the
 # fixture's), the state-script checker (<srv>/build). The source is copied unchanged from this
 # checkout at every run, so a change to it is what runs. pt: one calibration file, chosen by name;
 # nocal: none.
@@ -382,8 +382,8 @@ else
   wait $REGA 2>/dev/null || true
 fi
 
-# The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
-# legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
+# The backend runs from char/backend: its state-CSV loaders (state-csv/state-actuators.ts,
+# state-csv/state-transitions.ts) look in <cwd>/../../config, as production's cwd
 # (diablo_server/backend) sees daq-server/config.
 start_backend; wait_port $P_WS backend 30
 

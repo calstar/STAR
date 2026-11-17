@@ -264,7 +264,7 @@ def replay_by_board(frames):
     return out
 
 
-# P11. A command's TCP reply (an `error` from server.ts sendToActuatorService) and the
+# P11. A command's TCP reply (an `error` from sequencer-client.ts sendToSequencer) and the
 # sequencer's own Elodin publish (a `state_update`) reach the client by two independent paths
 # (sequencer → TCP → backend, sequencer → elodin-db → backend), so their relative order is a race
 # (seen swapped under 1x load). Within a run of consecutive error/state_update frames the two
