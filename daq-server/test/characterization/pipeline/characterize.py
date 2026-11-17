@@ -791,7 +791,29 @@ def main():
                 rendered = "(empty)"
             elif ctype.startswith("application/json"):
                 obj = json.loads(body)
-                if path in schema_only or path.startswith("/api/board-logs"):
+                if path == "/api/debug" and h["path"].endswith("?values"):
+                    # P13. The same body as P9's schema, plus the values of the keys that say how
+                    # the backend is wired rather than how much it has counted (D64(3)).
+                    sp = defaultdict(set)
+                    schema_paths(obj, "", sp)
+                    ws = obj.get("wsClients")
+                    rendered = (
+                        "schema "
+                        + dumps({k: sorted(v) for k, v in sp.items()})
+                        + " values "
+                        + dumps(
+                            {
+                                "ingestConnected": obj.get("ingestConnected"),
+                                "useRelay": obj.get("useRelay"),
+                                "wsClients": (
+                                    ">=1"
+                                    if isinstance(ws, (int, float)) and ws >= 1
+                                    else ws
+                                ),
+                            }
+                        )
+                    )
+                elif path in schema_only or path.startswith("/api/board-logs"):
                     sp = defaultdict(set)
                     schema_paths(obj, "", sp)
                     if path.startswith("/api/board-logs"):
