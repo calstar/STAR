@@ -32,18 +32,14 @@
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 #include "net/DaqInterface.hpp"
+#include "service/StopSignals.hpp"
 
 namespace {
-std::atomic<bool> g_running{true};
+auto& g_running = fsw::service::running();
 std::atomic<uint8_t> g_engine_state{0};
 
 // How long read_packet() waits before yielding so the loop can re-check g_running.
 constexpr int kElodinRecvTimeoutMs = 3000;
-
-void signalHandler(int /*sig*/) {
-    std::cout << "\n[HeartbeatService] Shutting down..." << std::endl;
-    g_running = false;
-}
 
 constexpr uint8_t SERVER_HEARTBEAT_TYPE = 2;
 constexpr uint8_t DIABLO_VERSION = 0;
@@ -225,8 +221,9 @@ int main(int argc, char* argv[]) {
     uint16_t broadcast_port = cli_broadcast_port ? static_cast<uint16_t>(*cli_broadcast_port)
                                                  : cfg.heartbeat_service.broadcast_port;
 
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
+    fsw::service::installStopHandlers(fsw::service::ShutdownNotice::kPrintThenStop,
+                                      "\n[HeartbeatService] Shutting down...",
+                                      fsw::service::Sigpipe::kDefault);
 
     // UDP broadcast socket
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -249,6 +246,8 @@ int main(int argc, char* argv[]) {
             close(sock);
             return 1;
         }
+        // Kept: D-BIND (D17) — observation/startup: S14, bindToDaqInterface's bool dropped; loud
+        // half: its own cerr line (DaqInterface.cpp:198, 202)
         fsw::net::bindToDaqInterface(sock, nic.address, "HeartbeatService");
     }
 
