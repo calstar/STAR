@@ -38,14 +38,10 @@
 
 #include "config/Config.hpp"
 #include "net/DaqInterface.hpp"
+#include "service/StopSignals.hpp"
 
 namespace {
-std::atomic<bool> g_running{true};
-
-void signalHandler(int /*sig*/) {
-    std::cout << "\n[OTAService] Shutting down..." << std::endl;
-    g_running = false;
-}
+auto& g_running = fsw::service::running();
 
 std::string trim(const std::string& s) {
     size_t a = s.find_first_not_of(" \t\r\n");
@@ -403,9 +399,9 @@ int main(int argc, char* argv[]) {
         g_bind_address = nic.address;
     }
 
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
-    signal(SIGPIPE, SIG_IGN);
+    fsw::service::installStopHandlers(fsw::service::ShutdownNotice::kPrintThenStop,
+                                      "\n[OTAService] Shutting down...",
+                                      fsw::service::Sigpipe::kIgnore);
 
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
