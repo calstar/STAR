@@ -1,9 +1,10 @@
 # DESIGN-WP5 — backend dead TS, the sequencer line client, the slot helper
 
-Target-design note for WP5 (BLOAT-MAP §2a, §3, WP5 row; LEDGER D39, D44, D60). Design only: nothing
-here has been executed. Paths are relative to `daq-server/diablo_server/backend/src/` unless stated.
-Line numbers are `backend-remastered` @ `85a02f9a` (product code equal to `main`), re-verified
-against `git show backend-remastered:…` @ `7d9436b5` for the simplicity round 1 (D60).
+Target-design note for WP5 (BLOAT-MAP §2a, §3, WP5 row; LEDGER D39, D44, D60, D70). **Design
+final** (rounds 1-2: D60, D70). Design only: nothing here has been executed. Paths are relative to
+`daq-server/diablo_server/backend/src/` unless stated. Line numbers are `backend-remastered` @
+`85a02f9a` (product code equal to `main`), re-verified against `git show backend-remastered:…` @
+`7d9436b5` for the simplicity round 1 (D60) and @ `f04c00f7` for round 2 (D70).
 
 WP5 is not a god-file split, but it is the first package to move code out of `server.ts` and it
 creates the two helpers WP6 and WP7 build on, so it gets the same treatment: alternatives,
@@ -15,10 +16,15 @@ interfaces (`design-stubs/ts/src/`), walkthroughs.
 derived from a board id; the import-time log lines of the state-CSV loaders and their order in the
 startup log (DESIGN-WP6 G12); every export a characterization harness imports by path.
 
-**Prerequisites.** C1 merged; the `tsc --noEmit` gate step (D40); G4 (DESIGN-WP6 §7: :9998 down /
-slow, frozen black-box; **extended here with one accepted hold and an upper bound on the timeout
-reply**, §6) exists **before** commit 5.6; G-W5 (§6) exists before commit 5.5. Both the G4
-extension and G-W5 are **C0 test-only packages** that land before WP5 (D44(3)), not WP5 commits.
+**Prerequisites.** C1 merged; the `tsc --noEmit` gate step (D40); **G4** exists **before** commit
+5.6 (it also gates DESIGN-WP6 commit 1.15, `server/commands.ts`); G-W5 (§6) exists before commit
+5.5. Both are **C0 test-only packages** that land before WP5 (D44(3), D70), not WP5 commits. G4 is
+a **new pipeline mode `holds`** (`test/characterization/pipeline/`, §6) — not lifecycle, which
+runs no sequencer (`lifecycle.py:859` "no sequencer, state UNKNOWN"), and not the frozen `pt` /
+`boards` / `nocal` sessions. It freezes, black-box, one accepted hold (`OK:<ms>`, no `error` frame,
+the following `state_update`), :9998 slow (`… timeout`, with an upper bound on the reply)
+and :9998 down (`… connect ECONNREFUSED 127.0.0.1:<port>`). DESIGN-WP6 §7's G4 bullet is amended
+to point here.
 
 ---
 
@@ -33,8 +39,8 @@ extension and G-W5 are **C0 test-only packages** that land before WP5 (D44(3)), 
 | the slot rule `board_id % 10, 0 → 10` | **six** copies in the backend: `sensor-config.ts:59`, `:116`; `elodin-vtable-registry.ts:249`; `legacy/state-actuators.ts:122`; `api-server.ts:97` (`elodinSlotFromBoardId`); `server.ts:344` | BLOAT-MAP §3 (five) + DESIGN-WP6 R5 (sixth) |
 | `legacy/` | `state-actuators.ts`, `state-transitions.ts`, `state-ids.ts`: live (server.ts:39-41), misnamed | BLOAT-MAP §3 |
 | unused exports | `state-actuators.ts` `getActuatorChannel`, `getNumActuatorsFromCSV`; `state-transitions.ts` `buildTransitionMap`, `isTransitionAllowed`; `calibration.ts` `calculatePressure`, `inversePressureToAdc` | BLOAT-MAP §2a — **two of these are not unused, see §1.1** |
-| a stale C++ comment | `services/ota/ota_service_main.cpp:13` "Protocol (matches ota-flash.ts)" | BLOAT-MAP WP5 row |
-| a module that goes dead at 5.4 | `shared-types.ts` (23 lines): its one value importer is `legacy/state-transitions.ts:8`, whose only value use of `SystemState` is inside `buildTransitionMap` | found in this note's review (§1.1); re-pointing the two `import type` importers is WP7/WP12's (§7) |
+| a stale C++ comment | `daq-server/diablo_server/services/ota/ota_service_main.cpp:13` "Protocol (matches ota-flash.ts)" (not under `backend/src/`) | BLOAT-MAP WP5 row |
+| a module that goes dead at 5.4 | `shared-types.ts` (23 lines): its one value importer is `legacy/state-transitions.ts:8`, whose only value use of `SystemState` is inside `buildTransitionMap` (`:137`) | found in this note's review (§1.1); re-pointing the two `import type` importers is WP7/WP12's (§7) |
 
 ### 1.1 Corrections to BLOAT-MAP found while designing
 
@@ -61,7 +67,7 @@ extension and G-W5 are **C0 test-only packages** that land before WP5 (D44(3)), 
   reproducer, parked — not deleted — by WP4, D42(e)) is not touched by WP5.
 - **`shared-types.ts` goes dead at 5.4.** Its only value importer is `legacy/state-transitions.ts:8`
   (`import { SystemState } from '../shared-types.js'`), and that module's only *value* use of
-  `SystemState` is `SystemState[id]` inside `buildTransitionMap` (`:136`); the other uses (`:17-18`,
+  `SystemState` is `SystemState[id]` inside `buildTransitionMap` (`:137`); the other uses (`:17-18`,
   the `Transition` interface) are types. Once 5.4 deletes `buildTransitionMap`, the import is
   type-only and the bundler elides it (D42(a)), so `shared-types.ts` leaves the esbuild module
   order. 5.4 makes the import an explicit `import type` and accepts the order change as a reviewed
@@ -151,10 +157,13 @@ on it being literally the expression every copy uses:
 
 ```ts
 export function boardSlot(boardId: number): number {
-  const m = boardId % 10;
-  return m === 0 ? 10 : m;
+    const m = boardId % 10;
+    return m === 0 ? 10 : m;
 }
 ```
+
+(4-space indent: `sensor-config.ts`'s own, as at `:59-60`; the new `sequencer-client.ts` is a new
+file and takes STYLE-S40's 2 spaces, §8.)
 
 Every caller keeps its own guard (`typeof … === 'number'`, the registry's `Number.isInteger && 1..255`,
 `asBoardId`'s fallbacks); `boardSlot` adds no validation. For the record: `-21 → -1`, `21.5 → 1.5`,
@@ -227,8 +236,12 @@ config's `[[states]]`): steps 1-6 of (a) with `TRANSITION:Engine Abort\n`. There
 path in the backend; the sequencer owns the abort batch (and its recorded defects C1-10, C4-3), and a
 sequencer-initiated abort (threshold) reaches the backend only as `_SEQUENCER_STATE`, never through
 `sequencer-client`. If :9998 is down the operator gets `ERROR "State transition failed: connect
-ECONNREFUSED 127.0.0.1:<port>"` within one round trip, or `…: timeout` after 2 s if it is stalled
-(G4 freezes both before 5.6 moves the code).
+ECONNREFUSED 127.0.0.1:<port>"` within one round trip, or `…: timeout` after 2 s if it is stalled.
+G4 — the `holds` pipeline mode (§6) — freezes both before 5.6 moves the code, and the accepted
+hold beside them: the one path through steps 3-4 where the reply is `OK:<ms>` rather than `OK`,
+which no frozen session takes today (`pipeline/session.ts:236` sends `holdMs: -5`, rejected before
+:9998; `ws_data_flow_test.ts:1429-1491` sends an accepted hold but never asserts its `errors`
+collector (`:1352`), so `test_integration.sh` does not freeze the predicate either).
 
 Zero/two owners: none. Observation kept: the backend never retries an abort that failed to reach
 :9998; the operator sees the error and presses again. Not WP5's to change.
@@ -274,12 +287,12 @@ order, each green on its own:
 
 | # | commit | notes |
 |---|---|---|
-| 5.1 | delete `calibration-sidecar.ts`, `ota-flash.ts`, `server-types.ts`; reword `ota_service_main.cpp:13` to name the protocol without the deleted file ("Protocol (board OTA listener):") | the C++ change is a comment; `clang-format` the file per AGENT-RULES 10 |
+| 5.1 | delete `calibration-sidecar.ts`, `ota-flash.ts`, `server-types.ts`; reword `daq-server/diablo_server/services/ota/ota_service_main.cpp:13` to name the protocol without the deleted file ("Protocol (board OTA listener):") | the C++ change is a comment; `clang-format` the file per AGENT-RULES 10 |
 | 5.2 | `git mv src/operators.test.ts src/__tests__/operators.test.ts`; its `import('./operators.js')` → `'../operators.js'` | test count unchanged |
-| 5.3 | `git mv src/legacy src/state-csv`; `server.ts:39-41` and `__tests__/ball-valve.test.ts:22` import paths; **in the same commit**, the pipeline harness's comments (D44(7); D18, comments only): the literal paths at `test/characterization/pipeline/run.sh:186-187` (`legacy/state-actuators.ts`, `legacy/state-transitions.ts` → `state-csv/…`), and the prose "the legacy state-CSV loaders" at `run.sh:134` and `pipeline/README.md:57,:279` and "the backend's legacy loaders" at `pipeline/make_fixture.py:121` → "state-CSV loaders" | the loaders' `join(__dirname, '..', '..', '..', '..', rel)` keeps its depth (same nesting), and `join` normalises the directory name away, so the `Trying: <path>` log lines are byte-identical. The harness edits are comments and README prose: no golden, no harness logic. `docs/BALL_VALVE_BOARD_PLAN.md:153` also says `legacy/state-actuators.ts`; it is a design doc, WP12's (§7) |
+| 5.3 | `git mv src/legacy src/state-csv`; `server.ts:39-41` and `__tests__/ball-valve.test.ts:22` import paths, **and any C0 test added since this note that imports `legacy/`** (G-W5 imports `legacy/state-actuators.js` for `resolveActuatorBoardSlotAndChannel`; the §6 grep after the commit is what proves none is left); **in the same commit**, the pipeline harness's comments (D44(7); D18, comments only): the literal paths at `test/characterization/pipeline/run.sh:186-187` (`legacy/state-actuators.ts`, `legacy/state-transitions.ts` → `state-csv/…`), and the prose "the legacy state-CSV loaders" at `run.sh:134` and `pipeline/README.md:57,:279` and "the backend's legacy loaders" at `pipeline/make_fixture.py:121` → "state-CSV loaders" | the loaders' `join(__dirname, '..', '..', '..', '..', rel)` keeps its depth (same nesting), and `join` normalises the directory name away, so the `Trying: <path>` log lines are byte-identical. The harness edits are comments and README prose: no golden, no harness logic. `docs/BALL_VALVE_BOARD_PLAN.md:153` also says `legacy/state-actuators.ts`; it is a design doc, WP12's (§7) |
 | 5.4 | drop `getActuatorChannel`, `getNumActuatorsFromCSV`, `buildTransitionMap`, `isTransitionAllowed` (and `_transitionMap`); make `state-transitions.ts:8` an explicit `import type { SystemState } from '../shared-types.js'` | **keep** `ACTUATOR_CHANNEL_BY_NAME` (used by `parseStateActuatorsCSV`; its import-time warning is in the startup log), `buildCSVSearchPaths`, and the `./state-ids.js` import (`csvStateMap` is still called at `:34`). Keep `calibration.ts` as is (§1.1). **Accepted order change, reviewed (D44(2)):** `shared-types.ts` leaves the esbuild module order (§1.1). Safe because (i) its only import-time act is `await import('../../shared/types.js')`, a module already evaluated at position 7 of 46, so nothing new runs and nothing stops running; (ii) `state-transitions.ts` has no top-level statement but its `__filename`/`__dirname` consts and function declarations (no log, no config read), so its body evaluating at its static position (35) instead of after the top-level-`await` deferral is not observable; (iii) with that `await import` gone the graph has no top-level await left, so the static order the check prints *is* the runtime order from 5.4 on |
 | 5.5 | add `boardSlot` to `sensor-config.ts`; replace `sensor-config.ts:59`, `:116`, `elodin-vtable-registry.ts:249-250`, `state-csv/state-actuators.ts:122-123` | each replacement is `<name> = boardSlot(<expr>)`, guards untouched; the registry's fold line untouched |
-| 5.6 | create `sequencer-client.ts` from `server.ts:1409-1441` (body verbatim, function renamed `sendToSequencer`, return type the inline `{ ok: boolean; reply: string }` as today, `ACT_SVC_PORT` → `SEQUENCER_PORT` defined there from the same `process.env.ACTUATOR_SERVICE_PORT ?? '9998'`); delete `server.ts:1443-1467` and `:75-76` (`ACT_SVC_PORT`, `CTRL_SVC_PORT`; `:73` `ELODIN_HOST` and `:74` `ELODIN_PORT` stay); `server.ts` imports `{ sendToSequencer, SEQUENCER_PORT }` after its last existing import and uses `SEQUENCER_PORT` in the `Actuator service: localhost:` log | **G4 (with its D44(3) extension) must exist first.** The five call sites change name only; the dead `.catch(() => {})` on `debug_mode` and the SCRIPTS poll stay (DESIGN-WP6 §4: promise shapes unchanged). After this commit nothing in `server.ts` uses `net` (its two uses, `:1420` and `:1452`, both move or go), so a cleanup line **may** delete `import * as net from 'net'` (`server.ts:24`): a Node builtin with no import-time effect, so the module order is unchanged. `CONTROLLER_SERVICE_PORT` is then read by nothing; the harnesses that set it (`lifecycle.py:927,1544`, `pipeline/run.sh:194`) stay as they are — an env var no process reads, in no golden |
+| 5.6 | create `sequencer-client.ts` from `server.ts:1409-1441` (body verbatim, function renamed `sendToSequencer`, return type the inline `{ ok: boolean; reply: string }` as today; `ACT_SVC_PORT` → `export const SEQUENCER_PORT = parseInt(process.env.ACTUATOR_SERVICE_PORT ?? '9998', 10);`, the `:75` line in full with only the name changed); delete `server.ts:1443-1467` and `:75-76` (`ACT_SVC_PORT`, `CTRL_SVC_PORT`; `:73` `ELODIN_HOST` and `:74` `ELODIN_PORT` stay); `server.ts` imports `{ sendToSequencer, SEQUENCER_PORT }` after its last existing import and uses `SEQUENCER_PORT` in the `Actuator service: localhost:` log | **G4 — the `holds` pipeline mode, a C0 test-only package (D44(3), D70) — must exist first;** it is also the gate for DESIGN-WP6 1.15. The five call sites change name only; the dead `.catch(() => {})` on `debug_mode` and the SCRIPTS poll stay (DESIGN-WP6 §4: promise shapes unchanged). After this commit nothing in `server.ts` uses `net` (its two uses, `:1420` and `:1452`, both move or go), so a cleanup line **may** delete `import * as net from 'net'` (`server.ts:24`): a Node builtin with no import-time effect, so the module order is unchanged. `CONTROLLER_SERVICE_PORT` is then read by nothing; the harnesses that set it (`lifecycle.py:927,1544`, `pipeline/run.sh:194`) stay as they are — an env var no process reads, in no golden |
 
 There is no 5.7: the `duePairs` extraction was dropped by D60 (§1.1).
 
@@ -287,7 +300,10 @@ There is no 5.7: the `duePairs` extraction was dropped by D60 (§1.1).
 failure outside `baseline_vitest_failures.txt`;
 `grep -rnE "legacy/|server-types|from '\./ota-flash|calibration-sidecar" src` prints nothing after
 5.3 (the pattern is `from '\./ota-flash` — or `ota-flash\.[jt]s` — and not `ota-flash'`, which
-would match the live URL literal `'/api/ota-flash'` at `api-server.ts:1169`);
+would match the live URL literal `'/api/ota-flash'` at `api-server.ts:1169`; the `src` scope is
+deliberate: the tracked, stale `backend/dist/` — 27 `.js` files whose `server.js:30,34` and
+`elodin-relay.js:15` still import `legacy/…` — is WP1's to delete, BLOAT-MAP §2, and a repo-wide
+grep would never go clean before it does);
 **the esbuild module-order diff** of DESIGN-WP6 §6.3 item 4 (D42(a), D44(2)): the only permitted
 changes are the deleted files leaving the list (5.1 — they are unreachable, so in practice none),
 `legacy/*` → `state-csv/*` renamed in place (5.3), `shared-types.ts` leaving the list (5.4, the
@@ -296,7 +312,10 @@ reviewed cleanup diff of the 5.4 row; every other module keeps its relative posi
 harmlessly: 5.6 leaves `server.ts`'s `import * as net` without a user (a Node builtin; its
 evaluation is not observable, whether the cleanup line deletes it or not), and 5.5's new
 `sensor-config.js` imports in the registry and the loaders are value imports of a module that is
-already evaluated earlier (`server.ts:31`).
+already evaluated earlier (`server.ts:31`). The same 5.5 edge is harmless in `elodin-relay.ts`
+(the parked second entrypoint, BLOAT-MAP §2, type-checked by the same `tsc` since `tsconfig.json`
+includes `src/**/*`): it already imports both the registry (`:15`) and `sensor-config` (`:16`)
+directly, so the registry gaining a `sensor-config` import adds no module to its graph.
 
 **Mutations** (each must go red, then be reverted):
 - 5.3: point `ball-valve.test.ts`'s import at a stub `state-csv/state-actuators.js` whose
@@ -315,18 +334,64 @@ already evaluated earlier (`server.ts:31`).
   20 (expect slot 10, 10, 1, 10; and the registry's fold turns 10 into 2). Mutation above → red;
   restore → green.
 - 5.6: change the predicate to `reply === 'OK'` must go red. **No golden sends a valid hold today**
-  (`pipeline/session.ts:236` sends `holdMs: -5`, rejected before :9998). The G4 extension (a C0
-  test-only package, D44(3)) therefore freezes one accepted hold (`state_transition` with a valid
-  `holdMs` to a state that takes one: the reply is `OK:<ms>`, no `ERROR` follows). Mutation → an
-  `ERROR "State transition failed: OK:<ms>"` line appears → red. The extension also states an
-  **upper bound on the timeout reply**: with the sequencer SIGSTOPped, `ERROR "State transition
-  failed: timeout"` arrives **≤ 2.8 s** after the command is sent — the 2000 ms socket timeout plus
-  a margin wide enough for D34's macOS timer overshoot but narrower than the next round number.
-  Mutation: change the timeout to 3000 → the reply lands after the bound → red. (Today's G4 says
-  only "after ~2 s", which a 3000 would pass.)
+  (`pipeline/session.ts:236` sends `holdMs: -5`, rejected before :9998; `ws_data_flow_test.ts:1429-1491`
+  sends one but never asserts the `errors` collector it attached at `:1352`, so `test_integration.sh`
+  would stay green under this mutation). G4's `holds` mode (below) therefore freezes one accepted
+  hold (`state_transition` with a valid `holdMs` to a state that takes one: the reply is `OK:<ms>`,
+  no `error` frame follows, then the `state_update`). Mutation → an `ERROR "State transition
+  failed: OK:<ms>"` line appears → red. `holds` also states an **upper bound on the timeout
+  reply**: with the sequencer SIGSTOPped, `ERROR "State transition failed: timeout"` arrives
+  **≤ 2.8 s** after the command is sent — the 2000 ms socket timeout plus a margin wide enough for
+  D34's macOS timer overshoot but narrower than the next round number. Mutation: change the timeout
+  to 3000 → the reply lands after the bound → red. (DESIGN-WP6's G4 bullet said only "after ~2 s",
+  which a 3000 would pass.)
 
-**Under the stack lock, once at the end** (one hold, AGENT-RULES 7): `pipeline/run.sh pt boards`,
-`lifecycle/run.sh` (G4 lives there). `test_integration.sh` in the merge queue's full gate.
+**G4 = pipeline mode `holds`** (C0 test-only package, before 5.6 and WP6 1.15; D70). What it is,
+fixed here so the C0 agent and the WP5 agent read the same thing:
+
+- *Fixture.* `run.sh` accepts `holds` beside `pt|nocal|boards` (`:45`), maps it to `pt` for
+  `make_fixture.py` as `nocal` does (`:126`; `make_fixture.py:55` asserts `pt|boards`), then, after
+  `:127`, appends to `$CFG` the `[[states]] … is_flow = true` + `[flow]` block **exactly as
+  `test/test_integration.sh:538-548` writes it** (`id = 21`, `name = "Flow Test"`,
+  `return_target = "Press Standby"`, `duration_ms = 800`, `max_ms = 5000`, `gate_actuator = "Fuel
+  Main"`), and points `transitions_csv` / `actuator_csv` / `actuator_delay_csv` (`:533-535`) at the
+  three patched CSV copies that script builds at `:485-531` (the hub ↔ `Flow Test` rows, the gate
+  `OPEN`, the 0.4 s gate delay) — the sequencer refuses a hold into a state it cannot return from.
+  Golden dir `golden/holds/` (the `:255-256` pattern).
+- *Session.* A fourth function in `session.ts` (dispatched at `:461`): unlock (the `:200`
+  `control_unlock` send), park on the hub (`state_transition` 2 then 20 — `Idle → Armed → Press
+  Standby` is the CSV's only route), then **accepted hold:** `state_transition {state: 21, holdMs:
+  800}` (valid, ≤ `max_ms`) → frozen: no `error` frame, the `state_update` into 21, and the
+  auto-return `state_update` to 20 after 800 + 400 ms, inside the step's `settle`. **Slow half:**
+  SIGSTOP the sequencer → `state_transition {state: 20}` (the hub it is parked on; the diagonal is
+  `1`, so a drained line changes no state) → `ERROR "State transition failed: timeout"`; the
+  harness computes `error.t − sent.t` from the frames it already stamps (`Frame.t`, `Sent.t`,
+  `:27-28`) and emits one **categorical** line (`timeout_reply_within_2800ms: yes`, never the raw
+  ms — N1/N2 do not cover it and a number would drift), **judged on CI per D34** (this Mac's
+  timer overshoot can make it `no`); → SIGCONT. The backend destroyed its socket at 2 s
+  (`server.ts:1439`) but the connection and the line sit in the listen backlog, so the resumed
+  sequencer accepts, reads and applies it and its reply write fails harmlessly
+  (`sequencer_main.cpp:243` `SIGPIPE` ignored, `:75` `MSG_NOSIGNAL`); whatever `state_update` it
+  publishes lands inside the step's `settle` and is frozen, not raced. **Down half** (last; it is
+  terminal): SIGTERM, wait for exit → `state_transition {state: 20}` → `ERROR "State transition
+  failed: connect ECONNREFUSED 127.0.0.1:<port>"` (N5 → `<port:sequencer>`); `debug_mode` → no
+  reply (the `.catch(() => {})` path). Nothing else in the session, so a WS/HTTP change elsewhere
+  cannot fail it.
+- *PID handoff.* `run.sh` hands `session.ts` the sequencer PID through `ports.json` (`:121`) —
+  **rewritten after the spawn at `:164-165`**, since `:121` runs before the sequencer exists and
+  `:127` has already consumed the file — under a key `sequencer_pid`, and `:243`'s inversion of
+  `ports.json` into N5's `<port:name>` map **excludes** that key, or every 5-digit PID-valued
+  number in the capture would be rewritten. The cleanup `kill` on an already-dead PID is
+  `2>/dev/null` (`:107`).
+- *`all`.* `holds` joins `run.sh all` (`:38-43`); its one CI-judged line is the only reason `all`
+  may be red on this Mac.
+- *Mutations* (each red, then reverted): predicate `reply === 'OK'`; timeout 3000; and, for the
+  down half, `done(false, err.message)` → `done(false, 'connect error')` (the `console.warn` text
+  is not a WS frame and would not move a golden) — each must change exactly one golden line.
+
+**Under the stack lock, once at the end** (one hold, AGENT-RULES 7): `pipeline/run.sh pt boards
+holds` (G4 lives in `holds`; lifecycle has no sequencer and is not on WP5's path).
+`test_integration.sh` in the merge queue's full gate.
 
 ---
 
