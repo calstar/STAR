@@ -7,7 +7,9 @@
 // the stale-uid C0 case (DESIGN-WP9 §7.2) gates this step. 1789 is exercised (cmd(8, 0, 1.0)).
 //
 // Decodes a CalibrationCommand row (ts u64 | cmd u8 @8 | pad @9 | sensor_id u16 LE @10 | ref f32
-// @12, memcpy not cast) and runs cmd 0-8 through CalibrationActions.
+// @12, memcpy not cast) and runs cmd 0-8 through CalibrationActions. CalibrationContext comes
+// from CalibrationActions.hpp (D58: no separate header), which the .cpp needs for the actions
+// anyway.
 //
 // Owns:       nothing; the dedupe memory is main's CommandDedupe, passed in.
 // Threads:    one. Called from main's loop head only, as the last statement of the 0x46 branch,
@@ -24,7 +26,7 @@
 
 #include <cstdint>
 
-#include "CalibrationContext.hpp"
+#include "CalibrationActions.hpp"
 #include "calibration/CommandDedupe.hpp"
 
 namespace fsw::calibration_service {

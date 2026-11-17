@@ -15,7 +15,7 @@ context is part of the float contract).
 |---|---|---|
 | WP3 | `lib/src/elodin/SendMsg.hpp`, `lib/include/elodin/TableId.hpp` | DESIGN-WP3 §2.3, §2.5 |
 | WP8 | `lib/include/service/StopSignals.hpp` (pass 1), `lib/include/net/TcpCommandServer.hpp` (pass 2) | DESIGN-WP8 §2; no `UdpSocket.hpp`, no `ConfigFile.hpp`, no `TcpListener` (dropped by the WP8 debate verdict, D54: sockets and config paths stay in the mains); no `SequencerStateFollower.hpp` (D57: the heartbeat/stacklight followers stay in their mains) |
-| WP9 | `services/calibration/{Conversions,SensorModels,CalibrationContext,CalibrationActions,AbortThresholds,CalibrationCommands,RawStream}.hpp` | DESIGN-WP9 §2-§3, amendments |
+| WP9 | `services/calibration/{Conversions,SensorModels,CalibrationActions,CalibrationCommands,RawStream}.hpp` | DESIGN-WP9 §2-§3, amendments; no `CalibrationContext.hpp` and no `AbortThresholds.hpp` (D58: the struct lives in `CalibrationActions.hpp`, the abort-threshold writer is a file-static of `CalibrationActions.cpp`) |
 | WP10 | `daq_bridge/{BoardMap,BackendLogForwarder,ElodinPublish}.hpp` | DESIGN-WP10 §4.3; the class splits add no header; no `TableRegistration` (D49: the two registration sites stay separate) |
 
 Names follow STYLE-S1 as ruled in D43(2).

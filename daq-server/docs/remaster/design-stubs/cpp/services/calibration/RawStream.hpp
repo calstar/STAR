@@ -28,6 +28,10 @@
 //             management. main owns the Elodin connection; StreamState only references it.
 // Contract:   published float32 values and cal_status — calibration/golden/stack.txt (4 ULP;
 //             published-near-zero abs 1e-12); t7_integration; integration cal_robust_learn.
+// Naming:     the StreamState parameter is `stream`, main's local name, so DESIGN-WP9 §6.1 check
+//             (h)'s prefix strip (`stream.`, `, stream`) dims the moved bodies; there is no `st`.
+//             CalibrationContext comes from CalibrationActions.hpp (D58), which the .cpp needs for
+//             current_loop_board (1973) anyway.
 #pragma once
 
 #include <sys/types.h>
@@ -37,7 +41,7 @@
 #include <map>
 #include <vector>
 
-#include "CalibrationContext.hpp"
+#include "CalibrationActions.hpp"
 #include "calibration/SensorCalibration.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
@@ -63,16 +67,16 @@ struct StreamState {
 };
 
 /** LabJack T7 raw rows (type_hi == 0x26). */
-void handle_t7_raw(CalibrationContext& ctx, StreamState& st, const uint8_t* pkt_buf,
+void handle_t7_raw(CalibrationContext& ctx, StreamState& stream, const uint8_t* pkt_buf,
                    ssize_t pkt_len, uint8_t type_lo);
 
 /** ESP32 raw rows (0x20-0x24, 0x30, ball valve). Includes the count log and the auto-save tail. */
-void handle_esp32_raw(CalibrationContext& ctx, StreamState& st, const uint8_t* pkt_buf,
+void handle_esp32_raw(CalibrationContext& ctx, StreamState& stream, const uint8_t* pkt_buf,
                       ssize_t pkt_len, uint8_t type_hi, uint8_t type_lo);
 
 /** CLEANUP C2 ONLY (DESIGN-WP9 amendment): the reconnect clear of last_adc_map, called by main's
  *  loop head at today's position (after capture_window.clear(), before "[Cal] Reconnected to
  *  Elodin"). In move-only, main does `stream.last_adc_map.clear();` itself. */
-void on_elodin_reconnected(StreamState& st);
+void on_elodin_reconnected(StreamState& stream);
 
 }  // namespace fsw::calibration_service
