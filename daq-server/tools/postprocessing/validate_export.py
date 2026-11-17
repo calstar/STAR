@@ -2,7 +2,7 @@
 """Summarize an Elodin `elodin-db export --format csv` directory for DB validation.
 
 Checks that expected entity families exist (PT/TC/LC calibrated, actuators, controller, board HB).
-Use after: FORMAT=csv ./scripts/postprocessing/export_elodin_db.sh <DB_PATH> ./export_csv
+Use after: FORMAT=csv ./tools/postprocessing/export_elodin_db.sh <DB_PATH> ./export_csv
 
 Exit codes:
   0 — export looks usable (and passes --strict checks if set)

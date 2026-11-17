@@ -3,7 +3,7 @@
 # 1. Engine LUT: stems from engine config + tank pressure range. Precomputes F, MR, mdot, etc.
 # 2. Policy LUT: DDP uses engine LUT for fast lookups (or physics if no engine LUT).
 #
-# Usage: ./scripts/controller_lut/generate_engine_and_policy_lut.sh [small|full]
+# Usage: ./tools/controller_lut/generate_engine_and_policy_lut.sh [small|full]
 # Optional: JOBS=8 ./generate_engine_and_policy_lut.sh  (parallel workers, default: all CPUs)
 
 set -e
@@ -13,11 +13,11 @@ JOBS="${JOBS:-}"
 
 CONFIG="${1:-small}"
 if [[ "$CONFIG" == "small" ]]; then
-  ENGINE_CONFIG="scripts/controller_lut/engine_lut_config_small.yaml"
-  POLICY_CONFIG="scripts/controller_lut/policy_lut_fsw_small.yaml"
+  ENGINE_CONFIG="tools/controller_lut/engine_lut_config_small.yaml"
+  POLICY_CONFIG="tools/controller_lut/policy_lut_fsw_small.yaml"
 elif [[ "$CONFIG" == "full" ]]; then
-  ENGINE_CONFIG="scripts/controller_lut/engine_lut_config.yaml"
-  POLICY_CONFIG="scripts/controller_lut/policy_lut_fsw.yaml"
+  ENGINE_CONFIG="tools/controller_lut/engine_lut_config.yaml"
+  POLICY_CONFIG="tools/controller_lut/policy_lut_fsw.yaml"
 else
   echo "Usage: $0 [small|full]"
   exit 1
@@ -29,7 +29,7 @@ POLICY_BIN="output/lut/controller_policy_fsw.bin"
 THRUST_CURVE_CSV="output/lut/thrust_curve.csv"
 
 echo "[0/4] Thrust curve from Layer 2 pressure curves..."
-python -m scripts.controller_lut.extract_thrust_curve_from_config \
+python -m tools.controller_lut.extract_thrust_curve_from_config \
   --config engine_sim/configs/default.yaml \
   --project-root "$PROJECT_ROOT" \
   --output "$THRUST_CURVE_CSV"
@@ -38,7 +38,7 @@ JOBS_ARG=""
 [[ -n "$JOBS" ]] && JOBS_ARG="--jobs $JOBS"
 
 echo "[1/4] Engine LUT (engine config + tank pressure range)..."
-python -m scripts.controller_lut.generate_controller_lut \
+python -m tools.controller_lut.generate_controller_lut \
   --lut-config "$ENGINE_CONFIG" \
   --output "$ENGINE_NPZ" \
   --project-root "$PROJECT_ROOT" \
@@ -55,14 +55,14 @@ t = Path('/tmp/policy_lut_with_engine.yaml')
 yaml.dump(c, t.open('w'), default_flow_style=False)
 print('  Using engine_lut_path:', c['engine_lut_path'])
 "
-python -m scripts.controller_lut.generate_controller_lut \
+python -m tools.controller_lut.generate_controller_lut \
   --lut-config /tmp/policy_lut_with_engine.yaml \
   --output "$POLICY_NPZ" \
   --project-root "$PROJECT_ROOT" \
   $JOBS_ARG
 
 echo "[3/4] Export policy LUT for FSW..."
-python -m scripts.controller_lut.export_lut_for_fsw \
+python -m tools.controller_lut.export_lut_for_fsw \
   --input "$POLICY_NPZ" \
   --output "$POLICY_BIN" \
   --project-root "$PROJECT_ROOT"
