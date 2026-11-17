@@ -39,8 +39,10 @@ done
 echo "linux_gate: $(git -C "$REPO" rev-parse --short "$REV") on $PLATFORM with $CC_KIND${AREAS:+, areas $AREAS only}"
 # Under its own lock (LEDGER D90), not the stack lock: the container has its own network namespace and
 # mounts only its export and log dir, so it cannot collide with a host stack; one Linux leg at a time.
-LOGS="$(cd "$HERE/../../.." && pwd -P)/.tmp/linux-gate/${PLATFORM#linux/}"
-rm -rf "$LOGS"; mkdir -p "$LOGS"
+# One directory per run, never deleted here: a red leg's full step logs must survive the next run
+# (LEDGER D89). Clean .tmp/linux-gate/ by hand when it grows.
+LOGS="$(cd "$HERE/../../.." && pwd -P)/.tmp/linux-gate/${PLATFORM#linux/}/$(date +%Y%m%d-%H%M%S)-$(git -C "$REPO" rev-parse --short "$REV")"
+mkdir -p "$LOGS"
 echo "linux_gate: full step logs in $LOGS"
 DAQ_STACK_LOCK="$(cd "$(git -C "$HERE" rev-parse --git-common-dir)" && pwd -P)/daq-linux.lock" \
   bash "$HERE/../with_stack_lock.sh" docker run --rm --security-opt seccomp=unconfined --platform "$PLATFORM" -v "$LOGS":/logs -v "$WORK":/src -w /src/daq-server "$TAG" bash -c "
