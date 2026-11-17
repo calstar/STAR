@@ -1,11 +1,10 @@
 /**
  * server/notifications.ts — operator notifications and their 5-minute replay buffer.
  *
- * Owns `activeNotificationKeys` (which keyed notifications are currently raised) and
- * `notificationBuffer` (what a late-connecting browser is replayed). In step 1 both are
- * exported as the mutable containers they were, because the raise/clear pairs still sit in
- * board-status, actuator-mismatch and ingest (DESIGN-WP6 R3); step 2.2 makes this module the
- * only writer. ws-connection.ts reads the buffer for the connect burst and prunes it first.
+ * Owns `activeNotificationKeys` (which keyed notifications are currently raised; exported as a
+ * ReadonlySet — raiseNotification / clearNotification are its only writers, step 2.2) and
+ * `notificationBuffer` (what a late-connecting browser is replayed; ws-connection.ts reads it
+ * for the connect burst and prunes it first).
  *
  * Event-loop only. No effect at import (M1). Never imports api-server.ts or api/*.
  *
@@ -16,9 +15,12 @@
 
 import { broadcast } from './ws-clients.js';
 import { MessageType } from '../../../shared/types.js';
-import type { NotificationPayload } from '../../../shared/types.js';
+import type { NotificationPayload, NotificationPayloadOngoing } from '../../../shared/types.js';
 
-export const activeNotificationKeys = new Set<string>();
+// The keys currently raised. Only raiseNotification / clearNotification below change it; importers
+// get the read-only view, so a stray add/delete elsewhere is a build error (STYLE-S32, step 2.2).
+const activeKeys = new Set<string>();
+export const activeNotificationKeys: ReadonlySet<string> = activeKeys;
 
 // Rolling notification history so a reloaded/late-connecting browser recovers the
 // last few minutes of warnings/info instead of starting blank. Replayed on connect.
@@ -39,4 +41,17 @@ export function broadcastNotification(payload: NotificationPayload): void {
   notificationBuffer.push({ at, payload });
   pruneNotificationBuffer(at);
   broadcast({ type: MessageType.NOTIFICATION, timestamp: at, payload });
+}
+
+/** Broadcast an ongoing notification, then mark its key raised — today's broadcast-then-add
+ *  pairs, broadcast first as before. The key is `payload.key`, so the two can never disagree. */
+export function raiseNotification(payload: NotificationPayloadOngoing): void {
+  broadcastNotification(payload);
+  activeKeys.add(payload.key);
+}
+
+/** Broadcast the `ongoing: false` notification, then clear its key — today's broadcast-then-delete pairs. */
+export function clearNotification(payload: NotificationPayloadOngoing): void {
+  broadcastNotification(payload);
+  activeKeys.delete(payload.key);
 }

@@ -9,8 +9,8 @@
  * pipeline/golden/ws_events.txt `calibration_command`). reloadCalibrationEntityMap() is the
  * deploy-time rebuild of the role map, in lockstep with the host's channelToEntityMap.
  *
- * `calibrationHost` is an `export let` assigned only here; its `.elodin` is still set by
- * elodin-link.onElodinConnected in step 1 (R3) — step 2.2 adds setCalibrationElodin(). No effect
+ * `calibrationHost` is an `export let` assigned only here, and this module is its only writer:
+ * elodin-link sets `.elodin` through setCalibrationElodin() (step 2.2). No effect
  * at import (M1). Never imports api-server.ts or api/*.
  *
  * Contract: calibration/golden/ts.txt freezes calibration-handler.ts against a stub host (incl.
@@ -20,6 +20,7 @@
 
 import { loadPTCalibration, type CalibrationCoefficients } from '../calibration.js';
 import type { CalibrationHost } from '../calibration-handler.js';
+import type { ElodinClient } from '../elodin-client.js';
 import { loadSensorRoleMap } from '../sensor-config.js';
 import { send, broadcast } from './ws-clients.js';
 import { uniqueIdFromPtEntity } from './config-caches.js';
@@ -75,4 +76,10 @@ export function reloadCalibrationEntityMap(): void {
 export function noteRawAdc(entity: string, value: number): void {
   const uid = uniqueIdFromPtEntity(entity);
   if (uid != null) lastRawAdc.set(uid, value);
+}
+
+/** `calibrationHost.elodin = client`, from elodin-link.onElodinConnected (step 2.2): until the first
+ *  connect the field is null and publishCalibrationReload is a no-op, as today. */
+export function setCalibrationElodin(client: ElodinClient): void {
+  calibrationHost.elodin = client;
 }
