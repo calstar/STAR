@@ -294,7 +294,13 @@ import-time read moving out of import time shows.
 
 `DESIGN-WP6.md` §7's G2, G3 and G1 (LEDGER D48): three notifications no other golden raised, each
 in a session cut to its one path so a change elsewhere on the WS/HTTP surface cannot fail it, and
-each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate difference:
+each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate difference. Their
+readiness is `waitForData` with its board arguments (`session.ts`): the one probe until the backend lists
+board 21 (and 71 in mismatch) connected and, for selftest, has its self-test -- the heartbeat and
+self-test tables are later subscription passes than the PT tables, and on a loaded Linux leg they
+went live ~3 s after the PT data, so a client connecting on PT data alone saw a board list without
+21 and no replay, and the one-shot self-test landed live in a later step. Bounded (20 s): a result
+that never arrives is still red.
 
 - **selftest (G2, `self_test_fail_<id>`).** The simulator is started with `--fail-connector 21:3`
   — an opt-in flag this package added to `sim/board_simulator.py`, default off, so every
@@ -553,6 +559,15 @@ Each applied to the backend source, run, reverted (none committed):
 | `server.ts` `getDebugInfo`: `ingestConnected: false` (D64(3)) | `http.txt`: all three `GET /api/debug?values` lines (P14 values) |
 | `api-server.ts` `POST /api/config`: save the profile but never `deployActiveProfile()` (H1) | `http.txt` `http_operator_writes`: `FILE config/config.toml` is the old deployed file, the profile's no longer "same as" it, and every later FILE that copied it moves |
 | `server.ts` `applyDeployedConfigChange`: drop its `CONFIG_UPDATED` broadcast (H1) | `ws_events.txt` `http_operator_writes`: four of the five `config_updated` frames gone (the CSV write's own broadcast stays), and `session_start_forced`'s |
+| `server.ts`: swap the startup rows `loadBoardsFromConfig()` and the `STATE_ACTUATOR_MAP` read (G12) | `startlog/backend_startup.txt`: `Loaded 11 boards` moves below the `Trying:` lines |
+| `server.ts`: `parsed.value === 0` → `=== 2` in the self-test block (never notify) (G2) | `selftest/ws_handshake.txt`: client A's replay loses `self_test_fail_21`; `ws_schema.txt` loses the notification key |
+| `sim/board_simulator.py`: `adc_good = 0`; the result byte always 1 (the flag ignored) | `sim_selftest_check.py` (run first by `run.sh selftest`): default bytes differ / the flag changes no byte |
+| `server.ts` `loadBoardsFromConfig`: accept `board.id` as the board id (G3) | `unrecognized/ws_handshake.txt`: board 21 listed `expected: true` at `127.0.0.1`, no `unrecognized_21` replay; `ws_streams.txt` `board_status_update` payloads |
+| `server.ts`: drop the `scheduleActuatorMismatchCheck` in the `position_pct` block (the reschedule on a sensed change) (G1) | `mismatch/ws_events.txt` `valve_close`: no `Actuator positions match expected` |
+| `ball-valve.ts` `ballValveSensedEntity` → `null` (no ball valve is ever sensed) (G1) | `mismatch/ws_events.txt`: neither `actuator_mismatch` frame; `ws_schema.txt` loses the notification keys |
+| `server.ts`: reply an `error` from the WS `Bad message` catch (G10) | `ws_events.txt` `subscribe`: two `error` frames (the non-JSON line and the payload-less `send_command`) |
+| `server.ts` `onStateCsvUpdated`: drop the `STATE_ACTUATOR_MAP` rebuild (G8) | `statecsv/ws_handshake.txt`: client B's `ACT_CMD.B2.CH2` snapshot stays `0` |
+| `server.ts` `onStateCsvUpdated`: drop the `config_updated` broadcast (G8) | `statecsv/ws_events.txt` `state_csv_deploy`: no frame |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 

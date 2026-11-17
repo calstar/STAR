@@ -179,23 +179,43 @@ async function getSweep(): Promise<void> {
   for (const p of gets) await request('GET', p);
 }
 
-/** Wait until the pipeline delivers: a probe client sees a raw and a calibrated PT sample. */
-async function waitForData(timeoutMs: number): Promise<void> {
+/** Wait until the pipeline delivers: a probe client sees a raw and a calibrated PT sample.
+ *  `boards` / `selfTestBoard` (the WP6 gap sessions): the same probe also waits, bounded by
+ *  `extraMs`, until the backend lists each of those boards connected (a `board_status_update`)
+ *  and, for `selfTestBoard`, has its self-test (`SELF_TEST.BOARD_<id>.*`, replayed or live). The
+ *  heartbeat and self-test tables are later subscription passes than the PT tables, and on a
+ *  loaded Linux leg they went live ~3 s after the PT data: a client connecting on PT data alone
+ *  saw a board list without 21 and no replay, and the one-shot self-test landed live in a later
+ *  step. One probe for all of it, so client A's connId is c2 in every session. On timeout the
+ *  session goes on and the golden shows what was missing. */
+async function waitForData(
+  timeoutMs: number, boards: number[] = [], selfTestBoard?: number, extraMs = 20000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  const seen = { raw: false, cal: false };
+  const seen = { raw: false, cal: false, st: selfTestBoard === undefined };
+  const connected = new Set<number>();
   const probe = new WebSocket(`ws://127.0.0.1:${PORT}`);
   probe.on('message', (d) => {
     try {
       const m = JSON.parse(d.toString());
+      if (m.type === 'board_status_update') {
+        for (const b of m.payload?.boards ?? []) if (b.connected === true) connected.add(b.id);
+        return;
+      }
       if (m.type !== 'sensor_update') return;
       const e = String(m.payload?.entity ?? '');
       if (/^PT\d+\.CH\d+$/.test(e)) seen.raw = true;
       if (/^PT\d+_Cal\.CH\d+$/.test(e)) seen.cal = true;
+      if (selfTestBoard !== undefined && e === `SELF_TEST.BOARD_${selfTestBoard}`) seen.st = true;
     } catch { /* ignore */ }
   });
   while (Date.now() < deadline && !(seen.raw && seen.cal)) await sleep(200);
+  const ready = () => seen.st && boards.every((b) => connected.has(b));
+  const extraBy = Date.now() + extraMs;
+  while (Date.now() < extraBy && !ready()) await sleep(200);
   probe.close();
   if (!(seen.raw && seen.cal)) throw new Error(`pipeline not delivering (raw=${seen.raw} cal=${seen.cal})`);
+  if (!ready()) console.log(`[session] boards ${boards} / self-test ${selfTestBoard} not ready within ${extraMs} ms`);
 }
 
 async function main(): Promise<void> {
@@ -745,7 +765,7 @@ const notificationWith = (key: string, ongoing: boolean) => (m: any) =>
  *  the notification replay; the unnarrowed history query freezes the series. Nothing else. */
 async function selftest(): Promise<void> {
   step('readiness');
-  await waitForData(60000);
+  await waitForData(60000, [21], 21);
   await sleep(3000);
 
   step('connect');
@@ -773,7 +793,7 @@ async function selftest(): Promise<void> {
  *  without one are not what this session is for. */
 async function unrecognized(): Promise<void> {
   step('readiness');
-  await waitForData(60000);
+  await waitForData(60000, [21]);
   await sleep(3000);
 
   step('connect');
@@ -802,7 +822,7 @@ async function unrecognized(): Promise<void> {
  *  missing one is a frame in the wrong step, which the golden shows. */
 async function mismatch(): Promise<void> {
   step('readiness');
-  await waitForData(60000);
+  await waitForData(60000, [21, 71]);
   await sleep(3000);
 
   step('connect');
@@ -859,7 +879,7 @@ async function mismatch(): Promise<void> {
  *  from the GET so the fixture's CSV, not a copy of it, is what is deployed. */
 async function statecsv(): Promise<void> {
   step('readiness');
-  await waitForData(60000);
+  await waitForData(60000, [21]);
   await sleep(3000);
 
   step('connect');
