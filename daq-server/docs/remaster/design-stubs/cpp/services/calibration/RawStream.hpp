@@ -6,11 +6,16 @@
 //
 // Converts raw ADC rows to engineering units and publishes the calibrated tables.
 //
-// Owns:       StreamState's owned members (counters, last_save, last_adc_map) and, in
-// RawStream.cpp's
-//             anonymous namespace, the stream globals g_hp_ma_live, g_pt_smoother,
-//             g_t7_cold_junction_c (cleanup C2 moves them into StreamState). The function-local
-//             `static int ch_mismatch_warn` stays in handle_esp32_raw.
+// Owns:       StreamState's owned members (counters, last_save, last_adc_map) and, in the
+//             anonymous namespace of RawStream.cpp, the stream globals g_hp_ma_live,
+//             g_pt_smoother, g_t7_cold_junction_c (cleanup C2 moves them into StreamState). The
+//             function-local `static int ch_mismatch_warn` stays in handle_esp32_raw.
+// last_save:  WRITTEN BY MAIN at old 1557's position (verdict fact 4): today's
+//             `auto last_save = steady_clock::now()` (1559) runs after connect_and_register
+//             (1544). main aggregate-initialises StreamState there with
+//             `last_save{std::chrono::steady_clock::now()}` (or assigns it on the next line). A
+//             bare member is the epoch, so the first ESP32 packet would satisfy `> 300` s at 2124
+//             and save adjustments at once — an observable the goldens do not freeze (G8).
 // Threads:    one. ElodinClient's publish_mutex_ is taken per publish, uncontended.
 // Order:      per packet: begin_batch → publish each value → flush_batch → ++packet_count; PT:
 //             select_pt_psi then `psi = g_pt_smoother.step(uid, psi)` in the same statement
@@ -51,8 +56,10 @@ struct StreamState {
     const double tc_adc_ref_voltage, rtd_adc_ref_voltage, rtd_excitation_ua, rtd_r0_ohm;
     int packet_count = 0;
     int debug_limit = 0;  // was a function-local static at 1621: same single counter, zero start
-    std::chrono::steady_clock::time_point last_save;  // today's type of `last_save`
-    std::map<uint16_t, int32_t> last_adc_map;         // today's type (1560)
+    // Today's type (1559). NOT default-initialised here: main writes steady_clock::now() into it
+    // at old 1557's position (see the header comment); a bare member is the epoch.
+    std::chrono::steady_clock::time_point last_save;
+    std::map<uint16_t, int32_t> last_adc_map;  // today's type (1560)
 };
 
 /** LabJack T7 raw rows (type_hi == 0x26). */
