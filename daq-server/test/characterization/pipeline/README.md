@@ -23,9 +23,12 @@ service log), `CHAR_CAPTURE_ONLY=<file>` (save the raw capture, skip the compari
 `calibration_service` → `diablo_server/backend/src/server.ts` (the thin backend; production's
 `sensor-backend.service` runs the same file via `npm run dev` with `SESSION_SERVICE_MODE=systemd`)
 → WebSocket + HTTP on one port. `sequencer_service` sits behind the backend's command path (TCP).
-Start order is `test/test_integration.sh`'s — DB, sequencer, bridge, backend, calibration,
-simulator — with three readiness waits of its own (see "Platform neutrality"); then `session.ts`
-waits until a probe client sees a raw and a calibrated PT sample and lets it settle 3 s.
+Start order is production's (the one `lifecycle/` freezes) — DB, sequencer, bridge, calibration,
+backend, simulator — with four readiness waits of its own (see "Platform neutrality"), each a wait
+on the service's own log line, bounded, never a sleep; then `session.ts` waits until a probe client
+sees a raw and a calibrated PT sample and lets it settle 3 s. (`test_integration.sh` starts
+calibration_service after the backend; see "Registrars before the backend" for why this harness
+does not.)
 
 `api-server.ts` is not a separate server: `createAPIHandler()` is mounted inside `server.ts`'s HTTP
 server and owns every `/api/*` path (with `video/routes.ts` for `/api/video/*`); `/stats` is
@@ -99,6 +102,21 @@ OTA 26414. daq_bridge also hard-codes UDP 5008, which is why the lock matters.
 - **Connect backfill horizon.** The viewer client connects ~10 s after the first sample, well
   inside the backend's 60 s connect backfill; at ~60 s the one-shot self-test series fell outside
   it on the slower machine.
+- **Registrars before the backend.** `daq_bridge` and `calibration_service` each register the
+  calibrated tables. The boards fixture's startup board 60 sits on PT slot 10, whose uint8 table
+  ids wrap onto PT2.CH1 (`[0x20,0x21]` raw, `[0x20,0x31]` calibrated; the validator's slot-10
+  error in `golden/boards/http.txt` is this), so each registrar registers those ids as PT10.CH1
+  and, a moment later, as PT2.CH1 again — ~130 ms apart on Linux arm64, ~3 ms on macOS. elodin-db
+  binds a VTableStream to the table's components at subscribe time; a backend subscription
+  accepted inside that window stays on the PT10 components and delivers nothing for the rest of the
+  run, and since it was accepted the backend never retries it (`LEDGER.md` D41, D-SLOT, D-SUB).
+  That is how `PT2_Cal.CH1.*` went missing from the Linux boards golden (216 → 213 series) while
+  `calibration_service` was started after the backend. `run.sh` now starts the backend only after
+  the bridge has logged `[Elodin] Drain complete, ready for TABLE data` (its last registration plus
+  its hard-coded 1.5 s drain) and calibration_service `[Cal] Connected to Elodin, registered
+  calibrated VTables, subscribed.`; each wait is capped at 30 s (the backend's own port-wait cap;
+  both lines come within ~3 s idle) and fails loudly. Board 60 itself stays: moving it would drop
+  the golden lines that freeze D-SLOT.
 
 ### Why one board
 
@@ -245,14 +263,18 @@ purpose:
   sensor 4. The simulator sends all of a board's results in one packet (and re-sends ~1 Hz for 6 s),
   so a partial set suggests rows lost between the DB and the backend, not a lost packet. P12 rule
   (a) treats a partial board as a mismatch.
-- **`PT2.CH1` stream missing.** In loaded runs the raw (`PT2.CH1.raw_adc_counts`) and calibrated
-  (`PT2_Cal.CH1.*`) series of PT board 22, connector 1, were absent from both the live stream and
-  history, while the board's other channels arrived. Seen once on idle Linux too, earlier.
-- What is known: both appeared only on Linux; macOS under the same load passes. They look like
-  Elodin subscription timing (the backend subscribes in request-id-capped passes and retries
-  refused pairs with backoff; rows written before a pair's subscription takes effect are never
-  delivered), the same mechanism that lost board 21's self-test sensors 2–10 before the harness
-  waited for subscriptions. Not proven: the backend logs no per-pair subscription acceptance.
+- **`PT2.CH1` stream missing** (resolved, D41). In loaded runs the raw (`PT2.CH1.raw_adc_counts`)
+  and calibrated (`PT2_Cal.CH1.*`) series of PT board 22, connector 1, were absent from both the
+  live stream and history, while the board's other channels arrived; the calibrated three went
+  missing once on idle Linux too. Root cause: the slot-10 registration window of board 60 (see
+  "Registrars before the backend"), not load. `run.sh` starts the backend only after both
+  registrars have finished, so the window cannot be hit; the board-22 case above is still open.
+- What is known of the remaining case: it appeared only on Linux under load; macOS under the same
+  load passes. It looks like Elodin subscription timing (the backend subscribes in
+  request-id-capped passes and retries refused pairs with backoff; rows written before a pair's
+  subscription takes effect are never delivered), the same mechanism that lost board 21's
+  self-test sensors 2–10 before the harness waited for subscriptions. Not proven: the backend logs
+  no per-pair subscription acceptance.
 
 Every golden line removed since `backend-remastered` is accounted for in `GOLDEN-AUDIT.md`.
 
