@@ -1,4 +1,4 @@
-// DESIGN STUB (DESIGN-WP9 §2, move-only step 5) — not compiled. Becomes
+// DESIGN STUB (DESIGN-WP9 §2, move-only step 4) — not compiled. Becomes
 // diablo_server/services/calibration/CalibrationCommands.{hpp,cpp}. Body: 1631-1819, the inside of
 // `if (type_hi == 0x46)`; its outer-loop `continue` at 1637 becomes `return`; the inner-loop
 // `continue`s at 1673, 1789, 1796 stay `continue` (DESIGN-WP9 §4). 1673 and 1796 (a refused

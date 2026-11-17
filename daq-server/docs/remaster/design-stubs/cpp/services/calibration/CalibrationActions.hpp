@@ -1,10 +1,13 @@
 // DESIGN STUB (DESIGN-WP9 §2-§3, move-only step 3) — not compiled. Becomes
 // diablo_server/services/calibration/CalibrationActions.{hpp,cpp}. Bodies, in today's textual
 // order: calibration_main.cpp 532-594 (file-static kMinAbortCalPoints, invert_abort_psi_to_adc),
-// 727-732, 999-1259 (1032-1108 write_abort_thresholds file-static) and 1294-1391; each lambda
-// becomes a function of the same name with the captured locals reached through `ctx.` (STYLE-S7:
-// no renames). D58 folded AbortThresholds.{hpp,cpp} (one consumer: this TU, at 1124, 1241, 1385)
-// and CalibrationContext.hpp (its two other takers include this header anyway) into this file.
+// 727-732, 994-1259 (the 994-998 banner comment leads sample_robust_curve, STYLE-S38; 1032-1108
+// write_abort_thresholds file-static) and 1294-1391; each lambda becomes a function of the same
+// name with the captured locals reached through `ctx.` (STYLE-S7: no renames). D58 folded
+// AbortThresholds.{hpp,cpp} (one consumer: this TU, at 1124, 1241, 1385) and
+// CalibrationContext.hpp (its two other takers include this header anyway) into this file. D69
+// made sample_robust_curve, recompute_tare and recompute_all_tares file-static too: every caller
+// (1117, 1381; 1186, 1252; 1389) is in this TU.
 //
 // ── CalibrationContext ──
 // A method-less carrier of the main() locals that today's 16 capture/clear/reload lambdas captured
@@ -60,9 +63,10 @@
 //             integration harness parks and restores the live file.
 //
 // File-static in the .cpp (not declared here): kMinAbortCalPoints, invert_abort_psi_to_adc,
-//             write_abort_thresholds, apply_pt_capture, apply_lc_capture, apply_pt_clear,
-//             apply_lc_clear. Size: ~505 lines (428 moved + file comment, includes, namespace),
-//             under STYLE-S33's 700.
+//             write_abort_thresholds, sample_robust_curve (999-1020: 41 robust predictions,
+//             wall-clock dependent, C3-1), recompute_tare, recompute_all_tares (1164-1175),
+//             apply_pt_capture, apply_lc_capture, apply_pt_clear, apply_lc_clear. Size: ~510 lines
+//             (433 moved + file comment, includes, namespace), under STYLE-S33's 700.
 #pragma once
 
 #include <cstddef>
@@ -102,12 +106,10 @@ struct CalibrationContext {
 /** 727-732. Also used by RawStream's ESP32 PT path (1973). */
 const ::fsw::config::PtBoardConfig* current_loop_board(const CalibrationContext& ctx,
                                                        uint8_t board_number);
-/** 999-1020. 41 robust predictions (wall-clock dependent, C3-1). */
-std::vector<std::pair<double, double>> sample_robust_curve(CalibrationContext& ctx, uint16_t uid);
-/** 1130-1156. The returned evaluator captures ctx by reference and uid by value. */
+/** 1130-1156. The returned evaluator captures ctx by reference and uid by value (the inner lambda
+ *  head at 1131, `[&, uid]` -> `[&ctx, uid]`, is the one changed line in the body). Also called
+ *  by main's stale-tare audit (1422) and the Tare command (1806). */
 fsw::calibration::LcTareStore::Evaluator lc_eval_for(CalibrationContext& ctx, uint16_t uid);
-void recompute_tare(CalibrationContext& ctx, uint16_t uid);
-void recompute_all_tares(CalibrationContext& ctx);
 /** 1194-1203: CaptureWindow decides; this logs a rejection. */
 fsw::calibration::CaptureResult take_capture(CalibrationContext& ctx, uint16_t uid,
                                              const char* what);
