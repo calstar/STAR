@@ -83,6 +83,9 @@ backend_vitest() {
 frontend_vitest() { (cd "$ROOT/diablo_server/frontend" && npm test); }
 frontend_lint() { (cd "$ROOT/diablo_server/frontend" && npm run lint); }
 frontend_build() { (cd "$ROOT/diablo_server/frontend" && npm run test:build); }
+# tsx and vitest strip types without checking them, so a missed setter for a module's state (WP6) or
+# any type error would otherwise fail only at runtime (LEDGER D40). The backend type-checks clean.
+backend_tsc() { (cd "$ROOT/diablo_server/backend" && npx tsc --noEmit -p .); }
 shared_types() {
   (cd "$ROOT/diablo_server/frontend" && npm run build:shared) &&
     git -C "$ROOT" diff --exit-code -- diablo_server/shared/
@@ -141,6 +144,7 @@ step video-gateway video_gateway
 step frontend-vitest frontend_vitest
 step frontend-lint frontend_lint
 step frontend-build frontend_build
+step backend-tsc backend_tsc
 step shared-types shared_types
 [ -x "$CHAR/run.sh" ] || [ -f "$CHAR/run.sh" ] && step characterization characterization
 [ "$FAST" = 1 ] || step integration integration

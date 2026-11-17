@@ -23,9 +23,12 @@ service log), `CHAR_CAPTURE_ONLY=<file>` (save the raw capture, skip the compari
 `calibration_service` → `diablo_server/backend/src/server.ts` (the thin backend; production's
 `sensor-backend.service` runs the same file via `npm run dev` with `SESSION_SERVICE_MODE=systemd`)
 → WebSocket + HTTP on one port. `sequencer_service` sits behind the backend's command path (TCP).
-Start order is `test/test_integration.sh`'s — DB, sequencer, bridge, backend, calibration,
-simulator — with three readiness waits of its own (see "Platform neutrality"); then `session.ts`
-waits until a probe client sees a raw and a calibrated PT sample and lets it settle 3 s.
+Start order is production's (the one `lifecycle/` freezes) — DB, sequencer, bridge, calibration,
+backend, simulator — with four readiness waits of its own (see "Platform neutrality"), each a wait
+on the service's own log line, bounded, never a sleep; then `session.ts` waits until a probe client
+sees a raw and a calibrated PT sample and lets it settle 3 s. (`test_integration.sh` starts
+calibration_service after the backend; see "Registrars before the backend" for why this harness
+does not.)
 
 `api-server.ts` is not a separate server: `createAPIHandler()` is mounted inside `server.ts`'s HTTP
 server and owns every `/api/*` path (with `video/routes.ts` for `/api/video/*`); `/stats` is
@@ -99,6 +102,21 @@ OTA 26414. daq_bridge also hard-codes UDP 5008, which is why the lock matters.
 - **Connect backfill horizon.** The viewer client connects ~10 s after the first sample, well
   inside the backend's 60 s connect backfill; at ~60 s the one-shot self-test series fell outside
   it on the slower machine.
+- **Registrars before the backend.** `daq_bridge` and `calibration_service` each register the
+  calibrated tables. The boards fixture's startup board 60 sits on PT slot 10, whose uint8 table
+  ids wrap onto PT2.CH1 (`[0x20,0x21]` raw, `[0x20,0x31]` calibrated; the validator's slot-10
+  error in `golden/boards/http.txt` is this), so each registrar registers those ids as PT10.CH1
+  and, a moment later, as PT2.CH1 again — ~130 ms apart on Linux arm64, ~3 ms on macOS. elodin-db
+  binds a VTableStream to the table's components at subscribe time; a backend subscription
+  accepted inside that window stays on the PT10 components and delivers nothing for the rest of the
+  run, and since it was accepted the backend never retries it (`LEDGER.md` D41, D-SLOT, D-SUB).
+  That is how `PT2_Cal.CH1.*` went missing from the Linux boards golden (216 → 213 series) while
+  `calibration_service` was started after the backend. `run.sh` now starts the backend only after
+  the bridge has logged `[Elodin] Drain complete, ready for TABLE data` (its last registration plus
+  its hard-coded 1.5 s drain) and calibration_service `[Cal] Connected to Elodin, registered
+  calibrated VTables, subscribed.`; each wait is capped at 30 s (the backend's own port-wait cap;
+  both lines come within ~3 s idle) and fails loudly. Board 60 itself stays: moving it would drop
+  the golden lines that freeze D-SLOT.
 
 ### Why one board
 
@@ -135,6 +153,47 @@ payloads, setup-stuck / connected / lost notifications) and those endpoints.
 On macOS it needs the 16 board_id loopback aliases (`11 12 13 14 21 22 25 31 32 41 42 51 52 60 61
 71`, the list test_integration.sh uses). `run.sh boards` checks `ifconfig lo0` first and fails
 (exit 7) naming every missing alias; it never skips. Linux has all of 127/8.
+
+### The stalesub session (`run.sh stalesub` → `golden/stalesub/stalesub.txt`)
+
+D-SUB, made deterministic. The race "Registrars before the backend" removes from the other three
+sessions is arranged here on purpose, step by step, each step waiting on the service's own log
+line, so the defect is characterized instead of merely sidestepped:
+
+1. DB, sequencer, `daq_bridge` as usual (the bridge leaves `[0x20,0x31]` registered as
+   `PT2_Cal.CH1`, having registered it as `PT10_Cal.CH1` first).
+2. **Registrar A**: `calibration_service` on `registrar_a.toml` — the fixture's config with every
+   board but `[boards.integration_startup]` (board 60, slot 10) disabled — in its own cwd
+   (`regA/`). It logs the slot-10 `[Config] ERROR` and re-registers `[0x20,0x31]` as
+   `PT10_Cal.CH1`; once it has logged `[Cal] Connected to Elodin, registered calibrated VTables,
+   subscribed.` it is stopped and reaped. The table outlives its connection.
+3. The backend starts and subscribes with every table registered: `[0x20,0x31]` is accepted,
+   bound to the PT10 components. `run.sh` waits for its passes as always.
+4. The real `calibration_service` starts and registers `PT10_Cal.CH1` then `PT2_Cal.CH1` under
+   `[0x20,0x31]` — the re-registration under a live subscription. The simulator (board 22 only,
+   from `127.0.0.22`) starts after it.
+5. `session.ts stalesub`: wait for `PT2_Cal.CH2` (the control: the startup board never touched
+   channel 2's tables) → connect A → watch for 2 × `RESUBSCRIBE_MIN_MS` (`server.ts`, 5000) +
+   2 s: a backend re-sending silent pairs at its minimum pass period would have re-sent twice
+   → one `query_historical` over those 12 s for `PT2.CH1.raw_adc_counts`,
+   `PT2_Cal.CH1.pressure_psi`, `PT2_Cal.CH2.pressure_psi`. (Main's real cadence is longer:
+   `scheduleResubscribe` sleeps until the earliest *refused* pair is due, and the T7 tables no
+   `t7_bridge` registers here stretch that along their backoff ladder — 5, 10, 20, 40, 60 s — so a
+   pass may not fall inside the window at all. It does not matter for main: an accepted pair is
+   never re-sent in any pass; only a refusal or a disconnect un-marks it.)
+
+What `stalesub.txt` freezes (`characterize.py stalesub_report`): registrar A's slot-10 error and
+its registration count; the bridge's and calibration_service's; how many times elodin-db logged
+inserting vtable `[32, 49]` (five: bridge ×2, registrar A, calibration_service ×2) and `[32, 50]`
+(two); that the backend never gave up on `[0x20, 0x31]` (the only per-pair line it logs, and only
+for refusals); then, per channel of board 22, the live value of the raw stream and of every
+calibrated component (`absent` when no frame carried it), the series present in the connect
+backfill and in the query. Main's behaviour: channel 1's raw stream flows, channels 2–4 flow raw
+and calibrated, and `PT2_Cal.CH1.*` is **absent** live, from the backfill and from the query —
+accepted, never refused, never retried, silent for the whole run. It uses real elodin-db 0.16.1
+and the real backend; no product code is touched.
+
+On macOS it needs the `127.0.0.22` alias only. It adds ~1 min to the area.
 
 ## The scripted session (`session.ts`)
 
@@ -245,14 +304,18 @@ purpose:
   sensor 4. The simulator sends all of a board's results in one packet (and re-sends ~1 Hz for 6 s),
   so a partial set suggests rows lost between the DB and the backend, not a lost packet. P12 rule
   (a) treats a partial board as a mismatch.
-- **`PT2.CH1` stream missing.** In loaded runs the raw (`PT2.CH1.raw_adc_counts`) and calibrated
-  (`PT2_Cal.CH1.*`) series of PT board 22, connector 1, were absent from both the live stream and
-  history, while the board's other channels arrived. Seen once on idle Linux too, earlier.
-- What is known: both appeared only on Linux; macOS under the same load passes. They look like
-  Elodin subscription timing (the backend subscribes in request-id-capped passes and retries
-  refused pairs with backoff; rows written before a pair's subscription takes effect are never
-  delivered), the same mechanism that lost board 21's self-test sensors 2–10 before the harness
-  waited for subscriptions. Not proven: the backend logs no per-pair subscription acceptance.
+- **`PT2.CH1` stream missing** (resolved, D41). In loaded runs the raw (`PT2.CH1.raw_adc_counts`)
+  and calibrated (`PT2_Cal.CH1.*`) series of PT board 22, connector 1, were absent from both the
+  live stream and history, while the board's other channels arrived; the calibrated three went
+  missing once on idle Linux too. Root cause: the slot-10 registration window of board 60 (see
+  "Registrars before the backend"), not load. `run.sh` starts the backend only after both
+  registrars have finished, so the window cannot be hit; the board-22 case above is still open.
+- What is known of the remaining case: it appeared only on Linux under load; macOS under the same
+  load passes. It looks like Elodin subscription timing (the backend subscribes in
+  request-id-capped passes and retries refused pairs with backoff; rows written before a pair's
+  subscription takes effect are never delivered), the same mechanism that lost board 21's
+  self-test sensors 2–10 before the harness waited for subscriptions. Not proven: the backend logs
+  no per-pair subscription acceptance.
 
 Every golden line removed since `backend-remastered` is accounted for in `GOLDEN-AUDIT.md`.
 
@@ -267,6 +330,7 @@ Each applied to the backend source, run, reverted (none committed):
 | `routes/config-profiles.ts` `readStateCsv`: swap the Idle/Armed columns | `csv.txt` (header and every row of all three CSVs) |
 | `gui-stream.ts` `envelopeWindowMs`: `2000 /` → `1000 /` (double the GUI rate), run under 1× load | `ws_streams.txt` T1 |
 | `server.ts`: drop every SELF_TEST row (`[0x60..0x6F]`), idle and under 1× load (boards) | `ws_streams.txt` P12 rule line: all not-received → (c) idle, (b) under load |
+| `elodin-vtable-registry.ts` + `server.ts`: un-mark a subscribed pair the DB has not delivered within 4 s so the next pass re-sends it, and run a pass every `RESUBSCRIBE_MIN_MS` regardless of the refused pairs' backoff (stalesub) | `stalesub.txt`: `PT2_Cal.CH1.*` live `value=…` instead of `absent`, present in the backfill and the query. The first half alone stays green: no pass fell inside the 12 s window (see above) |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
