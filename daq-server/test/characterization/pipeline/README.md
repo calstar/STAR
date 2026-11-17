@@ -8,6 +8,7 @@ bash test/characterization/pipeline/run.sh boards      # every simulated board t
 bash test/characterization/pipeline/run.sh stalesub    # D-SUB: a subscription accepted inside a re-registration window → golden/stalesub/
 bash test/characterization/pipeline/run.sh operator    # a WS client whose X-Auth-Email is an approved operator → golden/operator/
 bash test/characterization/pipeline/run.sh holds       # an accepted timed hold, then :9998 stalled and down → golden/holds/
+bash test/characterization/pipeline/run.sh startlog    # the backend alone, its startup log (G12) → golden/startlog/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
@@ -219,6 +220,7 @@ pt session's `transition_armed`). It is its own session because `ws_streams.txt`
 counts every client's handshake replay in its "paths checked" line; another client in the pt
 session would change that line. The two mutations below are what it is for; the second also reds
 the pt session from its `unlock` step on (client A, no header), the first reds nothing else. ~20 s.
+
 ### The holds session (`run.sh holds` → `golden/holds/`)
 
 The backend's `:9998` line client (`server.ts sendToActuatorService`) has three replies no other
@@ -267,6 +269,22 @@ What it freezes: the usual six files for its steps. The one timing line is categ
 `= timeout_reply_within_2800ms: yes`. It is judged on CI (LEDGER D34: this Mac's timer overshoot
 can make it `no` under load); the bound is 2000 ms + a margin for that overshoot, narrower than
 the next round number, so a 3000 ms socket timeout goes red.
+### The startup-log session (`run.sh startlog` → `golden/startlog/backend_startup.txt`)
+
+G12 (`DESIGN-WP6.md` §6.3 "startup-log diff"; LEDGER D96, where it also gates WP5). The backend
+is started **alone** on the pt fixture — the same `start_backend` command every session uses,
+nothing listening on any of its ports — and stopped once it has logged the last synchronous line
+of its `listen` callback, `[ThinServer] Actuator service: localhost:<port>`. `startlog.py` keeps
+everything the process wrote up to and including that line, normalised (N1, N4–N6), and nothing
+after it. That prefix is one deterministic sequence: ESM import evaluation (the state-CSV loaders'
+import-time config reads and their warnings, `session-manager`'s construction), then `server.ts`'s
+top level statement by statement — `GUI downsampling`, the PT calibration search, the sensor-role
+map, `Loaded N boards`, the state-actuator CSV search with its `Trying:` lines, the GUI static
+server — then the three `listen` lines. The lines after the mark are I/O-ordered (the Elodin
+connect refusals, the video gateway's, the board-log receiver's bind) and are cut, not frozen.
+No `git grep` of the other goldens finds any of these lines: this is the only place a moved import
+(`shared-types.ts`'s top-level `await`, WP5 5.4), a reordered startup row (WP6 §1.2) or a loader's
+import-time read moving out of import time shows.
 
 ## The scripted session (`session.ts`)
 
@@ -316,6 +334,7 @@ There is no subscription protocol in the thin backend (every client gets every s
 | file | what |
 |---|---|
 | `ws_handshake.txt` | each client's connect burst, in order (`server.ts` `wss.on('connection')`) |
+| `startlog/backend_startup.txt` | the backend's startup log to the end of its synchronous start, normalised (`startlog.py`, G12) |
 | `ws_events.txt` | per step: what was sent (`>`) and every event-like frame back (`<`), in arrival order |
 | `ws_streams.txt` | the streaming types: channel set and value where the sim fixes it; the timing bound T1; distinct normalised payloads of the periodic types; history series per request |
 | `ws_schema.txt` | every key path of every message type, with the JSON types seen |
