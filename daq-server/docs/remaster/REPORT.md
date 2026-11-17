@@ -28,29 +28,29 @@ because it overwrote a live stand file. Everything in §1 and §4 is therefore s
 Stand-safety and security items, in the order the team should look at them. Not fixed unless the
 line says so.
 
-2. **SEC-1 (CRITICAL).** Direct `:8081` is "operator". The backend treats an absent `X-Auth-Email`
+1. **SEC-1 (CRITICAL).** Direct `:8081` is "operator". The backend treats an absent `X-Auth-Email`
    as operator (`server.ts:978-979` WS, `api-server.ts:345-347` HTTP), listens on all interfaces
    (`server.ts:1861`), and `deploy/bootstrap_daq.sh:199-202` opens 8081 (and 3000) to any
    source. Any device that can route to the stand host — including one on the `192.168.2.0/24`
    board LAN — gets full control, bypassing Caddy's login.
 
-3. **SEC-3 (CRITICAL).** OTA `projectPath` is code execution. `api-server.ts:1200-1206` passes a
+2. **SEC-3 (CRITICAL).** OTA `projectPath` is code execution. `api-server.ts:1200-1206` passes a
    caller-supplied path to `ota_service`, which runs `pio run` on it
    (`ota_service_main.cpp:232-243`); a `platformio.ini` `extra_scripts` runs arbitrary code as
    the service user. Latent on a systemd stand (no OTA unit, `install_services.sh:10-12`); live
    on the tmux/dev stack and on flash days.
 
-4. **SEC-4 (HIGH).** The sequencer `:9998`, controller `:9999` and OTA `:9997` command ports
+3. **SEC-4 (HIGH).** The sequencer `:9998`, controller `:9999` and OTA `:9997` command ports
    bind `INADDR_ANY` with no authentication (`sequencer_main.cpp:264`,
    `controller_main.cpp:139`, `ota_service_main.cpp:422`). With the host firewall off, a LAN
    device can command states and fire.
 
-5. **SEC-2 = D-OTA (CRITICAL, ledger lead).** `POST /api/ota-flash` (`api-server.ts:1169`) and
+4. **SEC-2 = D-OTA (CRITICAL, ledger lead).** `POST /api/ota-flash` (`api-server.ts:1169`) and
    `POST /api/ota-flash/flash-all` (`:1101`) have no operator gate: behind Caddy a signed-in
    non-operator can reflash board firmware; `flash-all` reflashes every enabled board. H8
    freezes the viewer's 200 on `ota-flash` so the hole stays visible to the suite (D84).
 
-6. **D-CTRLSTOP — S1 if the stand runs `controller_service` under systemd with elodin-db up at
+5. **D-CTRLSTOP — S1 if the stand runs `controller_service` under systemd with elodin-db up at
    stop time.** With elodin-db up, `controller_service` never exits on SIGTERM or SIGINT:
    `ControllerService::stop()` joins the Elodin subscriber thread, which blocks in
    `TCPClient::read_exact()` on a socket with no receive timeout (`TCPClient::connect` sets only
@@ -61,7 +61,7 @@ line says so.
    Kept, not fixed (D17); its exit code and the SIGKILL-or-timeout outcome are frozen as-is
    (D89). The ledger does not record the unit's `TimeoutStopSec` value.
 
-7. **What the controller leaves on the wire when SIGKILLed mid-PWM** — the ledger does not settle
+6. **What the controller leaves on the wire when SIGKILLed mid-PWM** — the ledger does not settle
    this (D-CTRLSTOP entry, star-f9 note). **To verify against the stand config:** whether the
    stop path is reachable there, and what PWM the boards hold after the kill.
 
