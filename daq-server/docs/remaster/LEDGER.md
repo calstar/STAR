@@ -202,7 +202,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 
 ## Defects found in the original (kept as-is, for the team)
 
-- H-1 (harness, found by the orchestrator; **fixed in H1**, merged) `test/test_integration.sh` parks `cubic_calibration.json` and `lc_tare.json` but **not** `scripts/calibration/calibrations/abort_thresholds.txt`; its `calibration_service` regenerates that tracked file in place (seen 2026-11-15 20:03, ADC values 858993460→901943133). On the stand an integration run overwrites the live abort thresholds. Fix belongs in WP4 (park and restore it like the others); the gate now fails on any dirty tracked file after a run.
+- H-1 (harness, found by the orchestrator; **fixed in H1**, merged) `test/test_integration.sh` parks `cubic_calibration.json` and `lc_tare.json` but **not** `scripts/calibration/calibrations/abort_thresholds.txt`; its `calibration_service` regenerates that tracked file in place (seen 2026-11-15 20:03, ADC values 858993460→901943133). On the stand an integration run overwrites the live abort thresholds. (Originally slated for WP4; done in H1 — WP4 no longer owes it) (park and restore it like the others); the gate now fails on any dirty tracked file after a run.
 
 **Lead REPORT.md with these (safety-relevant on the real stand), each with its operator-visible consequence:** H-1 (fixed), C2-2 (shipped profile TOMLs never checked for underscore ints), C6-3 (server-heartbeat loss undetected; daq_bridge never takes over), C6-4 (board shown disconnected while its data still displays), C6-1 (log claims SENSOR_CONFIG sent, 0 packets), C6-6 (config_broadcast silent unless an actuator board is designated survivor), C4-1 (sequencer deadlock: aborts fail after entering a refused dynamic state), C4-3 (abort does not cancel a pending stage: a valve can move after the abort batch), C1-9 (CLEAR_ABORT is never sent: boards are never told the abort is cleared), C3-3 (the backend picks its PT calibration file by mtime among 13 tracked files: after a git pull / checkout / rsync / deploy the GUI's calibration panel can report, and its save-coefficients command can write from, a different file — here one with no coefficients — with no config change. Live PT pressures are NOT affected: `calculatePressure` has no caller; live conversion is calibration_service's cubic store), C1-10 (each abort sends 8 ABORTs then 4 ABORT_DONEs: `triggerAbort` runs twice), C2-1 (digital-twin fire timer disabled), C2-4 (bad/missing TOML → service starts on defaults).
 
@@ -239,7 +239,7 @@ From C5 (pipeline):
 From C4 (sequencer):
 - C4-1 **Entering a dynamic state refused at load deadlocks the command worker whenever Elodin is connected**: `doTransitionTo` holds `config_mutex_` while `publishState()` locks it again; every later command — aborts included — waits the 10 s timeout and fails; SIGTERM does not exit it.
 - C4-2 A script timeout fires twice (HoldTimer and ScriptRunner's deadline); into a self-transitionable state the column is re-sent, nondeterministically.
-- C4-3 **An abort does not cancel a pending stage**: abort entry uses `is_transition=false`, so the previous state's +0.2 s stage lands after the abort's batch.
+- C4-3 **An abort does not cancel a pending stage**: abort entry uses `is_transition=false`, so the previous state's stage (configured +0.2 s after its entry; +100 ms after the abort in the golden — see the correction below) lands after the abort's batch.
 - C4-4 With `sequencer_owns_valves=true`, nobody commands the PWM roles during Fire.
 - C4-5 controller_service: does not strip CR (`FIRE_START\r\n` → ERR); with unresolved PWM roles replies "fire gate disabled (sequencer owns the valves)" (wrong cause); can send one more test-duty PWM packet after its FIRE_STOP close; takes >3 s to exit on SIGTERM.
 - C4-6 `RELOAD_CONFIG` on :9998 replies `ERR:unknown command` (daq-server/CLAUDE.md lists it as a command).
@@ -281,7 +281,7 @@ From the bloat map (BLOAT-MAP.md, "Defects found"):
 8. `tools/controller_lut/*.sh` invoke `python -m scripts.controller_lut.*` (moved): the documented LUT regeneration fails.
 
 From the design notes and WP prep (2026-11-16; reported, not fixed):
-- **D-OTA (lead for REPORT.md)** `POST /api/ota-flash` and `POST /api/ota-flash/flash-all` have no operator gate (`api-server.ts` A1101, A1169): behind Caddy a signed-in non-operator can reflash board firmware; `flash-all` reflashes every enabled board.
+- **D-OTA (lead for REPORT.md)** `POST /api/ota-flash` and `POST /api/ota-flash/flash-all` have no operator gate (`api-server.ts:1101` flash-all, `:1169` ota-flash; confirmed by SEC-2): behind Caddy a signed-in non-operator can reflash board firmware; `flash-all` reflashes every enabled board.
 - D-CTL controller_service keeps running with no TCP fire gate when its control port fails to bind (`controller_main.cpp:147` ignores `listen()`; the control thread logs and returns).
 - D-OTA2 ota_service abandons its detached client threads when SIGTERM arrives mid-flash.
 - D-SL stacklight `--help` omits `--force-state`.
