@@ -15,6 +15,7 @@ from __future__ import annotations
 import difflib
 import os
 import re
+import socket
 import sys
 import time
 import tomllib
@@ -934,6 +935,114 @@ def s_controller_direct(run, name, profile="default", ctl_over=None):
     return s.finish()
 
 
+# The concurrent-client cap of the two command ports (sequencer_main.cpp kMaxClients,
+# controller_main.cpp kMaxControlClients, both 64; DESIGN-WP8 §7.2 gap 5): with 64 idle
+# connections held, the 65th is answered with the busy reply and closed, the service logs it
+# once, and once the 64 close a 66th is served. Everything up to the 65th happens inside the
+# per-client reader's SO_RCVTIMEO (5 s) counted from the first idle open, or the idle connections
+# would be dropped as timeouts before the 65th arrives; the harness refuses to continue if it
+# took longer. The log line is frozen as ascii() so its bytes — the controller's U+26A0 U+FE0F
+# and two spaces, the em dash U+2014 in both — are explicit in the golden.
+CLIENT_CAP = 64
+
+
+def _hold_idle(port: int, n: int) -> list[socket.socket]:
+    """n connections opened and never written to, paced so the accept loop (one accept per 10 ms
+    select pass, listen backlog 10 / 4) is never asked to queue a burst."""
+    t0 = time.monotonic()
+    held = []
+    for _ in range(n):
+        held.append(socket.create_connection(("127.0.0.1", port), timeout=5))
+        time.sleep(0.01)
+    time.sleep(
+        0.3
+    )  # every connection accepted and on its own thread before the next one
+    took = time.monotonic() - t0
+    if took > 4.0:
+        raise RuntimeError(
+            f"holding {n} connections took {took:.1f}s; the readers' 5 s SO_RCVTIMEO is near"
+        )
+    return held
+
+
+def _read_until_closed(port: int) -> str:
+    s = socket.create_connection(("127.0.0.1", port), timeout=5)
+    got = b""
+    try:
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            got += chunk
+    except socket.timeout:
+        return ascii(got) + " (still open after 5 s)"
+    finally:
+        s.close()
+    return ascii(got) + " then closed by the service"
+
+
+def _busy_log_lines(log: str) -> list[str]:
+    lines = [ln for ln in log.splitlines() if "client limit" in ln]
+    return [f"-- busy log line(s), exact bytes: x{len(lines)}"] + [
+        f"   {ascii(ln)}" for ln in lines
+    ]
+
+
+def s_clients(run, profile="default"):
+    s = Session(run, f"{profile}/clients")
+    cfg = s.config(profile)
+    s.start(cfg)
+    time.sleep(0.4)
+    # The session's own connection would be one of the 64; hold 64 fresh idle ones instead.
+    s.client.close()
+    s.client = None
+    s.note(f"{CLIENT_CAP} idle connections opened and held", record=False)
+    held = _hold_idle(H.SEQ_PORT, CLIENT_CAP)
+    mark, t_open = run.rec.mark(), time.monotonic_ns()
+    reply = _read_until_closed(H.SEQ_PORT)
+    s._add(
+        f"connection {CLIENT_CAP + 1}, nothing sent", reply, mark, t_open, record=False
+    )
+    for h in held:
+        h.close()
+    # The 64 readers see EOF, return and mark themselves done; the accept loop reaps them before
+    # it tests the cap for the next connection (timing assumption, README).
+    time.sleep(1.0)
+    s.note(f"the {CLIENT_CAP} idle connections closed", record=False)
+    s.client = H.Client(H.SEQ_PORT)
+    s.step("DEBUG_MODE:0", 0.05)
+    text = s.finish()
+    return text + "\n".join(_busy_log_lines(s.seq.log_text())) + "\n"
+
+
+def s_controller_clients(run):
+    s = Session(run, "controller/clients")
+    s.config("default")
+    s.rec_mark = run.rec.mark()
+    s.el_mark = run.el.mark()
+    s.boundaries = [(time.monotonic_ns(), "-")]
+    s.start_controller(s.controller_config("default"))
+    time.sleep(0.3)
+    s.note(f"{CLIENT_CAP} idle connections opened and held", record=False)
+    held = _hold_idle(H.CTL_PORT, CLIENT_CAP)
+    mark, t_open = run.rec.mark(), time.monotonic_ns()
+    reply = _read_until_closed(H.CTL_PORT)
+    s._add(
+        f"controller <- connection {CLIENT_CAP + 1}, nothing sent",
+        reply,
+        mark,
+        t_open,
+        record=False,
+    )
+    for h in held:
+        h.close()
+    time.sleep(1.0)
+    s.note(f"the {CLIENT_CAP} idle connections closed", record=False)
+    s.ctl_cmd(b"FIRE_STOP\n", f"FIRE_STOP (connection {CLIENT_CAP + 2})", 0.2)
+    text = s.finish()
+    return text + "\n".join(_busy_log_lines(s.ctl.log_text())) + "\n"
+
+
 def s_flow(run):
     s = Session(run, "digital-twin/flow")
     cfg = s.config("digital-twin")
@@ -1184,6 +1293,8 @@ def sessions():
             ),
         )
     )
+    out.append(("default/clients", lambda r: s_clients(r, "default")))
+    out.append(("controller/clients", s_controller_clients))
     out.append(("digital-twin/flow", s_flow))
     out.append(("digital-twin/scripts-load", s_scripts_load))
     out.append(
