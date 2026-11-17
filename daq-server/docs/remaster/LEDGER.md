@@ -2,52 +2,17 @@
 
 Single source of truth for the remaster. **After any context loss, read this first.**
 
-## CHECKPOINT — read this first after any context loss (updated 2026-11-16 ~13:00)
+## CHECKPOINT — read this first after any context loss (updated 2026-11-17 ~04:00)
 
 Then read `git log --oneline -30 backend-remastered` and the Merge log below before acting.
 
-**Where things stand.** Phase 1 (characterization) is almost done. Merged on `backend-remastered`:
-C2 (config + black-box rework), C3 (calibration), C5/C5b (pipeline, all board types), C6/C6L (lifecycle),
-C4/C4b/C4L (sequencer + destination boards + load), H1 (abort-thresholds harness fix), and the harness:
-gate, stack lock (priority, ownerless takeover, portable mtime, `--status`), bounded ctest retry
-(D31), leftover-process + port check (D33), Linux leg with full-tree export, per-Dockerfile image tag,
-`--areas` (D36), load guard (D27). Tip: 85a02f9a (docs-only on top of b2599617; queue/C1 + H2 pending). Pushed to origin.
-
-**In flight (next step for each):**
-
-| item | branch / worktree | state | next step |
-|---|---|---|---|
-| ~~C1 packets~~ MERGED (see Merge log) | `queue/C1` (86f87bca) in `.claude/worktrees/remaster` | macOS `--fast` PASS (11:46, no sleep). Linux arm64: all ok except integration (PT2_Cal.CH1), root-caused D41 = main's harness, reproduced on the tip (×3: 166/167/167) | wait for H2; stack H2 on queue/C1; full arm64 Linux leg on the stack; ff both; log two rows (D19/D25); push |
-| H2 harness fix (D41) | `fix/H2-startup-board-slot` in `.claude/worktrees/inv-pt2ch1`, agent a7939e890e34bd93b | implementing: startup board to a free slot, integration fails on `[Config] ERROR` (mutation: board 60 → red) | Linux integration alone ×5 (PT2_Cal.CH1 5/5), macOS ×2, keeps service logs for OI-1 |
-| stress pass (D27) | — | not started | after C1+H2: every area under 1× load (`yes` × 14 inside one lock hold, `CHAR_UNDER_LOAD=1` for pipeline), list any golden that moves |
-| tag candidate | — | not started | full gate (with integration), Linux arm64 full + `--amd64`, CI dispatch (`gh workflow run daq-server-ci.yml --ref backend-remastered`, judge format job per D24, timing tests per D34), then `git tag remaster-baseline`, add the golden/frontend-test diff gate step (D12a), push tag? — **tags: push only if the user asks; branch push is authorised (D1)** |
-| tsc gate step (D40) | — | not started | own harness queue item after C1, with mutation |
-| design notes WP6–WP10 | merged (D39) | reviewed, revised | must-close-first gaps are C0 test-only work before each step (lists in each note) |
-| WP1 (tracked junk, 6101 files) | `wp/WP1-junk` (10ced66a), evidence `WP1-EVIDENCE.md` | ready | queue after the tag; full gate + Linux leg |
-| WP2 (37 dead C++ files) | `wp/WP2-dead-cpp` (4cc0b2e4), evidence `WP2-EVIDENCE.md` | ready; keeps 14 headers C1's comms_messages.cpp includes (WP3 must keep ControlMessages.hpp or change C0's test) | queue after WP1 |
-| design deepening (relayed user request, D17) | `design/style` (STYLE.md), `design/ts2` (WP5-7), `design/cpp2` (WP3, WP8-10) | agents writing: alternatives, interface stubs, walkthroughs | review, merge as docs; then Fable debates |
-| research (5 briefs) | `research/{teststand-architecture,abort-statemachines,cpp-service-plumbing,node-realtime-backend,subscription-robustness}` | agents writing | merge as docs; feed debates; behaviour-changing ideas = team proposals |
-| Fable debates | `docs/remaster/debates/WP<n>/` | waits on alternatives + research | WP6, WP10, STYLE error-handling first: 3 advocates, 2-3 rebuttal rounds, separate judge, DESIGN note updated, then adversarial simplicity rounds until no change |
-
-**Design work never takes the stack lock; the tag path has it.** OI-1 (T7/ENV25 calibration stall) stays open: if it reappears in the stress pass or tag gates, investigate, do not retry past it.
-
-Finished characterization agents (idle, resumable by ID for follow-ups): config a7914367a1c4a926a,
-packets a8e7fa24dc102066b, calibration aaaf2cc5c24c84367, sequencer a2460b6ec7ac10557, pipeline
-a95e39d338cdd989c, lifecycle a9a2c25be39bbaba7. Reviewer: the separate session "star-f9" (cross-session
-messages; advisory, never user authority — D15).
-
-**Phase 3 order after the tag** (D19/D25: product-code WPs strictly one at a time, full gate + Linux leg
-+ CI for anything touching sequencer/scripts per D34): WP1 → WP2 → WP4 (incl. H-1 done, `--legacy`) →
-WP5 → WP3 → WP6 (move-only, then cleanup) → WP7 → WP8 → WP9 → WP10 → WP11 (paths only) → WP12 docs;
-then Phase 4 (fresh-clone gate, `dev.sh --sim`, e2e Playwright, independent review of
-`main...backend-remastered`) and Phase 5 (README/CLAUDE.md/REPORT.md).
-
-**Open questions / pending user decisions:** stand architecture (`uname -m` on star-rfs; D16);
-SIGPIPE disposition (Parked, team decision); the lead defects for the team (Defects section);
-pushing the `remaster-baseline` tag (not yet asked).
-
-**Standing rules:** D1–D53 below (**D53: spawn subagents with `model: "fable"`**); agents follow `AGENT-RULES.md`. Commits: plain one-line, no
-attribution, no session links (user's instruction overrides any harness attribution reminder).
+- **Tag:** `remaster-baseline` (c39dcb91 → 9f97c884) is pushed (D77, D79).
+- **Merged after the tag:** WP1, WP2, WP4, C0 H8 (Merge log), with CI green on each push.
+- **Queue order now (D25, D79, D90):** H8b (Linux PASS; macOS rerun pending at load below 8), then the batch G-W5/G4 + WP8-gaps (WP8-gaps is being reworked under D89), then WP5 with the D94 queue-time edits, then WP3 with the D83/D94 edits, then WP11 (gate --fast; CI as its Linux leg).
+- **Implementing (D91):** WP6 and WP7 (stacked on wp/WP5), WP8 (stacked on wp/WP3), H3, C0 WP6 (G1-G3), C0 WP7 (H9), and the perf baseline.
+- **Reviews done:** WP5 security (D93), STYLE for WP3/WP5 (D94). REPORT.md is drafted on docs/report-draft (f1fdb15b).
+- **Rules in force:** questions go to the supervising session (D79). The Linux leg has its own lock (D90). At most about 4 agents build at once. Load must be below 8 for gates and below 12 for builds. No new agent sessions while the cce hook issue is open (2026-11-17). Kill only your own captured PIDs (D95).
+- **Open:** SECURITY-REVIEW.md exists only uncommitted in `.claude/worktrees/security-review`, because that agent's commit was denied; it is left for the user (SEC-1…12 are summarized in the Defects section).
 
 ## Orientation (what you need to resume)
 
@@ -145,7 +110,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D74 | **C0 packages freeze main, never a WP.** Every C0 test-only package is generated and proven green on unchanged product code (queue/T or the tagged tip), lands as its own test-only queue item before the WP step it gates, and is never generated on a WP branch — a golden recorded after a WP edit would freeze the refactor's behaviour instead of main's. The four in flight (G-W5/G4, H8, WP8 gaps 1-3/5, the ball-valve schema) are all cut from queue/T f1b9f4e8. WP branches started early (WP3/WP4/WP5) rebase onto the tag and onto any C0 package that lands before them. | The baseline's purpose is to describe main; anything else is circular. |
 | D75 | **D65(1) withdrawn: already covered** (see D65). The C0 agent stopped instead of building a golden that would freeze nothing; mutation evidence recorded 2026-11-16 23:4x: dropping `+0x10` at `DatabaseConfig.cpp:643` turned `char_elodin_schema_config_base` red (`MISMATCH`, 9071 lines both sides; predicted lines 7562/7587/7590/7615 plus their raw twins 7570/7588/7598/7616), and `char_elodin_schema_profile_default` stayed green; reverted, tree clean. | A red-team finding is checked against the revision the WP will start from. |
 | D76 | **Tag candidate queue/T f1b9f4e8 judged locally green, pending CI.** macOS full gate: every step PASS (integration 167/167, ctest with no retries). Linux arm64 first leg at 1-min load ~62 (seven agents building at -j14) was set aside as starved (D27 class; integration 49/123 with 0/47 entities). Rerun at load 4-8 with agents throttled (nice 19, -j2, quiet during gates): npm, build, backend-vitest, characterization (pt/nocal/boards/stalesub), integration 167/167 all PASS; ctest red only on `script_runtime` ('the open is re-asserted by the republish (saw 2 over 2.3 s)', 3/3 after retries). No C++ or ctest file differs from 3587754f, whose Linux ctest passed; the symptom is D34's republish undercount, and the arm64 container runs on the same Mac whose timers D34 records. Per D34/D55 the native x86_64 CI run judges it: queue/T merged into backend-remastered and pushed, CI on PR #229 decides the tag. Logs: tagcand-f1b9f4e8/{macos,linux-arm64,linux-arm64-rerun}. | The local Linux leg is a VM on the Mac; it cannot judge a timer-bound test the Mac itself fails. |
-| D77 | **`remaster-baseline` cut (local).** CI run 44011896743 on 9972242a (= queue/T f1b9f4e8 + docs/remaster): every job green except Code Formatting, whose 11 offenders are all outside daq-server/ (D24). Run Tests 48/48 including `script_runtime` (13.14 s, passed natively; D76 resolved as the Mac/VM timer artefact), Integration, ASan+UBSan, TSan, Playwright E2E, Session Control E2E all green. Tag is annotated, on the commit after this one, local only; pushing it waits on the user. Next: the D12a growth-allowing golden diff step against the tag, then C0 packages and WPs in D25 order, each rebased onto the tag. | Tag = main's behaviour, frozen and proven on three legs. |
+| D77 | **`remaster-baseline` cut (local).** CI run 44011896743 on 9972242a (= queue/T f1b9f4e8 + docs/remaster): every job green except Code Formatting, whose 11 offenders are all outside daq-server/ (D24). Run Tests 48/48 including `script_runtime` (13.14 s, passed natively; D76 resolved as the Mac/VM timer artefact), Integration, ASan+UBSan, TSan, Playwright E2E, Session Control E2E all green. Tag is annotated, on the commit after this one; pushed on the user's direct answer (see D79). Next: the D12a growth-allowing golden diff step against the tag, then C0 packages and WPs in D25 order, each rebased onto the tag. | Tag = main's behaviour, frozen and proven on three legs. |
 | D78 | **wp/WP5 implemented (01634e5e, 6 commits, +122/−505), not queued.** tsc, vitest (identical to baseline on every SHA), esbuild order (only the four permitted changes), config/calibration and pipeline characterization PASS. 5.5 and 5.6 stay unproven until rebased onto G-W5 and G4 (mutations: `boardSlot` → `return m`; the `reply === 'OK'` predicate, timeout 3000 and `done(false,'connect error')` each move one `golden/holds/` line). At queue time: commit 5.3 must also re-point G-W5's `legacy/state-actuators.js` import, and expect comment-only conflicts with G4 in pipeline/run.sh, make_fixture.py and README.md. Stale `sendToActuatorService` / `legacy/` references in characterize.py:267 and three docs go to WP12. | Recorded so the rebase is mechanical. |
 | D79 | **User rule (2026-11-16): the supervising session (star-f9) answers questions in the user's place.** Questions go to star-f9, and its answers count as the user's decisions; this includes the tag push (already done on the user's direct answer). On PR #229 the only permitted action is pushing to backend-remastered: no merge, no ready-for-review, no title/body/label/reviewer edits, no comments. Anything touching main or aimed at the stand still goes to the user directly. Asking protocol (star-f9): one question per message, with options, a recommendation and evidence (file:line, gate log, D#); keep working on anything unblocked; after 30 min without a reply, default to the recommendation and note it here. Ordering (star-f9): C0 packages rebase and merge first; WP5 waits until the C0 packages guarding its files (G-W5, G4) have merged. | User's instruction. |
 | D80 | **wp/WP4 implemented (6367186a, 7 commits, 28 D + 5 M, +31/−2842), not queued.** The `--legacy` byte check is IDENTICAL. Integration passed 167/167 under the lock at 1-min load 4→13, with `abort_thresholds.txt` unchanged. The alias fix's mutation: a stubbed `sudo` produced the false ✅ before the fix and exit 1 naming 127.0.0.99 after it. The only visible behaviour change is that `--legacy` now runs the default path. Commit 7 (the alias fix) can be separated from the rest. Queue position is after WP1 and WP2 (D25); the branch was cut from queue/T, so after the rebase two residual-grep hits in WP2's files (`send_fake_pt.cpp:147`, `archive/README.md:18`) and `Doxyfile:88` (`build-ci`, WP1) disappear. Orchestrator's line: `.github/workflows/daq-server-ci.yml:569-576`. Note correction: pipeline/README.md cites `data_logger_service.py` at line 234, not 173-175. H3 adds: `test_integration.sh`'s `kill_stale_integration_processes` kills by port and by an unanchored `pkill -f "elodin.*integration_test"` on every exit, so any run of that script, even one that fails early, must hold the stack lock. | Recorded for the queue. |
@@ -198,23 +163,28 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | C6 | lifecycle: startup, shutdown, reconnect, dup-sub, heartbeat loss, OTA | agent | `char/lifecycle` | **merged** 9d846bd6 (7 goldens, 6 mutations incl. normaliser, black-box) |
 | C6L | lifecycle load-hardening | agent | `char/lifecycle-load` (ce1c2f89, 165fde6d; from 87baaaac) | **queue/C6L (be3d454f) failed, deleted (D25):** macOS full gate green except main's timing ctests (actuator_delays, script_positions → led to D31); Linux leg failed in its own area before running — the new alias check calls `ifconfig`, absent on ubuntu (and possibly the stand). Sent back to probe by binding instead; re-queue after that, ahead of C4/C5 hardening (they rebase onto it). Cause of the queue/C4 failure: a straggler simulator (`sim_skip` outliving its 8 s stop wait) kept sending PT data to the shared capture port, so the ball-valve and sim_board captures took its packets. Fixes: per-run capture ports, captures filtered by sender port, previous sim confirmed dead, stops bounded at 30 s (still-alive = red), windows start at the board's first packet. Bounds from cited constants (heartbeat lost [4, 8] s from `BOARD_HEARTBEAT_STALE_MS`; periodic senders [0.75P, 1.5P]; ball valve [4.8, 6] s from `BALL_VALVE_HEARTBEAT_TIMEOUT_S`); external assumptions in lifecycle/README.md. 42 golden lines relabelled one-for-one, none removed. 7/7 at 1× (load 21, 32, 59) and at 2× (92); 7 mutations red at 1×, incl. two doubled periods | `test/characterization/lifecycle/` | C0 |
 | B0 | bloat-map research (read-only) | agent | none | done → `docs/remaster/BLOAT-MAP.md` | — | — |
-| WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | queued (after suite) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
-| WP2 | delete C++ no target compiles | — | — | queued | BLOAT-MAP WP2 | WP1 |
-| WP3 | lib hygiene: PressureStateMachine, move db.hpp, split Parser/DatabaseConfig | — | — | queued | BLOAT-MAP WP3 | WP2 |
-| WP4 | dead launchers + superseded test scripts, `--legacy` branch; park and restore `abort_thresholds.txt` like the other live stores (H-1); make test_integration.sh fail loudly (non-zero, listing them) when a macOS loopback alias is missing instead of `|| true` + a false ✅ (reviewer suggestion) | — | — | queued | BLOAT-MAP WP4 | WP1 |
-| WP5 | backend dead TS + line client + slot helper | — | — | queued | BLOAT-MAP WP5 | WP1 |
-| WP6 | split server.ts | — | — | queued | BLOAT-MAP WP6 | WP5 |
-| WP7 | split api-server.ts | — | — | queued | BLOAT-MAP WP7 | WP5 |
-| WP8 | shared C++ service plumbing | — | — | queued | BLOAT-MAP WP8 | WP3 |
-| WP9 | split calibration_main.cpp — **constraint (C3, revised after the Linux leg):** the robust seed's θ differs by up to 2e-3 relative between compilers, so θ/covariance are now held only at rel 1e-2 and the **robust predictions** carry the contract (abs 1e-9 psi; 8e-10 measured across platforms — a thin margin). WP9 must still move `calculate_pressure` and the robust path without reordering arithmetic; a red `robust-prediction` family is a contract change until proven otherwise | — | — | queued | BLOAT-MAP WP9 | WP8 |
-| WP10 | split sequencer/controller/actuator/bridge god files | — | — | queued | BLOAT-MAP WP10 | WP9 |
-| WP11 | tools/: fix broken documented paths only; GUI deletions parked (operator-facing, team decision) | — | — | queued | BLOAT-MAP WP11 (narrowed) | WP4 |
-| WP12 | docs | — | — | queued | BLOAT-MAP WP12 | WP2, WP4, WP5, WP11 |
+| WP1 | delete tracked junk (root node_modules, .cache, build-ci, build-clang-ci, backend/dist, output/lut bins) | — | — | **merged** (D81, 4682e5ef) | see BLOAT-MAP WP1 | C1–C6 merged + mutation check |
+| WP2 | delete C++ no target compiles | — | — | **merged** (D82, CI green) | BLOAT-MAP WP2 | WP1 |
+| WP3 | lib hygiene: PressureStateMachine, move db.hpp, split Parser/DatabaseConfig | — | — | implemented wp/WP3 f4bc5c86 (D83, D94 review: queue as is) | BLOAT-MAP WP3 | WP2 |
+| WP4 | dead launchers + superseded test scripts, `--legacy` branch; park and restore `abort_thresholds.txt` like the other live stores (H-1); make test_integration.sh fail loudly (non-zero, listing them) when a macOS loopback alias is missing instead of `|| true` + a false ✅ (reviewer suggestion) | — | — | **merged** (D86, b912bd16) | BLOAT-MAP WP4 | WP1 |
+| WP5 | backend dead TS + line client + slot helper | — | — | implemented wp/WP5 aff71db2 (D78, D93, D94; after G-W5/G4) | BLOAT-MAP WP5 | WP1 |
+| WP6 | split server.ts | — | — | implementing (wp/WP6, stacked on WP5; D91) | BLOAT-MAP WP6 | WP5 |
+| WP7 | split api-server.ts | — | — | implementing (wp/WP7, stacked on WP5; D91) | BLOAT-MAP WP7 | WP5 |
+| WP8 | shared C++ service plumbing | — | — | implementing (wp/WP8, stacked on WP3; D91) | BLOAT-MAP WP8 | WP3 |
+| WP9 | split calibration_main.cpp — **constraint (C3, revised after the Linux leg):** the robust seed's θ differs by up to 2e-3 relative between compilers, so θ/covariance are now held only at rel 1e-2 and the **robust predictions** carry the contract (abs 1e-9 psi; 8e-10 measured across platforms — a thin margin). WP9 must still move `calculate_pressure` and the robust path without reordering arithmetic; a red `robust-prediction` family is a contract change until proven otherwise | — | — | waits for WP8 | BLOAT-MAP WP9 | WP8 |
+| WP10 | split sequencer/controller/actuator/bridge god files | — | — | waits for WP9 | BLOAT-MAP WP10 | WP9 |
+| WP11 | tools/: fix broken documented paths only; GUI deletions parked (operator-facing, team decision) | — | — | implemented wp/WP11 97843989 (D92) | BLOAT-MAP WP11 (narrowed) | WP4 |
+| WP12 | docs | — | — | waits for WP11 (+REPORT draft on docs/report-draft) | BLOAT-MAP WP12 | WP2, WP4, WP5, WP11 |
 
 ## Merge log
 
 | when | package | merge commit | gate |
 |---|---|---|---|
+| 2026-11-16 | **remaster-baseline** tag on 9f97c884 (= queue/T f1b9f4e8 + docs) | tag c39dcb91, pushed on the user's answer | D76/D77: macOS full PASS, Linux arm64 PASS except D34-class script_runtime, CI 44011896743 green |
+| 2026-11-16 | WP1 untrack junk (queue/WP1) | 4682e5ef | D81: macOS full PASS (format with pinned clang-format), Linux arm64 PASS |
+| 2026-11-16 | WP2 dead C++ (queue/WP2) | cd56a103 | D82: macOS PASS, Linux PASS except D34 script_runtime; CI 44032367993 green |
+| 2026-11-16 | WP4 launchers, test scripts, --legacy, alias fix (queue/WP4) | b912bd16 | D86: macOS full PASS, Linux arm64 PASS |
+| 2026-11-17 | C0 H8 operator gates (queue/H8) | 389ac159 | D88: Linux PASS, macOS PASS except D34 ctest; CI 44057282047 green |
 | 2026-11-15 | **first push** of `backend-remastered` (2243fccc: main's code + harness + H1) | — | **CI run 43822614402: GREEN under D24** — 14/15 jobs pass (gcc-12 + clang-18 builds, Run Tests, Integration Test, ASan+UBSan full stack, TSan, video gateway, web GUI, Playwright E2E, systemd session E2E, security, docker, code quality, summary). Code Formatting Check red with 12 offenders, all under `firmware/`, 0 under `daq-server/` (pre-existing on main, D11/D24) |
 | 2026-11-16 | **char-batch-2**: C4/C4b/C4L sequencer (42a37308), C6L lifecycle (a95a77b8), C5/C5b pipeline (a9eed981) | bb99e405.. | macOS `--fast`: characterization PASS in every area, format, tree-unchanged ok; ctest red only on D34 timing (actuator_delays after 2 retries; script_positions RETRY PASSED). Linux full leg: characterization ok (**pipeline now exact on Linux — the D30 known-red exception ends here**), integration ok, ctest red only on `script_runtime` after retries (D34: judged on CI). Golden lines removed vs tip: 194 = 152 pipeline + 42 lifecycle, each accounted for in `pipeline/GOLDEN-AUDIT.md` and `lifecycle/GOLDEN-AUDIT.md` (D20) |
 | 2026-11-16 | D36 harness (queue/D36, ff): `--areas` / `CHAR_AREAS`, Linux image tagged by Dockerfile hash (worktrees shared one tag, so an older Dockerfile without numpy overwrote it) | 99ab1875.. | lock self-test ok; macOS `--fast`: characterization PASS, ctest red only on the D34 pair (+ Darwin baseline); `CHAR_AREAS=config` runs only config + its ctest label, PASS; Linux `--areas config,calibration` PASS (config Python half now has numpy) |
