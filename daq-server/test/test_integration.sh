@@ -111,10 +111,36 @@ INTEGRATION_PROCESS_NAMES=(
   board_startup_sim
 )
 
+# PIDs bound to a port: lsof (macOS; the Linux image has it too), else fuser (psmisc).
+port_holders() {
+  local port=$1 proto=${2:-tcp}
+  if command -v lsof >/dev/null 2>&1; then
+    if [ "$proto" = udp ]; then lsof -nP -iUDP:"$port" -t 2>/dev/null; else lsof -nP -iTCP:"$port" -t 2>/dev/null; fi
+  elif command -v fuser >/dev/null 2>&1; then
+    fuser "$port/$proto" 2>/dev/null | tr -s ' ' '\n'
+  fi | sort -u || true
+}
+# Kill what this checkout left on a port; a holder from anywhere else is named and left alone.
+# Until LEDGER D80 this killed whatever held the port (and fuser -k everything on Linux), so a run
+# of this script that failed early still took down another worktree's stack — the reason every run,
+# however short, had to hold the stack lock. Matching the command line on $REPO_ROOT/ is the same
+# anchor the pkill sweeps below use; elodin-db qualifies through its DB path under .tmp/.
+kill_port() {
+  local port=$1 proto=${2:-tcp} sig=${3:-TERM} p cmd
+  for p in $(port_holders "$port" "$proto"); do
+    cmd="$(ps -o command= -p "$p" 2>/dev/null || true)"
+    case "$cmd" in
+      *"$REPO_ROOT/"*) kill "-$sig" "$p" 2>/dev/null || true ;;
+      "") ;;
+      *) echo "  ⚠️  port $port/$proto is held by pid $p from outside this checkout; left alone: ${cmd:0:90}" >&2 ;;
+    esac
+  done
+}
+
 # Kill any leftover processes from a previous integration test run that may
 # still be holding ports.  Only targets processes whose command line contains
-# our repo path or the well-known binary names, to avoid killing unrelated
-# processes.
+# our repo path (the elodin-db match is its DB path under this checkout's .tmp/),
+# to avoid killing unrelated processes or another worktree's stack.
 kill_stale_integration_processes() {
   local label="${1:-}"
   local killed=0
@@ -125,11 +151,12 @@ kill_stale_integration_processes() {
   done
   # Backend server (tsx src/server.ts) — match on the server.ts path
   pkill -f "$REPO_ROOT/diablo_server/backend.*server\.ts" 2>/dev/null && killed=$((killed + 1)) || true
-  # Elodin DB — match on the test DB path pattern
-  pkill -f "elodin.*integration_test" 2>/dev/null && killed=$((killed + 1)) || true
-  # Also kill any process bound to our test ports
+  # Elodin DB — match on this checkout's test DB path
+  pkill -f "elodin.*$REPO_ROOT/\.tmp/elodin_integration_test" 2>/dev/null && killed=$((killed + 1)) || true
+  # Also kill anything of ours still bound to a test port
   for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_SEQUENCER_PORT; do
-    lsof -ti ":$port" 2>/dev/null | xargs kill 2>/dev/null || true
+    kill_port "$port" tcp
+    kill_port "$port" udp
   done
   if [ "$killed" -gt 0 ]; then
     sleep 1
@@ -138,7 +165,7 @@ kill_stale_integration_processes() {
       pkill -9 -f "$REPO_ROOT.*$name" 2>/dev/null || true
     done
     pkill -9 -f "$REPO_ROOT/diablo_server/backend.*server\.ts" 2>/dev/null || true
-    pkill -9 -f "elodin.*integration_test" 2>/dev/null || true
+    pkill -9 -f "elodin.*$REPO_ROOT/\.tmp/elodin_integration_test" 2>/dev/null || true
     [ -n "$label" ] && echo "  $label: killed $killed stale process group(s)"
   fi
 }
@@ -285,35 +312,17 @@ if [ "$(uname)" = "Darwin" ]; then
   fi
 fi
 
-# ── Kill stale listeners on test ports (cross-platform: lsof on macOS, fuser on Linux) ──
-kill_port() {
-  local port=$1 proto=${2:-tcp}
-  local pids
-  if command -v fuser &>/dev/null; then
-    fuser -k "$port/$proto" > /dev/null 2>&1 || true
-  else
-    # macOS: use lsof
-    if [ "$proto" = "udp" ]; then
-      pids=$(lsof -nP -iUDP:"$port" -t 2>/dev/null) || true
-    else
-      pids=$(lsof -nP -iTCP:"$port" -t 2>/dev/null) || true
-    fi
-    for p in $pids; do
-      kill -9 "$p" 2>/dev/null || true
-    done
-  fi
-}
-
+# ── Kill this checkout's stale listeners on the test ports (kill_port, defined above) ──
 for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_DAQ_UDP_PORT; do
-  kill_port "$port" udp
+  kill_port "$port" udp KILL
 done
 sleep 0.3
 
 for port in $TEST_ELODIN_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
-  kill_port "$port" tcp
+  kill_port "$port" tcp KILL
 done
-# FSWConfigManager in daq_bridge binds to UDP 5008 (hardcoded); kill stale holders
-kill_port 5008 udp
+# FSWConfigManager in daq_bridge binds to UDP 5008 (hardcoded); kill our stale holders
+kill_port 5008 udp KILL
 sleep 0.5
 
 # ── Build C++ binaries ───────────────────────────────────────────────────────
