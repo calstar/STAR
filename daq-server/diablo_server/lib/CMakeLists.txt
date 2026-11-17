@@ -40,6 +40,7 @@ set(FSW_SOURCES
     src/control/ControllerLUT.cpp
     src/control/RobustDDPController.cpp
     src/control/ControllerService.cpp
+    src/service/StopSignals.cpp
 )
 
 add_library(fsw_daq_lib SHARED ${FSW_SOURCES})
