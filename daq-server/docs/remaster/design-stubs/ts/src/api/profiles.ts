@@ -3,7 +3,8 @@
  *
  * Owns: no state (`routes/config-profiles.ts`, `routes/calibration-profiles.ts` do). Must not
  * know about: `server/*`. Contract: `http.txt` (switch 403/409),
- * `__tests__/config-profile-create-calibration.test.ts` (drives `createAPIHandler`); H1/H8.
+ * `__tests__/config-profile-create-calibration.test.ts` (drives `createAPIHandler`); H1/H8; the
+ * `setImmediate` deferral at switch (718) is H1's ordering vitest (`res.writableEnded`, D72).
  * Import-time effects: none.
  */
 
