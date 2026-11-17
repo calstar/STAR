@@ -4,7 +4,11 @@
 // `continue`s at 1673, 1789, 1796 stay `continue` (DESIGN-WP9 §4). 1673 and 1796 (a refused
 // capture inside Zero All / Tare All) are NOT exercised by today's stack.txt — burst() sends 10
 // fresh samples per uid before cmd 0 and cmd 8 — so a wrong `return` there passes today's golden;
-// the stale-uid C0 case (DESIGN-WP9 §7.2) gates this step. 1789 is exercised (cmd(8, 0, 1.0)).
+// the stale-uid C0 case (DESIGN-WP9 §7.2 (ii)) gates this step, worded as the deterministic
+// `too_few` refusal (D73): one fresh sample for the uid after burst()'s 10 s synthetic jump, so
+// CaptureWindow::capture finds n = 1 < 3 inside the window anchored on that sample and refuses
+// with no real-time input; a `return` then skips the remaining uids and the golden goes red.
+// 1789 is exercised (cmd(8, 0, 1.0)).
 //
 // Decodes a CalibrationCommand row (ts u64 | cmd u8 @8 | pad @9 | sensor_id u16 LE @10 | ref f32
 // @12, memcpy not cast) and runs cmd 0-8 through CalibrationActions. CalibrationContext comes

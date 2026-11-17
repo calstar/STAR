@@ -90,7 +90,10 @@ void register_store_channels(fsw::calibration::CubicCalibrationStore& cubic_stor
                              const std::vector<fsw::elodin::BoardChannels>& pt_boards,
                              const std::vector<fsw::elodin::BoardChannels>& lc_boards,
                              const fsw::t7::T7CalibrationMap& t7_map);
-/** 1436-1472: the startup model summary lines. */
+/** 1436-1472: the startup model summary lines. The `[Calibration]   uid N -> model` lines
+ *  (1457-1458) range-for g_pt_model, an unordered_map (95): libc++ and libstdc++ iterate it in
+ *  different orders, so the cal.log golden's normaliser sorts that block — one golden for both
+ *  legs (D22; DESIGN-WP9 §7.2 (i), D73). The print itself moves verbatim. */
 void print_model_summary();
 
 }  // namespace fsw::calibration_service
