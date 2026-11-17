@@ -46,8 +46,7 @@ daq-server/                 # this subproject (inside the STAR monorepo)
 ├── test/                   # All test scripts and helpers
 │   ├── test_integration.sh # Full-stack integration test (run via `int` alias)
 │   ├── ws_data_flow_test.ts  # WebSocket data flow assertions (called by integration test)
-│   ├── udp_listener.ts     # Captures actuator UDP commands during integration test
-│   └── verify_packet_reception.sh
+│   └── udp_listener.ts     # Captures actuator UDP commands during integration test
 │
 ├── sim/                    # Simulators
 │   ├── board_simulator.py  # Simulates all ESP32 sensor boards over UDP
