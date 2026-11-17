@@ -2,15 +2,19 @@
 // diablo_server/lib/include/net/TcpCommandServer.hpp
 // (+ lib/src/net/TcpCommandServer.cpp in fsw_daq_lib).
 //
-// The accept loop two command ports share statement for statement (sequencer_main.cpp:303-349,
-// controller_main.cpp:171-214). Listener setup is NOT here: each main opens, binds, listens on and
-// closes its own socket as today (sequencer 252-276/351, controller 128-147/216, ota 410-434/456);
-// openTcpListener was dropped because a callee that closes on bind failure inverts the caller's
-// log → close order at all three sites (DESIGN-WP8 §0, Rejected).
+// The accept loop two command ports share statement for statement (sequencer_main.cpp:282-349,
+// controller_main.cpp:151-214: the Conn/reap_finished block, the loop, the shutdown/join tail).
+// Listener setup is NOT here: each main opens, binds, listens on and closes its own socket as
+// today (sequencer 252-276/351, controller 128-147/216, ota 410-434/456); openTcpListener was
+// dropped because a callee that closes on bind failure inverts the caller's log → close order at
+// all three sites (DESIGN-WP8 §0, Rejected).
 //
 // Owns:       the Conn vector (on the calling thread's stack; Conn and reap_finished moved
-//             verbatim from sequencer_main.cpp:284-301) and one tracked thread per client, all
-//             joined before it returns. It BORROWS listen_fd and never closes it.
+//             verbatim from sequencer_main.cpp:284-301 with their leading comment 282-283, S38;
+//             the controller's copy 151-169 is deleted with its comment) and one tracked thread
+//             per client, all joined before it returns. It BORROWS listen_fd and never closes it.
+//             Both mains lose the whole block: a Conn and a reap_finished left behind with no loop
+//             are -Wunused-variable, and baseline_warnings.txt admits no new line.
 // Threads:    runs on the caller's thread (sequencer: main; controller: its detached control
 //             thread, which stays detached — C4-5's >3 s exit). It touches the Conn vector only
 //             from that thread; client threads publish completion via Conn::done (atomic).
@@ -32,7 +36,8 @@
 // Literals:   today's one literal "[Sequencer] client limit (" / "[ControllerService] ⚠️  client
 //             limit (" becomes prefix + "client limit (" — the S15 literal multiset changes and
 //             the adoption commit lists it (DESIGN-WP8 §2.2).
-// Must not know: fsw::service (`running` is the caller's atomic; this TU does not include
+// Must not know: fsw::service (`running` is the caller's atomic — each main passes its g_running,
+//             the namespace-scope reference to fsw::service::running(); this TU does not include
 //             StopSignals.hpp); the line protocol, read discipline (512-byte lines / first 64
 //             bytes stay in each main), reply texts, any service object. **on_client reaches a
 //             service only through its public, enqueueing API** (SequencerService's
@@ -41,7 +46,8 @@
 // Contract:   sequencer/golden/* (every reply, CRLF, two commands per write, oversize close),
 //             sequencer/golden/controller__*, lifecycle/golden/shutdown.txt ("command port still
 //             accepting: False"), DESIGN-WP8 §7.2 gap 5 (busy reply and log bytes, 64 held
-//             connections; before pass 2).
+//             connections) — the one gate of pass 2, which is pass 2's only piece (D57): gap 5
+//             not merged green → pass 2 is not queued, this loop stays in its two mains.
 // Static init: none. No identifier spelled `main`.
 #pragma once
 

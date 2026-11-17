@@ -1,4 +1,4 @@
-// DESIGN STUB (DESIGN-WP8 §2.1) — not compiled. Becomes
+// DESIGN STUB (DESIGN-WP8 §2.1; notice shape per D57) — not compiled. Becomes
 // diablo_server/lib/include/service/StopSignals.hpp
 // (+ lib/src/service/StopSignals.cpp in fsw_daq_lib).
 //
@@ -6,7 +6,7 @@
 // Replaces nine file-local flags and handlers (DESIGN-WP8 §1.3).
 //
 // Owns:       one std::atomic<bool> (constant-initialised, true until SIGINT/SIGTERM) and, written
-//             once by installStopHandlers before ::signal(), the notice kind and line (plain
+//             once by installStopHandlers before ::signal(), the print order and the line (plain
 //             globals: every thread in every service is created after the call, so the writes
 //             happen-before every reader; STYLE-S24 states this exception).
 // Threads:    installStopHandlers: the main thread, once, exactly where the service installs its
@@ -14,16 +14,29 @@
 //             svc.init() in the sequencer, after initialize() and before start() in the controller,
 //             …), always before its first thread. running(): any thread. The handler runs on
 //             whichever thread the kernel picks (on Linux usually the group leader).
+// Read sites: none change (D57). Each main binds its old flag name to running() at namespace
+//             scope, where the deleted declaration stood — `auto& g_running =
+//             fsw::service::running();` inside the anonymous namespace (six mains), `static auto&
+//             g_running = …` in controller_main.cpp (its 54 is file-scope static) — so every
+//             `while (g_running)` is byte-identical. The reference binds at the main's dynamic
+//             initialisation to an atomic that is constant-initialised here, so DSO init order
+//             cannot bite and no I/O happens (STYLE-S26 holds, also inside the config harness that
+//             #include's a main). fsw_daq_lib is SHARED (lib/CMakeLists.txt:45): the one running()
+//             call goes through the PLT; each read is then an atomic load through the stored
+//             address. Unobservable.
 // Semantics:  ::signal — BSD semantics, i.e. sigaction with SA_RESTART, handler not reset, signal
 //             masked during the handler (research cpp-service-plumbing §0.1). Never sigaction with
 //             another flag set: dropping SA_RESTART makes accept/recv/waitpid return EINTR;
 //             SA_RESETHAND makes a second SIGTERM fatal. EINTR exposure stays today's: select,
 //             usleep and SO_RCVTIMEO/SO_SNDTIMEO socket calls are interrupted regardless (§0.2),
 //             including AbortBroadcaster's SO_SNDTIMEO sendto (an ABORT repeat can fail; D42).
-// Handler:    one function, switch on the notice; each case is today's body statement for
-//             statement, including the non-async-signal-safe std::cout << line << std::endl and
-//             not saving errno (parked: BLOAT-MAP defect 6; research §0.3). daq_bridge's case
-//             clears the flag before printing; the others print first; t7_bridge prints nothing.
+// Handler:    one function, switch on the print order; each case is today's body statement for
+//             statement — kPrintThenStop: `if (line) std::cout << line << std::endl;` then
+//             `flag = false;`; kStopThenPrint (daq_bridge): the same two the other way round —
+//             including the non-async-signal-safe std::cout << … << std::endl and not saving errno
+//             (parked: BLOAT-MAP defect 6; research §0.3). The `if (line)` test is the one
+//             statement no handler has today: true in every printing service, false only in
+//             t7_bridge, which prints nothing today. Unobservable.
 // Errors:     none returned; ::signal's result is ignored, as today.
 // Must not know: any service; config; sockets; what a service does on stop (each main tears down
 //             in its own order, §1.2/§6.3). No ServiceMain (rejected, §0).
@@ -37,10 +50,10 @@
 
 namespace fsw::service {
 
-/** What the SIGINT/SIGTERM handler prints. Each value is one service's behaviour today. */
+/** In which order the SIGINT/SIGTERM handler prints its line and clears the flag. Two values,
+ *  because two orders exist today; "print nothing" is not an order but a nullptr `line`. */
 enum class ShutdownNotice {
-    kSilent,         // flag only (t7_bridge)
-    kPrintThenStop,  // std::cout << line << std::endl; then flag = false (seven services)
+    kPrintThenStop,  // std::cout << line << std::endl; then flag = false (eight services)
     kStopThenPrint,  // flag = false; then std::cout << line << std::endl (daq_bridge)
 };
 
@@ -53,9 +66,10 @@ std::atomic<bool>& running();
 
 /** signal(SIGINT, h); signal(SIGTERM, h); and for kIgnore signal(SIGPIPE, SIG_IGN) — in that
  *  order. `line` is printed verbatim (callers include the leading "\n"; the controller's U+2026 is
- *  bytes in the literal) and must outlive the process (a string literal). `line` is nullptr
- *  **iff** notice == kSilent (t7_bridge); every printing notice passes a literal. Per-service
- *  arguments: DESIGN-WP8 §2.1 table. */
+ *  bytes in the literal) and must outlive the process (a string literal). `line == nullptr`
+ *  prints nothing (t7_bridge, which passes kPrintThenStop: with no line the order is
+ *  immaterial, and daq_bridge stays the only kStopThenPrint user). Per-service arguments:
+ *  DESIGN-WP8 §2.1 table. */
 void installStopHandlers(ShutdownNotice notice, const char* line, Sigpipe sigpipe);
 
 }  // namespace fsw::service
