@@ -294,6 +294,7 @@ import { ballValveSensedEntity, sensedStateFromPosition } from './ball-valve.js'
 import { countByLevel, t7Channels } from '../../shared/config-validation.js';
 import { sendToSequencer, SEQUENCER_PORT } from './sequencer-client.js';
 import { WS_PORT, GUI_PORT, ELODIN_HOST, ELODIN_PORT, THIN_VERBOSE_CONNECTION_LOG, THIN_HEARTBEAT_DIAG_LOG, THIN_STATS_LOG } from './server/env.js';
+import { stats, initStats } from './server/stats.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -716,35 +717,13 @@ function markStaleBoards(): void {
 
 setInterval(markStaleBoards, 1000);
 
-// ── Packet stats ─────────────────────────────────────────────────────────────
-// Counts raw entity updates received from Elodin DB vs broadcasts sent to WS clients.
-// GET /stats returns these so the integration test can verify no drops occur before
-// the throttle (backend→WS is intentionally throttled). NOTE: Elodin→backend is NOT
-// strictly lossless — the DB's live stream coalesces same-channel rows written in one
-// burst (multi-chunk board packets), forwarding at least one row per channel per
-// packet; DB *storage* keeps every row. See integration Test 15 for the invariant.
-
 // Authoritative "data is actually flowing" signal: epoch-ms of the last entity we
 // ingested from Elodin. The status badge derives dataFresh from this, so it reflects
 // real end-to-end delivery — not just "a run is marked active" or the WS being open.
 let lastIngestMs = 0;
 const DATA_FRESH_MS = 3000; // no ingest for this long ⇒ pipeline is not delivering
 
-const stats = {
-  ingestEntityUpdatesReceived: 0,  // every finite-value entity parsed from Elodin DB
-  // Raw physical channel samples (non-_Cal, canonical component only): exactly one
-  // increment per per-channel per-chunk sample a board sent, so the integration test
-  // can compare this against the simulator's sent-sample ground truth for absolute
-  // end-to-end loss detection (UDP → bridge → Elodin DB → backend), independent of
-  // the GUI downsampler.
-  rawPrimarySamplesIngested: 0,
-  // Same counter split by board group (pt1/pt2/tc/rtd/lc/enc/act) so a
-  // conservation failure names the lossy stream instead of just the total.
-  rawPrimarySamplesByGroup: {} as Record<string, number>,
-  sensorUpdatesBroadcast: 0,  // SENSOR_UPDATE messages actually sent (post-throttle)
-  sequencerStatesReceived: 0,  // packets successfully streamed through Elodin DB verifying storage
-  startTimeMs: Date.now(),
-};
+initStats();
 
 // ── Local state (sequencer / actuator_service authoritative) ────────────────
 /** Boot state id from the config's [[states]] (is_boot), or IDLE if none is flagged. This was a
