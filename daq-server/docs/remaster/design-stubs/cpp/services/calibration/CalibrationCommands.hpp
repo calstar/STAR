@@ -1,7 +1,10 @@
 // DESIGN STUB (DESIGN-WP9 §2, move-only step 5) — not compiled. Becomes
 // diablo_server/services/calibration/CalibrationCommands.{hpp,cpp}. Body: 1631-1819, the inside of
 // `if (type_hi == 0x46)`; its outer-loop `continue` at 1637 becomes `return`; the inner-loop
-// `continue`s at 1673, 1789, 1796 stay `continue` (DESIGN-WP9 §4).
+// `continue`s at 1673, 1789, 1796 stay `continue` (DESIGN-WP9 §4). 1673 and 1796 (a refused
+// capture inside Zero All / Tare All) are NOT exercised by today's stack.txt — burst() sends 10
+// fresh samples per uid before cmd 0 and cmd 8 — so a wrong `return` there passes today's golden;
+// the stale-uid C0 case (DESIGN-WP9 §7.2) gates this step. 1789 is exercised (cmd(8, 0, 1.0)).
 //
 // Decodes a CalibrationCommand row (ts u64 | cmd u8 @8 | pad @9 | sensor_id u16 LE @10 | ref f32
 // @12, memcpy not cast) and runs cmd 0-8 through CalibrationActions.
