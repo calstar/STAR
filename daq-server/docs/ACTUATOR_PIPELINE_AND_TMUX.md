@@ -4,7 +4,7 @@
 
 Launches the full stack in a single tmux session (`deploy/startup/start_tmux_dev.sh`),
 using the **thin backend** (`server.ts` connects directly to the Elodin DB — no
-relay). The legacy monolithic backend lives in `start_tmux_dev_legacy.sh`. Panes
+relay). Panes
 are created left-to-right in this order:
 
 | Pane | Component | Role |
@@ -24,8 +24,8 @@ are created left-to-right in this order:
 Notes:
 - All binaries build into `build/bin/`.
 - The data logger and the legacy Elodin relay / Python calibration sidecar are
-  **not** part of this stack (they exist only in `start_tmux_dev_legacy.sh` /
-  `start_web_gui.sh`).
+  **not** part of this stack. Their launchers (`start_tmux_dev_legacy.sh`,
+  `start_web_gui.sh`) have been removed.
 - The backend's `ACTUATOR_SERVICE_PORT` (default 9998) points at the
   **sequencer_service** TCP command port.
 
@@ -143,7 +143,7 @@ recorded on `[0x35] BV_CMD.B<n>.CH<m>` rather than `[0x32] ACT_CMD`, its positio
 
 1. User changes state in frontend (e.g. GSE → ARMED).
 2. Frontend sends a WebSocket command to the backend.
-3. Backend validates the transition and calls `sendToActuatorService("TRANSITION:<csvName>\n")` (`diablo_server/backend/src/server.ts`).
+3. Backend validates the transition and calls `sendToSequencer("TRANSITION:<csvName>\n")` (`diablo_server/backend/src/sequencer-client.ts`, called from `server.ts`).
 4. Backend opens TCP to `127.0.0.1:9998` (the `sequencer_service` command port), sends the line, and reads `OK\n` / `ERR:<reason>\n`.
 5. `sequencer_service` looks up the per-state actuator positions from `config/state_machine_actuators.csv` and sends UDP ACTUATOR_COMMAND packets to each board IP from config.
 
