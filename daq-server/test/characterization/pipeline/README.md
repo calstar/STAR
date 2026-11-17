@@ -203,8 +203,29 @@ rejected transitions (unknown id, bad hold) → a transition the sequencer refus
 Idle→Armed → debug on → actuator open/close/unknown → debug off → `extend_fire` outside Fire →
 Armed→Idle → countdown set/clear → a
 calibration command → an unsupported command → `session_start` (blocked, forced, again) → GET
-sweep during the session + session POSTs → `session_extend` (good, bad) → `session_stop` (twice) →
-HTTP error shapes → disconnect.
+sweep during the session + session POSTs → the viewer's operator gates (`http_viewer_gates`, below)
+→ `session_extend` (good, bad) → `session_stop` (twice) → HTTP error shapes → disconnect.
+
+**Operator gates as the viewer (H8, `DESIGN-WP7.md` §7; LEDGER SEC-*, D63, D72).** `api-server.ts`
+has 14 `isConfigWriteAuthorized` gates, each answering 403 `{"error":"Not an approved operator"}`
+to a non-empty `X-Auth-Email` that is not in `operators.txt` (the fixture's lists one operator,
+`operator@example.com`; the viewer is `viewer@example.com`). `http_errors` freezes six of them
+(`POST /api/config`, `/api/config/import`, `/api/state-csv`, `profiles/switch`,
+`/api/board-log-mode`, `calibration_profiles/save`); `http_viewer_gates` freezes the other eight,
+during the session, in the file's order: `POST /api/state-script`, `profiles/create`, `…/rename`,
+`…/delete`, `POST /api/ball_valve_cal`, `POST /api/feed-char/results` (the one that needs a
+session: without one it answers 409 before the gate), `calibration_profiles/load`, `…/new_blank`.
+Each body is well-formed, so a dropped gate reads as a non-403 -- for most a 200 and a changed
+file (rename and delete name the active profile, which their routes refuse with a 400) -- rather
+than as a parse error; the five GETs that follow (`/api/config/profiles`, `/api/state-script?name=
+viewer.script`, `/api/ball_valve_cal`, `/api/feed-char/results`, `/api/calibration_profiles`)
+witness that nothing was written, and `ws_events.txt` shows the step raised no `config_updated`.
+The WS half of the same gate is frozen where it already was: client B's `control_status`
+`operator: false` (`ws_handshake.txt`), its `control_unlock_result` `not_operator` and the
+`Control locked` refusal of its `state_transition` (`ws_events.txt`, `viewer_client`). The two
+ungated OTA routes (D-OTA / SEC-2) are not here — the pipeline runs no `ota_service`; the viewer's
+200 on `POST /api/ota-flash` is `lifecycle/golden/ota.txt`, and `flash-all`'s no-enabled-boards
+case is a backend vitest (D72).
 
 **Timing.** A step that sends something lasts its nominal time and then until the event stream
 (everything but the streams and board-health notifications) has been quiet for `QUIET_MS` = 1.5 s,
@@ -331,6 +352,8 @@ Each applied to the backend source, run, reverted (none committed):
 | `gui-stream.ts` `envelopeWindowMs`: `2000 /` → `1000 /` (double the GUI rate), run under 1× load | `ws_streams.txt` T1 |
 | `server.ts`: drop every SELF_TEST row (`[0x60..0x6F]`), idle and under 1× load (boards) | `ws_streams.txt` P12 rule line: all not-received → (c) idle, (b) under load |
 | `elodin-vtable-registry.ts` + `server.ts`: un-mark a subscribed pair the DB has not delivered within 4 s so the next pass re-sends it, and run a pass every `RESUBSCRIBE_MIN_MS` regardless of the refused pairs' backoff (stalesub) | `stalesub.txt`: `PT2_Cal.CH1.*` live `value=…` instead of `absent`, present in the backfill and the query. The first half alone stays green: no pass fell inside the 12 s window (see above) |
+| `api-server.ts`: delete the `isConfigWriteAuthorized` check of `POST /api/config/profiles/create` (H8) | `http.txt` `http_viewer_gates`: the viewer's create is 200 with `viewer-made` in the profile list, and the witness `GET /api/config/profiles` lists it too |
+| `server.ts`: `const isOp = true` at the WS upgrade (every client an operator) (H8) | `ws_handshake.txt` (client B `control_status` `operator: true`), `ws_events.txt` `viewer_client` (`control_unlock_result` `ok`, then B's `state_transition` reaches the sequencer) |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
