@@ -59,6 +59,12 @@ public class Oracle {
         return String.format(Locale.ROOT, "%.15g", v);
     }
 
+    /** Full precision (shortest round-trip repr), for the motor data orweb bundles. */
+    static String nf(double v) {
+        if (Double.isNaN(v) || Double.isInfinite(v)) return "null";
+        return Double.toString(v);
+    }
+
     static String body(RigidBody b) {
         return "{\"mass\": " + n(b.getMass()) + ", \"cgx\": " + n(b.getCM().x)
             + ", \"Ixx\": " + n(b.getIxx()) + ", \"Iyy\": " + n(b.getIyy()) + ", \"Izz\": " + n(b.getIzz()) + "}";
@@ -243,13 +249,13 @@ public class Oracle {
                 .append(", \"digest\": ").append(q(m.getDigest()))
                 .append(", \"motorType\": ").append(q(m.getMotorType().name()))
                 .append(", \"commonName\": ").append(q(m.getCommonName()))
-                .append(", \"diameter\": ").append(n(m.getDiameter()))
-                .append(", \"length\": ").append(n(m.getLength()))
+                .append(", \"diameter\": ").append(nf(m.getDiameter()))
+                .append(", \"length\": ").append(nf(m.getLength()))
                 .append(", \"delays\": [");
             double[] dl = m.getStandardDelays();
             for (int i = 0; i < dl.length; i++) {
                 if (i > 0) out.append(", ");
-                out.append(n(dl[i]));
+                out.append(nf(dl[i]));
             }
             out.append("], \"time\": [");
             double[] t = m.getTimePoints();
@@ -258,10 +264,10 @@ public class Oracle {
             StringBuilder ts = new StringBuilder(), ths = new StringBuilder(), cgs = new StringBuilder(), ms = new StringBuilder();
             for (int i = 0; i < t.length; i++) {
                 String sep = i > 0 ? ", " : "";
-                ts.append(sep).append(n(t[i]));
-                ths.append(sep).append(n(th[i]));
-                cgs.append(sep).append(n(cg[i].x));
-                ms.append(sep).append(n(cg[i].weight));
+                ts.append(sep).append(nf(t[i]));
+                ths.append(sep).append(nf(th[i]));
+                cgs.append(sep).append(nf(cg[i].x));
+                ms.append(sep).append(nf(cg[i].weight));
             }
             out.append(ts).append("], \"thrust\": [").append(ths).append("], \"cgx\": [").append(cgs)
                 .append("], \"mass\": [").append(ms).append("]}");

@@ -382,6 +382,10 @@ def _apply_params(c: RocketComponent, params: dict, ctx: BuildContext) -> None:
     for tag, value in params.items():
         if tag.startswith("_") or tag == "motorconfiguration":
             continue
+        if tag == "preset":
+            ctx.warn(f"{c.get_name()}: component preset not applied (orweb has no preset database); "
+                     "the file's own parameters are used")
+            continue
         if isinstance(value, dict) and "_xml" in value:
             continue  # carried through, not interpreted
         if isinstance(value, list) and value and isinstance(value[0], dict) and "_xml" in value[0]:

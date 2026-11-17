@@ -12,7 +12,6 @@ import json
 import math
 
 from .build import build_rocket
-from .config import get_motor_config
 from .masscalc import calculate_burnout, calculate_launch, calculate_motor, calculate_structure, get_cm_analysis
 
 DOCUMENT_VERSION = 1
@@ -78,12 +77,21 @@ def analysis_components(rocket, config=None) -> list[dict]:
             continue
         e = cm.get(c.id)
         locs = c.get_component_locations()
+        if e is None:
+            mass = cgx = each = None
+        elif _is_assembly(c):
+            # eachMass is the assembly's contents per instance; its own CG entry is only
+            # meaningful when its mass is overridden
+            each = e.each_mass
+            mass = e.each_mass * c.get_instance_count()
+            cgx = e.total_cm.x if c.is_mass_overridden() else None
+        else:
+            # totalCM averages the component over every instance of its parents
+            each, mass, cgx = e.each_mass, e.total_cm.weight, e.total_cm.x
         out.append({
             "id": c.id, "name": c.get_name(), "type": _doc_type(c),
             "x": locs[0].x, "length": c.get_length(),
-            "mass": None if e is None else e.each_mass * c.get_instance_count() if not _is_assembly(c) else e.each_mass,
-            "eachMass": None if e is None else e.each_mass,
-            "cgx": None if e is None else e.total_cm.x,
+            "mass": mass, "eachMass": each, "cgx": cgx,
             "instances": len(locs),
         })
     return out

@@ -21,7 +21,6 @@ from .components.internal import RingComponent
 from .components.lugs import LaunchLug, RailButton
 from .components.massobjects import MassObject, RecoveryDevice
 from .components.symmetric import BodyTube, Shape, SymmetricComponent, Transition
-from .config import get_motor_config
 from .util import mathutil as mu
 from .util.coordinate import ZERO, Coordinate
 

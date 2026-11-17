@@ -60,6 +60,31 @@ Param value shapes:
 Params the port does not use (appearance, decals, presets) are carried through
 untouched so a load–save round trip loses nothing.
 
+How `orweb` fills in the details (`orweb/ork.py`, `orweb/build.py`):
+
+- **Order matters.** `params` keep file order and are applied in that order, as
+  OpenRocket's loader does (several setters clamp against what is already set).
+- **Duplicates the savers write are folded in**: `position` into `axialoffset`,
+  `rotation` (fins) and a launch lug's `radialdirection` into `angleoffset`,
+  `fincount` into `instancecount`. Saving writes both forms again.
+- **Other shapes**: a body's `"thickness": "filled"`; `"tabposition": {"method":
+  "top"|"middle"|"bottom", "value"}`; `"motormount": {"ignitionevent",
+  "ignitiondelay", "overhang"}` on a mount (its motors live in `motorConfigs`);
+  `radialdirection`, `cant`, `clusterrotation` in rad. An auto param written
+  `auto` with no number in the file (ring radii, recovery `cd`) has
+  `"value": null`; `orweb.resolve_auto_values` fills those in.
+- **Passthrough**: an element the port does not interpret is `{"_xml": "<raw>"}`
+  (a list if repeated); the root's `"motorconfiguration": {"_configs": true}`
+  marks where `motorConfigs` are written. Everything outside `<rocket>`
+  (simulations, photo studio, preferences) and the zip's other entries (decals)
+  are in `document["ork"]` = `{"version", "creator", "extra": [raw xml],
+  "files": {path: base64}}`.
+- **Motors** in `motorConfigs[].motors` may also carry `type`, `diameter`,
+  `length`; `"delay": null` is a plugged motor. `selectedConfig: null` is
+  OpenRocket's default configuration (no motors). Motors resolve by
+  designation, manufacturer and digest against `orweb/data/motors.json`
+  (OpenRocket's own curves for every example) or a `MotorRegistry`.
+
 ## The API (FastAPI, `:8004`, prefix `/api`)
 
 | method | path | body | returns |
@@ -88,7 +113,8 @@ Mach 0.3 / AoA 0 is OpenRocket's design-view default.
 {
   "conditions": Conditions,
   "reference": { "length": 0.025, "area": 0.00049 },
-  "length": 0.4254,                       // aerodynamic length, m
+  "length": 0.4254,                       // whole configuration, as the figure prints it
+  "lengthAerodynamic": 0.4254,            // what the stability % is a percentage of
   "maxDiameter": 0.025,
   "cg":   { "x": 0.2598, "mass": 0.0713 },      // at launch, motors loaded
   "cgEmpty": { "x": 0.2055, "mass": 0.0482 },   // structure only
@@ -98,9 +124,12 @@ Mach 0.3 / AoA 0 is OpenRocket's design-view default.
   "components": [
     { "id": "uuid", "name": "Nose cone", "type": "nosecone",
       "x": 0.0, "length": 0.1, "mass": 0.0132, "cgx": 0.076,   // absolute x, from nose tip
-      "cpx": 0.0464, "cna": 2.0, "cd": 0.06 }
+      "cpx": 0.0464, "cna": 2.0, "cd": 0.06,       // cd is PER INSTANCE (one fin), as OpenRocket reports it;
+      "cdFriction": 0.059, "cdPressure": 0.001, "cdBase": 0 }  // the rocket total already counts every instance
   ],
   "figure": Figure,
+  "resolved": { "<componentId>": { "radius": 0.0125 } },  // the number each auto param resolved to
+  "motors": [ … ], "inertia": { "launch": RigidBody, "structure": …, "burnout": …, "motor": … },
   "warnings": ["…"]
 }
 ```

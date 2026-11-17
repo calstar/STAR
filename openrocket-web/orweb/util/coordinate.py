@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 
-from .mathutil import EPSILON, pow2, safe_sqrt
+from .mathutil import EPSILON, safe_sqrt
 
 _TINY_W = EPSILON * EPSILON  # MathUtil.pow2(MathUtil.EPSILON), Coordinate.average
 

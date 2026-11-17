@@ -49,6 +49,19 @@ The repo's default branch (`unstable`) has physics no released OpenRocket runs;
 porting it would cross-check against a program nobody uses. To move the pin,
 move the jar, regenerate the golden files, and fix what goes red.
 
+## Known gaps
+
+* Component presets (Parts Library) are not applied; the file's own numbers are used, with a warning.
+* OpenRocket's geometry warnings (gaps, overlaps) are not ported yet.
+* Back and 3D views, appearance/decal editing, Split fins / Convert to freeform / Export SVG are disabled.
+* The bundled motor set is the 29 motors OpenRocket's examples use; the thrustcurve.org mirror comes with the merge.
+
+## Seeing the real OpenRocket
+
+`tools/oracle/Launch.java` starts the 24.12 GUI on a newer JDK (it lifts the
+Java-17-only check) and `Drive.java` clicks and screenshots it, e.g. under
+`Xvfb :99`. That is how `docs/reference-ui/` was made.
+
 ## Layout
 
 ```
@@ -63,7 +76,10 @@ docs/SCHEMA.md    the document / API contract
 ## Roadmap
 
 1. **Design view** — component tree, edit dialogs, side view with CG/CP,
-   stability, `.ork` open/save. *(this milestone)*
+   stability, `.ork` open/save. **Done:** model, mass and Barrowman match
+   OpenRocket to 1e-9 on 30 rockets; saved `.ork` files load back in
+   OpenRocket to the same numbers; the UI is matched against screenshots of the
+   real program (`docs/reference-ui/` vs `docs/screenshots/`).
 2. **Simulation** — RK4 6-DOF stepper, events, recovery, plots; checked
    against the flight data OpenRocket stored in the example files.
 3. **Merge** — a tab in `star-openrocket`, and the OpenRocket column of its
