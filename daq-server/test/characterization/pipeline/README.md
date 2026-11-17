@@ -295,9 +295,9 @@ Idle→Armed → debug on → actuator open/close/unknown → debug off → `ext
 Armed→Idle → countdown set/clear → a
 calibration command → an unsupported command → `session_start` (blocked, forced, again) → GET
 sweep during the session + session POSTs → the viewer's operator gates (`http_viewer_gates`, below)
-→ `session_extend` (good, bad) → `session_stop` (twice) → HTTP error shapes → disconnect. Inside
-`transition_armed`, once the sequencer has answered, `GET /api/engine_state` and
-`GET /api/debug?values` (D64(3), below).
+→ `session_extend` (good, bad) → `session_stop` (twice) → HTTP error shapes → the operator's
+writes, idle (`http_operator_writes`, below) → disconnect. Inside `transition_armed`, once the
+sequencer has answered, `GET /api/engine_state` and `GET /api/debug?values` (D64(3), below).
 
 **Operator gates as the viewer (H8, `DESIGN-WP7.md` §7; LEDGER SEC-*, D63, D72).** `api-server.ts`
 has 14 `isConfigWriteAuthorized` gates, each answering 403 `{"error":"Not an approved operator"}`
@@ -321,12 +321,32 @@ ungated OTA routes (D-OTA / SEC-2) are not here — the pipeline runs no `ota_se
 200 on `POST /api/ota-flash` is `lifecycle/golden/ota.txt`, and `flash-all`'s no-enabled-boards
 case is a backend vitest (D72).
 
+**The operator's writes, idle (H1, `DESIGN-WP7.md` §7, the golden half; WP6 G7).** Every other
+request at these routes is the viewer's or one the route refuses, so until this step nothing
+froze what a write does when it is accepted. `http_operator_writes` runs after the session, as
+`operator@example.com`, in the routes' order: `POST /api/config` (the active profile read back
+with one extra `[char]` table), `POST /api/config/import` (the deployed file plus a
+`[char_import]` table, then `x = [` — 400 and the profile rolled back), `POST /api/state-csv`
+(the actuator table cut to its header and two rows), `POST /api/state-script` (`h1.script`,
+checked by `state_script_check` from `<srv>/build`), `profiles/create`, `…/rename`, `…/switch`
+(to `h1b` and back), `…/delete`, `calibration_profiles/save`. Each is followed by the files it
+should have changed, read from the fixture's `config/` tree and printed as `FILE <path>` lines in
+`http.txt` (the deployed copy and the profile's; a content already printed is named, not
+repeated; `(absent)` for a file that is not there), by a witness GET where the route has one,
+and by the frames the backend sends because of it: five `config_updated` in `ws_events.txt`
+(`onConfigUpdated` / `onStateCsvUpdated`, which only a deployed write fires — save, import, the
+CSV, each switch), while the board list each deploy re-broadcasts is the same config's and lands
+in the distinct payloads `ws_streams.txt` already holds. Idle on purpose —
+during a session the same writes are drafts and fire nothing; last on purpose — nothing after
+the step reads what it changed. That the response is written before the callback runs cannot be
+seen on loopback and is a backend vitest instead (`api-write-callback-order.test.ts`, D72).
+
 **Armed over HTTP, and `/api/debug` at value level (D64(3)).** The sweeps read
 `/api/engine_state` as 1 (Idle) and `/api/debug` as a schema (P9), so a backend whose HTTP side
 stopped following the WS side's state, or whose `ingestConnected` / `useRelay` / `wsClients`
 flags read from a stale copy, would stay green. Inside `transition_armed`, after the sequencer's
 reply, `GET /api/engine_state` is frozen as 2 and `GET /api/debug?values` (the backend ignores
-the query; the harness renders it by P13) as `ingestConnected: true`, `useRelay: false`,
+the query; the harness renders it by P14) as `ingestConnected: true`, `useRelay: false`,
 `wsClients: >=1`. The same `?values` request is in both sweeps (`wsClients` 0 before any client,
 `>=1` during the session).
 
@@ -349,7 +369,7 @@ There is no subscription protocol in the thin backend (every client gets every s
 | `ws_events.txt` | per step: what was sent (`>`) and every event-like frame back (`<`), in arrival order |
 | `ws_streams.txt` | the streaming types: channel set and value where the sim fixes it; the timing bound T1; distinct normalised payloads of the periodic types; history series per request |
 | `ws_schema.txt` | every key path of every message type, with the JSON types seen |
-| `http.txt` | every request: status, content-type and the headers that matter, normalised body |
+| `http.txt` | every request: status, content-type and the headers that matter, normalised body; in `http_operator_writes`, `FILE <path>` lines — a fixture file as `session.ts` read it at that point |
 | `csv.txt` | the CSV bodies the backend serves (`/api/state-csv`) |
 
 ### The CSV
@@ -395,7 +415,7 @@ those byte for byte (header, column order, cell format).
 | P11 | in a run of consecutive `error` / `state_update` frames within a step, errors are recorded first (each kind keeps its own order) | a command's TCP reply (`error`) and the sequencer's Elodin publish (`state_update`) take independent paths; their order swapped under load |
 | P12 | self-test results are one line per board the simulators self-test (expected set from `selftest_expected.py`: adc_good + every active connector; board 60: 0 and 2), written as `<exact result> | not-received (one-shot UDP self-test, defect)`, and a rule line that fails if (a) a received result differs, (b) more than half the boards are not-received, or (c) the run is quiet (`CHAR_UNDER_LOAD` unset) and any board is not-received. The handshake replay and the history series are summarised there | on a loaded Linux box some boards' one-shot self-test never reaches the backend |
 | P12d | in a quiet run every self-test path must carry every expected board exactly, checked separately: each client's handshake replay (A, B, C) and each full history reply (connect A, the unnarrowed query in `history`, viewer B), with the startup board exempt from paths that closed before it self-tested. A late client C (after the session) freezes the notification-buffer replay; its own backfill is past the 60 s horizon and is not frozen | the old golden froze each path line by line |
-| P13 | `GET /api/debug?values`: P9's schema, plus the values of `ingestConnected`, `useRelay` and `wsClients` (rendered `>=1` when at least one client is connected, else the number) | D64(3): these say how the backend is wired, not how much it has counted; the plain `/api/debug` line stays P9 |
+| P14 | `GET /api/debug?values`: P9's schema, plus the values of `ingestConnected`, `useRelay` and `wsClients` (rendered `>=1` when at least one client is connected, else the number) | D64(3): these say how the backend is wired, not how much it has counted; the plain `/api/debug` line stays P9 |
 | A1 | `ACT_CMD.B2.CH7` (Fuel Main) commanded: `{0} \| {0, 1}`, an explicit alternative, only for that series | the sequencer's boot-time de-energized row is replayed by elodin-db on subscribe on a loaded Linux box (defect) |
 | P13 | a step's `notes` (lines the session derives from its own `Sent.t` / `Frame.t` stamps) are printed under the step in `ws_events.txt` as `= <text>`, categorical only (`…: yes` / `no`), never a raw ms. Only `holds` writes any; a capture without the key prints nothing | a measured latency drifts; whether it met a bound derived from a config/spec value does not |
 
