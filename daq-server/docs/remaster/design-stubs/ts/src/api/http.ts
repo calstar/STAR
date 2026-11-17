@@ -74,8 +74,9 @@ export function readJsonBody(req: IncomingMessage): Promise<any> {
  * `body` is built from literals and already-evaluated locals (41 pairs keep the raw form):
  * anywhere else it would evaluate a throwing expression before `writeHead` and silently turn
  * today's hang (D-API3) into a 500. A check script in the package (no linter, STYLE-S40)
- * identifies sites **by content**, not line number: the body argument, string literals
- * stripped, may contain no `(` and no `.` outside `?.`.
+ * identifies sites **by content**, not line number: the body argument, string literals stripped
+ * (template-literal `${…}` interpolations kept), may contain no `(` and no `.` outside `?.`; the
+ * reviewer confirms each call replaces exactly one adjacent `writeHead`/`end` pair.
  */
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {
   throw new Error('stub');
