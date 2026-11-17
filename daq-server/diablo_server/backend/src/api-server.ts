@@ -47,6 +47,7 @@ import { handleProfilesRequest } from './api/profiles.js';
 import { handleHistoryRequest } from './api/history.js';
 import { handleGuiConfigRequest } from './api/gui-config.js';
 import { handleBoardLogsRequest } from './api/board-logs.js';
+import { handleDebugRequest } from './api/debug.js';
 
 /**
  * Create an HTTP request handler for all /api/* routes.
@@ -85,15 +86,8 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
       if (await handleHistoryRequest(req, res, url, opts)) return true;
       if (await handleGuiConfigRequest(req, res, url, opts)) return true;
       if (await handleBoardLogsRequest(req, res, url, opts)) return true;
-      if (url.pathname === '/api/debug' && req.method === 'GET') {
-        const info = getDebugInfo ? getDebugInfo() : null;
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(info ?? { error: 'Debug info not available' }));
-      } else if (url.pathname === '/api/engine_state' && req.method === 'GET') {
-        const engineState = getEngineState ? getEngineState() : 0;
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ engineState }));
-      } else if (url.pathname === '/api/calibration_status' && req.method === 'GET') {
+      if (await handleDebugRequest(req, res, url, opts)) return true;
+      if (url.pathname === '/api/calibration_status' && req.method === 'GET') {
         const status = getCalibrationStatus ? await getCalibrationStatus() : null;
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(status ?? { error: 'Calibration status not available' }));
@@ -286,10 +280,6 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         if (onCalibrationReload) onCalibrationReload();  // service re-reads the blank live store
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(listCalibrationProfiles()));
-      } else if (url.pathname === '/api/config_packets' && req.method === 'GET') {
-        // Config packets now built by config_broadcast_service.py (standalone). Return empty.
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ packets: [] }));
       } else if (url.pathname === '/api/ota-flash/projects' && req.method === 'GET') {
         const projects = discoverProjects();
         res.writeHead(200, { 'Content-Type': 'application/json' });
