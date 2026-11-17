@@ -17,7 +17,7 @@
 // Errors:     unknown model strings parse to today's defaults; missing per-uid entries fall back
 //             (full scale 1000, sense resistor 120, LC Linear), as today. The load_* functions
 //             print today's lines (counts, T7 count) — they are construction with side effects and
-//             are called at today's positions in main (DESIGN-WP9 §6.1 step 7).
+//             are called at today's positions in main (DESIGN-WP9 §6.1 step 6).
 // D22:        select_pt_psi contains the Blend expression `(1 - kFactoryWeight) * psi_rob +
 //             kFactoryWeight * psi_fac` (contractible) and stays header-inline so it is still
 //             inlined into handle_t7_raw, handle_esp32_raw and the bisection's forward lambda —

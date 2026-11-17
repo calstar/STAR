@@ -1,4 +1,4 @@
-// DESIGN STUB (DESIGN-WP9 §2-§3, move-only step 6) — not compiled. Becomes
+// DESIGN STUB (DESIGN-WP9 §2-§3, move-only step 5) — not compiled. Becomes
 // diablo_server/services/calibration/RawStream.{hpp,cpp}. Bodies: 1827-1910 (T7) and 1913-2127
 // (ESP32 filter, decode, per-type publish, then the 10000-count log and the 5-minute robust
 // auto-save, which therefore still run only after an ESP32 packet). Outer-loop `continue`s inside
@@ -15,7 +15,10 @@
 //             (1544). main aggregate-initialises StreamState there with
 //             `last_save{std::chrono::steady_clock::now()}` (or assigns it on the next line). A
 //             bare member is the epoch, so the first ESP32 packet would satisfy `> 300` s at 2124
-//             and save adjustments at once — an observable the goldens do not freeze (G8).
+//             and save adjustments at once — frozen by the C0 `after sweep` snapshot (DESIGN-WP9
+//             §7.2 (iv), D65(4)): adj.json is <absent> there today, and save_adjustments writes a
+//             file even with no learned state, so the epoch shows as a file where the golden has
+//             <absent>. That item gates this step (checkpoint 2), with G3 reconnect (§7.2 (v)).
 // Threads:    one. ElodinClient's publish_mutex_ is taken per publish, uncontended.
 // Order:      per packet: begin_batch → publish each value → flush_batch → ++packet_count; PT:
 //             select_pt_psi then `psi = g_pt_smoother.step(uid, psi)` in the same statement
@@ -48,9 +51,11 @@
 
 namespace fsw::calibration_service {
 
-/** Carrier of the read loop's locals two handlers share (1557-1562) plus references to the
- *  objects they publish with. Built by main after connect, before the loop. Not an abstraction
- *  (STYLE-S34): no methods. Member types are today's locals' types, unchanged. */
+/** Carrier of the read loop's locals two handlers share (1557 packet_count, 1559 last_save, 1560
+ *  last_adc_map; 1558 logged_ch5 and 1562 command_dedupe stay in main) plus references to the
+ *  objects they publish with. Built by main after connect, before the loop, replacing those three
+ *  lines. Not an abstraction (STYLE-S34): no methods. Member types are today's locals' types,
+ *  unchanged. */
 struct StreamState {
     fsw::elodin::ElodinClient& elodin_client;
     fsw::calibration::SensorCalibrationManager& tc_calibration;
