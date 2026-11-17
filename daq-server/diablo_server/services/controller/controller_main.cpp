@@ -38,6 +38,7 @@
 #include "control/RobustDDPController.hpp"
 #include "control/StateMachine.hpp"
 #include "net/DaqInterface.hpp"
+#include "service/StopSignals.hpp"
 
 /** Resolve path relative to config: paths like output/lut/... are relative to project root. */
 static std::string resolveConfigPath(const std::string& config_path, const std::string& path) {
@@ -51,12 +52,7 @@ static std::string resolveConfigPath(const std::string& config_path, const std::
 }
 
 // ── Signal handling ────────────────────────────────────────────────────
-static std::atomic<bool> g_running{true};
-
-static void signalHandler(int /*sig*/) {
-    std::cout << "\n[controller_service] Caught signal, shutting down…" << std::endl;
-    g_running = false;
-}
+static auto& g_running = fsw::service::running();
 
 // ── TCP control server (FIRE_START / FIRE_STOP) ─────────────────────────
 // The sequencer connects, sends "FIRE_START\n" or "FIRE_STOP\n", reads the reply, disconnects.
@@ -487,8 +483,9 @@ int main(int argc, char* argv[]) {
     }
 
     // ── Install signal handlers ────────────────────────────────────────
-    std::signal(SIGINT, signalHandler);
-    std::signal(SIGTERM, signalHandler);
+    fsw::service::installStopHandlers(fsw::service::ShutdownNotice::kPrintThenStop,
+                                      "\n[controller_service] Caught signal, shutting down…",
+                                      fsw::service::Sigpipe::kDefault);
 
     // ── Start ──────────────────────────────────────────────────────────
     if (!service.start(loop_hz)) {
