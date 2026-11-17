@@ -1,5 +1,12 @@
 # Robust DDP Controller and IMU Calibration Documentation
 
+> **Removed code (WP2).** The C++ Enhanced EKF navigation (`lib/include/nav/**`) and
+> the C++ `IMUCalibration` class (`lib/include/calibration/IMUCalibration.hpp`,
+> `lib/src/calibration/IMUCalibration.cpp`) described below were deleted: no build
+> target compiled them. Only the Robust DDP controller and the Python IMU calibration
+> workflow ([`../tools/calibration/README_IMU.md`](../tools/calibration/README_IMU.md))
+> are current; treat the EKF and C++ IMU sections as history.
+
 ## Overview
 
 This document describes the implementation of:

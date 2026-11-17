@@ -21,7 +21,7 @@ and flat; most operational tooling lives elsewhere (see *Where things live*).
 
 | Need | Location |
 |------|----------|
-| Start/stop the stack (tmux), DB, web GUI | `deploy/startup/` (e.g. `start_tmux_dev.sh`, `start_calibration_stack.sh`, `start_web_gui.sh`, `stop_tmux.sh`) |
+| Start/stop the stack (tmux), DB, web GUI | `deploy/startup/` (e.g. `start_tmux_dev.sh`, `stop_tmux.sh`) |
 | systemd unit files + installer | `deploy/systemd/` |
 | Host/Jetson provisioning | `deploy/setup/` |
 | Integration / E2E / pipeline tests | `test/` (e.g. `test_integration.sh`, `e2e_guitest_playwright.sh`) |

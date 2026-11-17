@@ -150,7 +150,7 @@ hermetic). Nothing here needs the live stand.
   `current_ma`, 0x35 `actuator_state_commanded`.
 - `elodin-vtable-registry.ts:240-289`: subscribe `BALL_VALVE` boards.
 - `server.ts:496-511`: heartbeat wire 8 → `'BALL_VALVE'`.
-- `legacy/state-actuators.ts:100-136`: resolve a ball-valve role to `BV_CMD.*` /
+- `state-csv/state-actuators.ts:100-136`: resolve a ball-valve role to `BV_CMD.*` /
   `BV*` entities.
 - Mismatch (decision 4): feed `actuatorSensedState` from `position_pct` with the
   thresholds; extract `checkActuatorMismatch` out of `server.ts` so it can be
