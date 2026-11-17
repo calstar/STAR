@@ -231,9 +231,37 @@ public class Oracle {
                 ThrustCurveMotor m = (ThrustCurveMotor) mc.getMotor();
                 all.putIfAbsent(m.getDigest(), m);
             }
+            // What the Motors & Configuration tab edits, as OpenRocket resolves it for this
+            // configuration (its override, else the component's default): stage separation,
+            // recovery deployment and motor ignition.
+            StringBuilder ev = new StringBuilder();
+            for (RocketComponent c : doc.getRocket()) {
+                String one = null;
+                if (c instanceof info.openrocket.core.rocketcomponent.AxialStage) {
+                    info.openrocket.core.rocketcomponent.StageSeparationConfiguration s =
+                        ((info.openrocket.core.rocketcomponent.AxialStage) c).getSeparationConfigurations().get(fcid);
+                    one = "\"kind\": \"separation\", \"event\": " + q(s.getSeparationEvent().name())
+                        + ", \"altitude\": " + n(s.getSeparationAltitude()) + ", \"delay\": " + n(s.getSeparationDelay());
+                } else if (c instanceof info.openrocket.core.rocketcomponent.RecoveryDevice) {
+                    info.openrocket.core.rocketcomponent.DeploymentConfiguration d =
+                        ((info.openrocket.core.rocketcomponent.RecoveryDevice) c).getDeploymentConfigurations().get(fcid);
+                    one = "\"kind\": \"deployment\", \"event\": " + q(d.getDeployEvent().name())
+                        + ", \"altitude\": " + n(d.getDeployAltitude()) + ", \"delay\": " + n(d.getDeployDelay());
+                } else if (c instanceof info.openrocket.core.rocketcomponent.MotorMount
+                        && ((info.openrocket.core.rocketcomponent.MotorMount) c).isMotorMount()) {
+                    MotorConfiguration mc = ((info.openrocket.core.rocketcomponent.MotorMount) c).getMotorConfig(fcid);
+                    if (!mc.isEmpty())
+                        one = "\"kind\": \"ignition\", \"event\": " + q(mc.getIgnitionEvent().name())
+                            + ", \"delay\": " + n(mc.getIgnitionDelay());
+                }
+                if (one == null) continue;
+                if (ev.length() > 0) ev.append(", ");
+                ev.append("{\"id\": ").append(q(String.valueOf(c.getID()))).append(", ").append(one).append("}");
+            }
             if (!firstCfg) cfgs.append(", ");
             firstCfg = false;
             cfgs.append("{\"id\": ").append(q(String.valueOf(fcid.key)))
+                .append(", \"events\": [").append(ev).append("]")
                 .append(", \"launch\": ").append(body(MassCalculator.calculateLaunch(fc)))
                 .append(", \"burnout\": ").append(body(MassCalculator.calculateBurnout(fc)))
                 .append("}");

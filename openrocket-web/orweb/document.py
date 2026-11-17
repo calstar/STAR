@@ -166,3 +166,45 @@ def resolve_auto_values(doc: dict, rocket=None) -> dict:
             walk(ch)
     walk(out["rocket"])
     return out
+
+
+def flight_events(doc: dict, config_id: str) -> list[dict]:
+    """What the Motors & Configuration tab shows for one flight configuration: each
+    stage's separation, each recovery device's deployment and each loaded mount's
+    ignition, as OpenRocket resolves them -- the configuration's override if the
+    component has one, else the component's own default
+    (FlightConfigurableParameterSet.get)."""
+    cfg = next(c for c in doc["motorConfigs"] if c["id"] == config_id)
+    out: list[dict] = []
+
+    # StageSeparationConfiguration / DeploymentConfiguration field defaults, which is what
+    # a component gets when the file does not write the element.
+    defaults = {"separationevent": "ejection", "separationaltitude": 200.0, "separationdelay": 0.0,
+                "deployevent": "ejection", "deployaltitude": 200.0, "deploydelay": 0.0}
+
+    def pick(params: dict, per_config: str, fields: tuple) -> dict:
+        base = {f: params.get(f, defaults[f]) for f in fields}
+        for o in params.get(per_config) or []:
+            if isinstance(o, dict) and o.get("configid") == config_id:
+                return {f: o.get(f, base[f]) for f in fields}
+        return base
+
+    def walk(c):
+        p = c.get("params", {})
+        if c["type"] in ("stage", "parallelstage"):
+            v = pick(p, "separationconfiguration", ("separationevent", "separationaltitude", "separationdelay"))
+            out.append({"id": c["id"], "kind": "separation", "event": v["separationevent"],
+                        "altitude": v["separationaltitude"], "delay": v["separationdelay"]})
+        elif c["type"] in ("parachute", "streamer"):
+            v = pick(p, "deploymentconfiguration", ("deployevent", "deployaltitude", "deploydelay"))
+            out.append({"id": c["id"], "kind": "deployment", "event": v["deployevent"],
+                        "altitude": v["deployaltitude"], "delay": v["deploydelay"]})
+        elif isinstance(p.get("motormount"), dict) and c["id"] in cfg["motors"]:
+            m = cfg["motors"][c["id"]]
+            out.append({"id": c["id"], "kind": "ignition", "event": m.get("ignitionEvent"),
+                        "delay": m.get("ignitionDelay")})
+        for ch in c.get("children", []):
+            walk(ch)
+
+    walk(doc["rocket"])
+    return out

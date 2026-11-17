@@ -234,6 +234,35 @@ def _read_motormount(elem: ET.Element, mount_id: str, motors_by_config: dict) ->
     return mm
 
 
+# Per-flight-configuration overrides a stage's separation or a recovery device's
+# deployment (StageSeparationConfiguration / DeploymentConfiguration). Structured
+# rather than carried as raw XML, so the Motors & Configuration tab can edit them:
+#   "separationconfiguration": [{"configid": "…", "separationevent": "burnout",
+#                                "separationaltitude": 200.0, "separationdelay": 0.0}]
+PER_CONFIG_TAGS = ("separationconfiguration", "deploymentconfiguration")
+
+
+def _read_per_config(elem: ET.Element) -> dict:
+    out: dict = {"configid": elem.get("configid")}
+    for e in elem:
+        t = _text(e)
+        try:
+            out[e.tag] = float(t)
+        except ValueError:
+            out[e.tag] = t
+    return out
+
+
+def _write_per_config(out: "_Out", ind: int, tag: str, items: list) -> None:
+    for item in items:
+        out.add(ind, f'<{tag} configid="{_esc(str(item["configid"]))}">')
+        for k, v in item.items():
+            if k == "configid":
+                continue
+            out.add(ind + 1, f"<{k}>{jstr(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else _esc(str(v))}</{k}>")
+        out.add(ind, f"</{tag}>")
+
+
 def _read_component(elem: ET.Element, motors_by_config: dict, configs: list) -> dict:
     ctype = TYPE_ALIASES.get(elem.tag, elem.tag)
     comp = {"id": None, "type": ctype, "name": "", "params": {}, "children": []}
@@ -254,6 +283,8 @@ def _read_component(elem: ET.Element, motors_by_config: dict, configs: list) -> 
             if comp["id"] is None:
                 comp["id"] = str(uuid.uuid4())
             params["motormount"] = _read_motormount(c, comp["id"], motors_by_config)
+        elif tag in PER_CONFIG_TAGS:
+            params.setdefault(tag, []).append(_read_per_config(c))
         elif tag in ("motorconfiguration", "flightconfiguration") and ctype == "rocket":
             cfg = {"id": c.get("configid"), "name": "", "default": c.get("default") == "true", "stages": {},
                    "motors": {}}
@@ -365,6 +396,9 @@ class _Out:
 
 def _encode_param(out: _Out, ind: int, ctype: str, tag: str, v) -> None:
     """One document param -> element(s), as the savers write them."""
+    if tag in PER_CONFIG_TAGS and isinstance(v, list) and all(isinstance(i, dict) and "configid" in i for i in v):
+        _write_per_config(out, ind, tag, v)
+        return
     if isinstance(v, list) and v and isinstance(v[0], dict) and "_xml" in v[0]:
         for item in v:
             out.raw(ind, item["_xml"])

@@ -380,8 +380,9 @@ class BuildContext:
 
 def _apply_params(c: RocketComponent, params: dict, ctx: BuildContext) -> None:
     for tag, value in params.items():
-        if tag.startswith("_") or tag == "motorconfiguration":
-            continue
+        if tag.startswith("_") or tag in ("motorconfiguration", "separationconfiguration",
+                                          "deploymentconfiguration"):
+            continue  # per-configuration overrides: read by OpenRocket's simulator, not the design view
         if tag == "preset":
             ctx.warn(f"{c.get_name()}: component preset not applied (orweb has no preset database); "
                      "the file's own parameters are used")

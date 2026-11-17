@@ -21,7 +21,6 @@ import { ComponentTree } from '../components/ComponentTree'
 import { AddComponentPanel } from '../components/AddComponentPanel'
 import { RocketPanel } from '../components/RocketPanel'
 import { MotorsTab } from '../components/MotorsTab'
-import { SimulationsTab } from '../components/SimulationsTab'
 import { ComponentConfigDialog } from '../components/edit/ComponentConfigDialog'
 import { LENGTH_UNITS, MASS_UNITS, IMPERIAL, METRIC } from '../lib/units'
 
@@ -90,7 +89,9 @@ export async function newDocument(api: Api): Promise<RocketDocument> {
   }
 }
 
-type MainTab = 'design' | 'motors' | 'sims'
+// No Flight simulations tab: this app makes .ork files and leaves flying them to
+// OpenRocket. Motors & Configuration stays -- it carries stages, separation and ignition.
+type MainTab = 'design' | 'motors'
 
 interface EditState {
   id: string
@@ -370,7 +371,6 @@ function Workbench({ api, initial }: { api: Api; initial: RocketDocument }) {
         tabs={[
           { id: 'design', label: 'Rocket design' },
           { id: 'motors', label: 'Motors & Configuration' },
-          { id: 'sims', label: 'Flight simulations' },
         ]}
         active={tab}
         onChange={setTab}
@@ -424,7 +424,6 @@ function Workbench({ api, initial }: { api: Api; initial: RocketDocument }) {
             analysisInner={innerRadiusOf}
           />
         )}
-        {tab === 'sims' && <SimulationsTab />}
       </div>
       <div
         className="orw-splitter"
