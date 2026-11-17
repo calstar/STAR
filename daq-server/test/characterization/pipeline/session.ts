@@ -159,7 +159,7 @@ async function getSweep(): Promise<void> {
     '/api/query', '/api/pressure-limits', '/api/gui-config', '/api/sensor-config',
     '/api/sensors', '/api/sensors/PT1.CH1',
     '/api/board-logs', '/api/board-logs?board=21&limit=5', '/api/board-logs/stats',
-    '/api/debug', '/api/engine_state', '/api/calibration_status', '/api/cubic_calibration',
+    '/api/debug', '/api/debug?values', '/api/engine_state', '/api/calibration_status', '/api/cubic_calibration',
     '/api/ball_valve_cal', '/api/lc_tare', '/api/feed-char/results', '/api/calibration_profiles',
     '/api/config_packets', '/api/ota-flash/projects',
     '/api/video/streams', '/api/video/config', '/api/video/recordings',
@@ -252,6 +252,10 @@ async function main(): Promise<void> {
   step('transition_armed');
   command('A', 'state_transition', { state: 2 });
   await settle(2500);
+  // D64(3): the HTTP view of the state the WS path just reached (engineState 2, not the sweep's
+  // 1), and /api/debug at value level (P13) with a client connected and ingest flowing.
+  await request('GET', '/api/engine_state');
+  await request('GET', '/api/debug?values');
 
   step('debug_on');
   command('A', 'debug_mode', { debugMode: true });

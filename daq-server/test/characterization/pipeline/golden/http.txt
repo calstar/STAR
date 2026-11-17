@@ -975,6 +975,13 @@ GET /api/debug
   access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
   access-control-allow-headers: Content-Type
   body: schema {".boardScanRateHz.pt1": ["number"], ".heapUsedMb": ["number"], ".ingestConnected": ["bool"], ".ingestPacketsReceived": ["number"], ".outboxWindowsHeld": ["number"], ".sensorCacheSize": ["number"], ".useRelay": ["bool"], ".wsBufferedBytes": ["number"], ".wsClients": ["number"]}
+GET /api/debug?values
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: schema {".boardScanRateHz.pt1": ["number"], ".heapUsedMb": ["number"], ".ingestConnected": ["bool"], ".ingestPacketsReceived": ["number"], ".outboxWindowsHeld": ["number"], ".sensorCacheSize": ["number"], ".useRelay": ["bool"], ".wsBufferedBytes": ["number"], ".wsClients": ["number"]} values {"ingestConnected": true, "useRelay": false, "wsClients": 0}
 GET /api/engine_state
   status 200
   content-type: application/json
@@ -1086,6 +1093,22 @@ GET /api/video/nope
   access-control-allow-headers: Content-Type
   access-control-expose-headers: Location
   body: {"error": "Not found"}
+
+## transition_armed
+GET /api/engine_state
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: {"engineState": 2}
+GET /api/debug?values
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: schema {".boardScanRateHz.pt1": ["number"], ".heapUsedMb": ["number"], ".ingestConnected": ["bool"], ".ingestPacketsReceived": ["number"], ".outboxWindowsHeld": ["number"], ".sensorCacheSize": ["number"], ".useRelay": ["bool"], ".wsBufferedBytes": ["number"], ".wsClients": ["number"]} values {"ingestConnected": true, "useRelay": false, "wsClients": ">=1"}
 
 ## http_during_session
 GET /stats
@@ -1257,6 +1280,13 @@ GET /api/debug
   access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
   access-control-allow-headers: Content-Type
   body: same as the earlier identical request
+GET /api/debug?values
+  status 200
+  content-type: application/json
+  access-control-allow-origin: *
+  access-control-allow-methods: GET, POST, PUT, DELETE, OPTIONS
+  access-control-allow-headers: Content-Type
+  body: schema {".boardScanRateHz.pt1": ["number"], ".heapUsedMb": ["number"], ".ingestConnected": ["bool"], ".ingestPacketsReceived": ["number"], ".outboxWindowsHeld": ["number"], ".sensorCacheSize": ["number"], ".useRelay": ["bool"], ".wsBufferedBytes": ["number"], ".wsClients": ["number"]} values {"ingestConnected": true, "useRelay": false, "wsClients": ">=1"}
 GET /api/engine_state
   status 200
   content-type: application/json
