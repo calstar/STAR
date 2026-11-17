@@ -155,9 +155,29 @@ wait_port() {  # port name seconds
 alive() {  # pid name
   kill -0 "$1" 2>/dev/null || { echo "pipeline: $2 exited early" >&2; tail -20 "$FX/logs/$2.log" >&2; exit 5; }
 }
+wait_log() {  # pid name fixed-string seconds -- the service's own line, or a loud failure
+  local i=0
+  until grep -qF -- "$3" "$FX/logs/$2.log" 2>/dev/null; do
+    alive "$1" "$2"
+    sleep 0.25; i=$((i + 1))
+    [ $i -lt $(($4 * 4)) ] || { echo "pipeline: $2 never logged '$3' within $4 s" >&2; tail -20 "$FX/logs/$2.log" >&2; exit 5; }
+  done
+}
 
-# Same start order as test/test_integration.sh: DB, sequencer, bridge, (config broadcast),
-# backend, calibration, sim.
+# Start order: DB, sequencer, bridge, calibration, backend, (config broadcast), sim -- production's
+# (lifecycle/ freezes it), not test_integration.sh's, which put calibration_service after the
+# backend. Both registrars (daq_bridge and calibration_service each register the calibrated
+# tables) must have finished before the backend subscribes: the startup board 60 sits on PT slot
+# 10, whose uint8 table ids wrap onto PT2.CH1 ([0x20,0x21] raw, [0x20,0x31] calibrated), so each
+# registrar registers those ids as PT10.CH1 and, a moment later (~130 ms on Linux arm64, ~3 ms on
+# macOS), as PT2.CH1 again. elodin-db binds a VTableStream to the table's components at subscribe
+# time: a backend subscription accepted inside that window stays on the PT10 components and
+# delivers nothing for the rest of the run, with no refusal to retry (D-SLOT / D-SUB,
+# docs/remaster/LEDGER.md D41) -- the boards golden lost PT2_Cal.CH1 on Linux exactly so. The
+# goldens freeze board 60 (the validator's slot-10 error, its setup/lost lifecycle), so the board
+# stays and the backend instead starts only after each registrar has logged completing its
+# registration. Each wait is bounded by the same 30 s cap as the backend's own port wait: on an
+# idle machine both lines come within ~3 s (the bridge's includes its hard-coded 1.5 s drain).
 "$ELODIN_DB" run "127.0.0.1:$P_ELODIN" "$FX/elodin_db" > "$FX/logs/elodin.log" 2>&1 &
 PIDS+=($!); wait_port $P_ELODIN elodin 15
 
@@ -179,9 +199,17 @@ until awk '/Published initial state/ {seen=1; next} seen && /commands for state/
   [ $i -lt 120 ] || { echo "pipeline: sequencer never applied its boot state" >&2; tail -20 "$FX/logs/sequencer.log" >&2; exit 5; }
 done
 
+# The bridge logs this line after its last registration message and the 1.5 s drain that follows
+# (daq_bridge_main.cpp); the DB has long since processed every table it registered.
 (cd "$FX" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
-PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
+PIDS+=($!); wait_log "${PIDS[-1]}" daq_bridge "[Elodin] Drain complete, ready for TABLE data" 30
 
+# calibration_service logs this line once every calibrated table is registered and its own raw
+# subscriptions are sent (calibration_main.cpp connect_and_register).
+(cd "$FX" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" --config "$CFG" \
+  --adjustments "$FX/adjustments.json" --elodin-host 127.0.0.1 --elodin-port $P_ELODIN) \
+  > "$FX/logs/calibration.log" 2>&1 &
+PIDS+=($!); wait_log "${PIDS[-1]}" calibration "[Cal] Connected to Elodin, registered calibrated VTables, subscribed." 30
 
 # The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
 # legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
@@ -200,17 +228,14 @@ PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
   "$TSX" "$SRV/diablo_server/backend/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
 PIDS+=($!); wait_port $P_WS backend 30
 
-(cd "$FX" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" --config "$CFG" \
-  --adjustments "$FX/adjustments.json" --elodin-host 127.0.0.1 --elodin-port $P_ELODIN) \
-  > "$FX/logs/calibration.log" 2>&1 &
-PIDS+=($!); sleep 1; alive "${PIDS[-1]}" calibration
-
 # The simulator sends each board's SELF_TEST once, at start. The backend subscribes to the
 # self-test tables in passes capped by the request-id space; a result published before the pass
 # that covers its table never reaches it (seen on Linux: board 21's sensors 2-10 lost). Start the
 # simulator only after a pass with nothing left queued, and then one more pass (the backend runs
 # one every 5 s): a pass only SENDS its subscriptions, and on a loaded Linux box the self-tests of
-# four boards still beat the DB's processing of them.
+# four boards still beat the DB's processing of them. The second pass always comes: the LabJack
+# T7's tables ([0x26, …]) have no t7_bridge here, so the DB refuses them and the backend re-sends
+# them on its backoff.
 i=0
 until awk '/VTableStream: sent/ { if (done) more = 1; else if ($0 !~ /queued for the next pass/) done = 1 }
            END { exit !more }' "$FX/logs/backend.log" 2>/dev/null; do
