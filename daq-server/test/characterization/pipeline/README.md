@@ -1,17 +1,20 @@
 # pipeline/ — the whole stack, frozen at its WebSocket and HTTP edge
 
 ```bash
-bash test/characterization/pipeline/run.sh             # all three sessions
+bash test/characterization/pipeline/run.sh             # every session
 bash test/characterization/pipeline/run.sh pt          # one routed PT board, the full script → golden/
 bash test/characterization/pipeline/run.sh nocal       # the backend with no PT calibration file → golden/nocal/
 bash test/characterization/pipeline/run.sh boards      # every simulated board type → golden/boards/
+bash test/characterization/pipeline/run.sh stalesub    # D-SUB: a subscription accepted inside a re-registration window → golden/stalesub/
+bash test/characterization/pipeline/run.sh operator    # a WS client whose X-Auth-Email is an approved operator → golden/operator/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
 `run.sh` takes the stack lock itself (re-entrant under `gate.sh` / `characterization/run.sh`) and
 refuses to run on the stand. Without a git repository (a `git archive` export, a deployed stand)
 it names the lock `$TMPDIR/daq-stack.lock` instead of asking git; nothing else in the harness or the
-stack calls git. Once it holds the lock: pt ~75 s, nocal ~20 s, boards ~40 s. Env:
+stack calls git. Once it holds the lock: pt ~75 s, nocal ~20 s, boards ~40 s, stalesub ~60 s,
+operator ~20 s. Env:
 `CHAR_BUILD_DIR` (default `build-gate/`, then `build/`), `ELODIN_DB` (an elodin-db binary; default
 `~/.cargo/bin/elodin-db`), `CHAR_KEEP=1` (keep `.tmp/char_pipeline_<mode>_<pid>/` with every
 service log), `CHAR_CAPTURE_ONLY=<file>` (save the raw capture, skip the comparison),
@@ -195,6 +198,27 @@ and the real backend; no product code is touched.
 
 On macOS it needs the `127.0.0.22` alias only. It adds ~1 min to the area.
 
+### The operator session (`run.sh operator` → `golden/operator/`)
+
+The WS operator allowlist's positive half (H8b; LEDGER D84, D63's security review). `server.ts`
+reads `X-Auth-Email` at the WebSocket upgrade: no header is the trusted-local case (`operator:
+true`, `email: null`), a non-empty header is looked up in `operators.txt` (`operators.ts`,
+case-insensitive), and `control_unlock` arms the connection only for an operator. The pt session
+freezes the first case (client A) and the viewer (client B, `viewer@example.com`: `operator:
+false`, `not_operator`, `Control locked`) but never a header that **is** in the file, so a backend
+that treated every non-empty header as a viewer, or whose unlock always refused, stayed green.
+
+Script, on the pt fixture (one routed board, the calibration file present): readiness → connect A
+with `X-Auth-Email: operator@example.com` (the fixture's one operator) → `control_unlock` →
+disconnect. What it freezes: A's `control_status` `{"email": "operator@example.com", "operator":
+true}` (`ws_handshake.txt`) and its `control_unlock_result` `{"ok": true, "reason": "ok"}`
+(`ws_events.txt`, `unlock`). Nothing is commanded after the unlock: the reply is the observable,
+and a transition would move the sequencer for no further coverage (the armed command path is the
+pt session's `transition_armed`). It is its own session because `ws_streams.txt`'s P12 rule
+counts every client's handshake replay in its "paths checked" line; another client in the pt
+session would change that line. The two mutations below are what it is for; the second also reds
+the pt session from its `unlock` step on (client A, no header), the first reds nothing else. ~20 s.
+
 ## The scripted session (`session.ts`)
 
 GET sweep → connect A → 3 s live → viewer client B (`X-Auth-Email`, not an operator) → unknown `subscribe`, non-JSON, `get_state_transitions` →
@@ -222,7 +246,8 @@ viewer.script`, `/api/ball_valve_cal`, `/api/feed-char/results`, `/api/calibrati
 witness that nothing was written, and `ws_events.txt` shows the step raised no `config_updated`.
 The WS half of the same gate is frozen where it already was: client B's `control_status`
 `operator: false` (`ws_handshake.txt`), its `control_unlock_result` `not_operator` and the
-`Control locked` refusal of its `state_transition` (`ws_events.txt`, `viewer_client`). The two
+`Control locked` refusal of its `state_transition` (`ws_events.txt`, `viewer_client`); its
+positive half -- a header that is in `operators.txt` -- is the operator session (above). The two
 ungated OTA routes (D-OTA / SEC-2) are not here — the pipeline runs no `ota_service`; the viewer's
 200 on `POST /api/ota-flash` is `lifecycle/golden/ota.txt`, and `flash-all`'s no-enabled-boards
 case is a backend vitest (D72).
@@ -354,6 +379,8 @@ Each applied to the backend source, run, reverted (none committed):
 | `elodin-vtable-registry.ts` + `server.ts`: un-mark a subscribed pair the DB has not delivered within 4 s so the next pass re-sends it, and run a pass every `RESUBSCRIBE_MIN_MS` regardless of the refused pairs' backoff (stalesub) | `stalesub.txt`: `PT2_Cal.CH1.*` live `value=…` instead of `absent`, present in the backfill and the query. The first half alone stays green: no pass fell inside the 12 s window (see above) |
 | `api-server.ts`: delete the `isConfigWriteAuthorized` check of `POST /api/config/profiles/create` (H8) | `http.txt` `http_viewer_gates`: the viewer's create is 200 with `viewer-made` in the profile list, and the witness `GET /api/config/profiles` lists it too |
 | `server.ts`: `const isOp = true` at the WS upgrade (every client an operator) (H8) | `ws_handshake.txt` (client B `control_status` `operator: true`), `ws_events.txt` `viewer_client` (`control_unlock_result` `ok`, then B's `state_transition` reaches the sequencer) |
+| `server.ts`: `const isOp = authEmail === '' ? true : false` at the WS upgrade (every non-empty header a viewer) (H8b) | `operator/ws_handshake.txt` (client A `control_status` `operator: false`), `operator/ws_events.txt` `unlock` (`control_unlock_result` `not_operator`). pt, nocal, boards, stalesub stay green: no other session sends an operator's header over WS |
+| `server.ts`: `const op = false` in the `CONTROL_UNLOCK` handler (unlock always refuses) (H8b) | `operator/ws_events.txt` `unlock` (`not_operator`); also the pt session, from its `unlock` step (client A, no header) through everything A does armed after it (`ws_events.txt`, `http.txt`: no session ever starts) |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
