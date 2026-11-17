@@ -15,6 +15,8 @@
 #                                                        # :9998 stalled and down → golden/holds/
 #   bash test/characterization/pipeline/run.sh startlog   # the backend alone: its startup log to the
 #                                                        # end of the synchronous start → golden/startlog/
+#   bash test/characterization/pipeline/run.sh selftest   # a board whose SELF_TEST reports one failed
+#                                                        # connector (self_test_fail_<id>) → golden/selftest/
 #
 # "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
 # 127.0.0.22); it fails, never skips, when one is missing. Linux has all of 127/8.
@@ -52,10 +54,11 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" operator || rc=1
   bash "$HERE/run.sh" holds || rc=1
   bash "$HERE/run.sh" startlog || rc=1
+  bash "$HERE/run.sh" selftest || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog) ;;
-  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog|selftest) ;;
+  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog|selftest]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -138,8 +141,15 @@ cat > "$FX/ports.json" <<EOF
  "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-FXMODE="$MODE"; case "$MODE" in nocal|operator|holds|startlog) FXMODE=pt ;; esac  # the pt fixture, one routed board
+FXMODE="$MODE"; case "$MODE" in nocal|operator|holds|startlog|selftest) FXMODE=pt ;; esac  # the pt fixture, one routed board
 "$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$FXMODE"
+# selftest: the simulator reports pt_board's connector 3 as failed (--fail-connector, opt-in,
+# LEDGER D48(1)); its default packet is proven byte-identical first, with no ports involved.
+SIM_FAIL=""
+if [ "$MODE" = selftest ]; then
+  SIM_FAIL="21:3"
+  "$PY" "$HERE/sim_selftest_check.py" || exit 1
+fi
 
 if [ "$MODE" = holds ]; then
   # A state that takes a timed hold. The shipped config has none (test_integration.sh builds one
@@ -406,7 +416,7 @@ done
 # --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the pt
 # sim config enables only pt_board, at 127.0.0.1; the boards one every board at 127.0.0.<id>.
 "$PY" "$ROOT/sim/board_simulator.py" --config "$FX/sim_config.toml" --target 127.0.0.1 \
-  --port $P_DAQ_UDP --low-noise --skip-startup > "$FX/logs/sim.log" 2>&1 &
+  --port $P_DAQ_UDP --low-noise --skip-startup ${SIM_FAIL:+--fail-connector "$SIM_FAIL"} > "$FX/logs/sim.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" sim
 
 if [ -n "${CHAR_HOLD:-}" ]; then  # debugging: leave the stack up for poking, then tear down
@@ -428,7 +438,7 @@ cat > "$FX/context.json" <<EOF
            "$ROOT": "<daq>"},
  "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items() if k != "sequencer_pid"}))'),
  "under_load": $([ "${CHAR_UNDER_LOAD:-0}" = 1 ] && echo true || echo false),
- "selftest_expected": $("$PY" "$HERE/selftest_expected.py" "$FX/sim_config.toml" "$CFG")}
+ "selftest_expected": $("$PY" "$HERE/selftest_expected.py" "$FX/sim_config.toml" "$CFG" ${SIM_FAIL:+--fail "$SIM_FAIL"})}
 EOF
 
 if [ -n "${CHAR_CAPTURE_ONLY:-}" ]; then
@@ -444,7 +454,7 @@ if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog -x selftest "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
