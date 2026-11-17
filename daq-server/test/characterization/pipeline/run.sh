@@ -7,9 +7,11 @@
 #   bash test/characterization/pipeline/run.sh            # both sessions
 #   bash test/characterization/pipeline/run.sh pt         # one routed PT board, the full script → golden/
 #   bash test/characterization/pipeline/run.sh boards     # every simulated board type → golden/boards/
+#   bash test/characterization/pipeline/run.sh stalesub   # D-SUB: a subscription accepted inside a
+#                                                        # re-registration window → golden/stalesub/
 #
-# "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS; it fails, never skips,
-# when one is missing. Linux has all of 127/8.
+# "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
+# 127.0.0.22); it fails, never skips, when one is missing. Linux has all of 127/8.
 #
 # Takes the machine-wide stack lock itself (re-entrant under gate.sh / run.sh). Off the stand
 # only. Every service runs against a private fixture tree in .tmp/char_pipeline_<pid>/ with its
@@ -40,9 +42,10 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" pt || rc=1
   bash "$HERE/run.sh" nocal || rc=1
   bash "$HERE/run.sh" boards || rc=1
+  bash "$HERE/run.sh" stalesub || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards) ;; *) echo "usage: run.sh [pt|nocal|boards]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub) ;; *) echo "usage: run.sh [pt|nocal|boards|stalesub]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -52,13 +55,15 @@ fi
 
 # The boards session sends as every simulated board from 127.0.0.<board_id>. Same list as
 # test/test_integration.sh: every board_id octet in config_base.toml plus the startup board (60).
-if [ "$MODE" = boards ] && [ "$(uname)" = "Darwin" ]; then
+# stalesub sends only as pt_board_2 (22).
+if { [ "$MODE" = boards ] || [ "$MODE" = stalesub ]; } && [ "$(uname)" = "Darwin" ]; then
   missing=()
-  for i in 11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71; do
+  ALIASES="11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71"; [ "$MODE" = stalesub ] && ALIASES=22
+  for i in $ALIASES; do
     ifconfig lo0 2>/dev/null | grep -q "inet 127\.0\.0\.$i " || missing+=("127.0.0.$i")
   done
   if [ ${#missing[@]} -gt 0 ]; then
-    echo "pipeline: the boards session needs loopback aliases that are missing: ${missing[*]}" >&2
+    echo "pipeline: the $MODE session needs loopback aliases that are missing: ${missing[*]}" >&2
     echo "          add them (as test_integration.sh does):" >&2
     echo "          for i in 11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71; do sudo ifconfig lo0 alias 127.0.0.\$i up; done" >&2
     exit 7
@@ -155,9 +160,29 @@ wait_port() {  # port name seconds
 alive() {  # pid name
   kill -0 "$1" 2>/dev/null || { echo "pipeline: $2 exited early" >&2; tail -20 "$FX/logs/$2.log" >&2; exit 5; }
 }
+wait_log() {  # pid name fixed-string seconds -- the service's own line, or a loud failure
+  local i=0
+  until grep -qF -- "$3" "$FX/logs/$2.log" 2>/dev/null; do
+    alive "$1" "$2"
+    sleep 0.25; i=$((i + 1))
+    [ $i -lt $(($4 * 4)) ] || { echo "pipeline: $2 never logged '$3' within $4 s" >&2; tail -20 "$FX/logs/$2.log" >&2; exit 5; }
+  done
+}
 
-# Same start order as test/test_integration.sh: DB, sequencer, bridge, (config broadcast),
-# backend, calibration, sim.
+# Start order: DB, sequencer, bridge, calibration, backend, (config broadcast), sim -- production's
+# (lifecycle/ freezes it), not test_integration.sh's, which put calibration_service after the
+# backend. Both registrars (daq_bridge and calibration_service each register the calibrated
+# tables) must have finished before the backend subscribes: the startup board 60 sits on PT slot
+# 10, whose uint8 table ids wrap onto PT2.CH1 ([0x20,0x21] raw, [0x20,0x31] calibrated), so each
+# registrar registers those ids as PT10.CH1 and, a moment later (~130 ms on Linux arm64, ~3 ms on
+# macOS), as PT2.CH1 again. elodin-db binds a VTableStream to the table's components at subscribe
+# time: a backend subscription accepted inside that window stays on the PT10 components and
+# delivers nothing for the rest of the run, with no refusal to retry (D-SLOT / D-SUB,
+# docs/remaster/LEDGER.md D41) -- the boards golden lost PT2_Cal.CH1 on Linux exactly so. The
+# goldens freeze board 60 (the validator's slot-10 error, its setup/lost lifecycle), so the board
+# stays and the backend instead starts only after each registrar has logged completing its
+# registration. Each wait is bounded by the same 30 s cap as the backend's own port wait: on an
+# idle machine both lines come within ~3 s (the bridge's includes its hard-coded 1.5 s drain).
 "$ELODIN_DB" run "127.0.0.1:$P_ELODIN" "$FX/elodin_db" > "$FX/logs/elodin.log" 2>&1 &
 PIDS+=($!); wait_port $P_ELODIN elodin 15
 
@@ -179,9 +204,43 @@ until awk '/Published initial state/ {seen=1; next} seen && /commands for state/
   [ $i -lt 120 ] || { echo "pipeline: sequencer never applied its boot state" >&2; tail -20 "$FX/logs/sequencer.log" >&2; exit 5; }
 done
 
+# The bridge logs this line after its last registration message and the 1.5 s drain that follows
+# (daq_bridge_main.cpp); the DB has long since processed every table it registered.
 (cd "$FX" && exec "$BIN/daq_bridge" "$CFG") > "$FX/logs/daq_bridge.log" 2>&1 &
-PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
+PIDS+=($!); wait_log "${PIDS[-1]}" daq_bridge "[Elodin] Drain complete, ready for TABLE data" 30
 
+# calibration_service logs this line once every calibrated table is registered and its own raw
+# subscriptions are sent (calibration_main.cpp connect_and_register).
+CAL_DONE="[Cal] Connected to Elodin, registered calibrated VTables, subscribed."
+start_calibration() {
+  (cd "$FX" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" --config "$CFG" \
+    --adjustments "$FX/adjustments.json" --elodin-host 127.0.0.1 --elodin-port $P_ELODIN) \
+    > "$FX/logs/calibration.log" 2>&1 &
+  PIDS+=($!); wait_log "${PIDS[-1]}" calibration "$CAL_DONE" 30
+}
+if [ "$MODE" != stalesub ]; then
+  start_calibration
+else
+  # stalesub: the D-SUB window, made deterministic. Registrar A is calibration_service run on a
+  # config holding only the startup board (slot 10): it re-registers [0x20,0x31] -- PT2_Cal.CH1 as
+  # the bridge just left it -- as PT10_Cal.CH1, and is stopped once it has logged doing so (the
+  # table outlives its connection). The backend then starts and subscribes with every table
+  # registered, so [0x20,0x31] is accepted, bound to the PT10 components. Only after the backend's
+  # passes are done does the real calibration_service start and register PT10 then PT2 again. No
+  # racing anywhere: every step waits on the service's own line.
+  mkdir -p "$FX/regA"
+  (cd "$FX/regA" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" \
+    --config "$FX/registrar_a.toml" --adjustments "$FX/regA/adjustments.json" \
+    --elodin-host 127.0.0.1 --elodin-port $P_ELODIN) > "$FX/logs/registrar_a.log" 2>&1 &
+  REGA=$!; PIDS+=($REGA); wait_log $REGA registrar_a "$CAL_DONE" 30
+  kill $REGA
+  i=0
+  while kill -0 $REGA 2>/dev/null; do
+    sleep 0.25; i=$((i + 1))
+    [ $i -lt 40 ] || { echo "pipeline: registrar A still alive 10 s after SIGTERM" >&2; kill -9 $REGA; exit 5; }
+  done
+  wait $REGA 2>/dev/null || true
+fi
 
 # The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
 # legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
@@ -200,23 +259,21 @@ PIDS+=($!); sleep 1; alive "${PIDS[-1]}" daq_bridge
   "$TSX" "$SRV/diablo_server/backend/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
 PIDS+=($!); wait_port $P_WS backend 30
 
-(cd "$FX" && exec env -u CAL_BACKUP_PATH -u CAL_VERBOSE "$BIN/calibration_service" --config "$CFG" \
-  --adjustments "$FX/adjustments.json" --elodin-host 127.0.0.1 --elodin-port $P_ELODIN) \
-  > "$FX/logs/calibration.log" 2>&1 &
-PIDS+=($!); sleep 1; alive "${PIDS[-1]}" calibration
-
 # The simulator sends each board's SELF_TEST once, at start. The backend subscribes to the
 # self-test tables in passes capped by the request-id space; a result published before the pass
 # that covers its table never reaches it (seen on Linux: board 21's sensors 2-10 lost). Start the
 # simulator only after a pass with nothing left queued, and then one more pass (the backend runs
 # one every 5 s): a pass only SENDS its subscriptions, and on a loaded Linux box the self-tests of
-# four boards still beat the DB's processing of them.
+# four boards still beat the DB's processing of them. The second pass always comes: the LabJack
+# T7's tables ([0x26, …]) have no t7_bridge here, so the DB refuses them and the backend re-sends
+# them on its backoff.
 i=0
 until awk '/VTableStream: sent/ { if (done) more = 1; else if ($0 !~ /queued for the next pass/) done = 1 }
            END { exit !more }' "$FX/logs/backend.log" 2>/dev/null; do
   sleep 0.25; i=$((i + 1))
   [ $i -lt 240 ] || { echo "pipeline: backend never finished subscribing" >&2; tail -20 "$FX/logs/backend.log" >&2; exit 5; }
 done
+[ "$MODE" != stalesub ] || start_calibration  # the re-registration, after the subscription
 
 # --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the pt
 # sim config enables only pt_board, at 127.0.0.1; the boards one every board at 127.0.0.<id>.
@@ -237,7 +294,8 @@ CAPTURE="$FX/capture.json"
   > "$FX/logs/session.log" 2>&1 || { echo "pipeline: session failed" >&2; tail -30 "$FX/logs/session.log" >&2; tail -30 "$FX/logs/backend.log" >&2; exit 6; }
 
 cat > "$FX/context.json" <<EOF
-{"now_ms": $START_MS, "gui_points_per_second": $(sed -n "/^\[gui\]/,/^\[/s/^points_per_second = \([0-9.]*\)/\1/p" "$CFG"),
+{"now_ms": $START_MS, "mode": "$MODE", "logs": "$FX/logs",
+ "gui_points_per_second": $(sed -n "/^\[gui\]/,/^\[/s/^points_per_second = \([0-9.]*\)/\1/p" "$CFG"),
  "paths": {"$FX/config": "<cfgdir>", "$FX/home": "<home>", "$FX": "<fx>",
            "$ROOT": "<daq>"},
  "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))'),
@@ -252,14 +310,13 @@ fi
 
 OUT="$FX/out"
 "$PY" "$HERE/characterize.py" "$CAPTURE" "$FX/context.json" "$OUT"
-GOLD="$HERE/golden"; [ "$MODE" = boards ] && GOLD="$HERE/golden/boards"
-[ "$MODE" = nocal ] && GOLD="$HERE/golden/nocal"
+GOLD="$HERE/golden"; [ "$MODE" = pt ] || GOLD="$HERE/golden/$MODE"
 if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   mkdir -p "$GOLD"; rm -f "$GOLD"/*.txt; cp "$OUT"/* "$GOLD/"
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
