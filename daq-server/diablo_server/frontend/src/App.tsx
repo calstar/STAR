@@ -79,6 +79,8 @@ export default function App() {
               <Route path="/mobile" element={<P.MobileGuiPage />} />
 
               {/* ── Panes / tools ──────────────────────────────────────── */}
+              <Route path="/asi" element={<P.AsiTestPage />} />
+              <Route path="/asi-twin" element={<P.AsiTwinPage />} />
               <Route path="/boards" element={<P.BoardsPage />} />
               <Route path="/calibration" element={<P.CalibrationPage />} />
               {/* Cubic calibration merged into the unified Calibration page. */}

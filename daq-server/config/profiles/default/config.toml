@@ -238,6 +238,27 @@ necessary_for_abort = false
 voltage_reference = 0
 
 active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
+
+# ASI (augmented spark igniter) PDB: an actuator board of the same design as board 12, driving the
+# ASI's six NC outputs (roles at the end of [actuator_roles]): per line two vent solenoids and the
+# pilot of the pneumatic run valve. STAGED, NOT LIVE -- it waits on its
+# IP. To bring it up: set ip / mac / board_id (board_id usually follows the IP's last octet; 15 is
+# a placeholder, unused elsewhere), uncomment this block AND the ASI roles, then reload the config.
+# designated_survivor stays on board 12. Check its abort behaviour with the team before enabling.
+# [boards.asi_actuator_board]
+# type = "ACTUATOR"
+# ip = "192.168.2.15"          # PLACEHOLDER: waiting on the IP
+# mac = ""                     # PLACEHOLDER
+# send_port = 5005
+# listen_port = 5005
+# num_actuators = 10
+# board_id = 15                # PLACEHOLDER
+# enabled = true
+# enable_serial_printing = 1
+# necessary_for_abort = false
+# voltage_reference = 0
+# active_connectors = [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 ]
+
 [boards.lc_board]
 type = "LC"
 ip = "192.168.2.41"
@@ -359,20 +380,43 @@ board_id = 81
 enabled = false
 scan_rate_hz = 100.0           # scans/s; every channel below is sampled once per scan
 
+# ASI (augmented spark igniter) feed PTs, P&ID "ASI V1": AIN0/AIN1 the GOx line, AIN2/AIN3 the
+# methane line. Roles lead with the P&ID tag so the ASI tab maps them itself (lib/asi/settings.ts
+# autoMapping). Upstream = regulator outlet, downstream = run-valve outlet (the injector hole's P0).
+# Which of each pair is up/down is ASSUMED (lower AIN = upstream): swap the roles if wired otherwise.
+# full_scale is the P&ID's 1000 psi PT-LP range; `signal` is a PLACEHOLDER -- set it from the
+# transducers' datasheet (a wrong signal reads a wrong pressure).
 [[boards.labjack_1.channels]]
-ain = 1                        # AIN number as printed on the T7 (0-13)
+ain = 0                        # AIN number as printed on the T7 (0-13)
 kind = "PT"                    # PT | TC | LC | VOLTAGE
-role = "Placeholder PT"        # the name the GUI shows; unique across all sensors
+role = "PT-LP-5 GOx Upstream"  # the name the GUI shows; unique across all sensors
 range = 10.0                   # +/- volts: 10, 1, 0.1, 0.01
 signal = "0-5V"                # PT output: 0-5V | 0.5-4.5V | 1-5V | 0-10V | 4-20mA (+ shunt_ohms)
-full_scale = 1000.0            # psi at full output (PLACEHOLDER: from the transducer's datasheet)
+full_scale = 1000.0            # psi at full output (P&ID PT-LP range)
+
+[[boards.labjack_1.channels]]
+ain = 1
+kind = "PT"
+role = "PT-LP-2 GOx Downstream"
+range = 10.0
+signal = "0-5V"                # PLACEHOLDER: from the datasheet
+full_scale = 1000.0
 
 [[boards.labjack_1.channels]]
 ain = 2
-kind = "TC"
-tc_type = "K"
-role = "Placeholder TC"
-range = 0.1                    # a thermocouple is millivolts; 0.1 V covers type K to 1372 C
+kind = "PT"
+role = "PT-LP-6 CH4 Upstream"
+range = 10.0
+signal = "0-5V"                # PLACEHOLDER: from the datasheet
+full_scale = 1000.0
+
+[[boards.labjack_1.channels]]
+ain = 3
+kind = "PT"
+role = "PT-LP-1 CH4 Downstream"
+range = 10.0
+signal = "0-5V"                # PLACEHOLDER: from the datasheet
+full_scale = 1000.0
 
 # Motorized ball valve board (firmware/Hotfire_Code/BallValve_Hotfire), two valves on connectors 1
 # and 2. Each is commanded like an actuator through [actuator_roles] -- ["NC", 1, 71] and
@@ -636,6 +680,17 @@ thrust_curve_path = "output/lut/thrust_curve.csv"
 "GN2 Vent" = ["NC", 6, 14]
 "LOX Fill" = ["NC", 7, 14]
 "LOX Dump" = ["NC", 8, 14]
+# ASI PDB (board 15 is a PLACEHOLDER -- see [boards.asi_actuator_board]). Uncomment with the board.
+# Wiring (operator, 2026-11-16): GOx 1 vent before run valve (SOL-18), 2 vent after (SOL-16), 3 run
+# valve (pneumatic, the PDB drives its pilot); methane 4 vent before (SOL-19), 5 vent after (SOL-17),
+# 6 run valve (pneumatic). All NC. The ASI tab maps
+# these names itself.
+# "ASI GOx Vent Up" = ["NC", 1, 15]
+# "ASI GOx Vent Dn" = ["NC", 2, 15]
+# "ASI GOx Run" = ["NC", 3, 15]
+# "ASI CH4 Vent Up" = ["NC", 4, 15]
+# "ASI CH4 Vent Dn" = ["NC", 5, 15]
+# "ASI CH4 Run" = ["NC", 6, 15]
 
 # ── System states ────────────────────────────────────────────────────────────
 # The state list, in one place. These ids and names were duplicated across the C++ enum, the

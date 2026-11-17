@@ -8,6 +8,8 @@
  */
 import { lazy } from 'react';
 
+export const AsiTestPage        = lazy(() => import('@/app/asi/page'));
+export const AsiTwinPage        = lazy(() => import('@/app/asi-twin/page'));
 export const BoardsPage         = lazy(() => import('@/app/boards/page'));
 export const CalibrationPage    = lazy(() => import('@/app/calibration/page'));
 export const CubicCalPage       = lazy(() => import('@/app/calibration-cubic/page'));
