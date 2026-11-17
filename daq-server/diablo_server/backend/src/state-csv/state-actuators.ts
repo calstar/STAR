@@ -143,28 +143,6 @@ export function resolveActuatorTelemetryEntity(actuatorName: string): string | n
   return `${r.ballValve ? 'BV' : 'ACT'}${r.bn}.CH${r.localCh}`;
 }
 
-export function getActuatorChannel(
-  actuatorName: string,
-  configActuatorChannels: Record<string, number>,
-): number | undefined {
-  // Explicit caller-provided channels (highest priority)
-  const fromCaller = configActuatorChannels[actuatorName];
-  if (fromCaller !== undefined) return fromCaller;
-
-  // Config-driven channel-by-name map
-  const fromConfig = ACTUATOR_CHANNEL_BY_NAME[actuatorName];
-  if (fromConfig !== undefined) return fromConfig;
-
-  // Abbreviation → full name → channel
-  const fullName = ACTUATOR_ABBREV_MAP[actuatorName];
-  if (fullName) {
-    const ch = ACTUATOR_CHANNEL_BY_NAME[fullName];
-    if (ch !== undefined) return ch;
-  }
-
-  return undefined;
-}
-
 export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
   const result: StateActuatorMap = {};
 
@@ -272,38 +250,6 @@ export function parseStateActuatorsCSV(csvPath: string): StateActuatorMap {
     console.error('❌ Failed to parse state actuators CSV:', error);
     return result;
   }
-}
-
-export function getNumActuatorsFromCSV(): number {
-  /**Get number of actuators dynamically from CSV file.*/
-  const possiblePaths = buildCSVSearchPaths();
-
-  for (const path of possiblePaths) {
-    try {
-      if (!existsSync(path)) {
-        continue;
-      }
-      const csvContent = readFileSync(path, 'utf-8');
-      const lines = csvContent.trim().split('\n');
-      if (lines.length < 2) {
-        continue;
-      }
-      // Count non-empty actuator rows (skip header)
-      let count = 0;
-      for (let i = 1; i < lines.length; i++) {
-        const row = lines[i].split(',');
-        if (row[0] && row[0].trim()) {
-          count++;
-        }
-      }
-      if (count > 0) {
-        return count;
-      }
-    } catch (error) {
-      continue;
-    }
-  }
-  return 10; // Fallback default
 }
 
 /**
