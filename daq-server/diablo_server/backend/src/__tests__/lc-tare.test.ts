@@ -193,7 +193,8 @@ describe('live stream and reconnect backfill agree', () => {
     // A wiring assertion, deliberately narrow: it checks the one line that decides which side of
     // history.record() the subtraction lands on. Moving the tare into the drain means deleting
     // this wrapper, and this test is what notices.
-    const src = fs.readFileSync(path.join(__dirname, '..', 'server.ts'), 'utf8');
+    // The parse site lives in server/ingest.ts (WP6 1.14).
+    const src = fs.readFileSync(path.join(__dirname, '..', 'server', 'ingest.ts'), 'utf8');
     expect(src).toContain('expandWithTare(parseElodinPacket(');
 
     // The drain loop lives in server/ws-clients.ts (WP6 1.3). Both anchors must be found, or
