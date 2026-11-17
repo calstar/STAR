@@ -39,9 +39,11 @@ export interface APIHandlerOptions {
   getQueryClient?: () => ElodinQueryClient | null;
   getDebugInfo?: () => DebugInfo | null;
   /** Deferred with `setImmediate` after the response by config save/import (idle) and profile
-   *  switch → `server.ts` `applyDeployedConfigChange`. */
+   *  switch → `server.ts` `applyDeployedConfigChange`. H1's ordering vitest (D72) asserts
+   *  `res.writableEnded === true` inside a mock of it at each of the three sites. */
   onConfigUpdated?: () => void;
-  /** Deferred after a deployed state-CSV save → rebuild the state-actuator map, `config_updated`. */
+  /** Deferred after a deployed state-CSV save → rebuild the state-actuator map, `config_updated`.
+   *  Same vitest, fourth site. */
   onStateCsvUpdated?: () => void;
   /** Reads `engine-state.currentState`. */
   getEngineState?: () => number;
@@ -55,8 +57,9 @@ export interface APIHandlerOptions {
 }
 
 /** The operator gate for every gated write (14 routes; the two OTA routes have none — D-OTA /
- *  SEC-2, kept). All 14 and the two OTA routes are frozen as the viewer by the H8 package (C0,
- *  gates step 1; security ruling) before any of them moves. */
+ *  SEC-2, kept). All 14 and `POST /api/ota-flash` are frozen as the viewer by the H8 package (C0,
+ *  gates step 1; security ruling) before any of them moves; `flash-all`'s viewer 200 is H9's
+ *  vitest (D72: no harness has a config with no enabled boards). */
 export function isConfigWriteAuthorized(req: IncomingMessage): boolean {
   throw new Error('stub');
 }
