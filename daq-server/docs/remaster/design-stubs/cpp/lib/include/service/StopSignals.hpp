@@ -30,12 +30,13 @@
 //             SA_RESETHAND makes a second SIGTERM fatal. EINTR exposure stays today's: select,
 //             usleep and SO_RCVTIMEO/SO_SNDTIMEO socket calls are interrupted regardless (§0.2),
 //             including AbortBroadcaster's SO_SNDTIMEO sendto (an ABORT repeat can fail; D42).
-// Handler:    one function, switch on the print order; each case is today's body statement for
-//             statement — kPrintThenStop: `if (line) std::cout << line << std::endl;` then
+// Handler:    one function, switch on the print order; each case is today's two statements in
+//             today's order — kPrintThenStop: `if (line) std::cout << line << std::endl;` then
 //             `flag = false;`; kStopThenPrint (daq_bridge): the same two the other way round —
 //             including the non-async-signal-safe std::cout << … << std::endl and not saving errno
-//             (parked: BLOAT-MAP defect 6; research §0.3). The `if (line)` test is the one
-//             statement no handler has today: true in every printing service, false only in
+//             (parked: BLOAT-MAP defect 6; research §0.3). The switch and the `if (line)` test are
+//             the two statements no handler has today: the switch selects the one case that
+//             service's handler was; the test is true in every printing service, false only in
 //             t7_bridge, which prints nothing today. Unobservable.
 // Errors:     none returned; ::signal's result is ignored, as today.
 // Must not know: any service; config; sockets; what a service does on stop (each main tears down
@@ -57,16 +58,20 @@ enum class ShutdownNotice {
     kStopThenPrint,  // flag = false; then std::cout << line << std::endl (daq_bridge)
 };
 
-/** SIGPIPE keeps its default action (the process dies, −13) or is ignored. Per service, frozen
- *  until the team decides (LEDGER Parked "SIGPIPE disposition"); never changed in a refactor. */
+/** SIGPIPE is left alone or ignored. kDefault means NO signal() call for SIGPIPE at all — not
+ *  signal(SIGPIPE, SIG_DFL), which would overwrite a disposition inherited from a launcher that
+ *  ignores SIGPIPE; today's five default-disposition mains make no such call, and die with −13 on
+ *  a SIGPIPE. Per service, frozen until the team decides (LEDGER Parked "SIGPIPE disposition");
+ *  never changed in a refactor. */
 enum class Sigpipe { kDefault, kIgnore };
 
 /** The process's stop flag: true until SIGINT/SIGTERM. */
 std::atomic<bool>& running();
 
 /** signal(SIGINT, h); signal(SIGTERM, h); and for kIgnore signal(SIGPIPE, SIG_IGN) — in that
- *  order. `line` is printed verbatim (callers include the leading "\n"; the controller's U+2026 is
- *  bytes in the literal) and must outlive the process (a string literal). `line == nullptr`
+ *  order; for kDefault no SIGPIPE call. `line` is printed verbatim (callers include the leading
+ *  "\n"; the controller's U+2026 is bytes in the literal) and must outlive the process (a string
+ *  literal). `line == nullptr`
  *  prints nothing (t7_bridge, which passes kPrintThenStop: with no line the order is
  *  immaterial, and daq_bridge stays the only kStopThenPrint user). Per-service arguments:
  *  DESIGN-WP8 §2.1 table. */
