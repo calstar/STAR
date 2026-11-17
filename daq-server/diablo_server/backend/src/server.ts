@@ -28,7 +28,7 @@ import { parseElodinPacket } from './elodin-protocol.js';
 import { recordFirmware } from './firmware-log.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
 import { applyValveCalibration } from './ball-valve-cal.js';
-import { loadSensorRoleMap, hpBoardNumbers, t7CalFields } from './sensor-config.js';
+import './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
 import { valvePlanSuffix } from './valve-plan.js';
@@ -51,7 +51,7 @@ import './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
 import { startDhcpStatusPoller, getBoardDhcpStatus } from './dhcp-status.js';
 import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
-import { loadPTCalibration, type CalibrationCoefficients } from './calibration.js';
+import './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import { isOperator } from './operators.js';
 import type { NotificationPayload } from '../../shared/types.js';
@@ -115,41 +115,13 @@ import { history, pruneHistory, sendHistoricalData } from './server/history.js';
 import { firstPacketTimeMs, countdownTargetMs, initMissionTime, setFirstPacketTimeMs, setCountdownTargetMs } from './server/mission-time.js';
 import { guiStreamConfig, envelope, encoderEnvelope, broadcastLastTime, BROADCAST_MIN_MS, streamBudgetFor, saneSampleTimeMs, initGuiStream, reloadGuiStreamConfig, emitSensorPoint, emitSensorWindow, flushEnvelopes } from './server/sensor-stream.js';
 import { _hpBoardNumbers, _t7CalFields, _t7SlotToBoardId, initConfigCaches, resetConfigCaches, uniqueIdFromPtEntity } from './server/config-caches.js';
+import { calibrationHost, lastRawAdc, initCalibrationState, reloadCalibrationEntityMap } from './server/calibration-state.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
-const ptCalibration = new Map<number, CalibrationCoefficients>();
-const calibrationPoints = new Map<number, { adc: number; pressure: number }[]>();
-const lastRawAdc = new Map<number, number>();
-let ptCalibrationFilePath: string | null = null;
-
-// Load existing calibration file if available
-try {
-  const loaded = loadPTCalibration();
-  if (loaded.map.size > 0) {
-    for (const [k, v] of loaded.map) ptCalibration.set(k, v);
-    ptCalibrationFilePath = loaded.filePath;
-    console.log(`[ThinServer] Loaded ${ptCalibration.size} PT calibrations from ${loaded.filePath}`);
-  }
-} catch { /* no calibration file — fine */ }
-
-// Sensor-role → entity naming. Rebuilt on config save (onConfigUpdated) so a
-// Sensor Roles edit reflects without a backend restart. calibrationHost reads
-// this via its channelToEntityMap property (updated in lockstep below).
-let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
+initCalibrationState();
 
 initConfigCaches();
-
-const calibrationHost: CalibrationHost = {
-  ptCalibration,
-  ptCalibrationFilePath,
-  calibrationPoints,
-  channelToEntityMap: calChannelToEntityMap,
-  lastRawAdc,
-  send,
-  broadcast,
-  elodin: null as any, // Will be set after elodin connection
-};
 
 // ── Board status ─────────────────────────────────────────────────────────────
 
@@ -595,10 +567,7 @@ const apiHandler = createAPIHandler({
  */
 export function applyDeployedConfigChange(): void {
   reloadGuiStreamConfig();
-  // Rebuild sensor-role-derived caches so a Sensor Roles / board_id edit reflects
-  // live (the backend is always-on and isn't restarted by a session start).
-  calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
-  calibrationHost.channelToEntityMap = calChannelToEntityMap;
+  reloadCalibrationEntityMap();
   resetConfigCaches();
   // The state CSVs are deployed in the same step, so rebuild what is derived from them too
   // rather than relying on onStateCsvUpdated, which the session path never fires.
