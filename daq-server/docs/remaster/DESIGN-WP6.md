@@ -634,7 +634,7 @@ own scripts (§6.3, D48(3)).
   `expected` — its id spelled `id =` instead of `board_id =` (the registry takes
   `b.board_id ?? b.id`, `:247`; `loadBoardsFromConfig` needs a numeric `board_id`,
   `server.ts:399`). Not an empty `[boards]`, which trips the registry's 1..255 fallback (`:330-334`).
-- **G4 :9998 down / slow** (lifecycle, WP5's): SIGSTOP the sequencer → `state_transition` →
+- **G4 :9998 down / slow** (pipeline mode `holds`, WP5's — DESIGN-WP5 §6, D70; not lifecycle, which runs no sequencer): SIGSTOP the sequencer → `state_transition` →
   `ERROR "State transition failed: timeout"` after ~2 s; SIGTERM it → `"… connect ECONNREFUSED
   127.0.0.1:<port>"` (N5 normalises the port); `debug_mode` → no reply.
 - **G5 keepalive reaper**: a client that stops answering pings is reaped within [30, 60] s.
