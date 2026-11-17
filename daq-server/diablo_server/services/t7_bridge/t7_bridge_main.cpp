@@ -43,6 +43,7 @@
 #include "config/Config.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "service/StopSignals.hpp"
 #include "t7/T7Calibration.hpp"
 #include "t7/T7Convert.hpp"
 #include "t7/T7Stream.hpp"
@@ -53,7 +54,7 @@
 
 namespace {
 
-std::atomic<bool> g_running{true};
+auto& g_running = fsw::service::running();
 
 // One line per statement even with a thread per T7: buffer, then write under a lock.
 std::mutex g_log_mutex;
@@ -79,10 +80,6 @@ private:
     std::ostream& out_;
     std::ostringstream buf_;
 };
-
-void on_signal(int) {
-    g_running = false;
-}
 
 uint64_t epoch_ns() {
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -340,9 +337,9 @@ int main(int argc, char* argv[]) {
     const uint16_t db_port =
         static_cast<uint16_t>(opt.elodin_port > 0 ? opt.elodin_port : cfg.database.port);
 
-    signal(SIGINT, on_signal);
-    signal(SIGTERM, on_signal);
-    signal(SIGPIPE, SIG_IGN);  // a dropped Elodin socket must not kill the process
+    fsw::service::installStopHandlers(
+        fsw::service::ShutdownNotice::kPrintThenStop, nullptr,
+        fsw::service::Sigpipe::kIgnore);  // a dropped Elodin socket must not kill the process
 
     std::cout << "[t7_bridge] " << boards.size() << " T7(s), Elodin " << db_host << ":" << db_port
               << (opt.fake ? ", FAKE devices" : "") << std::endl;
