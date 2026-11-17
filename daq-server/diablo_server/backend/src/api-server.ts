@@ -46,6 +46,7 @@ import { captureEndpoint, clearEndpoints, valveCalibrationSnapshot } from './bal
 import { isConfigWriteAuthorized, readJsonBody, type APIHandlerOptions } from './api/http.js';
 export type { APIHandlerOptions, BoardScanRateHz, DebugInfo } from './api/http.js';
 export { buildSensorConfig, type SensorConfigEntry } from './sensor-config.js';
+import { handleConfigRequest } from './api/config.js';
 
 /**
  * Create an HTTP request handler for all /api/* routes.
@@ -78,121 +79,8 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         await handleVideoRequest(req, res, url.pathname, video);
         return true;
       }
-      if (url.pathname === '/api/config' && req.method === 'GET') {
-        // The editor reads the ACTIVE PROFILE (the draft you edit), not the deployed config.toml.
-        const config = readActiveProfile();
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ config, active: getActiveProfileName() }));
-      } else if (url.pathname === '/api/config/running' && req.method === 'GET') {
-        // The config the pipeline is reading right now (routes/config.ts getRunningConfigPath):
-        // what every page that DISPLAYS the stand reads. /api/config is the editor's draft (the
-        // active profile), which differs from it during a session and in every simulated run.
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ config: readDeployedConfig(), path: getRunningConfigPath() }));
-      } else if (url.pathname === '/api/config' && req.method === 'POST') {
-        // Save to the ACTIVE PROFILE. When idle, also deploy it to config.toml (the running file);
-        // during a session config.toml is frozen — the write is a draft applied at the next start.
-        if (!isConfigWriteAuthorized(req)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Not an approved operator' }));
-          return true;
-        }
-        let body = '';
-        req.on('data', (chunk) => {
-          body += chunk.toString();
-        });
-        req.on('end', () => {
-          try {
-            const { config } = JSON.parse(body);
-            // The editor refuses to save this, but it is not the only writer — enforce it where
-            // every write passes. A dangling PWM actuator means the controller comes up with its
-            // fire gate disabled, which is far better found here than at the next restart.
-            const pwmIssues = validateControllerActuators(config);
-            if (pwmIssues.length > 0) {
-              res.writeHead(400, { 'Content-Type': 'application/json' });
-              res.end(JSON.stringify({ error: `Invalid controller PWM actuators: ${pwmIssues.join('; ')}` }));
-              return;
-            }
-            const sessionActive = sessionManager.getStatus().active;
-            console.log(`📝 Config save → active profile "${getActiveProfileName()}"${sessionActive ? ' (draft; config.toml frozen — session active)' : ' (+ deploy to config.toml)'}`);
-            writeActiveProfile(config);
-            if (!sessionActive) {
-              deployActiveProfile();
-              if (onConfigUpdated) {
-                setImmediate(() => {
-                  try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
-                });
-              }
-            }
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, deployed: !sessionActive, message: sessionActive ? 'Saved as draft (applies at next session start)' : 'Config saved and deployed' }));
-          } catch (error: any) {
-            console.error('❌ Config save error:', error);
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message || 'Failed to save config' }));
-          }
-        });
-      } else if (url.pathname === '/api/config/export' && req.method === 'GET') {
-        // Raw config.toml download (backup). Read-only — no operator gate.
-        try {
-          const raw = fs.readFileSync(getConfigPath(), 'utf-8');
-          res.writeHead(200, {
-            'Content-Type': 'text/plain; charset=utf-8',
-            'Content-Disposition': 'attachment; filename="config.toml"',
-          });
-          res.end(raw);
-        } catch (error: any) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: error.message || 'Failed to read config' }));
-        }
-      } else if (url.pathname === '/api/config/import' && req.method === 'POST') {
-        // Replace config.toml with an uploaded file (restore). Operators only.
-        // Validate by writing then re-reading with the app's tolerant parser;
-        // roll back to the previous contents if it fails to parse.
-        if (!isConfigWriteAuthorized(req)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Not an approved operator' }));
-          return true;
-        }
-        let body = '';
-        req.on('data', (chunk) => { body += chunk.toString(); });
-        req.on('end', () => {
-          // Import replaces the ACTIVE PROFILE (validated), then deploys to config.toml when idle —
-          // same freeze rule as a save.
-          const target = getActiveProfilePath();
-          let previous: string | null = null;
-          try {
-            if (!body.trim()) throw new Error('Uploaded config is empty');
-            previous = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : null;
-            fs.writeFileSync(target, body, 'utf-8');
-            const imported = readConfig(target); // throws if the uploaded TOML is invalid
-            // Parsing is not the only way an uploaded config can be wrong. Throwing here reuses
-            // the rollback below, so a file naming a PWM actuator that doesn't exist never
-            // becomes the deployed config.
-            const importPwmIssues = validateControllerActuators(imported);
-            if (importPwmIssues.length > 0)
-              throw new Error(`Invalid controller PWM actuators: ${importPwmIssues.join('; ')}`);
-            const sessionActive = sessionManager.getStatus().active;
-            if (!sessionActive) {
-              deployActiveProfile();
-              if (onConfigUpdated) {
-                setImmediate(() => {
-                  try { onConfigUpdated(); } catch (e) { console.warn('⚠️ onConfigUpdated handler threw:', e); }
-                });
-              }
-            }
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, deployed: !sessionActive, message: sessionActive ? 'Imported as draft (applies at next session start)' : 'Config imported and deployed' }));
-          } catch (error: any) {
-            if (previous !== null) {
-              try { fs.writeFileSync(target, previous, 'utf-8'); } catch { /* best effort */ }
-            }
-            console.error('❌ Config import error:', error);
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: error.message || 'Invalid config file' }));
-          }
-        });
-      } else if (url.pathname === '/api/states' && req.method === 'GET') {
+      if (await handleConfigRequest(req, res, url, opts)) return true;
+      if (url.pathname === '/api/states' && req.method === 'GET') {
         // The state list from the active profile's [[states]]. One source for the labels the GUI
         // used to keep in six separate maps, several of which had drifted — the top bar rendered
         // ids 18 and 19 as "STATE 18"/"STATE 19" because they were simply missing from its copy.
@@ -369,12 +257,6 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
             res.end(JSON.stringify({ error: error.message || 'Check failed' }));
           }
         });
-      } else if (url.pathname === '/api/config/validate' && req.method === 'GET') {
-        // What the session-start gate would find, without attempting a start. Read-only, so no
-        // operator check — this reports on config the caller can already read via GET /api/config.
-        // The gate itself lives in SessionManager.start(); this endpoint never decides anything.
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(validateActiveProfile()));
       } else if (url.pathname === '/api/config/profiles' && req.method === 'GET') {
         // List profiles + which is active + whether a session freezes deploys/switching.
         ensureSeeded();
