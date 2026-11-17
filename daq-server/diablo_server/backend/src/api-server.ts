@@ -24,7 +24,7 @@ import {
   newBlankCalibration,
 } from './routes/calibration-profiles.js';
 import { buildSensorConfig } from './sensor-config.js';
-import { sessionManager } from './session-manager.js';
+import './session-manager.js';
 import { validateActiveProfile } from './config-validation.js';
 import './operators.js';
 import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from './ota-build.js';
@@ -49,6 +49,7 @@ import { handleGuiConfigRequest } from './api/gui-config.js';
 import { handleBoardLogsRequest } from './api/board-logs.js';
 import { handleDebugRequest } from './api/debug.js';
 import { handleCalibrationRequest } from './api/calibration.js';
+import { handleFeedCharRequest } from './api/feed-char.js';
 
 /**
  * Create an HTTP request handler for all /api/* routes.
@@ -89,64 +90,8 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
       if (await handleBoardLogsRequest(req, res, url, opts)) return true;
       if (await handleDebugRequest(req, res, url, opts)) return true;
       if (await handleCalibrationRequest(req, res, url, opts)) return true;
-      if (url.pathname === '/api/feed-char/results') {
-        /**
-         * Feed-characterization results, stored WITH the run rather than in the browser.
-         *
-         * A CdA is a measurement of the rig, derived from that run's telemetry, so it belongs
-         * beside that run's data — not in a browser tab that loses it on refresh, nor in a
-         * downloaded CSV divorced from the trace it came from. One JSON line per result, in the
-         * session's own directory, so a run's folder carries both the raw pressures and what was
-         * concluded from them.
-         */
-        const dbDir = sessionManager.getStatus().dbDir;
-        if (!dbDir) {
-          // No run to attach to. Say so plainly rather than inventing a location — a result with
-          // no run is not a result anyone can check later.
-          res.writeHead(409, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'No active session — start a run before recording results', results: [] }));
-          return true;
-        }
-        const resultsPath = path.join(dbDir, 'feed_characterization.jsonl');
-
-        if (req.method === 'GET') {
-          let results: unknown[] = [];
-          try {
-            results = fs.readFileSync(resultsPath, 'utf-8')
-              .split('\n')
-              .filter((l) => l.trim())
-              // Skip a torn last line rather than failing the whole read: the file is appended to
-              // live, so a reader can arrive mid-write.
-              .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-              .filter((x) => x !== null);
-          } catch { /* nothing recorded yet */ }
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ results, dbDir }));
-          return true;
-        }
-
-        if (req.method === 'POST') {
-          if (!isConfigWriteAuthorized(req)) {
-            res.writeHead(403, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Not an approved operator' }));
-            return true;
-          }
-          const body = await readJsonBody(req);
-          if (!body || typeof body !== 'object') {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Expected a result object' }));
-            return true;
-          }
-          // Append, never rewrite: a result already written is a record of something that happened.
-          fs.appendFileSync(resultsPath, JSON.stringify({ ...body, recordedAt: new Date().toISOString() }) + '\n', 'utf-8');
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, path: resultsPath }));
-          return true;
-        }
-
-        res.writeHead(405, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'GET or POST' }));
-      } else if (url.pathname === '/api/ota-flash/projects' && req.method === 'GET') {
+      if (await handleFeedCharRequest(req, res, url, opts)) return true;
+      if (url.pathname === '/api/ota-flash/projects' && req.method === 'GET') {
         const projects = discoverProjects();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ projects }));
