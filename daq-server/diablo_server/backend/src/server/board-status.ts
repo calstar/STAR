@@ -22,7 +22,6 @@
 
 import { readConfig } from '../routes/config.js';
 import { getBoardDhcpStatus } from '../dhcp-status.js';
-import { t7Channels } from '../../../shared/config-validation.js';
 import { MessageType } from '../../../shared/types.js';
 import type { SensorUpdate, BoardStatus } from '../../../shared/types.js';
 import type { ParsedSensorData } from '../elodin-protocol.js';
@@ -30,7 +29,7 @@ import { THIN_VERBOSE_CONNECTION_LOG, THIN_HEARTBEAT_DIAG_LOG, THIN_STATS_LOG } 
 import { stats } from './stats.js';
 import { wss, broadcast } from './ws-clients.js';
 import { activeNotificationKeys, broadcastNotification, raiseNotification, clearNotification } from './notifications.js';
-import { _t7SlotToBoardId } from './config-caches.js';
+import { t7BoardIdForSlot } from './config-caches.js';
 
 export const BOARD_STATUS_HZ = 1;     // broadcast rate for board status
 /** Board marked disconnected if no Elodin [0x10] heartbeat for this long. Too low causes UI flap when DB or TCP jitters; heartbeats are usually multi-Hz but not hard-real-time. */
@@ -128,12 +127,7 @@ export function updateBoard(low: number, payload: Buffer): void {
 const T7_ALIVE_MARK_MS = 500;
 const t7LastMark = new Map<number, number>();
 export function noteT7Alive(slot: number): void {
-  if (_t7SlotToBoardId.size === 0) {
-    try {
-      for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
-    } catch { return; }
-  }
-  const boardId = _t7SlotToBoardId.get(slot);
+  const boardId = t7BoardIdForSlot(slot);
   if (boardId === undefined) return;
   const now = Date.now();
   if (now - (t7LastMark.get(boardId) ?? 0) < T7_ALIVE_MARK_MS) return;
