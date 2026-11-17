@@ -307,8 +307,8 @@ Rules for every commit in step 1:
   move-only edit. Do it **only** for a module the R1b list shows evaluating first at that line
   *before* the commit — never for an import already elided today (type-only or unused, e.g.
   `import type { StateActuatorMap }`), where a bare import would **add** a module to the
-  evaluation set. Measured on the bundle (46 modules today, `server.ts` included; 47 after WP5 adds
-  `sequencer-client`, which changes none of the fifteen), step 1 makes exactly **fifteen** bare
+  evaluation set. Measured on the bundle (46 modules today, `server.ts` included; still 46 after WP5, which adds
+  `sequencer-client` and drops `shared-types.ts` (D60); neither changes the fifteen), step 1 makes exactly **fifteen** bare
   imports, each in the commit that moves its last value user out of `server.ts`:
 
   | line | module | line | module |
