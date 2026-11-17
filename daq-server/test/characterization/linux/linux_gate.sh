@@ -51,7 +51,7 @@ DAQ_STACK_LOCK="$(cd "$(git -C "$HERE" rev-parse --git-common-dir)" && pwd -P)/d
   fails=()
   step() { local n=\$1; shift; printf '── %-18s ' \$n; if \"\$@\" > /logs/\$n.log 2>&1; then echo ok; grep -E '^(RETRY PASSED|KNOWN FAILURE)' /logs/\$n.log; else echo FAIL; tail -40 /logs/\$n.log; grep -E '^(RETRY PASSED|KNOWN FAILURE|FAILED )|FAILED:|^[A-Za-z ]+: (PASS|FAIL)|^CHARACTERIZATION' /logs/\$n.log; fails+=(\$n); fi; }
   step npm bash -c '(cd diablo_server/backend && npm ci --no-audit --no-fund) && (cd diablo_server/frontend && npm ci --no-audit --no-fund)'
-  step build bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -Wno-dev && cmake --build build'
+  step build bash -c 'cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -Wno-dev && cmake --build build && bash test/characterization/include_guard.sh build'
   if [ -z '$AREAS' ]; then
     step ctest bash test/characterization/ctest_with_retry.sh build -j\$(nproc)
     step backend-vitest bash -c 'cd diablo_server/backend && npm test'
