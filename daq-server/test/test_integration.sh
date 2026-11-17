@@ -222,6 +222,18 @@ wait_for_port() {
   return 0
 }
 
+# `timeout` is coreutils and macOS has none, so a bare `timeout 8 …` was "command not found" and
+# the check behind it never ran while its verdict still printed green (LEDGER D61a). GNU timeout
+# where it exists (brew's is gtimeout), else perl's alarm: the timer survives exec, so the
+# command itself is the process SIGALRM ends.
+run_with_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"
+  else perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' "$secs" "$@"
+  fi
+}
+
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Full-Stack Integration Test  [backend: $BACKEND]"
 echo "═══════════════════════════════════════════════════════════════"
@@ -964,23 +976,35 @@ if [ -n "$CONTROLLER_SVC" ]; then
     echo "  ❌ test setup: could not remove the pwm_fuel assignment from $TEST_CONFIG"
     UDP_CHECK_FAILED=1
   fi
-  # Listen where PWM would land, so "nothing was sent" is observed rather than assumed.
-  timeout 8 python3 -c "
-import socket, sys
+  # Listen where PWM would land, so "nothing was sent" is observed rather than assumed. The port
+  # also carries heartbeat_service's SERVER_HEARTBEAT (type 2, every second), so the listener runs
+  # to a wall-clock deadline (an idle timeout never expired and the outer timeout killed it before
+  # it wrote; the count then read as 0) and counts only PWM packets (type 10, ControllerService).
+  run_with_timeout 8 python3 -c "
+import socket, time
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(('127.0.0.1', $TEST_ACTUATOR_UDP_PORT))
-s.settimeout(6)
+s.settimeout(0.5)
+deadline = time.monotonic() + 5.5
 n = 0
 try:
-    while True:
-        s.recvfrom(2048); n += 1
-except Exception:
-    pass
-open('$BAD_UDP','w').write(str(n))
+    while time.monotonic() < deadline:
+        try:
+            data, _ = s.recvfrom(2048)
+        except socket.timeout:
+            continue
+        if data and data[0] == 10:
+            n += 1
+finally:
+    open('$BAD_UDP', 'w').write(str(n))
 " &
   BAD_LISTENER=$!
   sleep 0.5
+  if ! kill -0 "$BAD_LISTENER" 2>/dev/null; then
+    echo "  ❌ test setup: the PWM listener on 127.0.0.1:$TEST_ACTUATOR_UDP_PORT did not start"
+    UDP_CHECK_FAILED=1
+  fi
   "$CONTROLLER_SVC" --config "$BAD_CFG" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
     --control-port "$((TEST_CONTROLLER_PORT + 20))" \
@@ -988,11 +1012,19 @@ open('$BAD_UDP','w').write(str(n))
   BAD_PID=$!
   sleep 2
   # Ask it to fire. A controller that resolved its actuators would start PWM here.
-  printf 'FIRE_START\n' | timeout 2 nc 127.0.0.1 "$((TEST_CONTROLLER_PORT + 20))" >/dev/null 2>&1 || true
+  printf 'FIRE_START\n' | run_with_timeout 2 nc 127.0.0.1 "$((TEST_CONTROLLER_PORT + 20))" >/dev/null 2>&1 || true
   sleep 2
   kill "$BAD_PID" 2>/dev/null || true
   wait "$BAD_LISTENER" 2>/dev/null || true
-  BAD_PWM_COUNT="$(cat "$BAD_UDP" 2>/dev/null || echo 0)"
+  # The listener writes its count on exit, 0 included; no file means it never listened, and a
+  # missing file used to read as 0 (the vacuous green of D61a).
+  if [ -f "$BAD_UDP" ]; then
+    BAD_PWM_COUNT="$(cat "$BAD_UDP")"
+  else
+    echo "  ❌ test setup: the PWM listener left no count at $BAD_UDP (it did not run to its timeout)"
+    BAD_PWM_COUNT=unknown
+    UDP_CHECK_FAILED=1
+  fi
   if command grep -aq 'no \[actuator_roles\] entry is assigned "pwm_fuel"' "$BAD_LOG" &&
      command grep -aq "PWM fire gate DISABLED" "$BAD_LOG"; then
     echo "  ✅ unassigned PWM output refused with a reason"
@@ -1003,7 +1035,7 @@ open('$BAD_UDP','w').write(str(n))
   fi
   if [ "$BAD_PWM_COUNT" = "0" ]; then
     echo "  ✅ no PWM emitted while unresolved"
-  else
+  elif [ "$BAD_PWM_COUNT" != unknown ]; then
     echo "  ❌ controller emitted $BAD_PWM_COUNT PWM packet(s) despite an unassigned output"
     UDP_CHECK_FAILED=1
   fi
