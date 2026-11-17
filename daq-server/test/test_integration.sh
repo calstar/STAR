@@ -16,9 +16,8 @@
 # Browser / Playwright E2E is separate: bash test/e2e_guitest_playwright.sh (not run by this script).
 #
 # Usage:
-#   bash test/test_integration.sh [-v|--verbose] [--legacy] [--only=<ids>]
+#   bash test/test_integration.sh [-v|--verbose] [--only=<ids>]
 #
-#   --legacy   Use server-legacy.ts instead of server.ts (default: thin backend).
 #
 # Running only some WS checks (still starts the full stack unless you hack the script):
 #   bash test/test_integration.sh --only=sensor_data
@@ -39,7 +38,6 @@ ONLY_FLAG=""
 for arg in "$@"; do
   case "$arg" in
     -v|--verbose) VERBOSE=1 ;;
-    --legacy) BACKEND=legacy ;;
     --only=*) ONLY_FLAG="$arg" ;;
   esac
 done
@@ -759,8 +757,8 @@ wait_for_port "$TEST_ELODIN_PORT" "Elodin DB" 10 || {
 echo "  ✅ Elodin DB started (PID ${PIDS[-1]})"
 
 # ── Start sequencer_service ──────────────────────────────────────────────────
-# Provides TCP command endpoint on :9998. Both thin and legacy backends forward
-# state/actuator commands here. Reads Elodin port from the test config.
+# Provides TCP command endpoint on :9998. The backend forwards state/actuator
+# commands here. Reads Elodin port from the test config.
 
 if [ -n "$SEQ_SVC" ]; then
   echo "⚙️  Starting sequencer_service..."
@@ -830,32 +828,15 @@ fi
 
 # ── Start Backend Server ─────────────────────────────────────────────────────
 
-if [ "$BACKEND" = "thin" ]; then
-  echo "🖥️  Starting Backend server (server.ts)..."
-  (cd "$REPO_ROOT/diablo_server/backend" && \
-    WS_PORT=$TEST_BACKEND_WS_PORT \
-    ELODIN_HOST=127.0.0.1 \
-    ELODIN_PORT=$TEST_ELODIN_PORT \
-    ACTUATOR_SERVICE_PORT=9998 \
-    CONFIG_PATH="$TEST_CONFIG" \
-    LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
-    npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
-else
-  echo "🖥️  Starting Backend server (server-legacy.ts)..."
-  (cd "$REPO_ROOT/diablo_server/backend" && \
-    WS_PORT=$TEST_BACKEND_WS_PORT \
-    API_PORT=$TEST_BACKEND_API_PORT \
-    ELODIN_HOST=127.0.0.1 \
-    ELODIN_PORT=$TEST_ELODIN_PORT \
-    ELODIN_RELAY_WS_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
-    ACTUATOR_SERVICE_ENABLED=false \
-    ACTUATOR_SERVICE_PORT=9998 \
-    USE_CALIBRATION_SERVICE_CALIBRATED=false \
-    USE_DIRECT_DAQ=false \
-    USE_CPP_CONTROLLER=true \
-    CONFIG_PATH="$TEST_CONFIG" \
-    npx tsx src/server-legacy.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
-fi
+echo "🖥️  Starting Backend server (server.ts)..."
+(cd "$REPO_ROOT/diablo_server/backend" && \
+  WS_PORT=$TEST_BACKEND_WS_PORT \
+  ELODIN_HOST=127.0.0.1 \
+  ELODIN_PORT=$TEST_ELODIN_PORT \
+  ACTUATOR_SERVICE_PORT=9998 \
+  CONFIG_PATH="$TEST_CONFIG" \
+  LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
+  npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 PIDS+=($!)
 
 wait_for_port "$TEST_BACKEND_WS_PORT" "Backend WS" 15 || {
