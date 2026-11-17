@@ -5,7 +5,8 @@ why. Decisions: D39 (review), D43 (casing, `// Kept:`), D45 (deepening), D46 (ta
 the debate verdict (`debates/WP8/verdict.md`, ratified under D39; LEDGER **D54**) and the
 simplicity round that followed it (LEDGER **D57**: `parseArgs` and `follow_sequencer_state`
 dropped, the `// Kept:` tags moved to pass 1, `StopSignals`' notice reduced to a print order plus
-a nullable line, no read-site edits). How it got here — the reviewed text, its amendments, the
+a nullable line, no read-site edits) and a final cosmetic round (wording and line references only;
+no decision changed). How it got here — the reviewed text, its amendments, the
 withdrawn `UdpSocket`/`ConfigFile` interfaces, the alternatives (B RAII types, C signals only),
 the walkthroughs and the first gate classification — is preserved verbatim in
 [`debates/WP8/history.md`](debates/WP8/history.md).
@@ -232,7 +233,10 @@ enum class ShutdownNotice { kPrintThenStop, kStopThenPrint };  // print order: e
 enum class Sigpipe { kDefault, kIgnore };  // LEDGER Parked; never changed in a refactor
 std::atomic<bool>& running();              // true until SIGINT/SIGTERM; constant-initialised
 /** signal(SIGINT, h); signal(SIGTERM, h); and, for kIgnore, signal(SIGPIPE, SIG_IGN) — in that
- *  order, with ::signal, never sigaction. `line` is printed verbatim (callers include the
+ *  order, with ::signal, never sigaction. kDefault makes NO signal() call for SIGPIPE — not
+ *  signal(SIGPIPE, SIG_DFL), which would overwrite a disposition inherited from a launcher that
+ *  ignores SIGPIPE; today's five default-disposition mains make no such call either, so neither
+ *  does the helper. `line` is printed verbatim (callers include the
  *  leading "\n") and must outlive the process; nullptr prints nothing (t7_bridge), and the
  *  notice is then immaterial. */
 void installStopHandlers(ShutdownNotice notice, const char* line, Sigpipe sigpipe);
@@ -252,13 +256,14 @@ void installStopHandlers(ShutdownNotice notice, const char* line, Sigpipe sigpip
   config_broadcast and calibration run one thread; `ControllerService::initialize` at 462 starts
   none — its threads start in `start()`, `ControllerService.cpp:203,208`). If a future change
   starts a thread before the call, these must become atomics.
-- The handler is one function with a `switch (g_notice)`; each case is today's body **statement
-  for statement** — `kPrintThenStop`: `if (g_line) std::cout << g_line << std::endl;` then
+- The handler is one function with a `switch (g_notice)`; each case is today's two statements in
+  today's order — `kPrintThenStop`: `if (g_line) std::cout << g_line << std::endl;` then
   `g_running = false;`; `kStopThenPrint`: the same two in the other order — including the
   non-async-signal-safe `std::cout << … << std::endl` and not saving `errno` (parked: BLOAT-MAP
-  defect 6; a `write(2)` would change line order in captured logs). The `if (g_line)` test is the
-  one statement no handler has today; it is true in every printing service and false only in
-  t7_bridge, whose handler prints nothing today — unobservable. `::signal`, not `sigaction`:
+  defect 6; a `write(2)` would change line order in captured logs). The `switch (g_notice)` and
+  the `if (g_line)` test are the two statements no handler has today: the switch selects the one
+  case that service's own handler was, and the test is true in every printing service and false
+  only in t7_bridge, whose handler prints nothing today — unobservable. `::signal`, not `sigaction`:
   with BSD semantics `SA_RESTART` restarts the blocked `recv`/`accept`/`waitpid`; **`select`,
   `usleep` and the `SO_RCVTIMEO`/`SO_SNDTIMEO` socket calls return `EINTR` regardless** of
   `SA_RESTART` (research §0.2), so today's exposure is kept exactly (the loops already `continue`
@@ -304,8 +309,10 @@ daq_bridge's is `running` (154 / 106, the latter with external linkage) and WP9/
 name instead. The reference binds, at the main's dynamic initialisation, to an atomic that is
 **constant-initialised** in `fsw_daq_lib` (`std::atomic<bool> g_running{true}`, a `constexpr`
 constructor), so DSO initialisation order cannot bite and the binding does no I/O — S26 holds, and
-the three harness executables that `#include` a main (§7.3) run the same binding at load with
-nothing printed. `fsw_daq_lib` is **`SHARED`** (`lib/CMakeLists.txt:45`): the one `running()`
+after pass 1 exactly **two** of the three harness executables that `#include` a main (§7.3:
+`char_cfg_stacklight`, `char_cfg_config_broadcast`) run the same binding at load with nothing
+printed; `char_cfg_daq_bridge` includes a main WP8 does not touch, until WP10's cleanup binds its
+`running` the same way. `fsw_daq_lib` is **`SHARED`** (`lib/CMakeLists.txt:45`): the one `running()`
 call goes through the PLT; thereafter each `g_running` read is an atomic load through the stored
 address, into the shared object's data — had the sites called `running()` instead, each read
 would be a PLT call. Either way unobservable, and nothing a golden can see. The controller keeps
@@ -318,8 +325,10 @@ namespace. File-static functions and lambdas that read `g_running` (heartbeat 10
 ```cpp
 namespace fsw::net {
 struct TcpServeOptions { size_t max_clients; const char* busy_log_prefix; };  // 64; "[Sequencer] " | "[ControllerService] ⚠️  "
-/** The loop sequencer_main.cpp:303-349 / controller_main.cpp:171-214 statement for statement
- *  (the Conn/reap_finished block 284-301 / 152-169 moves in front of it, §6.2): while
+/** The loop sequencer_main.cpp:303-349 / controller_main.cpp:171-214 with identical syscalls
+ *  and branches; the one textual change is the spawn lambda, which calls on_client(raw->fd)
+ *  where today's calls handleClient(raw->fd, svc) / handleControlClient(raw->fd, svc) —
+ *  unobservable (the Conn/reap_finished block 284-301 / 152-169 moves in front of it, §6.2): while
  *  (running) { reap; select(listen_fd, 10 ms); accept; reap; cap check: "ERR:too many
  *  connections\n" (MSG_NOSIGNAL), cerr << busy_log_prefix << "client limit (" << max_clients <<
  *  ") reached — refusing connection", close; spawn a tracked thread running on_client(fd) then
@@ -430,7 +439,8 @@ any service whose SIGPIPE is default and is hit by one: −13.
 
 Pass 1 adopts the one piece that is behaviour-identical by construction and is the prerequisite
 of WP9 and WP10, and places the three `// Kept:` tags (comment lines, no gate). Pass 2 adopts the
-one statement-identical move, `serveTcpClients`. One commit per (helper, service) pair, so a red
+one move with identical syscalls and branches, `serveTcpClients` (§2.2: only the spawn lambda's
+callee changes). One commit per (helper, service) pair, so a red
 golden names its cause (D12e). Run the guards in §7 after each commit (under the stack lock,
 subsets per D23); format only touched files with the pinned clang-format 19.1.7; clang-format's
 include regrouping and rewraps are an expected non-dimmed diff (D43(6)).
@@ -442,6 +452,10 @@ In every main the edit is the same four things and nothing else: add
 reference of §2.1 (same name, same place, `static` where it was `static`); delete the handler;
 replace the `signal()` lines with the one `installStopHandlers` call from §2.1's table. **No read
 site is touched** (D57): the lists below are what stays byte-identical, checked with `git diff`.
+The `<signal.h>` / `<csignal>` include **stays** in each main (heartbeat 16, stacklight 12,
+config_broadcast 12, ota 24, sequencer 30, controller 23 `<csignal>`, t7_bridge 22): the main no
+longer calls `signal()` itself, but a move-only commit does not "fix" an include; the only include
+diff expected is clang-format's regrouping around the new `service/StopSignals.hpp` line (D43(6)).
 
 1. `lib/src/service/StopSignals.cpp` + header; append to `FSW_SOURCES`. Build.
 2. t7_bridge: 56 → `auto& g_running = fsw::service::running();`; delete `on_signal` (83-85);
@@ -481,7 +495,12 @@ a contiguous block:
 
 1. `lib/src/net/TcpCommandServer.cpp` + header; append to `FSW_SOURCES`. `Conn` and
    `reap_finished` **verbatim** from `sequencer_main.cpp:284-301`, with the comment 282-283 as
-   `Conn`'s leading comment (S38). Build.
+   `Conn`'s leading comment (S38). That comment is **stale where it lands**: it names `svc` and
+   `main()`, and `TcpCommandServer.cpp` has neither. It still moves verbatim and is not re-homed
+   to the sequencer's call site — S38 moves a definition with its leading comment and corrects
+   stale comments in cleanup, not in a move-only. **Stale after pass 2 (one line):**
+   `TcpCommandServer.cpp`'s `Conn` comment (ex sequencer 282-283) — corrected in WP10's cleanup
+   queue item (DESIGN-WP10 §6.2). Build.
 2. sequencer 282-349 → `serveTcpClients` (§2.2): the comment and the `Conn`/`reap_finished`
    block 282-301 go with the loop (left behind they are `-Wunused-variable`, and
    `baseline_warnings.txt` admits no new line); 252-280 (listener, the `Listening on port` line
@@ -562,7 +581,11 @@ them.
    Add SIGTERM and SIGINT exit code and latency bound for each (controller's > 3 s, C4-5, as a
    bound, not a fix). Plus research §1's **second-SIGTERM case** (verdict §5; team question 2
    confirms): SIGTERM twice 50 ms apart to heartbeat, expect exit 0, not −15 (catches
-   `SA_RESETHAND`). Also closes DESIGN-WP10 gap 2.
+   `SA_RESETHAND`). Also closes DESIGN-WP10 gap 2. **Note for its author, controller case:** the
+   controller installs its handlers at 490, after `service.initialize` (462-465) and the PWM/NIC
+   setup (313-352), so the SIGTERM is sent only once the post-install line `🎯 Controller running.
+   PWM gated to FIRE state (TCP :N).` (503) is in the log; a SIGTERM before that line kills with
+   −15 legitimately (§1.2) and is not a failure of the case.
 3. **[before pass 1] The `Shutting down` line** printed by each handler is read by no test; nor is
    daq_bridge's flag-then-print order. Add, per service, the handler's exact line (bytes, incl.
    the leading newline and controller's U+2026) and its position relative to the service's final
@@ -581,7 +604,7 @@ them.
    pre-bound: keeps running, logs `[ControllerService] ❌ Control bind(N) failed: <strerror>`, PWM
    gate unreachable by TCP (D-CTL's only characterization). Sequencer with :9998 pre-bound:
    `[Sequencer] bind() failed on port N`, exit 1. ota likewise. Not gating: WP8 no longer moves
-   these ladders (team question 1 asks who writes it).
+   these ladders (C0 writes it, LEDGER D54(1)).
 7. **[worth writing, not gating] Follower reconnect and subscribe-refused**: no case drops a
    follower's connection and checks that heartbeat/stacklight re-subscribe. Not gating since D57
    (the followers stay in their mains). **Reconnect half**, as before: with the stand-in db
@@ -625,13 +648,16 @@ byte-identical by construction: do not move, rename or change the linkage of any
 and since D57 this is true by inspection: in stacklight and config_broadcast WP8 touches only the
 flag declaration (33 / 44, now the reference), the handler (36-39 / 46-49), the two `signal()`
 lines (264-265 / 498-499), one `#include`, and the D-BIND tag comment at config_broadcast 526;
-`main`'s body, `elodinThread`, `trim`, `getTomlValue`, `parseVentAbortFromCsv` and `buildPackets`
-are not edited. Every header a WP8 main newly includes lives under `lib/include` with its source
-in `fsw_daq_lib` (nothing new on `_CFG_INCLUDES` or the link line); no identifier spelled `main`
-in any new header; no static object in a new TU prints or reads a file at load (S26); the
-namespace-scope `g_running` reference (§2.1) also runs its dynamic initialisation inside the three
-harness executables — one call into `fsw_daq_lib` returning a constant-initialised atomic, no I/O,
-nothing printed; `serveTcpClients` and the `StopSignals` TU are linked but never called by the
+`main`'s body beyond the two `signal()` lines (stacklight 264-265, config_broadcast 498-499) and
+the D-BIND tag at config_broadcast 526, `elodinThread`, `trim`, `getTomlValue`,
+`parseVentAbortFromCsv` and `buildPackets` are not edited. Every header a WP8 main newly includes
+lives under `lib/include` with its source in `fsw_daq_lib` (nothing new on `_CFG_INCLUDES` or the
+link line); no identifier spelled `main` in any new header; no static object in a new TU prints or
+reads a file at load (S26); the namespace-scope `g_running` reference (§2.1) also runs its dynamic
+initialisation inside the two harness executables whose main pass 1 edits (`char_cfg_stacklight`,
+`char_cfg_config_broadcast`; `char_cfg_daq_bridge` includes an untouched main until WP10's
+cleanup) — one call into `fsw_daq_lib` returning a constant-initialised atomic, no I/O, nothing
+printed; `serveTcpClients` and the `StopSignals` TU are linked but never called by the
 harness and must not register anything at load. If a change nevertheless needs the harness
 touched, D18 applies (those two files only, goldens byte-identical, mutations re-run, orchestrator
 reviews). Run `bash test/characterization/config/check.sh cpp <bin dirs>` (ctest
@@ -679,7 +705,8 @@ left every argv loop where it is, so this is now purely a question for a later p
 Remaining team questions (verdict §6, verbatim; after D57, 4 and 5 are about the followers in
 their mains and no longer about a WP8 helper):
 
-1. Who writes gap 6, the only D-CTL characterization, now that no WP owes it?
+1. Who writes gap 6, the only D-CTL characterization, now that no WP owes it? — **Answered**,
+   LEDGER D54(1): C0 writes it, not gating.
 2. Add research §1's second-SIGTERM case (catches `SA_RESETHAND`) to gap 2?
 3. Ratify the D-FD shape above, and that `UniqueFd` arrives with that package?
 4. Self-pipe: the follower's wake needs `ElodinClient` to expose its fd — in the proposal's scope?
