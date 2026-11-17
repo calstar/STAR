@@ -68,7 +68,10 @@ using ControllerMeasurementMessage =
 /**
  * @brief PSM state transition event message   [0x43, 0x00]
  *
- * Written by PressureStateMachine on every executeStateEntryActions call.
+ * No FSW code names this alias since its writer, PressureStateMachine, was deleted (WP3).
+ * SequencerService::publishStateTransition publishes [0x43, 0x00] through its own alias of the
+ * same CommsMessage<uint64_t, uint8_t, uint8_t, uint8_t> (StateTransitionMsg). Kept: the packets
+ * characterization golden (comms_messages.txt) freezes this type's layout.
  * Layout: U64(8) + U8(1) + U8(1) + U8(1) = 11 bytes
  */
 using ControllerStateTransitionMessage =

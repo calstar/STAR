@@ -4,7 +4,7 @@
 #include <iostream>
 #include <string>
 
-#include "db.hpp"  // utl/db.hpp — VTable builder, Msg, postcard encoding
+#include "db.hpp"  // third_party/elodin/db.hpp — VTable builder, Msg, postcard encoding
 #include "elodin/SendMsg.hpp"
 
 using namespace vtable;
