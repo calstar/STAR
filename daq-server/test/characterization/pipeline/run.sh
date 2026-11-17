@@ -13,6 +13,8 @@
 #                                                        # operators.txt (H8b) → golden/operator/
 #   bash test/characterization/pipeline/run.sh holds      # an accepted timed hold (OK:<ms>), then
 #                                                        # :9998 stalled and down → golden/holds/
+#   bash test/characterization/pipeline/run.sh startlog   # the backend alone: its startup log to the
+#                                                        # end of the synchronous start → golden/startlog/
 #
 # "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
 # 127.0.0.22); it fails, never skips, when one is missing. Linux has all of 127/8.
@@ -49,9 +51,11 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" stalesub || rc=1
   bash "$HERE/run.sh" operator || rc=1
   bash "$HERE/run.sh" holds || rc=1
+  bash "$HERE/run.sh" startlog || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards|stalesub|operator|holds) ;; *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog) ;;
+  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -134,7 +138,7 @@ cat > "$FX/ports.json" <<EOF
  "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-FXMODE="$MODE"; case "$MODE" in nocal|operator|holds) FXMODE=pt ;; esac  # the pt fixture, one routed board
+FXMODE="$MODE"; case "$MODE" in nocal|operator|holds|startlog) FXMODE=pt ;; esac  # the pt fixture, one routed board
 "$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$FXMODE"
 
 if [ "$MODE" = holds ]; then
@@ -236,6 +240,7 @@ ln -s "$FX/scripts/calibration/calibrations" "$SRV/scripts/calibration/calibrati
 ln -s "$BUILD" "$SRV/build"
 [ "$MODE" = nocal ] || cp "$ROOT/calibration/calibration_2026-02-25T03-44-09.json" "$SRV/calibration/"
 CFG="$FX/config/config.toml"
+BACKEND_CFG="$CFG"
 
 wait_port() {  # port name seconds
   local i=0
@@ -255,6 +260,48 @@ wait_log() {  # pid name fixed-string seconds -- the service's own line, or a lo
     [ $i -lt $(($4 * 4)) ] || { echo "pipeline: $2 never logged '$3' within $4 s" >&2; tail -20 "$FX/logs/$2.log" >&2; exit 5; }
   done
 }
+
+start_backend() {  # the one backend command every session and startlog run (env as production's)
+  (cd "$FX/char/backend" && exec env -u USE_SIM -u RUNNING_CONFIG_PATH -u COUNTDOWN_STATE_PATH \
+    -u SESSION_STATE_PATH -u VIDEO_CONFIG_PATH -u VIDEO_SECRETS_PATH -u REPLAY_MODE -u ELODIN_DEBUG \
+    -u THIN_VERBOSE_CONNECTION_LOG -u THIN_HEARTBEAT_DIAG_LOG -u THIN_STATS_LOG \
+    -u SESSION_WARN_LEADS_MS -u SESSION_WARN_LEAD_MS \
+    HOME="$FX/home" WS_PORT=$P_WS GUI_PORT=0 ELODIN_HOST=127.0.0.1 ELODIN_PORT=$P_ELODIN \
+    ACTUATOR_SERVICE_PORT=$P_SEQ CONTROLLER_SERVICE_PORT=$P_CTRL OTA_SERVICE_PORT=$P_OTA \
+    LOG_INGEST_PORT=$P_LOG_UDP CONFIG_PATH="$BACKEND_CFG" SESSION_SERVICE_MODE=mock \
+    DAQ_CALIBRATIONS_DIR="$FX/scripts/calibration/calibrations" \
+    DAQ_OPERATORS_FILE="$FX/operators.txt" STAR_DHCP_HOSTS="$FX/no-dhcp-hosts" \
+    VIDEO_GATEWAY_HOST=127.0.0.1 VIDEO_GATEWAY_API_PORT=$P_VID_API \
+    VIDEO_GATEWAY_WEBRTC_PORT=$P_VID_RTC VIDEO_AGENT_PORT=$P_VID_AGENT \
+    "$TSX" "$SRV/diablo_server/backend/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
+  PIDS+=($!)
+}
+
+if [ "$MODE" = startlog ]; then
+  # G12 (DESIGN-WP6 §6.3 startup-log diff, LEDGER D96): the backend alone, nothing listening on
+  # any of its ports, stopped once it has logged the last synchronous line of its listen callback.
+  # startlog.py cuts there and normalises; what the process printed before it -- import-time
+  # lines of the state-CSV loaders, then server.ts's top level in order -- is the golden.
+  START_MS="$("$PY" -c 'import time; print(int(time.time()*1000))')"
+  start_backend; BE=${PIDS[-1]}
+  wait_log $BE backend "[ThinServer] Actuator service: localhost:" 30
+  kill $BE; wait $BE 2>/dev/null || true
+  cat > "$FX/context.json" <<EOF
+{"now_ms": $START_MS, "mode": "$MODE", "logs": "$FX/logs",
+ "paths": {"$FX/config": "<cfgdir>", "$FX/home": "<home>", "$FX": "<fx>", "$ROOT": "<daq>"},
+ "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items()}))')}
+EOF
+  OUT="$FX/out"; mkdir -p "$OUT"
+  "$PY" "$HERE/startlog.py" "$FX/logs/backend.log" "$FX/context.json" "$OUT/backend_startup.txt" \
+    || { echo "pipeline: startlog never reached the end mark" >&2; cat "$OUT/backend_startup.txt" >&2; exit 5; }
+  GOLD="$HERE/golden/startlog"
+  if [ "${CHAR_UPDATE:-0}" = 1 ]; then
+    mkdir -p "$GOLD"; cp "$OUT"/* "$GOLD/"; echo "pipeline[$MODE]: goldens rewritten (1 file in golden/startlog)"; exit 0
+  fi
+  if diff -ru "$GOLD" "$OUT"; then echo "pipeline[$MODE]: PASS"; else
+    echo "pipeline[$MODE]: FAIL — the backend's startup log differs from golden/startlog (diff above)" >&2; exit 1; fi
+  exit 0
+fi
 
 # Start order: DB, sequencer, bridge, calibration, backend, (config broadcast), sim -- production's
 # (lifecycle/ freezes it), not test_integration.sh's, which put calibration_service after the
@@ -338,19 +385,7 @@ fi
 # The backend runs from char/backend: its state-CSV loaders (legacy/state-actuators.ts,
 # legacy/state-transitions.ts) look in <cwd>/../../config, as production's cwd
 # (diablo_server/backend) sees daq-server/config.
-(cd "$FX/char/backend" && exec env -u USE_SIM -u RUNNING_CONFIG_PATH -u COUNTDOWN_STATE_PATH \
-  -u SESSION_STATE_PATH -u VIDEO_CONFIG_PATH -u VIDEO_SECRETS_PATH -u REPLAY_MODE -u ELODIN_DEBUG \
-  -u THIN_VERBOSE_CONNECTION_LOG -u THIN_HEARTBEAT_DIAG_LOG -u THIN_STATS_LOG \
-  -u SESSION_WARN_LEADS_MS -u SESSION_WARN_LEAD_MS \
-  HOME="$FX/home" WS_PORT=$P_WS GUI_PORT=0 ELODIN_HOST=127.0.0.1 ELODIN_PORT=$P_ELODIN \
-  ACTUATOR_SERVICE_PORT=$P_SEQ CONTROLLER_SERVICE_PORT=$P_CTRL OTA_SERVICE_PORT=$P_OTA \
-  LOG_INGEST_PORT=$P_LOG_UDP CONFIG_PATH="$CFG" SESSION_SERVICE_MODE=mock \
-  DAQ_CALIBRATIONS_DIR="$FX/scripts/calibration/calibrations" \
-  DAQ_OPERATORS_FILE="$FX/operators.txt" STAR_DHCP_HOSTS="$FX/no-dhcp-hosts" \
-  VIDEO_GATEWAY_HOST=127.0.0.1 VIDEO_GATEWAY_API_PORT=$P_VID_API \
-  VIDEO_GATEWAY_WEBRTC_PORT=$P_VID_RTC VIDEO_AGENT_PORT=$P_VID_AGENT \
-  "$TSX" "$SRV/diablo_server/backend/src/server.ts") > "$FX/logs/backend.log" 2>&1 &
-PIDS+=($!); wait_port $P_WS backend 30
+start_backend; wait_port $P_WS backend 30
 
 # The simulator sends each board's SELF_TEST once, at start. The backend subscribes to the
 # self-test tables in passes capped by the request-id space; a result published before the pass
@@ -409,7 +444,7 @@ if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal -x stalesub -x operator -x holds "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
