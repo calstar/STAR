@@ -38,6 +38,7 @@
 #include "control/RobustDDPController.hpp"
 #include "control/StateMachine.hpp"
 #include "net/DaqInterface.hpp"
+#include "net/TcpCommandServer.hpp"
 #include "service/StopSignals.hpp"
 
 /** Resolve path relative to config: paths like output/lut/... are relative to project root. */
@@ -146,70 +147,10 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
     std::cout << "[ControllerService] 🎮 Control server on TCP :" << port
               << "  (FIRE_START | FIRE_STOP)" << std::endl;
 
-    // Threads are counted and joined rather than detached, so none outlives `svc`.
-    struct Conn {
-        std::thread th;
-        int fd{-1};
-        std::atomic<bool> done{false};
-    };
-    std::vector<std::unique_ptr<Conn>> conns;
-
-    auto reap_finished = [&conns]() {
-        for (auto it = conns.begin(); it != conns.end();) {
-            if ((*it)->done.load()) {
-                if ((*it)->th.joinable())
-                    (*it)->th.join();
-                it = conns.erase(it);
-            } else {
-                ++it;
-            }
-        }
-    };
-
-    while (g_running) {
-        reap_finished();
-
-        struct timeval tv{0, 10000};  // 10 ms — keeps the g_running check cheap and responsive
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(listen_fd, &fds);
-        if (select(listen_fd + 1, &fds, nullptr, nullptr, &tv) <= 0)
-            continue;
-
-        int client = ::accept(listen_fd, nullptr, nullptr);
-        if (client < 0)
-            continue;
-
-        // Reap again before testing the cap, so a burst of short-lived connections inside one
-        // select() iteration is not counted against the limit after those threads have finished.
-        reap_finished();
-        if (conns.size() >= kMaxControlClients) {
-            // Say why rather than closing cold — a bare close() reaches the client as a TCP
-            // reset, indistinguishable from the service having crashed.
-            static const char kBusy[] = "ERR:too many connections\n";
-            ::send(client, kBusy, sizeof(kBusy) - 1, MSG_NOSIGNAL);
-            std::cerr << "[ControllerService] ⚠️  client limit (" << kMaxControlClients
-                      << ") reached — refusing connection" << std::endl;
-            ::close(client);
-            continue;
-        }
-
-        auto conn = std::make_unique<Conn>();
-        conn->fd = client;
-        Conn* raw = conn.get();
-        conn->th = std::thread([raw, svc]() {
-            handleControlClient(raw->fd, svc);
-            raw->done = true;
-        });
-        conns.push_back(std::move(conn));
-    }
-
-    // Wake anything parked in recv() so shutdown does not wait out the 5 s timeout, then join.
-    for (const auto& c : conns)
-        ::shutdown(c->fd, SHUT_RDWR);
-    for (const auto& c : conns)
-        if (c->th.joinable())
-            c->th.join();
+    fsw::net::serveTcpClients(listen_fd, g_running, {kMaxControlClients, "[ControllerService] ⚠️  "},
+                              [svc](int fd) {
+                                  handleControlClient(fd, svc);
+                              });
 
     ::close(listen_fd);
 }
