@@ -13,7 +13,8 @@
 //             counts nothing, 877-878) → the non-blocking drain. Raw (main computes `publishing`
 //             and calls begin_batch, 886-888): publish rows if `publishing` → if `publishing`,
 //             flush_batch (→ ++elodin_publish_count, else ++elodin_drop_count) and the drain.
-//             Board slot: board_id % 10, 0 → 10, as today (WP10 does not adopt table_id_for).
+//             Board slot: board_id % 10, 0 → 10, as today (no shared table-id helper; WP3's
+//             table_id_for was dropped, D62).
 // Errors:     a failed raw flush is counted (elodin_drop_count), a failed self-test flush is not;
 //             neither is logged. Unknown board id for a self-test → the fallback ladder (config
 //             IP, discovery, 127.0.0.<octet>), else skipped.

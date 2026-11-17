@@ -212,9 +212,10 @@ functions that replace the lambdas live in four TUs and read the same locals tho
 captured. `Conversions.hpp` and `SensorModels.hpp` each have ≥ 3 including TUs.
 `CalibrationContext` gets its own header because four headers take it; in `CalibrationActions.hpp`
 it would make `AbortThresholds.hpp` include the whole actions API for one type while
-`CalibrationActions.cpp` includes `AbortThresholds.hpp` back. `table_id_for` (DESIGN-WP3 §2.5) is
-not adopted: calibration derives `cal_lo = type_lo + 0x10` (1966-1968) and the slot by the inverse
-(490, 517); neither is the same integer expression.
+`CalibrationActions.cpp` includes `AbortThresholds.hpp` back. No shared table-id helper is adopted
+(WP3's `table_id_for` was dropped by D62; DESIGN-WP3 §2.5): calibration derives
+`cal_lo = type_lo + 0x10` (1966-1968) and the slot by the inverse (490, 517); neither is the same
+integer expression as the registrars', so the copies stay where they are.
 
 Declaration-only stubs, clang-format 19 clean, in `docs/remaster/design-stubs/cpp/services/
 calibration/`: `Conversions.hpp`, `SensorModels.hpp`, `CalibrationContext.hpp`,
