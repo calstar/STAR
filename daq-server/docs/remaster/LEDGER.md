@@ -236,6 +236,9 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 - Deleting `tools/` operator GUIs (`tools/gui/**`, the orphaned calibration GUIs): operator-facing, the team's decision, not a refactor's.
 
 ## Defects found in the original (kept as-is, for the team)
+- **D-WSFLOW-LABEL (S4):** test/ws_data_flow_test.ts:3728 prints `server-legacy.ts`, which no longer exists.
+- **D-DUPSUB-USAGE (S4):** test/test_duplicate_subscription.ts:13,16 usage comments say scripts/test/, but the file is in test/.
+- **D-PSM-COMMENTS (S4):** StateMachineDiagram.tsx:43, PressureFeed.cpp:160 and tools/gui/combined_fsw_gui.py:98 still name PressureStateMachine (deleted in WP3).
 - **D-SELFTESTRACE (S4, harness):** `test/session_flow_test.ts:189-197` waits for a SELF_TEST.* update after the pipeline starts. The boards' one-shot self-test can come before the client subscribes, so the check flakes (CI 44145497033, red once, green on rerun).
 - **D-CALLOG-RESIDUE (S4):** the Tare log line in calibration_main.cpp prints `offset=…kg` with near-zero floating residue that differs by platform (3.3e-14 macOS vs 9.7e-15 Linux), so cal.log is not portable at that line.
 - **D-PWMCOUNT (S3, harness):** `test_integration.sh`'s 'no PWM emitted while unresolved' check never produced a real count on main. heartbeat_service broadcasts SERVER_HEARTBEAT to the listener's port every second (:837), so its 6 s idle timeout never fired, the outer 8 s timeout killed it, and `|| echo 0` reported 0. Fixed in H3; D-BADPWM still applies (the controller sends to 192.168.2.12).
