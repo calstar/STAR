@@ -5,6 +5,7 @@
 #include <string>
 
 #include "db.hpp"  // utl/db.hpp — VTable builder, Msg, postcard encoding
+#include "elodin/SendMsg.hpp"
 
 using namespace vtable;
 using namespace vtable::builder;
@@ -12,16 +13,8 @@ using namespace vtable::builder;
 namespace fsw {
 namespace elodin {
 
-// ── Helper: encode a db.hpp message and send via ElodinClient ──────────────
-template <typename T>
-static bool send_msg(ElodinClient& client, T msg) {
-    auto buf = Msg(msg).encode_vec();
-    if (buf.empty()) {
-        std::cerr << "[DatabaseConfig] Failed to encode message" << std::endl;
-        return false;
-    }
-    return client.send_msg({0, 0}, buf);  // packet_id unused — already in buf
-}
+// Encode failures are logged with this text (the controller's send_msg is silent; SendMsg.hpp).
+static constexpr const char kEncodeFailed[] = "[DatabaseConfig] Failed to encode message";
 
 bool DatabaseConfig::register_environmental_tables(ElodinClient& client,
                                                    const std::vector<BoardChannels>& boards) {
@@ -39,14 +32,17 @@ bool DatabaseConfig::register_environmental_tables(ElodinClient& client,
             raw_field(16, 4, schema(PrimType::F32(), {}, component(prefix + "humidity_rh"))),
             raw_field(20, 4, schema(PrimType::U32(), {}, component(prefix + "sample_ts_ms"))),
         });
-        if (!send_msg(client, VTableMsg{.id = {0x25, board.board_id}, .vtable = vt})) {
+        if (!send_msg(client, VTableMsg{.id = {0x25, board.board_id}, .vtable = vt},
+                      kEncodeFailed)) {
             ok = false;
             continue;
         }
         for (const char* field :
              {"timestamp_ns", "temperature_c", "pressure_pa", "humidity_rh", "sample_ts_ms"})
-            ok = send_msg(client, set_component_name(prefix + field)) && ok;
-        ok = send_msg(client, set_entity_name((0x25u << 8) | board.board_id, entity)) && ok;
+            ok = send_msg(client, set_component_name(prefix + field), kEncodeFailed) && ok;
+        ok = send_msg(client, set_entity_name((0x25u << 8) | board.board_id, entity),
+                      kEncodeFailed) &&
+             ok;
     }
     return ok;
 }
@@ -73,20 +69,20 @@ static bool register_raw_sensor_vtable(
         raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + "status"))),
     });
 
-    if (!send_msg(client, VTableMsg{.id = {type_hi, channel_id}, .vtable = vt})) {
+    if (!send_msg(client, VTableMsg{.id = {type_hi, channel_id}, .vtable = vt}, kEncodeFailed)) {
         std::cerr << "[DatabaseConfig] ❌ VTable failed: " << entity_name << std::endl;
         return false;
     }
 
     // Name the per-field components
-    send_msg(client, set_component_name(prefix + "timestamp_ns"));
-    send_msg(client, set_component_name(prefix + "channel_id"));
-    send_msg(client, set_component_name(prefix + adc_field_name));
-    send_msg(client, set_component_name(prefix + "sample_ts_ms"));
-    send_msg(client, set_component_name(prefix + "status"));
+    send_msg(client, set_component_name(prefix + "timestamp_ns"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "channel_id"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + adc_field_name), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "sample_ts_ms"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "status"), kEncodeFailed);
 
     // Name the entity
-    send_msg(client, set_entity_name(entity_id, entity_name));
+    send_msg(client, set_entity_name(entity_id, entity_name), kEncodeFailed);
 
     return true;
 }
@@ -114,17 +110,17 @@ static bool register_calibrated_vtable(
         raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + "cal_status"))),
     });
 
-    if (!send_msg(client, VTableMsg{.id = {type_hi, pkt_lo}, .vtable = vt})) {
+    if (!send_msg(client, VTableMsg{.id = {type_hi, pkt_lo}, .vtable = vt}, kEncodeFailed)) {
         std::cerr << "[DatabaseConfig] ❌ Calibrated VTable failed: " << entity_name << std::endl;
         return false;
     }
 
-    send_msg(client, set_component_name(prefix + "timestamp_ns"));
-    send_msg(client, set_component_name(prefix + "channel_id"));
-    send_msg(client, set_component_name(prefix + cal_field_name));
-    send_msg(client, set_component_name(prefix + raw_field_name));
-    send_msg(client, set_component_name(prefix + "cal_status"));
-    send_msg(client, set_entity_name(entity_id, entity_name));
+    send_msg(client, set_component_name(prefix + "timestamp_ns"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "channel_id"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + cal_field_name), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + raw_field_name), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "cal_status"), kEncodeFailed);
+    send_msg(client, set_entity_name(entity_id, entity_name), kEncodeFailed);
 
     return true;
 }
@@ -142,16 +138,16 @@ static bool register_actuator_state_vtable(ElodinClient& client, uint8_t type_hi
         raw_field(9, 1, schema(PrimType::U8(), {}, component(prefix + "actuator_state"))),
     });
 
-    if (!send_msg(client, VTableMsg{.id = {type_hi, channel_id}, .vtable = vt})) {
+    if (!send_msg(client, VTableMsg{.id = {type_hi, channel_id}, .vtable = vt}, kEncodeFailed)) {
         std::cerr << "[DatabaseConfig] ❌ Actuator state VTable failed: " << entity_name
                   << std::endl;
         return false;
     }
 
-    send_msg(client, set_component_name(prefix + "timestamp_ns"));
-    send_msg(client, set_component_name(prefix + "channel_id"));
-    send_msg(client, set_component_name(prefix + "actuator_state"));
-    send_msg(client, set_entity_name(entity_id, entity_name));
+    send_msg(client, set_component_name(prefix + "timestamp_ns"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "channel_id"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "actuator_state"), kEncodeFailed);
+    send_msg(client, set_entity_name(entity_id, entity_name), kEncodeFailed);
 
     return true;
 }
@@ -212,14 +208,16 @@ bool register_t7_vtable(ElodinClient& client, uint8_t lo, const std::string& ent
         raw_field(16, 4, schema(u32_type, {}, component(prefix + u32_field))),
         raw_field(20, 1, schema(PrimType::U8(), {}, component(prefix + status_field))),
     });
-    if (!send_msg(client, VTableMsg{.id = {0x26, lo}, .vtable = vt})) {
+    if (!send_msg(client, VTableMsg{.id = {0x26, lo}, .vtable = vt}, kEncodeFailed)) {
         std::cerr << "[DatabaseConfig] T7 VTable failed: " << entity << std::endl;
         return false;
     }
     bool ok = true;
     for (const char* field : {"timestamp_ns", "channel_id", value_field, u32_field, status_field})
-        ok = send_msg(client, set_component_name(prefix + field)) && ok;
-    return send_msg(client, set_entity_name((static_cast<uint64_t>(0x26) << 8) | lo, entity)) && ok;
+        ok = send_msg(client, set_component_name(prefix + field), kEncodeFailed) && ok;
+    return send_msg(client, set_entity_name((static_cast<uint64_t>(0x26) << 8) | lo, entity),
+                    kEncodeFailed) &&
+           ok;
 }
 }  // namespace
 
@@ -468,18 +466,18 @@ bool DatabaseConfig::register_heartbeat_tables(ElodinClient& client,
         });
 
         uint64_t entity_id = 0x1000 + board_id;
-        if (!send_msg(client, VTableMsg{.id = {0x10, board_id}, .vtable = vt})) {
+        if (!send_msg(client, VTableMsg{.id = {0x10, board_id}, .vtable = vt}, kEncodeFailed)) {
             std::cerr << "[DatabaseConfig] ❌ Heartbeat VTable failed: " << entity << std::endl;
             continue;
         }
 
-        send_msg(client, set_component_name(prefix + "timestamp_ns"));
-        send_msg(client, set_component_name(prefix + "board_id"));
-        send_msg(client, set_component_name(prefix + "board_type"));
-        send_msg(client, set_component_name(prefix + "engine_state"));
-        send_msg(client, set_component_name(prefix + "board_state"));
-        send_msg(client, set_component_name(prefix + "packet_ts_ms"));
-        send_msg(client, set_entity_name(entity_id, entity));
+        send_msg(client, set_component_name(prefix + "timestamp_ns"), kEncodeFailed);
+        send_msg(client, set_component_name(prefix + "board_id"), kEncodeFailed);
+        send_msg(client, set_component_name(prefix + "board_type"), kEncodeFailed);
+        send_msg(client, set_component_name(prefix + "engine_state"), kEncodeFailed);
+        send_msg(client, set_component_name(prefix + "board_state"), kEncodeFailed);
+        send_msg(client, set_component_name(prefix + "packet_ts_ms"), kEncodeFailed);
+        send_msg(client, set_entity_name(entity_id, entity), kEncodeFailed);
         registered++;
     }
 
@@ -506,13 +504,13 @@ static bool register_self_test_vtable(ElodinClient& client, uint8_t board_id, ui
 
     uint8_t high = SELF_TEST_HIGH_BASE + sensor_id;
     uint64_t entity_id = (static_cast<uint64_t>(high) << 8) | board_id;
-    if (!send_msg(client, VTableMsg{.id = {high, board_id}, .vtable = vt}))
+    if (!send_msg(client, VTableMsg{.id = {high, board_id}, .vtable = vt}, kEncodeFailed))
         return false;
 
-    send_msg(client, set_component_name(prefix + "timestamp_ns"));
-    send_msg(client, set_component_name(prefix + "sensor_id"));
-    send_msg(client, set_component_name(prefix + "result"));
-    send_msg(client, set_entity_name(entity_id, entity));
+    send_msg(client, set_component_name(prefix + "timestamp_ns"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "sensor_id"), kEncodeFailed);
+    send_msg(client, set_component_name(prefix + "result"), kEncodeFailed);
+    send_msg(client, set_entity_name(entity_id, entity), kEncodeFailed);
     return true;
 }
 
@@ -542,13 +540,13 @@ static bool register_sequencer_vtable(ElodinClient& client) {
         raw_field(12, 4, schema(PrimType::U32(), {}, component("SEQUENCER.state.allowed_bitmask"))),
         raw_field(16, 1, schema(PrimType::U8(), {}, component("SEQUENCER.state.debug_mode"))),
     });
-    if (!send_msg(client, VTableMsg{.id = {0x50, 0x00}, .vtable = vt1}))
+    if (!send_msg(client, VTableMsg{.id = {0x50, 0x00}, .vtable = vt1}, kEncodeFailed))
         return false;
-    send_msg(client, set_component_name("SEQUENCER.state.timestamp_ns"));
-    send_msg(client, set_component_name("SEQUENCER.state.current_state"));
-    send_msg(client, set_component_name("SEQUENCER.state.allowed_bitmask"));
-    send_msg(client, set_component_name("SEQUENCER.state.debug_mode"));
-    send_msg(client, set_entity_name(0x5000, "SEQUENCER.state"));
+    send_msg(client, set_component_name("SEQUENCER.state.timestamp_ns"), kEncodeFailed);
+    send_msg(client, set_component_name("SEQUENCER.state.current_state"), kEncodeFailed);
+    send_msg(client, set_component_name("SEQUENCER.state.allowed_bitmask"), kEncodeFailed);
+    send_msg(client, set_component_name("SEQUENCER.state.debug_mode"), kEncodeFailed);
+    send_msg(client, set_entity_name(0x5000, "SEQUENCER.state"), kEncodeFailed);
 
     // StateTransition: U64+U8+U8+U8 (11 bytes)
     auto vt2 = builder::vtable({
@@ -557,13 +555,13 @@ static bool register_sequencer_vtable(ElodinClient& client) {
         raw_field(9, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.to_state"))),
         raw_field(10, 1, schema(PrimType::U8(), {}, component("CONTROLLER.state.reason"))),
     });
-    if (!send_msg(client, VTableMsg{.id = {0x43, 0x00}, .vtable = vt2}))
+    if (!send_msg(client, VTableMsg{.id = {0x43, 0x00}, .vtable = vt2}, kEncodeFailed))
         return false;
-    send_msg(client, set_component_name("CONTROLLER.state.timestamp_ns"));
-    send_msg(client, set_component_name("CONTROLLER.state.from_state"));
-    send_msg(client, set_component_name("CONTROLLER.state.to_state"));
-    send_msg(client, set_component_name("CONTROLLER.state.reason"));
-    send_msg(client, set_entity_name(0x4300, "CONTROLLER.state"));
+    send_msg(client, set_component_name("CONTROLLER.state.timestamp_ns"), kEncodeFailed);
+    send_msg(client, set_component_name("CONTROLLER.state.from_state"), kEncodeFailed);
+    send_msg(client, set_component_name("CONTROLLER.state.to_state"), kEncodeFailed);
+    send_msg(client, set_component_name("CONTROLLER.state.reason"), kEncodeFailed);
+    send_msg(client, set_entity_name(0x4300, "CONTROLLER.state"), kEncodeFailed);
 
     return true;
 }
@@ -582,13 +580,13 @@ static bool register_calibration_command_vtable(ElodinClient& client) {
         raw_field(12, 4,
                   schema(PrimType::F32(), {}, component("CALIBRATION.command.reference_value"))),
     });
-    if (!send_msg(client, VTableMsg{.id = {0x46, 0x00}, .vtable = vt}))
+    if (!send_msg(client, VTableMsg{.id = {0x46, 0x00}, .vtable = vt}, kEncodeFailed))
         return false;
-    send_msg(client, set_component_name("CALIBRATION.command.timestamp_ns"));
-    send_msg(client, set_component_name("CALIBRATION.command.type"));
-    send_msg(client, set_component_name("CALIBRATION.command.sensor_id"));
-    send_msg(client, set_component_name("CALIBRATION.command.reference_value"));
-    send_msg(client, set_entity_name(0x4600, "CALIBRATION.command"));
+    send_msg(client, set_component_name("CALIBRATION.command.timestamp_ns"), kEncodeFailed);
+    send_msg(client, set_component_name("CALIBRATION.command.type"), kEncodeFailed);
+    send_msg(client, set_component_name("CALIBRATION.command.sensor_id"), kEncodeFailed);
+    send_msg(client, set_component_name("CALIBRATION.command.reference_value"), kEncodeFailed);
+    send_msg(client, set_entity_name(0x4600, "CALIBRATION.command"), kEncodeFailed);
     return true;
 }
 
