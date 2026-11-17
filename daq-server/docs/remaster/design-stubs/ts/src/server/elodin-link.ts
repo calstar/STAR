@@ -22,7 +22,8 @@
  * `createElodinLink`, no `now` dep, no `setClockForTests` here. `scheduleResubscribe` and the four
  * listeners stay verbatim (LEDGER D49: no pure delay function either). A later
  * D-SUB/D-ECHO package passes `client` as a **parameter at the decision**
- * (`registerVTables(client)`, `duePairs(desired, state, now)`), not a factory.
+ * (`registerVTables(client)`; the registry's due-pair loop stays inline until such a package
+ * extracts it — WP5's `duePairs` was dropped, D60), not a factory.
  * Import-time effects: none beyond the pure constructor; `server.ts` registers
  * `setInterval(broadcastConnectionStatus, 1000)` (row 24, the third 1 s timer) and
  * `elodin.on('connected' | 'dbError' | 'disconnected' | 'error', …)` in today's order.

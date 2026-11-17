@@ -416,9 +416,11 @@ reading imported bindings), `applyDeployedConfigChange` (body verbatim with 852-
    `grep -lE "from '\./commands\.js'" src/server/*.ts | grep -v '/ws-connection\.ts$'`
 4. **Module-evaluation order vs the parent commit** (R1b). esbuild's bundle concatenates modules
    in evaluation order with a `// <path>` banner per module, and this graph has no lazy `__esm`
-   wrappers, so the list is the exact static order. (At runtime `shared-types.ts`'s top-level
-   `await import(…)` makes `state-csv/state-transitions` evaluate after its later siblings; no
-   observable effect today; G12 covers runtime order.) The binary is the backend's own esbuild;
+   wrappers, so the list is the exact static order. (Before WP5 lands, `shared-types.ts`'s
+   top-level `await import(…)` makes `state-csv/state-transitions` evaluate after its later
+   siblings at runtime, with no observable effect; WP5 commit 5.4 makes that import type-only, so
+   `shared-types.ts` leaves the bundle and the graph has no top-level await — for WP6 the static
+   order *is* the runtime order. G12 covers runtime order either way.) The binary is the backend's own esbuild;
    the scratch checkout of the parent gets this worktree's `node_modules` symlinked in. It runs in
    under 1 s and writes nothing:
 
