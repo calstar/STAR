@@ -15,10 +15,10 @@ mkdir "$DAQ_STACK_LOCK" && touch -t 202001010000 "$DAQ_STACK_LOCK"
 out="$(bash "$LOCKSH" echo took-empty 2>/dev/null)"
 check "an ownerless lock dir is taken over" '[ "$out" = took-empty ]'
 
-# 2. lock whose owner pid is dead: taken over
+# 2. lock whose owner pid is dead: taken over within one poll (LEDGER D98: 5 s bound)
 mkdir "$DAQ_STACK_LOCK" && echo 999999 > "$DAQ_STACK_LOCK/pid"
-out="$(bash "$LOCKSH" echo took-stale 2>/dev/null)"
-check "a lock held by a dead pid is taken over" '[ "$out" = took-stale ]'
+s=$SECONDS; out="$(bash "$LOCKSH" echo took-stale 2>/dev/null)"; el=$((SECONDS - s))
+check "a lock held by a dead pid is taken over within 5 s (${el} s)" '[ "$out" = took-stale ] && [ "$el" -le 5 ]'
 
 # 3. re-entry
 out="$(bash "$LOCKSH" bash "$LOCKSH" echo nested 2>/dev/null)"
