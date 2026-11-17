@@ -6,8 +6,8 @@
  * legacy "throttle" mode, and the two exits every sample leaves through: emitSensorPoint (event-
  * like streams, broadcast at once) and emitSensorWindow (downsampled streams: history first, then
  * each client's outbox). The pure envelope library stays in gui-stream.ts; this is the wiring.
- * In step 1 `envelope`, `encoderEnvelope` and `broadcastLastTime` are exported because ingest
- * still drives them row by row (DESIGN-WP6 R3); step 2.1 folds that into publishSample().
+ * publishSample() is the one entry for a finite row (step 2.1); the envelopes and the throttle
+ * gate are private.
  *
  * Event-loop only. No effect at import (M1): the config read and its log line happen in
  * initGuiStream(), which server.ts calls at today's position (§1.2 row 2); the 50 ms flush timer
@@ -26,6 +26,7 @@ import {
 import { readConfig } from '../routes/config.js';
 import { MessageType } from '../../../shared/types.js';
 import type { SensorUpdate } from '../../../shared/types.js';
+import type { ParsedSensorData } from '../elodin-protocol.js';
 import { broadcast, clientStreams } from './ws-clients.js';
 import { history } from './history.js';
 import { stats } from './stats.js';
@@ -60,13 +61,13 @@ export function streamBudgetFor(high: number, _low: number): StreamBudget {
   return null;
 }
 
-export const broadcastLastTime = new Map<string, number>();  // per-key throttle gate (legacy mode)
+const broadcastLastTime = new Map<string, number>();  // per-key throttle gate (legacy mode)
 
 // ── GUI stream downsampling (config.toml [gui]; see gui-stream.ts) ───────────
 
 export let guiStreamConfig: GuiStreamConfig;
-export let envelope: EnvelopeAccumulator;
-export let encoderEnvelope: EnvelopeAccumulator;
+let envelope: EnvelopeAccumulator;
+let encoderEnvelope: EnvelopeAccumulator;
 
 /** The startup read of [gui]: builds both envelopes and logs the mode (DESIGN-WP6 §1.2 row 2). */
 export function initGuiStream(): void {
@@ -133,5 +134,38 @@ export function flushEnvelopes(): void {
   }
   for (const closed of encoderEnvelope.flushOlderThan(nowMs)) {
     emitSensorWindow(closed.key, closed.entity, closed.component, closed.points);
+  }
+}
+
+/** One finite row's way out (ingest, step 2.1): today's last block of the per-row loop — key, sane
+ *  timestamp, budget; null → emitSensorPoint; 'gui' + throttle mode → 50 ms gate → emitSensorWindow;
+ *  else envelope add → emitSensorWindow on a closed window. Takes values, not sockets. */
+export function publishSample(high: number, low: number, parsed: ParsedSensorData, epochNow: number): void {
+  const key = `${parsed.entity}.${parsed.component}`;
+  // Sample time = Elodin field-0 timestamp (bridge receipt, epoch ms),
+  // guarded against off-clock publishers.
+  const tsMs = saneSampleTimeMs(parsed.timestamp, epochNow);
+
+  const budget = streamBudgetFor(high, low);
+  if (budget === null) {
+    // Event-like streams (state, self-test, controller, sequencer): every
+    // update goes out immediately, no downsampling and no staging.
+    emitSensorPoint(key, parsed.entity, parsed.component, parsed.value, tsMs);
+    return;
+  }
+
+  if (budget === 'gui' && guiStreamConfig.mode === 'throttle') {
+    // Legacy drop-throttle (config.toml [gui] downsample_mode = "throttle").
+    const lastBcast = broadcastLastTime.get(key) ?? 0;
+    if (epochNow - lastBcast < BROADCAST_MIN_MS) return;
+    broadcastLastTime.set(key, epochNow);
+    emitSensorWindow(key, parsed.entity, parsed.component, [{ tMs: tsMs, value: parsed.value }]);
+  } else {
+    // Min/max envelope: extremes of each window survive with their real
+    // timestamps, so transients can't hide between broadcast slots.
+    // Encoders run on their own, much shorter window (see streamBudgetFor).
+    const acc = budget === 'encoder' ? encoderEnvelope : envelope;
+    const closed = acc.add(key, parsed.entity, parsed.component, tsMs, parsed.value);
+    if (closed.length > 0) emitSensorWindow(key, parsed.entity, parsed.component, closed);
   }
 }

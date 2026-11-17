@@ -4,9 +4,8 @@
  * Owns `boardsStatus` (the config baseline from loadBoardsFromConfig(), then heartbeats via
  * updateBoard(), a T7's data-as-heartbeat via noteT7Alive()), the stale sweep and the board-
  * health notifications it raises (markStaleBoards()), the 1 Hz BOARD_STATUS_UPDATE
- * (broadcastBoardStatus()), the self-test snapshot replayed on connect (`selfTestLatest`,
- * `selfTestNotifiedBoards` — filled by ingest in step 1, DESIGN-WP6 R3; step 2.1 adds
- * noteSelfTestResults()) and the 5 s diagnostics log. ws-connection reads `boardsStatus` and
+ * (broadcastBoardStatus()), the self-test snapshot replayed on connect (`selfTestLatest`, filled
+ * by noteSelfTestResults() from ingest) and the 5 s diagnostics log. ws-connection reads `boardsStatus` and
  * `selfTestLatest` for the connect burst; ingest reads `boardsStatus` for the self-test label.
  *
  * Event-loop only. No effect at import (M1): server.ts calls loadBoardsFromConfig() at today's
@@ -26,6 +25,7 @@ import { getBoardDhcpStatus } from '../dhcp-status.js';
 import { t7Channels } from '../../../shared/config-validation.js';
 import { MessageType } from '../../../shared/types.js';
 import type { SensorUpdate, BoardStatus } from '../../../shared/types.js';
+import type { ParsedSensorData } from '../elodin-protocol.js';
 import { THIN_VERBOSE_CONNECTION_LOG, THIN_HEARTBEAT_DIAG_LOG, THIN_STATS_LOG } from './env.js';
 import { stats } from './stats.js';
 import { wss, broadcast } from './ws-clients.js';
@@ -205,10 +205,34 @@ const SETUP_STUCK_THRESHOLD_MS = 4000;
 
 const prevConnectedState = new Map<number, boolean>();
 const boardFirstSeenSetupMs = new Map<number, number>();
-export const selfTestNotifiedBoards = new Set<number>();
+const selfTestNotifiedBoards = new Set<number>();
 /** Latest self-test results — key = "SELF_TEST.BOARD_{id}.sensor_{n}", value = 0|1.
  *  Replayed as SENSOR_UPDATE on WS connect so late-connecting browsers see results. */
 export const selfTestLatest = new Map<string, SensorUpdate>();
+
+/** Self-test rows [0x60..0x6F, id] (ingest, step 2.1): snapshot each; on the first failing value for
+ *  a board not yet notified, raise `self_test_fail_<id>` and stop (the `break` stays). */
+export function noteSelfTestResults(boardId: number, rows: ParsedSensorData[], epochNow: number): void {
+  for (const parsed of rows) {
+    const stKey = `${parsed.entity}.${parsed.component}`;
+    selfTestLatest.set(stKey, { entity: parsed.entity, component: parsed.component, value: parsed.value, timestamp: epochNow });
+
+    if (parsed.value === 0 && !selfTestNotifiedBoards.has(boardId)) {
+      selfTestNotifiedBoards.add(boardId);
+      const status = boardsStatus.get(boardId);
+      const label = status ? boardLabel(status) : `Board ${boardId}`;
+      broadcastNotification({
+        key: `self_test_fail_${boardId}`,
+        category: 'error',
+        message: `${label} failed self-test`,
+        timestampMs: epochNow,
+        ongoing: true,
+      });
+      activeNotificationKeys.add(`self_test_fail_${boardId}`);
+      break;
+    }
+  }
+}
 
 export function boardLabel(status: BoardStatus): string {
   const num = status.boardNumber ?? status.id;
