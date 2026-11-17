@@ -127,6 +127,14 @@ the missing file. CI never passes `--legacy` (`daq-server-ci.yml:669,779` run th
 | 858 | `fi` | delete |
 | 1161 | `--backend="$BACKEND" $SEQ_FLAG …` | **keep**: `ws_data_flow_test.ts:41` defaults `--backend` to `'legacy'`, and its `IS_THIN` branches are parked (BLOAT-MAP §4; `environmental-recovery.integration.ts:109` also passes `--backend=thin`). `ws_data_flow_test.ts` is not edited. |
 
+**How the DoD is read.** BLOAT-MAP's "default path byte-identical except the removed branch" is
+taken as the run: the commands it launches, their environment and the script's output are identical
+(the §4.1 byte check derives the new file from the old one by deleting the branch and the two edits
+above, so anything else that changed would show). The source bytes of the default path do change
+(de-indent of 834-842, the comments at 762-763). If the orchestrator reads the DoD literally, the
+fallback is: keep the one-armed `if` (833) and `fi` (858), no de-indent, and leave 762-763 — the
+same commit minus those two edits.
+
 Dry run on an extracted copy (the exact verify command, §4.1): 19 lines removed, 1205 lines
 after, `bash -n` clean; `grep -n -i legacy` afterwards hits only `:434` (`INTEGRATION_GUI_MODE=throttle`,
 the GUI stream's legacy mode — unrelated, keep) and `:821` (`archive/legacy/python-services/…`, the
@@ -294,9 +302,10 @@ the merge row. Mutation (each red, then reverted, recorded): (a) `stacklight_ser
 - [ ] `python3 test/test_ota_flash.py` with `OTA_SERVICE_BIN` unset and `build/bin/ota_service`
       present (first candidate); and with it absent, the not-found text lists two candidates.
 - [ ] Full gate (`gate.sh`, with integration) and `linux/linux_gate.sh` (arm64 full) on the item's
-      tip; CI dispatch is not required (nothing under the sequencer or scripts moves, D34), but the
-      `test` job's "Run integration tests" step (§6) is deleted by the orchestrator in the same
-      queue item, so the next dispatch must show the job without that step.
+      tip. **One CI dispatch, recorded in the row** (D1): D34 does not demand it (nothing under the
+      sequencer or scripts moves), but the queue item edits `daq-server-ci.yml` (§6) and adds a
+      ctest the `test` job runs on x86 — the dispatch shows the yml still parses, the job without
+      the deleted step, and `stacklight_force_state` passing on a runner.
 - [ ] `git diff --stat backend-remastered...HEAD -- ':!daq-server/test' ':!daq-server/deploy'
       ':!daq-server/sim' ':!daq-server/archive' ':!daq-server/diablo_server/services/CMakeLists.txt'`
       is empty.
