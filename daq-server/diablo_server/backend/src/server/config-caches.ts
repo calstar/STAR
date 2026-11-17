@@ -8,7 +8,7 @@
  * Both slot maps are private and lazily filled; t7BoardIdForSlot() is the one T7 lookup
  * (step 2.4), used here and by board-status.noteT7Alive().
  *
- * `_hpBoardNumbers` and `_t7CalFields` are `export let` live bindings assigned only here
+ * `hpBoardNumbersCache` and `t7CalFieldsCache` are `export let` live bindings assigned only here
  * (STYLE-S32); step 2.5 renames them. No effect at import (M1). Never imports api-server.ts or api/*.
  *
  * Contract: uniqueId = board_id*100+channel matches calibration_service (the calibration capture
@@ -22,20 +22,20 @@ import { t7Channels } from '../../../shared/config-validation.js';
 
 /** Cached HP (4-20 mA) PT board-number set for the Elodin decode hot path. Rebuilt on config
  *  reload (onConfigUpdated) so moving/adding an HP board takes effect without a restart. */
-export let _hpBoardNumbers: Set<number>;
+export let hpBoardNumbersCache: Set<number>;
 /** Cached T7 calibrated-table -> field map (which float is psi, °C or kg); rebuilt with it. */
-export let _t7CalFields: Map<number, string>;
+export let t7CalFieldsCache: Map<number, string>;
 
 /** The startup config reads (HP set, then T7 fields), in today's order. */
 export function initConfigCaches(): void {
-  _hpBoardNumbers = hpBoardNumbers();
-  _t7CalFields = t7CalFields();
+  hpBoardNumbersCache = hpBoardNumbers();
+  t7CalFieldsCache = t7CalFields();
 }
 
 /** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
-const _ptSlotToBoardId = new Map<number, number>();
+const ptBoardIdBySlot = new Map<number, number>();
 function _ensurePtSlotCache(): void {
-  if (_ptSlotToBoardId.size > 0) return;
+  if (ptBoardIdBySlot.size > 0) return;
   try {
     const config = readConfig();
     const boards = (config.boards || {}) as Record<string, Record<string, unknown>>;
@@ -43,24 +43,24 @@ function _ensurePtSlotCache(): void {
       const bid = raw.board_id;
       const typ = raw.type;
       if (typeof bid !== 'number' || typ !== 'PT') continue;
-      _ptSlotToBoardId.set(boardSlot(bid), bid);
+      ptBoardIdBySlot.set(boardSlot(bid), bid);
     }
   } catch { /* fine — fallback below */ }
 }
 
 /** T7 slot -> board_id, for T7<slot>_Cal.AIN<n> (built with the PT cache, cleared with it). */
-const _t7SlotToBoardId = new Map<number, number>();
+const t7BoardIdBySlot = new Map<number, number>();
 
 /** The one T7 slot lookup (step 2.4; it replaced two equivalent lazy fillers, here and in
  *  board-status.noteT7Alive): `undefined` when the slot has no T7 board or on a config error,
  *  which both callers treat as "no board". */
 export function t7BoardIdForSlot(slot: number): number | undefined {
-  if (_t7SlotToBoardId.size === 0) {
+  if (t7BoardIdBySlot.size === 0) {
     try {
-      for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
+      for (const ch of t7Channels(readConfig().boards)) t7BoardIdBySlot.set(ch.slot, ch.boardId);
     } catch { /* no config: no T7 board */ }
   }
-  return _t7SlotToBoardId.get(slot);
+  return t7BoardIdBySlot.get(slot);
 }
 
 /** Map PT{n}.CH{m} — or a T7 input's T7{n}_Cal.AIN{m} — to uniqueId = board_id*100+channel
@@ -76,14 +76,14 @@ export function uniqueIdFromPtEntity(entity: string): number | null {
   const slot = parseInt(m[1], 10);
   const ch = parseInt(m[2], 10);
   _ensurePtSlotCache();
-  const bid = _ptSlotToBoardId.get(slot);
+  const bid = ptBoardIdBySlot.get(slot);
   return bid !== undefined ? bid * 100 + ch : slot * 100 + ch;
 }
 
 /** The post-deploy rebuild: the same four statements, in the same order, as applyDeployedConfigChange had. */
 export function resetConfigCaches(): void {
-  _ptSlotToBoardId.clear();
-  _t7SlotToBoardId.clear();
-  _hpBoardNumbers = hpBoardNumbers();
-  _t7CalFields = t7CalFields();
+  ptBoardIdBySlot.clear();
+  t7BoardIdBySlot.clear();
+  hpBoardNumbersCache = hpBoardNumbers();
+  t7CalFieldsCache = t7CalFields();
 }

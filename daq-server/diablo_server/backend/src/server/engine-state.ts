@@ -2,7 +2,7 @@
  * server/engine-state.ts — the sequencer's state as the backend reports it.
  *
  * Owns `currentState`, `debugMode`, the advertised-allowed bitmask and the per-state refusal
- * reasons, and the CSV-derived commanded positions (`STATE_ACTUATOR_MAP`, rebuilt by
+ * reasons, and the CSV-derived commanded positions (`stateActuatorMap`, rebuilt by
  * reloadStateActuatorMap() at startup — a throw there kills the process before the crash guards
  * exist, as today — and at the two deploy callbacks, which keep their own try/catch and warning
  * text). applySequencerState() is the only path that moves the state (the `_SEQUENCER_STATE`
@@ -59,11 +59,11 @@ export function configStateName(id: number): string | null {
 // State Management tab can now change that file at runtime. It used to be a const that nothing
 // ever rebuilt, so expected-position / mismatch detection kept using the CSV as it was when the
 // backend booted.
-export let STATE_ACTUATOR_MAP: StateActuatorMap;
+export let stateActuatorMap: StateActuatorMap;
 
 /** The CSV read: at startup (uncaught, as today) and from the two deploy callbacks (each with its own try/catch). */
 export function reloadStateActuatorMap(): void {
-  STATE_ACTUATOR_MAP = getStateActuatorMap();
+  stateActuatorMap = getStateActuatorMap();
 }
 
 /**
@@ -72,7 +72,7 @@ export function reloadStateActuatorMap(): void {
  * or mismatch detection never lines up with sensed state.
  */
 export function getExpectedPositions(state: SystemState): Record<string, number> {
-  const expected = STATE_ACTUATOR_MAP[state];
+  const expected = stateActuatorMap[state];
   if (!expected) return {};
   const result: Record<string, number> = {};
   for (const [name, value] of Object.entries(expected)) {
@@ -89,7 +89,7 @@ export function getExpectedPositions(state: SystemState): Record<string, number>
 
 /** Push CSV-derived commanded actuator states using ACT_CMD.B*.CH* keys (matches Elodin [0x32] + GUI). */
 export function broadcastCommandedActuatorsForState(state: SystemState): void {
-  const raw = STATE_ACTUATOR_MAP[state];
+  const raw = stateActuatorMap[state];
   if (!raw) return;
   const epochNow = Date.now();
   for (const [actuatorName, value] of Object.entries(raw)) {
