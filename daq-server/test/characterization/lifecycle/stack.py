@@ -225,10 +225,20 @@ def wait_tcp(port: int, timeout: float) -> bool:
 
 
 def http(
-    method: str, port: int, path: str, body: bytes | None = None, timeout: float = 30
+    method: str,
+    port: int,
+    path: str,
+    body: bytes | None = None,
+    timeout: float = 30,
+    headers: dict | None = None,
 ):
+    # headers: extra request headers (the identity header X-Auth-Email a viewer carries); none by
+    # default, so every existing call sends exactly what it sent before.
     req = urllib.request.Request(
-        f"http://127.0.0.1:{port}{path}", data=body, method=method
+        f"http://127.0.0.1:{port}{path}",
+        data=body,
+        headers=dict(headers or {}),
+        method=method,
     )
     if body is not None:
         req.add_header("Content-Type", "application/json")

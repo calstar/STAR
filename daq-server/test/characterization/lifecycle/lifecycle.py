@@ -1333,11 +1333,16 @@ def ota_handshake(r: Run):
     )
     case("build+flash, malformed", f"OTA_BUILD_FLASH|127.0.0.1|{ok_dir}", None)
 
-    def post(title, body: dict, behavior=None, expected=fw):
+    def post(title, body: dict, behavior=None, expected=fw, headers=None):
         r.emit(g, f"== backend POST /api/ota-flash: {title}")
         board = FakeOtaBoard(behavior) if behavior else None
         st, resp = stack.http(
-            "POST", P["P_WS"], "/api/ota-flash", json.dumps(body).encode(), timeout=60
+            "POST",
+            P["P_WS"],
+            "/api/ota-flash",
+            json.dumps(body).encode(),
+            timeout=60,
+            headers=headers,
         )
         try:
             shown = N.dumps(json.loads(resp))
@@ -1368,6 +1373,16 @@ def ota_handshake(r: Run):
     )
     post("no ip", {"firmwareBase64": b64})
     post("neither firmware nor project", {"ip": "127.0.0.1"})
+    # H8 (DESIGN-WP7 §7, LEDGER D-OTA / SEC-2): the same flash as the viewer -- a signed-in email
+    # that is not in operators.txt. The route has no operator gate, so today the board is flashed
+    # and the viewer gets the operator's 200; frozen so the hole stays visible until the team
+    # closes it (a 403 here is that fix, a contract change, not a regression).
+    post(
+        "firmwareBase64, board answers OK, as viewer@example.com (not an operator; no gate)",
+        {"ip": "127.0.0.1", "firmwareBase64": b64},
+        "ok",
+        headers={"X-Auth-Email": "viewer@example.com"},
+    )
 
 
 def shutdown(r: Run, cap, mon, sim, cb, sl, cal, ota, el, br, hb, be):
