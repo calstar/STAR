@@ -132,6 +132,10 @@ def main():
         f, i = hits[0]
         if f.endswith("api-server.ts"):
             remaining += 1
+        elif files[f][i + len(needle) : i + len(needle) + 1] != ["return true;"]:
+            # a moved branch that does not end `return true;` falls through to the router's 404
+            bad += 1
+            print(f"BAD branch without `return true;` after it: {cond}")
         covered[f].update(range(i, i + len(needle)))
     helpers = helper_block(old_text(args.rev))
     hits = find_runs(helpers, files.get("src/api/http.ts", []))
