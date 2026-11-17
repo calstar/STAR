@@ -30,6 +30,7 @@
 #include "control/RobustDDPController.hpp"
 #include "db.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "elodin/SendMsg.hpp"
 #include "net/DaqInterface.hpp"
 
 using namespace vtable;
@@ -918,14 +919,6 @@ void ControllerService::subscriberReadLoop(std::vector<uint8_t>& rx_buffer) {
 //  ELODIN DB WRITES (optional — only compiled if HAS_ELODIN)
 // ═══════════════════════════════════════════════════════════════════════
 
-template <typename T>
-static bool send_msg(fsw::elodin::ElodinClient& client, T msg) {
-    auto buf = Msg(msg).encode_vec();
-    if (buf.empty())
-        return false;
-    return client.send_msg({0, 0}, buf);
-}
-
 bool ControllerService::registerControllerTables() {
     if (!elodin_client_ || !elodin_connected_)
         return false;
@@ -990,16 +983,26 @@ bool ControllerService::registerControllerTables() {
         raw_field(13, 4, schema(PrimType::F32(), {}, component("CONTROLLER.fire.duty_O"))),
     });
 
-    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x40), uint8_t(0x00)),
-                                        .vtable = actuation_vt});
-    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x41), uint8_t(0x00)),
-                                        .vtable = diagnostics_vt});
-    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x42), uint8_t(0x00)),
-                                        .vtable = measurement_vt});
-    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x43), uint8_t(0x00)),
-                                        .vtable = state_trans_vt});
-    send_msg(*elodin_client_, VTableMsg{.id = std::make_tuple(uint8_t(0x44), uint8_t(0x00)),
-                                        .vtable = fire_state_vt});
+    fsw::elodin::send_msg(
+        *elodin_client_,
+        VTableMsg{.id = std::make_tuple(uint8_t(0x40), uint8_t(0x00)), .vtable = actuation_vt},
+        nullptr);
+    fsw::elodin::send_msg(
+        *elodin_client_,
+        VTableMsg{.id = std::make_tuple(uint8_t(0x41), uint8_t(0x00)), .vtable = diagnostics_vt},
+        nullptr);
+    fsw::elodin::send_msg(
+        *elodin_client_,
+        VTableMsg{.id = std::make_tuple(uint8_t(0x42), uint8_t(0x00)), .vtable = measurement_vt},
+        nullptr);
+    fsw::elodin::send_msg(
+        *elodin_client_,
+        VTableMsg{.id = std::make_tuple(uint8_t(0x43), uint8_t(0x00)), .vtable = state_trans_vt},
+        nullptr);
+    fsw::elodin::send_msg(
+        *elodin_client_,
+        VTableMsg{.id = std::make_tuple(uint8_t(0x44), uint8_t(0x00)), .vtable = fire_state_vt},
+        nullptr);
 
     // Send component names so Elodin exports with strings instead of schema hashes
     std::vector<std::string> actuation_fields = {
@@ -1030,21 +1033,24 @@ bool ControllerService::registerControllerTables() {
                                             "CONTROLLER.fire.duty_O"};
 
     for (const auto& f : actuation_fields)
-        send_msg(*elodin_client_, set_component_name(f));
+        fsw::elodin::send_msg(*elodin_client_, set_component_name(f), nullptr);
     for (const auto& f : diagnostics_fields)
-        send_msg(*elodin_client_, set_component_name(f));
+        fsw::elodin::send_msg(*elodin_client_, set_component_name(f), nullptr);
     for (const auto& f : measurement_fields)
-        send_msg(*elodin_client_, set_component_name(f));
+        fsw::elodin::send_msg(*elodin_client_, set_component_name(f), nullptr);
     for (const auto& f : state_fields)
-        send_msg(*elodin_client_, set_component_name(f));
+        fsw::elodin::send_msg(*elodin_client_, set_component_name(f), nullptr);
     for (const auto& f : fire_fields)
-        send_msg(*elodin_client_, set_component_name(f));
+        fsw::elodin::send_msg(*elodin_client_, set_component_name(f), nullptr);
 
-    send_msg(*elodin_client_, set_entity_name(0x4000, "CONTROLLER.actuation"));
-    send_msg(*elodin_client_, set_entity_name(0x4100, "CONTROLLER.diagnostics"));
-    send_msg(*elodin_client_, set_entity_name(0x4200, "CONTROLLER.measurement"));
-    send_msg(*elodin_client_, set_entity_name(0x4300, "CONTROLLER.state"));
-    send_msg(*elodin_client_, set_entity_name(0x4400, "CONTROLLER.fire"));
+    fsw::elodin::send_msg(*elodin_client_, set_entity_name(0x4000, "CONTROLLER.actuation"),
+                          nullptr);
+    fsw::elodin::send_msg(*elodin_client_, set_entity_name(0x4100, "CONTROLLER.diagnostics"),
+                          nullptr);
+    fsw::elodin::send_msg(*elodin_client_, set_entity_name(0x4200, "CONTROLLER.measurement"),
+                          nullptr);
+    fsw::elodin::send_msg(*elodin_client_, set_entity_name(0x4300, "CONTROLLER.state"), nullptr);
+    fsw::elodin::send_msg(*elodin_client_, set_entity_name(0x4400, "CONTROLLER.fire"), nullptr);
 
     std::cout << "[ControllerService] ✅ Registered controller tables with Elodin DB" << std::endl;
     return true;

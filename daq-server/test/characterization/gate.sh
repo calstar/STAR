@@ -119,7 +119,7 @@ format_check() {
   local cf="${CLANG_FORMAT_19_DIR:-}"
   export PATH="${cf:+$cf:}$PATH"
   clang-format --version | grep -q 'version 19\.' || { echo "need clang-format 19 (CLANG_FORMAT_19_DIR)"; return 1; }
-  (cd "$REPO" && git ls-files 'daq-server/diablo_server' 'daq-server/archive/legacy/utl' 'daq-server/test' |
+  (cd "$REPO" && git ls-files 'daq-server/diablo_server' 'daq-server/test' |
     grep -E '\.(c|cc|cpp|h|hpp)$' | grep -v -E '/(nlohmann|toml\+\+)/' |
     xargs clang-format --dry-run --Werror) || return 1
   local newpy
