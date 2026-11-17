@@ -278,6 +278,38 @@ control paths) directs new structure and team fixes only, never the refactor (D4
 
 ---
 
+### 2.4 Lines and files before and after, per component <!-- refresh after last merge -->
+
+Counted with `git ls-tree -r` and `wc -l`-equivalent newline counts over text blobs, at `main` @
+`15b5a0c5` and `backend-remastered` @ `8d7db131` (2026-11-17; WP3, WP5-WP11 not all landed, so
+the backend and C++ rows will move). Everything under `daq-server/`, plus the repo-root
+`node_modules/` that `main` tracked. Binary blobs count as files, not lines. Grouping rules:
+*tests* = `test/` (except the harness), `__tests__/`, `lib/test/`; *characterization harness* =
+`test/characterization/` (mostly goldens, so its lines are not code); *vendored/junk* =
+`node_modules/`, `.cache/`, `build-ci/`, `archive/`, `external/`, `lib/third_party/`, and the
+vendored `nlohmann`/`toml++` headers; *tools* = `tools/`, `sim/`, `scripts/`, `deploy/`,
+`githooks/`; *other* = config, calibration data, flash, video, build files, so totals reconcile.
+
+| Component | main files | main lines | remastered files | remastered lines |
+|---|---:|---:|---:|---:|
+| backend TS | 100 | 25,515 | 80 | 18,992 |
+| frontend | 130 | 30,747 | 130 | 30,747 |
+| C++ services | 22 | 10,356 | 22 | 10,199 |
+| C++ lib | 94 | 20,507 | 94 | 18,922 |
+| transport | 32 | 2,834 | 28 | 2,352 |
+| tests | 147 | 29,089 | 131 | 27,719 |
+| characterization harness | 0 | 0 | 785 | 179,167 |
+| tools | 176 | 40,047 | 167 | 39,158 |
+| docs | 51 | 7,494 | 164 | 28,526 |
+| vendored/junk | 6,100 | 828,046 | 7 | 48,019 |
+| other (config, calibration data, flash, video, build files) | 50 | 7,806 | 45 | 6,477 |
+| **Total** | 6,902 | 1,002,441 | 1,653 | 410,278 |
+
+Almost all of the drop in totals is junk leaving the tree (tracked root `node_modules/`,
+`build-ci/` binaries, `.cache/clangd/` index: BLOAT-MAP §1; WP1 D81). The product rows are flat
+or smaller (backend TS -6.5k lines, C++ lib -1.6k, services -0.2k); this table does not
+attribute those, see the ledger's merge log per package. The harness and docs are the additions.
+
 ## 3. How behaviour was proven unchanged
 
 The principle: the suite is not evidence about itself. Goldens were recorded on unchanged product
@@ -320,6 +352,23 @@ moved code are allowed only with goldens byte-identical, mutations re-run and th
   a straggler process or a bound test port fails the area that leaked (D33); a run the machine
   slept through is void (D37); every characterization ctest has an explicit timeout (D38); a port
   handed from a listener to a child is confirmed bindable first (D36).
+
+### Running the characterization suite
+
+Off the stand only (`daq-server/CLAUDE.md`; `gate.sh` refuses on `star-rfs` or a 192.168.2.x
+address; the other entry points do not check, so you do). Build first (`bash scripts/build.sh`).
+
+```bash
+bash test/characterization/run.sh                      # every area: ctest half + each area's run.sh
+CHAR_AREAS=config,packets bash test/characterization/run.sh   # only these areas
+bash test/characterization/gate.sh                     # the full merge gate (integration included)
+bash test/characterization/gate.sh --fast              # no integration; never a merge check (D19)
+bash test/characterization/linux/linux_gate.sh         # the same goldens in an ubuntu:24.04 container (D15, D90)
+```
+
+`CHAR_UPDATE=1` rewrites goldens and is only for `main`'s behaviour, never to make a change pass.
+Areas that bind ports hold the stack lock (D2, D7, D8, D14); a bound test port or a straggler
+process fails the area (D33). Per-area detail is in each `test/characterization/<area>/README.md`.
 
 ### Mutations
 
@@ -552,3 +601,27 @@ REPORT-DEFECTS-DRAFT.md §5)
 - Tag push: D77 "local only, waits on the user" vs D79 "already done".
 - WP11 count: D67 says 11 edits; D68 corrects to 10 files / 24 line edits.
 - WP1 count: D81 says 6,103 files; the CHECKPOINT and WP1-EVIDENCE's groups give 6,101.
+
+---
+
+## 6. Before you deploy
+
+Deploying is the team's decision. This refactor was gated off the stand only and nothing in it
+has been run against the stand's hardware; a build that passes the gate is evidence about
+behaviour on a dev box, not permission to restart a service (D59, D77; `daq-server/CLAUDE.md`).
+
+- **Nothing in §1 or §4 is fixed.** `main`'s behaviour is preserved bit for bit, so SEC-1 (an
+  absent `X-Auth-Email` is operator; 8081 and 3000 open to any source), the OTA operator gate and
+  the S1 items are still live after a deploy (D17).
+- **Check for a run first.** `systemctl --user is-active sensor-elodin sensor-daq sensor-actuator
+  sensor-calibration`: if any is `active`, a run is in progress; do not restart the backend
+  under a live session (`daq-server/CLAUDE.md`).
+- **Do not run the integration or e2e scripts on the stand.** `test_integration.sh` deletes the
+  live calibration store (H-1 fixed the harness's copy, not the stand's procedure); the two
+  tracked-but-gitignored live stores need a copy-aside procedure first (Parked; BLOAT-MAP §1).
+- **Answer D16 first**: `uname -m` on star-rfs. Until then arm64 and amd64 are both tested and CI
+  is the only native x86_64 evidence (D55).
+- **Known unproven points** (§5): D-ECHO, D-PF, OI-1 and D35's two Linux signatures.
+- **Team decisions waiting** (§5): SIGPIPE disposition, TQ1-TQ7 and which §1 items to fix; each is
+  its own golden-first package. Draft PR #229 is for reading only (D59).
+
