@@ -30,7 +30,7 @@ import { ballValveSensedEntity, sensedStateFromPosition } from '../ball-valve.js
 import { stats } from './stats.js';
 import { activeNotificationKeys } from './notifications.js';
 import { noteFirstSample } from './mission-time.js';
-import { _hpBoardNumbers, _t7CalFields } from './config-caches.js';
+import { hpBoardNumbersCache, t7CalFieldsCache } from './config-caches.js';
 import { publishSample } from './sensor-stream.js';
 import { noteRawAdc } from './calibration-state.js';
 import { countHeartbeat, updateBoard, noteT7Alive, noteSelfTestResults } from './board-status.js';
@@ -62,7 +62,7 @@ export function handleElodinPacket(header: any, payload: Buffer): void {
     // applyValveCalibration replaces a ball valve's position_pct with its two-point calibrated
     // figure (ball-valve-cal.ts) before the mismatch check below and the browser see it.
     const parsedList = applyValveCalibration(
-      expandWithTare(parseElodinPacket(header.packetId, payload, _hpBoardNumbers, _t7CalFields)));
+      expandWithTare(parseElodinPacket(header.packetId, payload, hpBoardNumbersCache, t7CalFieldsCache)));
 
     if (parsedList.length === 0) {
       if (high >= 0x40) {

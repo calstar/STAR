@@ -34,7 +34,7 @@ import { notificationBuffer, pruneNotificationBuffer } from './notifications.js'
 import { sendHistoricalData } from './history.js';
 import { firstPacketTimeMs, countdownTargetMs } from './mission-time.js';
 import { boardsStatus, selfTestLatest } from './board-status.js';
-import { currentState, debugMode, STATE_ACTUATOR_MAP, configStateName } from './engine-state.js';
+import { currentState, debugMode, stateActuatorMap, configStateName } from './engine-state.js';
 import { connectionStatusPayload } from './elodin-link.js';
 import { handleMessage } from './commands.js';
 
@@ -138,7 +138,7 @@ export function handleConnection(ws: WebSocket, req: http.IncomingMessage): void
   }
 
   // Commanded actuator snapshot for current state (ACT_CMD.B*.CH* keys — same as [0x32] parser + GUI).
-  const snap = STATE_ACTUATOR_MAP[currentState];
+  const snap = stateActuatorMap[currentState];
   if (snap) {
     const t = Date.now();
     for (const [actuatorName, value] of Object.entries(snap)) {
