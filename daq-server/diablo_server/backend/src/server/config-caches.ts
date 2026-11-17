@@ -5,8 +5,8 @@
  * parseElodinPacket takes on every packet, and the two slot→board_id maps behind
  * uniqueIdFromPtEntity. initConfigCaches() is the startup read (DESIGN-WP6 §1.2 row 8);
  * resetConfigCaches() is the one rebuild point, called from applyDeployedConfigChange (STYLE-S20).
- * The PT slot map is private and lazily filled; the T7 slot map is exported in step 1 because
- * board-status.noteT7Alive() still fills it too (two lazy fillers until step 2.4, DESIGN-WP6 §1.1).
+ * Both slot maps are private and lazily filled; t7BoardIdForSlot() is the one T7 lookup
+ * (step 2.4), used here and by board-status.noteT7Alive().
  *
  * `_hpBoardNumbers` and `_t7CalFields` are `export let` live bindings assigned only here
  * (STYLE-S32); step 2.5 renames them. No effect at import (M1). Never imports api-server.ts or api/*.
@@ -49,19 +49,26 @@ function _ensurePtSlotCache(): void {
 }
 
 /** T7 slot -> board_id, for T7<slot>_Cal.AIN<n> (built with the PT cache, cleared with it). */
-export const _t7SlotToBoardId = new Map<number, number>();
+const _t7SlotToBoardId = new Map<number, number>();
+
+/** The one T7 slot lookup (step 2.4; it replaced two equivalent lazy fillers, here and in
+ *  board-status.noteT7Alive): `undefined` when the slot has no T7 board or on a config error,
+ *  which both callers treat as "no board". */
+export function t7BoardIdForSlot(slot: number): number | undefined {
+  if (_t7SlotToBoardId.size === 0) {
+    try {
+      for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
+    } catch { /* no config: no T7 board */ }
+  }
+  return _t7SlotToBoardId.get(slot);
+}
 
 /** Map PT{n}.CH{m} — or a T7 input's T7{n}_Cal.AIN{m} — to uniqueId = board_id*100+channel
  *  (matches calibration_service, where a T7 input's channel is its AIN). */
 export function uniqueIdFromPtEntity(entity: string): number | null {
   const t7 = entity.match(/^T7(\d+)_Cal\.AIN(\d+)$/);
   if (t7) {
-    if (_t7SlotToBoardId.size === 0) {
-      try {
-        for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
-      } catch { /* no config: no T7 uid */ }
-    }
-    const bid = _t7SlotToBoardId.get(parseInt(t7[1], 10));
+    const bid = t7BoardIdForSlot(parseInt(t7[1], 10));
     return bid !== undefined ? bid * 100 + parseInt(t7[2], 10) : null;
   }
   const m = entity.match(/^PT(\d+)(?:_Cal)?\.CH(\d+)$/);

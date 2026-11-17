@@ -22,7 +22,6 @@
 
 import { readConfig } from '../routes/config.js';
 import { getBoardDhcpStatus } from '../dhcp-status.js';
-import { t7Channels } from '../../../shared/config-validation.js';
 import { MessageType } from '../../../shared/types.js';
 import type { SensorUpdate, BoardStatus } from '../../../shared/types.js';
 import type { ParsedSensorData } from '../elodin-protocol.js';
@@ -30,8 +29,7 @@ import { THIN_VERBOSE_CONNECTION_LOG, THIN_HEARTBEAT_DIAG_LOG, THIN_STATS_LOG } 
 import { stats } from './stats.js';
 import { wss, broadcast } from './ws-clients.js';
 import { activeNotificationKeys, broadcastNotification, raiseNotification, clearNotification } from './notifications.js';
-import { _t7SlotToBoardId } from './config-caches.js';
-import { recordFirmware } from '../firmware-log.js';
+import { t7BoardIdForSlot } from './config-caches.js';
 
 export const BOARD_STATUS_HZ = 1;     // broadcast rate for board status
 /** Board marked disconnected if no Elodin [0x10] heartbeat for this long. Too low causes UI flap when DB or TCP jitters; heartbeats are usually multi-Hz but not hard-real-time. */
@@ -121,30 +119,6 @@ export function updateBoard(low: number, payload: Buffer): void {
 }
 
 /**
- * Record the firmware image a board reports running: shown live on the Boards pane and pinned to
- * the run in `<dbDir>/firmware.jsonl`.
- *
- * Payload is BoardFirmwareElodinMessage (see comms/messages/board/BoardFirmwareMessage.hpp):
- *   u64 timestamp_ns (0) | u8 board_id (8) | u8[32] firmware_digest (9)
- */
-export function updateBoardFirmware(low: number, payload: Buffer): void {
-  if (payload.length < 41) return;
-  const digest = payload.subarray(9, 41).toString('hex');
-  const status = boardsStatus.get(low);
-  if (!status) return; // heartbeat creates the entry; firmware only annotates it
-  if (status.firmwareDigest === digest) return;
-
-  const previous = status.firmwareDigest;
-  status.firmwareDigest = digest;
-  status.firmwareSeenMs = Date.now();
-  console.log(
-    `[ThinServer] Board ${low} (${status.type}) firmware ${previous ? 'changed to ' : ''}${digest.slice(0, 16)}…`,
-  );
-  recordFirmware(low, digest, status.type);
-  broadcastBoardStatus();
-}
-
-/**
  * A LabJack T7 sends no BOARD_HEARTBEAT — it is not an ESP32 board — so its liveness on the Boards
  * pane is its data: each raw sample t7_bridge publishes stands in for a heartbeat, at most every
  * T7_ALIVE_MARK_MS so the pane's heartbeat-rate reads as a steady ~2 Hz rather than the scan rate.
@@ -153,12 +127,7 @@ export function updateBoardFirmware(low: number, payload: Buffer): void {
 const T7_ALIVE_MARK_MS = 500;
 const t7LastMark = new Map<number, number>();
 export function noteT7Alive(slot: number): void {
-  if (_t7SlotToBoardId.size === 0) {
-    try {
-      for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
-    } catch { return; }
-  }
-  const boardId = _t7SlotToBoardId.get(slot);
+  const boardId = t7BoardIdForSlot(slot);
   if (boardId === undefined) return;
   const now = Date.now();
   if (now - (t7LastMark.get(boardId) ?? 0) < T7_ALIVE_MARK_MS) return;
