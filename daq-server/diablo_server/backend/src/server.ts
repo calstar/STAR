@@ -93,6 +93,7 @@ import { _hpBoardNumbers, _t7CalFields, _t7SlotToBoardId, initConfigCaches, rese
 import { calibrationHost, lastRawAdc, initCalibrationState, reloadCalibrationEntityMap } from './server/calibration-state.js';
 import { BOARD_STATUS_HZ, boardsStatus, loadBoardsFromConfig, updateBoard, countHeartbeat, noteT7Alive, markStaleBoards, broadcastBoardStatus, boardLabel, logDiagnostics, selfTestLatest, selfTestNotifiedBoards } from './server/board-status.js';
 import { currentState, debugMode, STATE_ACTUATOR_MAP, initEngineState, reloadStateActuatorMap, configStateName, getExpectedPositions, broadcastCommandedActuatorsForState, broadcastStateUpdate, refreshScriptStatus, setDebugMode, applySequencerState } from './server/engine-state.js';
+import { actuatorSensedState, scheduleActuatorMismatchCheck } from './server/actuator-mismatch.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -107,53 +108,6 @@ loadBoardsFromConfig();
 // ── State actuator map (expected positions per state from CSV) ────────────────
 
 reloadStateActuatorMap();
-
-// ── Actuator state mismatch detection ────────────────────────────────────────
-
-/** Last-known actuator_state per entity: [0x31] current-sense (ACT*), or a ball valve's position
- *  (BV*, see ball-valve.ts). Absent = not known, which never raises a mismatch. */
-const actuatorSensedState = new Map<string, number>();
-const ACTUATOR_MISMATCH_DELAY_MS = 5000;
-let actuatorMismatchTimer: NodeJS.Timeout | null = null;
-
-function scheduleActuatorMismatchCheck(state: SystemState): void {
-  if (actuatorMismatchTimer) clearTimeout(actuatorMismatchTimer);
-  actuatorMismatchTimer = setTimeout(() => {
-    actuatorMismatchTimer = null;
-    checkActuatorMismatch(state);
-  }, ACTUATOR_MISMATCH_DELAY_MS);
-}
-
-function checkActuatorMismatch(state: SystemState): void {
-  const expected = getExpectedPositions(state);
-  if (Object.keys(expected).length === 0) return;
-
-  const now = Date.now();
-  const mismatched: string[] = [];
-
-  for (const [entity, expectedPos] of Object.entries(expected)) {
-    const sensed = actuatorSensedState.get(entity);
-    if (sensed === undefined) continue; // no data yet — don't alert
-    if (sensed !== expectedPos) {
-      const expLabel = expectedPos === 1 ? 'OPEN' : 'CLOSED';
-      const actLabel = sensed === 1 ? 'OPEN' : 'CLOSED';
-      const name = entity.replace('ACT.', '').replace(/_/g, ' ');
-      mismatched.push(`${name} (expected ${expLabel}, sensed ${actLabel})`);
-    }
-  }
-
-  const key = 'actuator_mismatch';
-  if (mismatched.length > 0) {
-    const stateName = configStateName(state) ?? SystemState[state] ?? 'UNKNOWN';
-    const msg = `Actuator mismatch in ${stateName}: ${mismatched.join(', ')}`;
-    console.warn(`[ThinServer] ⚠️ ${msg}`);
-    broadcastNotification({ key, category: 'warning', message: msg, timestampMs: now, ongoing: true });
-    activeNotificationKeys.add(key);
-  } else if (activeNotificationKeys.has(key)) {
-    broadcastNotification({ key, category: 'warning', message: 'Actuator positions match expected', timestampMs: now, ongoing: false });
-    activeNotificationKeys.delete(key);
-  }
-}
 
 setInterval(logDiagnostics, 5000);
 
