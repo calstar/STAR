@@ -53,8 +53,9 @@ std::atomic<bool>& running();
 
 /** signal(SIGINT, h); signal(SIGTERM, h); and for kIgnore signal(SIGPIPE, SIG_IGN) — in that
  *  order. `line` is printed verbatim (callers include the leading "\n"; the controller's U+2026 is
- *  bytes in the literal) and must outlive the process (a string literal); nullptr with kSilent.
- *  Per-service arguments: DESIGN-WP8 §2.1 table. */
+ *  bytes in the literal) and must outlive the process (a string literal). `line` is nullptr
+ *  **iff** notice == kSilent (t7_bridge); every printing notice passes a literal. Per-service
+ *  arguments: DESIGN-WP8 §2.1 table. */
 void installStopHandlers(ShutdownNotice notice, const char* line, Sigpipe sigpipe);
 
 }  // namespace fsw::service

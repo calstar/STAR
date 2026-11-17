@@ -99,7 +99,7 @@ package). A refactor never applies them to existing behaviour. WPs: all.
 
 **S13 — Exit codes are frozen; 78 is reserved.** 0, 1, frozen exceptions as WP8 §4; −6 only for a programming invariant; 78 only for refused config, never restarted (precedent `sensor-t7.service:21-22`). Only `main` exits, in its startup block.
 
-**S14 — A seam keeps its error style; a fault is a value that reaches a decider.** Status seams keep returning status (`{ok, reply}`, `bool` + `refusal_reason`, `TcpListener::Failed`); no exception crosses them. New helpers are `[[nodiscard]]`; a status is consumed or passed up, `(void)` only under `// Kept:`. Nothing reports an in-duty fault only in a log.
+**S14 — A seam keeps its error style; a fault is a value that reaches a decider.** Status seams keep returning status (`{ok, reply}`, `bool` + `refusal_reason`, `DaqBindResult{ok, address, detail}` from `resolveDaqBindAddress`, `lib/include/net/DaqInterface.hpp:57`); no exception crosses them. New helpers are `[[nodiscard]]`; a status is consumed or passed up, `(void)` only under `// Kept:`. Nothing reports an in-duty fault only in a log.
 
 **S14a — Every degraded part is a keyed `ongoing` status on an operator surface, and the safety layer never depends on a service choosing to exit.** Model `markStaleBoards` (`server.ts:661-701`). The backend raises it from what it observes today (stale ingest, board heartbeats, WS close, `{ok:false}`); it does **not** observe SERVER_HEARTBEAT loss (C6-3), per-pair liveness (D-SUB) or any C++ in-duty fault; those need plumbing (C++ precedent: the Boards-page journal, `star-dhcp-sync.service:13-16`; TQ6).
 
@@ -158,10 +158,13 @@ module (WP6 `server/env.ts`). WPs: 6.
 
 **S21 — Name the owner of every resource; RAII when its lifetime is a scope.** Good:
 `lib/src/elodin/ElodinClient.cpp:14`, `lib/src/control/ControllerService.cpp:74-78`. Where *when* an
-fd closes is observable, keep the explicit `close()` where it is; shared helpers then return a raw
-fd and the caller owns it (WP8 §0 rejected an owning `UdpSender`: heartbeat closes its socket before
-joining the Elodin thread). A helper's doc comment says who closes on which path (WP8 §2.3
-`openTcpListener`: callee closes on socket/bind failure, caller owns the fd otherwise). WPs: 8, 10.
+fd closes is observable, keep the explicit `close()` where it is; no WP8 helper opens or returns an
+fd (WP8 §0 rejected an owning `UdpSender` — heartbeat closes its socket before joining the Elodin
+thread — and, after the debate, `openTcpListener`: a callee that closes on bind failure inverts the
+log → `close` order the three mains have today). A helper that borrows an fd says so, and says who
+closes what, in its doc comment (WP8 §2.2 `serveTcpClients`: borrows `listen_fd` and never closes
+it — the main does, `sequencer_main.cpp:351`, `controller_main.cpp:216`; `on_client` closes its
+client fd, 221/124; the busy path closes inside the helper, 329/195). WPs: 8, 10.
 
 **S22 — Every thread has a stop path and an owner that joins it.** Stop = an atomic flag checked at
 a bounded interval (sleeps in ≤ 100 ms slices, as `services/sequencer/ActuatorCommander.cpp:655-656`;
@@ -299,7 +302,8 @@ rewrite every file). `tsc --noEmit` (D40) is the only static gate. WPs: 5–7.
    (`lib/include/elodin`: 0 camel, 36 snake) and `findConfigFile`/`readFileText` into
    `fsw::config` (0:46); S1 gives `follow_sequencer_state`, `find_config_file`,
    `read_file_text`. WP8's `fsw::net` helpers (`openUdpSocket`, `openTcpListener`,
-   `serveTcpClients`, `ipv4Destination`) match `bindToDaqInterface`. WP10 §5 mints camelCase
+   `serveTcpClients`, `ipv4Destination`) match `bindToDaqInterface` (of these only
+   `serveTcpClients` survived the WP8 debate; the others were dropped, D54). WP10 §5 mints camelCase
    `registerAllTables` in snake_case `daq_bridge` (0:13) because BLOAT-MAP named it; S1 gives
    `register_all_tables` (a planning name is not an observable; the function itself was later dropped, LEDGER D49(10)). WP9's snake_case in
    `services/calibration` conforms. Decide before WP8 pass 1 (renaming later is a second diff).

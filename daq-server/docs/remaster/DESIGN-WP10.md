@@ -49,15 +49,16 @@ thread **and the send path it calls (`sendBatch`, `sendUDP`)** stay in core
 ## 0. Boundary with WP8 (lands first)
 
 WP8 owns process plumbing in the mains (stop flag, `installStopHandlers` with the per-service
-SIGPIPE setting, `openTcpListener`/`serveTcpClients`, `openUdpSocket`/`ipv4Destination`,
-`follow_sequencer_state`). It rejects a generic `SubscriberLoop` and a shared argv parser, so every
+SIGPIPE setting, `serveTcpClients`, `follow_sequencer_state`; listener and UDP socket setup stays
+in each main — DESIGN-WP8 §0, debate verdict D54). It rejects a generic `SubscriberLoop`, a shared
+argv parser and every UDP helper, so every
 Elodin loop below stays its owner's code. WP10 does not touch `sequencer_main.cpp` or
 `controller_main.cpp`.
 
 | site in WP10's files | WP10 action |
 |---|---|
-| `ActuatorCommander.cpp:343-371` socket per batch, `SO_SNDTIMEO` 100 ms, `bind(bind_addr_)` | stays in core (`sendBatch`). Cleanup may adopt `fsw::net::openUdpSocket(false)` where the statement is identical; the explicit `bind()` and its `[ActuatorCommander] bind(<addr>) failed` log stay. |
-| `ControllerService.cpp:92-98` (one socket, `bindToDaqInterface`), sends 434-439, 498-506 | `initialize` stays in core; the sends go to `_pwm`. Cleanup may adopt `openUdpSocket(false)`/`ipv4Destination` where statement-identical (DESIGN-WP8 §2.2). |
+| `ActuatorCommander.cpp:343-371` socket per batch, `SO_SNDTIMEO` 100 ms, `bind(bind_addr_)` | stays in core (`sendBatch`), socket creation included (WP8 shares no UDP helper); the explicit `bind()` and its `[ActuatorCommander] bind(<addr>) failed` log stay. |
+| `ControllerService.cpp:92-98` (one socket, `bindToDaqInterface`), sends 434-439, 498-506 | `initialize` stays in core, socket creation included (WP8 shares no UDP helper); the sends go to `_pwm`. |
 | `daq_bridge_main.cpp:49-90` `BackendLogForwarder` | moves as-is to `daq_bridge/BackendLogForwarder.hpp`. |
 | `SequencerService.cpp:1023-1114` TCP client; `:1253-1293` Elodin retry; `ControllerService.cpp:754-915` subscriber | move as-is to `_controller_notify` / the `_elodin` TUs; no WP8 helper applies. |
 | `daq_bridge_main.cpp:574-606` and `:745-776` publisher connect + 5 s reconnect | **stay in `main`, two separate sites** (§4.2). |
@@ -437,7 +438,6 @@ baseline: the pre-WP tip, as for the move-only item). Content:
       does not call them.
 - [ ] **daq_bridge signals** (§0): `installStopHandlers(kStopThenPrint, "\n[DAQ Bridge] Shutting
       down...", Sigpipe::kIgnore)`, `fsw::service::running()`.
-- [ ] Optional: `openUdpSocket(false)` where the statements are identical (§0).
 
 Not in cleanup (parked or forbidden): fixing C4-1/C4-2/C4-3/C1-10/C4-4/C4-5/C6-1/C6-3/C1-12; a
 shared registration helper for daq_bridge (§4.2); replacing the republish 10 ms slices with a
