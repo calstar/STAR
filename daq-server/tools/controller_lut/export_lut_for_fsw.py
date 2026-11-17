@@ -10,7 +10,7 @@ The binary format is designed for ControllerLUT.cpp:
   - For each output: name_len u8, name bytes, shape (num_axes × u32), data (float64 LE)
 
 Usage:
-  python -m scripts.controller_lut.export_lut_for_fsw --input output/lut/controller_lut_ddp_small.npz --output output/lut/controller_lut.bin
+  python -m tools.controller_lut.export_lut_for_fsw --input output/lut/controller_policy_fsw.npz --output output/lut/controller_policy_fsw.bin
 """
 
 from __future__ import annotations
