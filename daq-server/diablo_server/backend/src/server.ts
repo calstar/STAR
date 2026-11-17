@@ -57,7 +57,6 @@ import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUp
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
-const WS_PORT = parseInt(process.env.WS_PORT ?? '8081', 10);
 // Command types that actuate/transition the engine — gated by the operator
 // unlock. Read-only queries and countdown display are not.
 const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
@@ -69,11 +68,6 @@ type WsWithControl = WebSocket & {
    *  sweep is gone in a way TCP never reported (Wi-Fi drop, closed lid). */
   __daqAlive?: boolean;
 };
-const ELODIN_HOST = process.env.ELODIN_HOST ?? '127.0.0.1';
-const ELODIN_PORT = parseInt(process.env.ELODIN_PORT ?? '2240', 10);
-const THIN_VERBOSE_CONNECTION_LOG = process.env.THIN_VERBOSE_CONNECTION_LOG === '1';
-const THIN_HEARTBEAT_DIAG_LOG = process.env.THIN_HEARTBEAT_DIAG_LOG === '1';
-const THIN_STATS_LOG = process.env.THIN_STATS_LOG === '1';
 
 // ~20 Hz × 800 s ≈ 13 min per full series; rings grow lazily so sparse/event
 // streams stay small. Key cap must exceed the live stream count (>200) or
@@ -299,6 +293,7 @@ import { ConfigIssuesError } from './config-validation.js';
 import { ballValveSensedEntity, sensedStateFromPosition } from './ball-valve.js';
 import { countByLevel, t7Channels } from '../../shared/config-validation.js';
 import { sendToSequencer, SEQUENCER_PORT } from './sequencer-client.js';
+import { WS_PORT, GUI_PORT, ELODIN_HOST, ELODIN_PORT, THIN_VERBOSE_CONNECTION_LOG, THIN_HEARTBEAT_DIAG_LOG, THIN_STATS_LOG } from './server/env.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -1792,8 +1787,6 @@ httpServer.on('error', (err: NodeJS.ErrnoException) => {
   }
 });
 
-// Serve the built SPA (frontend/dist) on GUI_PORT; 0 disables.
-const GUI_PORT = parseInt(process.env.GUI_PORT ?? '3000', 10);
 startGuiStaticServer(GUI_PORT);
 
 httpServer.listen(WS_PORT, () => {
