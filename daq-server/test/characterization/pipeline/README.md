@@ -62,7 +62,7 @@ at all, which would freeze a dead pipeline.
   `daq-server/`. Everything the backend resolves relative to its own file then lands in the
   fixture, not the checkout: its PT calibration (`calibration.ts`: `srv/calibration/*.json`, the
   newest by mtime), `/api/cubic_calibration` (`srv/scripts/calibration/calibrations`, the
-  fixture's store), the legacy state-CSV loaders (`srv/../config` — the fixture's), the
+  fixture's store), the state-CSV loaders (`srv/../config` — the fixture's), the
   state-script checker (`srv/build`). The source is copied unchanged at every run, so an edit to
   `diablo_server/backend/src` is what runs. pt and boards put exactly one file in
   `srv/calibration/` (`calibration_2026-02-25T03-44-09.json`, chosen by name); nocal puts none.
@@ -241,7 +241,7 @@ pointed at them by the same relative form (an absolute path is found by the sequ
 writes it. The sequencer refuses a hold into a state it cannot return from, which is why the CSV
 column exists. One step `test_integration.sh` does not take: ten rows of the shipped
 `state_transitions.csv` are one cell short (`feed-twin/backend/statemachines/NEEDS-REPAIR.md`;
-`StateMachine.cpp` and `legacy/state-transitions.ts` both read a row left-aligned and a missing
+`StateMachine.cpp` and `state-csv/state-transitions.ts` both read a row left-aligned and a missing
 cell as "not allowed"), so a column appended to such a row lands under the previous header —
 Press Standby's `1` under Emergency Abort — and the hold is refused `transition rejected`.
 `test_integration.sh` enters Flow Test with debug mode on, which bypasses the table
@@ -463,7 +463,7 @@ Each applied to the backend source, run, reverted (none committed):
 - In mock mode the run's `dbDir` is never created, so `POST /api/feed-char/results` during a
   session answers 500 `ENOENT`.
 - `debug_mode` produces two identical `state_update`s (the TCP-reply path and the Elodin path).
-- The legacy state-CSV loaders `join()` `[state_machine]` paths onto fixed directories, so an
+- The state-CSV loaders `join()` `[state_machine]` paths onto fixed directories, so an
   absolute path in config is never found (`get_state_transitions` → `[]`, no commanded snapshot).
 - `/api/cubic_calibration` ignores `DAQ_CALIBRATIONS_DIR`; the backend's own PT calibration and
   `calibration_status.calibrationFilePath` come from `daq-server/calibration/*.json` via `__dirname`.

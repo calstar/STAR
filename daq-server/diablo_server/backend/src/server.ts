@@ -38,9 +38,9 @@ import { createAPIHandler } from './api-server.js';
 import { VideoService } from './video/service.js';
 import { startBoardLogReceiver } from './board-logs.js';
 import { readConfig, readDeployedConfig } from './routes/config.js';
-import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './legacy/state-actuators.js';
-import type { StateActuatorMap } from './legacy/state-actuators.js';
-import { getStateTransitions } from './legacy/state-transitions.js';
+import { getStateActuatorMap, CSV_ACTUATOR_TO_ENTITY, resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } from './state-csv/state-actuators.js';
+import type { StateActuatorMap } from './state-csv/state-actuators.js';
+import { getStateTransitions } from './state-csv/state-transitions.js';
 import { recordBoardScanIngest, getBoardScanRateHz, isPrimaryPhysicalStream, mapEntityToGroup } from './board-scan-rate.js';
 import {
   EnvelopeAccumulator, parseGuiStreamConfig, envelopeWindowMs, encoderWindowMs,

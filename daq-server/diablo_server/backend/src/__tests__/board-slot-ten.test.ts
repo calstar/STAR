@@ -2,7 +2,7 @@
  * The board-slot rule on a board whose id ends in 0: `board_id % 10`, with 0 → 10. The backend
  * holds four inline copies of that rule on the paths a config reaches without a running stack
  * (`sensor-config.ts` hpBoardNumbers and loadSensorRoleMap, `elodin-vtable-registry.ts`
- * buildVTableStreamSubscriptionList, `legacy/state-actuators.ts`
+ * buildVTableStreamSubscriptionList, `state-csv/state-actuators.ts`
  * resolveActuatorBoardSlotAndChannel), and no other test feeds any of them a `% 10 == 0` board:
  * vtable-subscriptions.test.ts uses 21, 22, 12, 41 and the pipeline fixture's board 60 never
  * streams. Dropping the `0 → 10` half in any one copy (slot 0) must go red here.
@@ -35,7 +35,7 @@ vi.mock('../routes/config.js', () => ({ readConfig: () => config, readDeployedCo
 
 const { hpBoardNumbers, loadSensorRoleMap } = await import('../sensor-config.js');
 const { buildVTableStreamSubscriptionList } = await import('../elodin-vtable-registry.js');
-const { resolveActuatorBoardSlotAndChannel, resolveActuatorCmdEntity } = await import('../legacy/state-actuators.js');
+const { resolveActuatorBoardSlotAndChannel, resolveActuatorCmdEntity } = await import('../state-csv/state-actuators.js');
 
 describe('board_id % 10 == 0 is slot 10', () => {
   it('hpBoardNumbers: the current-loop board 10 is slot 10, never 0', () => {
