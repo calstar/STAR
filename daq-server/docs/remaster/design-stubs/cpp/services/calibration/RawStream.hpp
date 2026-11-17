@@ -10,15 +10,21 @@
 //             anonymous namespace of RawStream.cpp, the stream globals g_hp_ma_live,
 //             g_pt_smoother, g_t7_cold_junction_c (cleanup C2 moves them into StreamState). The
 //             function-local `static int ch_mismatch_warn` stays in handle_esp32_raw.
-// last_save:  WRITTEN BY MAIN at old 1557's position (verdict fact 4): today's
-//             `auto last_save = steady_clock::now()` (1559) runs after connect_and_register
-//             (1544). main aggregate-initialises StreamState there with
-//             `last_save{std::chrono::steady_clock::now()}` (or assigns it on the next line). A
-//             bare member is the epoch, so the first ESP32 packet would satisfy `> 300` s at 2124
-//             and save adjustments at once — frozen by the C0 `after sweep` snapshot (DESIGN-WP9
-//             §7.2 (iv), D65(4)): adj.json is <absent> there today, and save_adjustments writes a
-//             file even with no learned state, so the epoch shows as a file where the golden has
-//             <absent>. That item gates this step (checkpoint 2), with G3 reconnect (§7.2 (v)).
+//             last_adc_map is WRITE-ONLY on the baseline (declaration 1560, the reconnect clear
+//             1575, writes 1860, 1883, 1983, 2075, a comment naming it at 1791, no reader): it
+//             moves verbatim here and cleanup deletes it, that grep being the proof (DESIGN-WP9
+//             §6.2, D73).
+// last_save:  DEFAULT MEMBER INITIALISER `= std::chrono::steady_clock::now()` (D73). The struct is
+//             constructed by main at old 1557's position, after connect_and_register (1544), which
+//             is exactly where today's `auto last_save = steady_clock::now()` (1559) ran, so the
+//             timing is unchanged and main's aggregate initialiser does not name the member. A
+//             bare member would be the epoch, so the first ESP32 packet would satisfy `> 300` s
+//             at 2124 and save adjustments at once — and the EXISTING golden sees it: the first
+//             sync() sentinel (service_run.py:567, a raw 0x30 row) takes the ESP32 path, so an
+//             epoch member writes adj.json before files("after refused commands") (:585), where
+//             stack.txt:4780 has <absent> today (save_adjustments writes a file even with no
+//             learned state). No new snapshot; checkpoint 2 is gated by DESIGN-WP9 §6.1's checks
+//             alone.
 // Threads:    one. ElodinClient's publish_mutex_ is taken per publish, uncontended.
 // Order:      per packet: begin_batch → publish each value → flush_batch → ++packet_count; PT:
 //             select_pt_psi then `psi = g_pt_smoother.step(uid, psi)` in the same statement
@@ -65,10 +71,12 @@ struct StreamState {
     const double tc_adc_ref_voltage, rtd_adc_ref_voltage, rtd_excitation_ua, rtd_r0_ohm;
     int packet_count = 0;
     int debug_limit = 0;  // was a function-local static at 1621: same single counter, zero start
-    // Today's type (1559). NOT default-initialised here: main writes steady_clock::now() into it
-    // at old 1557's position (see the header comment); a bare member is the epoch.
-    std::chrono::steady_clock::time_point last_save;
-    std::map<uint16_t, int32_t> last_adc_map;  // today's type (1560)
+    // Today's type (1559). The default member initialiser runs when main constructs the struct at
+    // old 1557's position, which is where 1559 ran: timing unchanged (D73). A bare member would be
+    // the epoch and save on the first ESP32 packet; stack.txt:4780 (<absent>) is the check.
+    std::chrono::steady_clock::time_point last_save = std::chrono::steady_clock::now();
+    // today's type (1560); write-only (no reader on the baseline), deleted in cleanup (D73)
+    std::map<uint16_t, int32_t> last_adc_map;
 };
 
 /** LabJack T7 raw rows (type_hi == 0x26). */
@@ -81,7 +89,10 @@ void handle_esp32_raw(CalibrationContext& ctx, StreamState& stream, const uint8_
 
 /** CLEANUP C2 ONLY (DESIGN-WP9 amendment): the reconnect clear of last_adc_map, called by main's
  *  loop head at today's position (after capture_window.clear(), before "[Cal] Reconnected to
- *  Elodin"). In move-only, main does `stream.last_adc_map.clear();` itself. */
+ *  Elodin"). In move-only, main does `stream.last_adc_map.clear();` itself (D73: not minted
+ *  there). Vacuous once the last_adc_map deletion lands first among the cleanup commits
+ *  (DESIGN-WP9 §6.2, D73): it is the only RawStream state the reconnect clears, so C2 then has
+ *  nothing to move here and does not mint this function either. */
 void on_elodin_reconnected(StreamState& stream);
 
 }  // namespace fsw::calibration_service
