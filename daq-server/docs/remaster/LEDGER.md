@@ -251,6 +251,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 - Deleting `tools/` operator GUIs (`tools/gui/**`, the orphaned calibration GUIs): operator-facing, the team's decision, not a refactor's.
 
 ## Defects found in the original (kept as-is, for the team)
+- **D-SESSION-HDR (S4, harness):** test/characterization/pipeline/session.ts's header comment repeats the line 'what PT board 22 delivers…'.
 - **D-GAP5-SELECT (S4, harness):** `test/characterization/sequencer/char_sequencer.py:991-1043` (the clients sessions) cannot see the command servers' select period; doubling it, or setting it to 1 s, stays green. DESIGN-WP8 §7.2 gap 5 expected it to.
 - **D-UNRECIP (S3):** `server.ts:540-546` creates an unlisted board at an invented `192.168.2.<id>`, so `unrecognized_<id>` names the wrong host for boards off that subnet.
 - **D-WSFLOW-LABEL (S4):** test/ws_data_flow_test.ts:3728 prints `server-legacy.ts`, which no longer exists.
