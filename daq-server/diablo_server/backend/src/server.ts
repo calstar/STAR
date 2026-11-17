@@ -193,9 +193,8 @@ setInterval(() => {
 
 // ── Mission time ─────────────────────────────────────────────────────────────
 
-let firstPacketTimeMs: number | null = null;
 import { loadCountdownTargetTimeMs, saveCountdownTargetTimeMs } from './countdown-state.js';
-let countdownTargetMs: number | null = loadCountdownTargetTimeMs();
+initMissionTime();
 import { sessionManager } from './session-manager.js';
 import { ConfigIssuesError } from './config-validation.js';
 import { ballValveSensedEntity, sensedStateFromPosition } from './ball-valve.js';
@@ -206,6 +205,7 @@ import { stats, initStats } from './server/stats.js';
 import { type WsWithControl, wss, attachWebSocketServer, broadcast, send, clientStreams, clientStreamStatus, flushClientOutboxes, resetOutboxStats, reapUnresponsiveClients, KEEPALIVE_MS } from './server/ws-clients.js';
 import { activeNotificationKeys, notificationBuffer, pruneNotificationBuffer, broadcastNotification } from './server/notifications.js';
 import { history, pruneHistory, sendHistoricalData } from './server/history.js';
+import { firstPacketTimeMs, countdownTargetMs, initMissionTime, setFirstPacketTimeMs, setCountdownTargetMs } from './server/mission-time.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -1168,7 +1168,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       });
       break;
     case 'set_countdown_target':
-      countdownTargetMs = command.data.targetTimeMs ?? null;
+      setCountdownTargetMs(command.data.targetTimeMs ?? null);
       saveCountdownTargetTimeMs(countdownTargetMs);
       broadcast({ type: MessageType.COUNTDOWN_TARGET_UPDATE, timestamp: Date.now(), payload: { targetTimeMs: countdownTargetMs } });
       break;
@@ -1514,9 +1514,9 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
       // Set mission T+0 on first meaningful data packet.
       if (firstPacketTimeMs === null) {
-        firstPacketTimeMs = epochNow;
+        setFirstPacketTimeMs(epochNow);
         if (THIN_VERBOSE_CONNECTION_LOG) {
-          console.log(`[ThinServer] Mission T+0: ${new Date(firstPacketTimeMs).toISOString()}`);
+          console.log(`[ThinServer] Mission T+0: ${new Date(epochNow).toISOString()}`);
         }
         broadcast({ type: MessageType.MISSION_START_TIME, timestamp: Date.now(), payload: { missionStartTime: firstPacketTimeMs } });
       }
