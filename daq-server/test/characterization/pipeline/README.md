@@ -12,6 +12,7 @@ bash test/characterization/pipeline/run.sh startlog    # the backend alone, its 
 bash test/characterization/pipeline/run.sh selftest    # one failed self-test connector (G2) → golden/selftest/
 bash test/characterization/pipeline/run.sh unrecognized  # a board the backend does not expect (G3) → golden/unrecognized/
 bash test/characterization/pipeline/run.sh mismatch    # the ball valve against its CLOSE row (G1) → golden/mismatch/
+bash test/characterization/pipeline/run.sh statecsv    # an idle-mode state-CSV deploy (G8) → golden/statecsv/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
@@ -289,7 +290,7 @@ No `git grep` of the other goldens finds any of these lines: this is the only pl
 (`shared-types.ts`'s top-level `await`, WP5 5.4), a reordered startup row (WP6 §1.2) or a loader's
 import-time read moving out of import time shows.
 
-### The WP6 gap sessions (`run.sh selftest|unrecognized|mismatch` → `golden/<mode>/`)
+### The WP6 gap sessions (`run.sh selftest|unrecognized|mismatch|statecsv` → `golden/<mode>/`)
 
 `DESIGN-WP6.md` §7's G2, G3 and G1 (LEDGER D48): three notifications no other golden raised, each
 in a session cut to its one path so a change elsewhere on the WS/HTTP surface cannot fail it, and
@@ -334,6 +335,18 @@ each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate di
   overrides before publishing, so the valve closes before the check runs.) The valve never hears a
   SERVER_HEARTBEAT here (daq_bridge sends them to `broadcast_ip`:hb_udp, the valve listens on
   127.0.0.71:act_udp), so the simulator's failsafe-open never arms.
+- **statecsv (G8, LEDGER D105, the idle-mode state-CSV deploy).** Client A connected, the session
+  GETs the actuators CSV, flips one cell (Fuel Vent's Idle column, CLOSE → OPEN) and POSTs it back
+  as the operator with no session active: `writeStateCsv` writes the active profile and, idle,
+  copies it over the deployed file (both under the fixture's `config/`), and `setImmediate` fires
+  `onStateCsvUpdated` (`server.ts`), which rebuilds `STATE_ACTUATOR_MAP` and broadcasts one
+  `config_updated`. Frozen: that frame is all A gets (its commanded snapshot was sent at connect
+  and is never re-sent), the POST's `{"success":true,"deployed":true,…}`, the CSV before and after
+  (`csv.txt`, both), and the next client's connect burst — B's snapshot carries `ACT_CMD.B2.CH2`
+  (Fuel Vent) `= 1` where A's carried `0`, the one line that shows the map was rebuilt from the
+  new file. Nothing reaches the sequencer (it read its CSVs at boot; a deploy reaches the pipeline
+  only at session start), so `BV_CMD`/`ACT_CMD` Elodin rows do not change.
+
 ## The scripted session (`session.ts`)
 
 GET sweep → connect A → 3 s live → viewer client B (`X-Auth-Email`, not an operator) → unknown `subscribe`, non-JSON, `get_state_transitions` →
