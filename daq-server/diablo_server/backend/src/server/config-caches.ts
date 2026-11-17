@@ -12,11 +12,11 @@
  * (STYLE-S32); step 2.5 renames them. No effect at import (M1). Never imports api-server.ts or api/*.
  *
  * Contract: uniqueId = board_id*100+channel matches calibration_service (the calibration capture
- * path of test/ws_data_flow_test.ts); the `bid % 10, 0 → 10` slot rule here is the sixth copy
- * (D-WS, R5) and is replaced only in step 2.3 after G6.
+ * path of test/ws_data_flow_test.ts); the slot rule is sensor-config.boardSlot() (step 2.3, after
+ * G6 — __tests__/config-caches.test.ts), the `typeof` guard staying in the caller.
  */
 
-import { hpBoardNumbers, t7CalFields } from '../sensor-config.js';
+import { hpBoardNumbers, t7CalFields, boardSlot } from '../sensor-config.js';
 import { readConfig } from '../routes/config.js';
 import { t7Channels } from '../../../shared/config-validation.js';
 
@@ -43,8 +43,7 @@ function _ensurePtSlotCache(): void {
       const bid = raw.board_id;
       const typ = raw.type;
       if (typeof bid !== 'number' || typ !== 'PT') continue;
-      const mod = bid % 10;
-      _ptSlotToBoardId.set(mod === 0 ? 10 : mod, bid);
+      _ptSlotToBoardId.set(boardSlot(bid), bid);
     }
   } catch { /* fine — fallback below */ }
 }
