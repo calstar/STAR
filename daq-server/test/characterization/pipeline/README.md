@@ -486,6 +486,10 @@ Each applied to the backend source, run, reverted (none committed):
 | `sequencer-client.ts` `sendToSequencer`: the reply predicate `reply === 'OK' \|\| reply.startsWith('OK:')` → `reply === 'OK'` (holds) | `golden/holds/ws_events.txt` `hold_accepted`: one new line, `error` "State transition failed: OK:800" |
 | `sequencer-client.ts` `sendToSequencer`: `socket.setTimeout(2000, …)` → `3000` (holds) | `golden/holds/ws_events.txt` `sequencer_stalled`: `= timeout_reply_within_2800ms: no` |
 | `sequencer-client.ts` `sendToSequencer`: `done(false, err.message)` → `done(false, 'connect error')` (holds) | `golden/holds/ws_events.txt` `sequencer_down`: the `ECONNREFUSED` error text |
+| `api-server.ts` `/api/engine_state`: answer 1 regardless of `getEngineState` (D64(3)) | `http.txt` `transition_armed`: `{"engineState": 2}` becomes "same as the earlier identical request" |
+| `server.ts` `getDebugInfo`: `ingestConnected: false` (D64(3)) | `http.txt`: all three `GET /api/debug?values` lines (P14 values) |
+| `api-server.ts` `POST /api/config`: save the profile but never `deployActiveProfile()` (H1) | `http.txt` `http_operator_writes`: `FILE config/config.toml` is the old deployed file, the profile's no longer "same as" it, and every later FILE that copied it moves |
+| `server.ts` `applyDeployedConfigChange`: drop its `CONFIG_UPDATED` broadcast (H1) | `ws_events.txt` `http_operator_writes`: four of the five `config_updated` frames gone (the CSV write's own broadcast stays), and `session_start_forced`'s |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
