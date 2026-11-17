@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the private fixture tree one pipeline characterization run reads and writes.
 
-    make_fixture.py <daq_root> <fixture_dir> <ports.json> [pt|boards|stalesub]
+    make_fixture.py <daq_root> <fixture_dir> <ports.json> [pt|boards|stalesub|unrecognized]
 
 Everything a service writes lands under <fixture_dir>; nothing in the checkout is moved or
 touched (the integration harness parks the live calibration store instead — this does not).
@@ -19,7 +19,15 @@ Layout (the C++ services run with cwd = <fixture_dir>; every path they hard-code
   sim_config.toml                      the simulator's view: pt — only pt_board enabled;
                                        boards — every board config enables but the T7,
                                        at 127.0.0.<id>; stalesub — only pt_board_2 (board 22,
-                                       the slot the startup board's ids wrap onto)
+                                       the slot the startup board's ids wrap onto);
+                                       unrecognized — pt_board
+  config_backend/                      unrecognized only: the backend's CONFIG_PATH -- a copy of
+                                       config/ in which pt_board's `board_id = 21` is spelled
+                                       `id = 21`. The VTable registry still subscribes to it
+                                       (elodin-vtable-registry.ts: b.board_id ?? b.id) while
+                                       loadBoardsFromConfig (server.ts, numeric board_id only)
+                                       leaves it out, so its heartbeats arrive from a board the
+                                       backend does not expect (G3). The services keep config/.
   registrar_a.toml                     stalesub only: the services config with every board but
                                        [boards.integration_startup] disabled -- what a
                                        calibration_service run on it registers is exactly the
@@ -59,7 +67,7 @@ def sub_line(text, pattern, repl, count=0, section=None):
 def main():
     daq_root, fx, ports_path = sys.argv[1:4]
     mode = sys.argv[4] if len(sys.argv) > 4 else "pt"
-    assert mode in ("pt", "boards", "stalesub"), mode
+    assert mode in ("pt", "boards", "stalesub", "unrecognized"), mode
     ports = json.load(open(ports_path))
     root = fx
     cfg_dir = os.path.join(root, "config")
@@ -79,7 +87,7 @@ def main():
     text = open(os.path.join(daq_root, "config", "config_base.toml")).read()
     # Hardware safety: no address on the board LAN survives into a config anything runs against.
     text = text.replace("192.168.2.", "127.0.0.")
-    if mode == "pt":
+    if mode in ("pt", "unrecognized"):
         # The one routed sensor board sends from 127.0.0.1, the only loopback address every host
         # has.
         text = sub_line(
@@ -171,6 +179,18 @@ designated_survivor = false
     ):
         open(path, "w").write(text)
     open(os.path.join(cfg_dir, ".active_profile"), "w").write("default\n")
+    if mode == "unrecognized":
+        # G3: the backend's own copy of the config, pt_board's id spelled so that the registry
+        # subscribes to its tables but the board list does not expect it. Not an empty
+        # [boards]: that trips the registry's 1..255 heartbeat fallback.
+        be_text = sub_line(text, r"^board_id = 21$", "id = 21", 1, "boards.pt_board")
+        be_dir = os.path.join(root, "config_backend")
+        shutil.copytree(cfg_dir, be_dir)
+        for path in (
+            os.path.join(be_dir, "config.toml"),
+            os.path.join(be_dir, "profiles", "default", "config.toml"),
+        ):
+            open(path, "w").write(be_text)
     # The operator allowlist the WS/HTTP gates read: one operator, so both answers are reachable.
     open(os.path.join(fx, "operators.txt"), "w").write("operator@example.com\n")
 
@@ -202,6 +222,7 @@ designated_survivor = false
             "pt": lambda name, _b: name == "pt_board",
             "boards": not_t7,
             "stalesub": lambda name, _b: name == "pt_board_2",
+            "unrecognized": lambda name, _b: name == "pt_board",
         }[mode]
     )
     open(os.path.join(fx, "sim_config.toml"), "w").write(sim)

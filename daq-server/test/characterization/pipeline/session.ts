@@ -3,7 +3,7 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds|selftest]
+ *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds|selftest|unrecognized]
  *
  * pt: the full scripted session against the one routed PT board. boards: every simulated board
  * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
@@ -14,8 +14,8 @@
  * what PT board 22 delivers, channel by channel, live and from history. holds: one accepted timed
  * hold, then the sequencer stalled (SIGSTOP) and gone (SIGTERM) under the backend's :9998 client;
  * run.sh hands over the sequencer's PID in <CHAR_FIXTURE>/ports.json (README "The holds session").
- * selftest: WP6 gap G2 (DESIGN-WP6 §7), a session cut to its one notification (README "The WP6 gap
- * sessions").
+ * selftest, unrecognized: WP6 gaps G2 and G3 (DESIGN-WP6 §7), each a session cut to its one
+ * notification (README "The WP6 gap sessions").
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
@@ -721,9 +721,33 @@ async function selftest(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
+/** G3 (DESIGN-WP6 §7): the backend read a config in which pt_board's id is spelled `id = 21`
+ *  (make_fixture.py config_backend/): the registry subscribes to board 21's tables (its data
+ *  flows -- readiness needs it) but loadBoardsFromConfig never listed it, so its first heartbeat
+ *  creates it `expected: false` at the backend's invented `192.168.2.21`, and the next 1 Hz sweep
+ *  raises `unrecognized_21`. All during readiness: client A's burst freezes the board list and the
+ *  notification replay. WS only -- the HTTP routes read board_id too, and their shapes for a board
+ *  without one are not what this session is for. */
+async function unrecognized(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A');
+  await settle(2500);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
 (MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub()
   : MODE === 'operator' ? operator() : MODE === 'holds' ? holds()
-  : MODE === 'selftest' ? selftest()
+  : MODE === 'selftest' ? selftest() : MODE === 'unrecognized' ? unrecognized()
   : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }

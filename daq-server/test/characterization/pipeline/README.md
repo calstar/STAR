@@ -10,6 +10,7 @@ bash test/characterization/pipeline/run.sh operator    # a WS client whose X-Aut
 bash test/characterization/pipeline/run.sh holds       # an accepted timed hold, then :9998 stalled and down → golden/holds/
 bash test/characterization/pipeline/run.sh startlog    # the backend alone, its startup log (G12) → golden/startlog/
 bash test/characterization/pipeline/run.sh selftest    # one failed self-test connector (G2) → golden/selftest/
+bash test/characterization/pipeline/run.sh unrecognized  # a board the backend does not expect (G3) → golden/unrecognized/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
@@ -287,9 +288,9 @@ No `git grep` of the other goldens finds any of these lines: this is the only pl
 (`shared-types.ts`'s top-level `await`, WP5 5.4), a reordered startup row (WP6 §1.2) or a loader's
 import-time read moving out of import time shows.
 
-### The WP6 gap sessions (`run.sh selftest` → `golden/<mode>/`)
+### The WP6 gap sessions (`run.sh selftest|unrecognized` → `golden/<mode>/`)
 
-`DESIGN-WP6.md` §7's G2, G3 and G1 (LEDGER D48): three notifications no other golden raised (G3 and G1 follow), each
+`DESIGN-WP6.md` §7's G2, G3 and G1 (LEDGER D48): three notifications no other golden raised (G1 follows), each
 in a session cut to its one path so a change elsewhere on the WS/HTTP surface cannot fail it, and
 each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate difference:
 
@@ -302,6 +303,17 @@ each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate di
   row) during readiness. Client A's connect burst freezes the replay with the 0 (P12, whose expected
   values come from `selftest_expected.py --fail 21:3`: the board's line reads `all 1 but sensor_3 =
   0`) and the notification replay; the unnarrowed `query_historical` freezes the series.
+- **unrecognized (G3, `unrecognized_<id>`).** The backend's `CONFIG_PATH` is `config_backend/`, a
+  copy of the fixture's config in which pt_board's `board_id = 21` is spelled `id = 21`
+  (`make_fixture.py`); every service keeps `config/`. The VTable registry subscribes to board 21
+  either way (`elodin-vtable-registry.ts`: `b.board_id ?? b.id`), so its data flows, but
+  `loadBoardsFromConfig` (`server.ts`, numeric `board_id` only) never listed it: its first heartbeat
+  creates it `expected: false`, and the next 1 Hz sweep raises `unrecognized_21`. Frozen as main
+  does it: the board's `ip` and the message's address are the backend's **invented**
+  `192.168.2.21` (`updateBoard` hard-codes `192.168.2.<id>` for a board it has no config for),
+  `boardNumber` is `null`, its type comes from the heartbeat. Not an empty `[boards]` (that trips
+  the registry's 1..255 heartbeat fallback). WS only: the HTTP routes read `board_id` too, with
+  their own defaults for a board that lacks it, and those shapes are not what this session freezes.
 ## The scripted session (`session.ts`)
 
 GET sweep → connect A → 3 s live → viewer client B (`X-Auth-Email`, not an operator) → unknown `subscribe`, non-JSON, `get_state_transitions` →
@@ -509,6 +521,10 @@ Each applied to the backend source, run, reverted (none committed):
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
+- A heartbeating board the backend's config does not list is created with an invented address,
+  `192.168.2.<id>` (`updateBoard`), which is what `unrecognized_<id>`'s "Unrecognized board at …"
+  then names; on a stand whose boards are not on that subnet the message points at the wrong
+  host (the `unrecognized` session).
 - Session start and stop reload board status from config (`applyDeployedConfigChange` /
   `onStopped` → `loadBoardsFromConfig`), so a board that is heartbeating can be reported
   "connection lost" and then "connected" a second later (P1).

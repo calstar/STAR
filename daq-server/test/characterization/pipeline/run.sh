@@ -17,6 +17,8 @@
 #                                                        # end of the synchronous start → golden/startlog/
 #   bash test/characterization/pipeline/run.sh selftest   # a board whose SELF_TEST reports one failed
 #                                                        # connector (self_test_fail_<id>) → golden/selftest/
+#   bash test/characterization/pipeline/run.sh unrecognized  # a heartbeating board the backend's config
+#                                                        # does not expect (unrecognized_<id>) → golden/unrecognized/
 #
 # "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
 # 127.0.0.22); it fails, never skips, when one is missing. Linux has all of 127/8.
@@ -55,10 +57,11 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" holds || rc=1
   bash "$HERE/run.sh" startlog || rc=1
   bash "$HERE/run.sh" selftest || rc=1
+  bash "$HERE/run.sh" unrecognized || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog|selftest) ;;
-  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog|selftest]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized) ;;
+  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -250,7 +253,9 @@ ln -s "$FX/scripts/calibration/calibrations" "$SRV/scripts/calibration/calibrati
 ln -s "$BUILD" "$SRV/build"
 [ "$MODE" = nocal ] || cp "$ROOT/calibration/calibration_2026-02-25T03-44-09.json" "$SRV/calibration/"
 CFG="$FX/config/config.toml"
-BACKEND_CFG="$CFG"
+# unrecognized: the backend reads its own copy of the config (make_fixture.py config_backend/);
+# every service keeps $CFG.
+BACKEND_CFG="$CFG"; [ "$MODE" = unrecognized ] && BACKEND_CFG="$FX/config_backend/config.toml"
 
 wait_port() {  # port name seconds
   local i=0
@@ -454,7 +459,7 @@ if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog -x selftest "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog -x selftest -x unrecognized "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
