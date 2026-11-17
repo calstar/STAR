@@ -1,9 +1,10 @@
 # DESIGN-WP3 — C++ library hygiene
 
 The "as decided" execution note for WP3 (D17(a)): what an implementer does, in what order, and
-why. Decisions: D45 (design deepening), D62 (simplicity review round 1). How it got here — the
-deepened note with its alternatives A/B/C, the comparison matrix, the dropped `table_id_for`
-(§2.5 there) and the closed questions — is preserved verbatim in
+why. **Design final** (simplicity rounds 1-2: D62, D71). Decisions: D45 (design deepening),
+D62 (round 1), D71 (round 2: every guard made executable — those that could not fail were
+replaced). How it got here — the deepened note with its alternatives A/B/C, the comparison matrix,
+the dropped `table_id_for` (§2.5 there) and the closed questions — is preserved verbatim in
 [`debates/WP3/history.md`](debates/WP3/history.md). Where the two disagree, this note wins.
 
 **Baseline.** WP3 runs **after WP2**, so product code (`diablo_server/`, `archive/`) is read from
@@ -11,13 +12,16 @@ the WP2 tree, `wp/WP2-dead-cpp` @ **`4cc0b2e4`**; everything else (`test/`, `git
 `format.sh`, the CI yml, these docs) from `backend-remastered` @ **`3b618ab6`** (whose
 `diablo_server/` is `b2599617`'s = `main` @ `15b5a0c5`). Every line this note cites is the same
 on the two branches except in `lib/CMakeLists.txt` (WP2 drops the `IMUCalibration` comment at 42,
-so lines after 41 are one lower) and `gate.sh` (the orchestrator's file; `backend-remastered`
-gained a line at 28 after WP2 branched); `services/CMakeLists.txt` and
-`test/characterization/config/CMakeLists.txt` differ between the branches only below the lines
-cited (WP2 removes the uWebSockets block at 85-100; BR's harness file has `TIMEOUT 120` at 47).
-Where a number differs it is given as **WP2 / BR**. Re-anchor with the `grep -n` anchors given;
-names, not numbers, are the contract. Paths are relative to `daq-server/diablo_server/` unless they
-start with `test/`, `archive/`, `githooks/`, `docs/`, `tools/`, `flash/`, `build-clang-ci/` or
+so lines after 41 are one lower), `flash/dependencies.txt` (WP2 deletes the seven dead-binary
+lines above the `PressureStateMachine` comment, so that line is 23 on WP2 and 30 on BR) and
+`gate.sh` (the orchestrator's file; `backend-remastered` gained a line at 28 and six after 146 after
+WP2 branched) and `linux/linux_gate.sh` (BR gained a line at 46);
+`services/CMakeLists.txt` and `test/characterization/config/CMakeLists.txt` differ between the
+branches only below the lines cited (WP2 removes the uWebSockets block at 85-100; BR's harness file
+has `TIMEOUT 120` at 47). Where a number differs it is given as **WP2 / BR**. Re-anchor with the
+`grep -n` anchors given; names, not numbers, are the contract. Paths are relative to
+`daq-server/diablo_server/` unless they start with `test/`, `archive/`, `githooks/`, `docs/`,
+`tools/`, `flash/`, `build-clang-ci/` or
 `.github/`.
 
 **Prerequisites:** WP2 merged; C1 (`packets/`, `elodin/`) merged (its `comms_messages.cpp` and the
@@ -29,8 +33,9 @@ float arithmetic moves here), AGENT-RULES 4-6; STYLE-S1, S12, S33, S34, S36, S38
 
 ## 0. Summary
 
-WP3 does four things, each a separate commit, each built and guarded (D62: "verified
-executable"):
+WP3 does four things, each a separate commit, each built and guarded (D62, D71: "verified
+executable" — every check in §6 is a command whose result changes when the thing it guards is
+broken):
 
 1. **Delete `PressureStateMachine`** (`lib/src/control/PressureStateMachine.cpp` 771,
    `lib/include/control/PressureStateMachine.hpp` 246): compiled into `fsw_daq_lib`, zero callers.
@@ -83,20 +88,29 @@ the deletion commit (a deletion stays a pure deletion):
 |---|---|---|
 | `services/sequencer/PressureFeed.cpp:160` | explains a historical layout bug ("PressureStateMachine uses twelve …"); still true as history | stays (WP12 / cleanup, not WP3) |
 | `transport/include/comms/messages/control/ControllerMessages.hpp:71` ("Written by PressureStateMachine on every executeStateEntryActions call") | becomes false | WP3's optional comment commit (§5 step 5); the header is compiled by the packets golden, so the fix is harmless but still separate (STYLE-S38) |
-| `tools/gui/README.md:122,134`, `tools/gui/combined_fsw_gui.py:98`, `docs/CONTROLLER_STACK_AND_DB_WRITES.md:60`, `docs/IMPROVEMENTS.md:525`, `frontend/components/controls/StateMachineDiagram.tsx:43`, `flash/dependencies.txt:23` | comments and docs that name PSM as the FSW's state machine or as compiled into `libfsw_daq_lib.so` (`flash/dependencies.txt:23` is the one that becomes false) | WP12 |
-| `daq-server/build-clang-ci/{build.ninja,.ninja_log,.ninja_deps}` | a **checked-in build directory** (3 tracked files, paths under `/home/aidan/Diablo-FSW/`), not a comment; it names `PressureStateMachine.cpp.o` | not WP3's; reported to the orchestrator (§8 Q3) |
+| `tools/gui/README.md:122,134`, `tools/gui/combined_fsw_gui.py:98`, `docs/CONTROLLER_STACK_AND_DB_WRITES.md:60`, `docs/IMPROVEMENTS.md:525`, `frontend/components/controls/StateMachineDiagram.tsx:43`, `flash/dependencies.txt:23 / :30` | comments and docs that name PSM as the FSW's state machine or as compiled into `libfsw_daq_lib.so` (`flash/dependencies.txt:23 / :30` is the one that becomes false) | WP12 |
+| `daq-server/build-clang-ci/{build.ninja,.ninja_log,.ninja_deps}` | a **checked-in build directory** (3 tracked files, paths under `/home/aidan/Diablo-FSW/`), not a comment; it names `PressureStateMachine.cpp.o` | **WP1 deletes it** (`wp/WP1-junk` @ `10ced66a` tracks nothing under `build-clang-ci/`); WP1 precedes WP2, so it is gone before WP3 starts (§8 Q3) |
 
 ### 2.2 db.hpp
 
-`git mv archive/legacy/utl/db.hpp diablo_server/lib/third_party/elodin/db.hpp` — content unchanged
-(`git diff -M100% --stat` shows a pure rename). Constraints that fix the destination:
+`mkdir -p diablo_server/lib/third_party/elodin && git mv archive/legacy/utl/db.hpp
+diablo_server/lib/third_party/elodin/db.hpp` (from `daq-server/`; `git mv` refuses a destination
+directory that does not exist) — content unchanged (`git diff -M100% --stat` shows a pure rename).
+Constraints that fix the destination:
 
-- **SYSTEM directory, or the baseline breaks.** `lib/CMakeLists.txt` 54-60 / 55-61 reaches db.hpp
-  only through a `SYSTEM` include directory, so its `-Wmissing-field-initializers` are not
-  reported and `baseline_warnings.txt` has no db.hpp line. A destination on a plain include path
-  (`lib/include/elodin/`, or `lib/src/elodin/` next to its includer — a quoted include searches the
-  includer's directory first and that is not a system directory) would add those warnings → red
-  under D4. Editing db.hpp to add a pragma is forbidden (byte-identical move).
+- **SYSTEM directory, or CI's compilers report db.hpp.** `lib/CMakeLists.txt` 54-60 / 55-61 reaches
+  db.hpp only through a `SYSTEM` include directory, so its `-Wmissing-field-initializers`
+  (designated initialisers that omit fields) are not reported. Those warnings are emitted by
+  **gcc-12 and clang-18** — CI's build matrix (`daq-server-ci.yml:185`) and the Linux leg's gcc-12
+  — and **not by Apple clang ≥ 19**, which is the only compiler the D4 baseline is compared on
+  (`gate.sh` `build_clean`, macOS; `baseline_warnings.txt` has no db.hpp line for both reasons).
+  So a destination on a plain include path (`lib/include/elodin/`, or `lib/src/elodin/` next to
+  its includer — a quoted include searches the includer's directory first and that is not a system
+  directory) would stay green under D4 on this Mac and put db.hpp's warnings into every CI and
+  Linux-leg build log, where nothing compares warnings today (H3 adds that comparison; LEDGER D71).
+  "No new warning" therefore proves nothing about the SYSTEM property here; its survival is checked
+  executably instead (§6, the `ninja -t commands` count). Editing db.hpp to add a pragma is
+  forbidden (byte-identical move).
 - **The basename stays `db.hpp`.** db.hpp:4515-4516 does `#if __has_include("db.hpp")` /
   `#include "db.hpp"` (`#endif` at 4517): its second half includes its first through the include
   guard. The quoted lookup resolves in db.hpp's own directory first; renaming the file breaks it.
@@ -116,9 +130,12 @@ what is true:
 
 ```cmake
 # SYSTEM so the vendored Elodin encoder (third_party/elodin/db.hpp) does not report warnings we are
-# not going to act on (its -Wmissing-field-initializers). Suppressing the warning itself would hide
-# the live ones in our own code (two in baseline_warnings.txt today; 22 in SensorAssignment.cpp once
-# turned out to be two struct fields nothing reads), so it is scoped to the vendored header.
+# not going to act on: its designated initialisers omit fields, which gcc-12 and clang-18 (CI's
+# matrix, the Linux leg) report as -Wmissing-field-initializers and Apple clang >= 19 (where the
+# warning baseline is compared) does not. Suppressing the warning itself would hide the live ones in
+# our own code (two in baseline_warnings.txt today; 22 in SensorAssignment.cpp once turned out to be
+# two struct fields nothing reads), so it is scoped to the vendored header. Check it survived with
+# `ninja -t commands fsw_daq_lib | grep -c 'isystem *[^ ]*third_party/elodin'` (>= 1; 0 if dropped).
 # PRIVATE: only fsw_daq_lib's own sources include it (DatabaseConfig.cpp, ControllerService.cpp).
 target_include_directories(fsw_daq_lib SYSTEM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/elodin
@@ -133,14 +150,17 @@ targets link `fsw_daq_lib` (whose `SYSTEM PUBLIC` path propagates now) and none 
 `char_config_services.cpp` includes, nor `char_config_dump`'s sources, includes db.hpp — and after
 the move it would name a directory that no longer exists (not an error: `-Wmissing-include-dirs`
 is not in `-Wall -Wextra -Wpedantic`, but a dangling path is noise). This is a D18 harness edit:
-goldens byte-identical, the `config` area's mutation checks re-run in the package, the one-line
-harness diff reviewed by the orchestrator (§6).
+goldens byte-identical, the `config` area's mutation checks re-run in the package (the per-area
+list of deliberate breakages lives in `LEDGER.md`, as `test/characterization/README.md:30` says),
+the one-line harness diff reviewed by the orchestrator (§6).
 
 Why PRIVATE is not a behaviour change: the property only decides which compile lines carry
-`-isystem …/utl`. Every target other than `fsw_daq_lib` loses that flag; none of their sources
+`-isystem …/utl`. Every target other than `fsw_daq_lib` loses that flag (today every one of
+38 of `daq_bridge`'s 41 compile lines carry it, through `SYSTEM PUBLIC`); none of their sources
 includes `db.hpp` or any header that does, and after WP2 the directory holds no other file a
-`#include` could resolve to. Codegen of those TUs is unchanged; the build proves it (no new warning,
-no missing include).
+`#include` could resolve to. Codegen of those TUs is unchanged; the build proves it (no missing
+include) and the `ninja -t commands` counts in §6 prove the flag moved where the note says (≥ 1 on
+`fsw_daq_lib`, 0 on a service target).
 
 References outside WP3's files, by owner (all must be updated or confirmed, none silently left):
 
@@ -153,6 +173,7 @@ References outside WP3's files, by owner (all must be updated or confirmed, none
 | `.github/workflows/daq-server-ci.yml:227` ccache key | orchestrator | drop the two `archive/legacy/utl` globs; the key goes cold once (harmless) |
 | `.github/workflows/daq-server-ci.yml:303,383,397` (TODO / secrets / unsafe-function greps, each `… \|\| true`) | orchestrator | drop `archive/legacy/utl/` (a missing path makes `grep -r` print an error to stderr); db.hpp is still scanned under `diablo_server/` |
 | `.github/workflows/daq-server-ci.yml:325` (`if grep -r "#include <iostream>" … diablo_server/ archive/legacy/utl/ \| grep -v "#include <iostream>" \| head -5; then`) | orchestrator | drop the path; **the `if` outcome is unchanged**, verified (D62): the workflow sets no `shell:` (only `defaults.run.working-directory`), so the step runs under GitHub's default `bash -e {0}` — **no `pipefail`** — and the condition's status is the last command's, `head -5`, which exits 0 on empty input (`-e` is inert inside an `if` condition). The second `grep -v` removes every line the first `grep` matched, so the stream is empty and the `if` is true today and stays true; the only difference is `grep`'s stderr line about the missing directory not appearing. That the step is vacuous is a `main` CI defect candidate (§8 Q4) |
+| `docs/IMPROVEMENTS.md:273` ("the archived Elodin headers are now `SYSTEM` includes (`db.hpp` was the only remaining source of that warning)") | WP12 | docs: the location goes stale with the move and the "only remaining source" claim is already false (the two live warnings above); corrected with the other PSM/db.hpp mentions in §2.1's table, not by WP3 |
 
 db.hpp is **clang-format-19 clean at the new path** (checked with the pinned 19.1.7 on a copy at
 `diablo_server/lib/third_party/elodin/db.hpp`; `daq-server/.clang-format` governs both the old and
@@ -217,6 +238,17 @@ declaration, `printStmt`, `printBlock`, and `print_canonical` 927-931) into
 `lib/src/script/Printer.cpp`:
 
 ```cpp
+// Canonical printer for state scripts: print_canonical(ScriptProgram) → the one normalised text
+// every parse of an equivalent script produces. Moved verbatim from Parser.cpp (DESIGN-WP3 §2.4);
+// one stage per TU, like Lexer.cpp / Parser.cpp / Validate.cpp / Slug.cpp.
+//
+// Owns:       nothing. A pure function of the program it is handed; no state, no fds, no threads.
+// Threads:    any; no lock. Reads the ScriptProgram it is given and nothing else.
+// Must not know: the lexer, the parser's helpers (Parser.cpp's first anonymous namespace), the
+//             validator or the runtime. Only the AST types and op_name() in script/StateScript.hpp.
+// Contract:   the canonical text — config/golden/cpp/script_parse/* (every script fixture), ctest
+//             state_script (lib/test/test_state_script.cpp), tools/state_script_check.
+// Static init: none (STYLE-S26).
 #include <string>
 
 #include "script/StateScript.hpp"
@@ -227,6 +259,9 @@ namespace script {
 }  // namespace script
 }  // namespace fsw
 ```
+
+(The doc comment is the one addition STYLE-S36 asks of a new TU; it is written here so the move
+commit carries it and no later "add the header comment" edit touches the file.)
 
 It needs only public names: `op_name` (`StateScript.hpp:119`), the AST types, and
 `print_canonical`'s declaration (`StateScript.hpp:289`). No new header. Append
@@ -315,9 +350,12 @@ canonical printer remains a pure function of a `ScriptProgram`.
 One commit each, in this order, each built and guarded:
 
 1. Delete PSM (`.cpp`, `.hpp`, `lib/CMakeLists.txt:29`).
-2. `git mv` db.hpp; `lib/CMakeLists.txt` SYSTEM PRIVATE block; `services/CMakeLists.txt:7`;
+2. `mkdir -p diablo_server/lib/third_party/elodin`, then `git mv` db.hpp; `lib/CMakeLists.txt`
+   SYSTEM PRIVATE block; `services/CMakeLists.txt:7`;
    `test/characterization/config/CMakeLists.txt:10` (D18, §2.2); `githooks/pre-push:22,26`. Hand
-   the orchestrator its lines (§2.2 table: `gate.sh`, `format.sh:28`, yml 227/303/325/383/397).
+   the orchestrator its lines (§2.2 table: `gate.sh`, `format.sh:28`, yml 227/303/325/383/397) and
+   the one-line Linux-leg form of §6 command (a) for `linux_gate.sh:49 / :50`. Run command (a) against
+   `build-gate/` and put both counts in the report.
 3. `SendMsg.hpp`; adopt in `DatabaseConfig.cpp` and `ControllerService.cpp`.
 4. `Printer.cpp`; `FSW_SOURCES`.
 5. Optional, separate (STYLE-S38: stale comments are corrected outside a move): the two comments
@@ -332,11 +370,34 @@ already clean, at both paths).
 | change | guarded by | check |
 |---|---|---|
 | PSM deletion | build; `packets/comms_messages.cpp` (compiles `ControlMessages.hpp` and `ControllerMessages.hpp`) | `ctest -R char_packets_comms_messages` (no lock needed) |
-| db.hpp move | `git diff -M100%` (rename only); clean build with **no new warning** vs `baseline_warnings.txt` (proves the SYSTEM path survived); `elodin/golden/schema_{config_base,profile_default}.txt` (every registration byte from daq_bridge, calibration, sequencer, controller, t7_bridge, heartbeat, stacklight) | `CHAR_AREAS=elodin,packets,config` under the lock |
-| `_CFG_INCLUDES` line (D18) | `config/golden/**` byte-identical; the `config` area's mutation checks re-run; the one-line harness diff reviewed by the orchestrator | same run (`config` is in the set) |
+| db.hpp move | `git diff -M100%` (rename only); clean build (D4 as always, though it cannot see this: §2.2); **the SYSTEM check**, command (a) below, ≥ 1 on `fsw_daq_lib` and 0 on `daq_bridge` — it goes to 0 / stays 38 if `SYSTEM` or `PRIVATE` is dropped; `elodin/golden/schema_{config_base,profile_default}.txt` (every registration byte from daq_bridge, calibration, sequencer, controller, t7_bridge, heartbeat, stacklight) | command (a) against `build-gate/` after the gate's build; `CHAR_AREAS=elodin,packets,config` under the lock |
+| `_CFG_INCLUDES` line (D18) | `config/golden/**` byte-identical; the `config` area's mutation checks re-run (`test/characterization/README.md:30`: the list is in `LEDGER.md`); the one-line harness diff reviewed by the orchestrator | same run (`config` is in the set) |
 | `send_msg` | `elodin` section `controller_service` and every `DatabaseConfig` caller section | same run; mutation (proves the guard): pass the wrong component name in one `DatabaseConfig` call → red; revert |
-| Printer | `config/golden/cpp/script_parse/*` (canonical print of every script fixture), ctest `state_script` (`lib/test/test_state_script.cpp`), `tools/state_script_check` | `ctest -R 'state_script\|characterization_config_cpp'`; mutation: drop the `.`-trim loop in `printExpr` → `script_parse` lines with `0.5` go red; revert |
-| everything | Linux leg `--areas elodin,packets,config` (gcc-12 looks headers up the same way, but SYSTEM handling of `-isystem` vs `-I` is compiler-specific: prove "no new warning" on gcc too) | `linux_gate.sh --areas elodin,packets,config <rev>` |
+| Printer | `config/golden/cpp/script_parse/*` (canonical print of every script fixture), ctest `state_script` (`lib/test/test_state_script.cpp`), `tools/state_script_check` | command (b) below; mutation: drop the `.`-trim loop in `printExpr` → `script_parse` lines with `0.5` go red; revert |
+| everything | Linux leg `--areas elodin,packets,config` (gcc-12 looks headers up the same way, but `-isystem` vs `-I` handling is compiler-specific, and gcc-12 is a compiler that *does* report db.hpp — §2.2) plus command (a) against the container's `build/`. The Linux leg compares **no warnings today** (neither does CI); a gcc-only warning regression is invisible until H3, the post-tag harness package, adds a Linux-leg warning comparison (LEDGER D71) | `linux_gate.sh --areas elodin,packets,config <rev>`; command (a) in the container |
+| **CI run, required** (D34: any WP touching the sequencer; step 4 edits `lib/src/script/`, and every step relinks `fsw_daq_lib`) | `actuator_delays`, `script_positions`, `script_runtime` and `t7_integration` (which links `fsw_daq_lib`) are judged on CI only; this Mac and the local Docker leg inherit the host's timer overshoot. If CI cannot judge them, the item waits; there is no partial fallback | the orchestrator dispatches it (agents never push, AGENT-RULES 2) |
+
+The two commands, verbatim (kept out of the table so their pipes need no escaping — in a table
+cell a `|` must be written `\|`, and a copied `\|` is a literal pipe to CMake's regex engine, which
+is how the round-1 Printer check selected no tests, D71):
+
+```sh
+# (a) the SYSTEM PRIVATE property, from the Ninja tree the gate built: build-gate/ on the macOS gate
+#     (gate.sh:39 / :40; run it on the host after the gate), build/ in the Linux container
+#     (linux_gate.sh:49 / :50; the export tree is a mktemp dir deleted at exit, :27, so there it is
+#     one line appended to the leg's `step build` after `cmake --build build` — C0's file, handed to
+#     the orchestrator with the §2.2 lines). scripts/build.sh's tree is a Makefile tree and has no
+#     build.ninja. CMake writes the flag as "-isystem <path>" with a space, so the pattern allows
+#     one; the spaceless "isystem[^ ]*third_party/elodin" matches nothing on this generator (0 of 37
+#     lines, dry-run).
+#     Expect >= 1 for fsw_daq_lib (37 of its 40 TUs today, at the old path) and 0 for daq_bridge
+#     (38 of its 41 today, at the old path, through SYSTEM PUBLIC).
+ninja -C <build> -t commands fsw_daq_lib | grep -c 'isystem *[^ ]*third_party/elodin'
+ninja -C <build> -t commands daq_bridge | grep -c 'isystem *[^ ]*third_party/elodin'
+
+# (b) the printer: the lib's unit test and the config area's canonical-print goldens, one regex
+cd <build> && ctest -R 'state_script|characterization_config_cpp' --output-on-failure
+```
 
 Gaps: none that WP3 needs closed first. The Elodin re-registration gap (DESIGN-WP10 §7.4 gap 1)
 matters only if a later package changes registration code; WP3 moves none of it.
@@ -349,8 +410,12 @@ matters only if a later package changes registration code; WP3 moves none of it.
 - **The controller's `send_msg` call sites are in a WP10 file.** WP3 edits
   `ControllerService.cpp` (tokens at the call sites, the include, the deleted template). WP10's
   re-anchoring by function name absorbs it; §2.3 tells WP10 what to move.
-- **Warning baseline on gcc.** `baseline_warnings.txt` was taken with clang/macOS. On gcc,
-  `-isystem` also demotes warnings; check the Linux leg's warning set does not grow.
+- **Warning baseline on gcc.** `baseline_warnings.txt` was taken with Apple clang on macOS, and that
+  is the only compiler D4 compares; gcc-12 and clang-18 report db.hpp where Apple clang does not
+  (§2.2). On gcc, `-isystem` also demotes warnings, so the move is silent there too — but today no
+  gate would notice if it were not. The executable guard is §6 command (a) on both legs; the warning
+  comparison for the Linux leg arrives with H3 (LEDGER D71). Until then, read the Linux build log
+  for `db.hpp` by hand once in this package and say so in the report.
 
 ## 8. Open questions and report-only items
 
@@ -359,7 +424,7 @@ matters only if a later package changes registration code; WP3 moves none of it.
    orchestrator.
 2. Defect candidate (report only): the two `send_msg` copies disagreed on whether an encode failure
    is logged; kept as-is via the parameter.
-3. Report only: `daq-server/build-clang-ci/` is a checked-in build directory (§2.1). Its removal is
-   not WP3's.
+3. Closed: `daq-server/build-clang-ci/` is a checked-in build directory (§2.1) that WP1 deletes
+   (`wp/WP1-junk`); WP3 inherits a tree without it and touches nothing there.
 4. Defect candidate in `main`'s CI (report only): the yml:325 "missing includes" step always takes
    its `if` branch (§2.2), so it warns on every run and detects nothing.
