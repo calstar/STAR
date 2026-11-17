@@ -21,18 +21,39 @@ mtime_of() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"; }
 
 [ $# -gt 0 ] || { echo "usage: $0 <command> [args...] | --status" >&2; exit 2; }
 
-# --status: who holds the lock, for how long, and who is waiting.
+# --status: every lock of this clone — the stack lock and the Linux leg's (LEDGER D90) — with its
+# holder, age and priority tickets, and each with_stack_lock.sh process under the lock it is on
+# (its DAQ_STACK_LOCK). A process whose command line merely names the script, such as a shell that
+# will call it once its own load guard clears, is listed apart: it waits on no lock (LEDGER D98,
+# when such a shell and two Linux-lock waiters read as stack-lock waiters).
 if [ "$1" = "--status" ]; then
-  if [ -d "$LOCK_DIR" ]; then
-    age=$(($(date +%s) - $(mtime_of "$LOCK_DIR")))
-    echo "held ${age}s by pid $(cat "$LOCK_DIR/pid" 2>/dev/null || echo '?'): $(cat "$LOCK_DIR/what" 2>/dev/null || echo '?')"
-    [ "$age" -lt 600 ] || echo "!! held over 10 min — iterate with a subset (LEDGER D23)"
-  else
-    echo "free"
-  fi
-  for t in "$LOCK_DIR.priority"/*; do [ -e "$t" ] && echo "priority ticket: pid $(basename "$t")"; done
-  echo "waiting / running under the lock:"
-  ps -axo pid=,etime=,command= | grep '[w]ith_stack_lock.sh' | grep -v -- '--status' | sed 's/^/  /'
+  # The clone's common git dir, where both standard locks live, whatever DAQ_STACK_LOCK says here;
+  # outside a clone (a container's export, the self-test's temp lock) the configured lock's directory.
+  common="$( (cd "$(dirname "${BASH_SOURCE[0]}")" && cd "$(git rev-parse --git-common-dir 2>/dev/null)" && pwd -P) 2>/dev/null || dirname "$LOCK_DIR")"
+  lock_of() {  # the lock dir a with_stack_lock.sh process uses: its DAQ_STACK_LOCK, else the default
+    local env
+    if [ -r "/proc/$1/environ" ]; then env="$(tr '\0' '\n' < "/proc/$1/environ")"
+    else env="$(ps -Eo command= -p "$1" 2>/dev/null | tr ' ' '\n')"; fi
+    sed -n 's/^DAQ_STACK_LOCK=//p' <<< "$env" | tail -1 | grep . || echo "$common/daq-stack.lock"
+  }
+  procs="$(ps -axo pid=,etime=,command= | awk -v me=$$ '$1 != me && $4 ~ /with_stack_lock\.sh$/ && $5 != "--status"')"
+  for lock in $(printf '%s\n' "$LOCK_DIR" "$common/daq-stack.lock" "$common/daq-linux.lock" | awk '!seen[$0]++'); do
+    printf '%s: ' "$(basename "$lock")"
+    if [ -d "$lock" ]; then
+      age=$(($(date +%s) - $(mtime_of "$lock")))
+      echo "held ${age}s by pid $(cat "$lock/pid" 2>/dev/null || echo '?'): $(cat "$lock/what" 2>/dev/null || echo '?')"
+      [ "$age" -lt 600 ] || echo "  !! held over 10 min — iterate with a subset (LEDGER D23)"
+    else
+      echo free
+    fi
+    for t in "$lock.priority"/*; do [ -e "$t" ] && echo "  priority ticket: pid $(basename "$t")"; done
+    while read -r pid etime cmd; do
+      [ -n "$pid" ] && [ "$(lock_of "$pid")" = "$lock" ] || continue
+      if [ "$pid" = "$(cat "$lock/pid" 2>/dev/null)" ]; then echo "  holder  $pid $etime $cmd"; else echo "  waiting $pid $etime $cmd"; fi
+    done <<< "$procs"
+  done
+  others="$(ps -axo pid=,etime=,command= | grep '[w]ith_stack_lock.sh' | grep -v -- '--status' | awk '$4 !~ /with_stack_lock\.sh$/')"
+  [ -z "$others" ] || { echo "naming the script, not in its loop (e.g. an own load guard), on no lock:"; cut -c1-160 <<< "$others" | sed 's/^/  /'; }
   exit 0
 fi
 
@@ -52,12 +73,16 @@ if [ "${DAQ_STACK_LOCK_PRIORITY:-}" = 1 ]; then
   touch "$PRIO_DIR/$$"
   trap 'rm -f "$PRIO_DIR/$$"' EXIT INT TERM
 fi
+# A pid is alive when it exists and is not a zombie: kill -0 succeeds on a zombie (a holder whose
+# shell was killed and never reaped it) on macOS and Linux alike, so a dead owner would hold the
+# lock until something reaped it (LEDGER D98: a guard, not a diagnosed cause).
+alive() { kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }
 priority_waiting() {
   [ "${DAQ_STACK_LOCK_PRIORITY:-}" = 1 ] && return 1
   local t
   for t in "$PRIO_DIR"/*; do
     [ -e "$t" ] || continue
-    if kill -0 "$(basename "$t")" 2>/dev/null; then return 0; else rm -f "$t"; fi
+    if alive "$(basename "$t")"; then return 0; else rm -f "$t"; fi
   done
   return 1
 }
@@ -66,7 +91,7 @@ deadline=$((SECONDS + WAIT_S))
 announced=0
 while priority_waiting || ! mkdir "$LOCK_DIR" 2>/dev/null; do
   owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-  if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+  if [ -n "$owner" ] && ! alive "$owner"; then
     echo "with_stack_lock: taking over stale lock from pid $owner" >&2
     rm -rf "$LOCK_DIR"
     continue

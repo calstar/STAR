@@ -14,8 +14,21 @@ export CHAR_BUILD_DIR="$BUILD"
 fail=0
 echo "── stack lock self-test"
 bash "$HERE/test_stack_lock.sh" || fail=1
-echo "── ctest -L characterization ($BUILD)${CHAR_AREAS:+ -R ${CHAR_AREAS//,/|}}"
-(cd "$BUILD" && ctest -L characterization ${CHAR_AREAS:+-R "${CHAR_AREAS//,/|}"} --output-on-failure) || fail=1
+# The ctest half runs for the areas that declare one (an area's CMakeLists.txt), selected by the
+# anchored test name (`char_<area>_*`, `characterization_<area>_*`): a bare `-R pipeline` also
+# matched char_packets_pipeline_decode. "No tests were found" used to exit 0, so a label or a
+# build that had lost its tests passed silently; it is an error now (LEDGER D61d).
+ctest_areas=""
+for d in "$HERE"/*/CMakeLists.txt; do
+  a="$(basename "$(dirname "$d")")"
+  if [ -z "${CHAR_AREAS:-}" ] || [[ ",${CHAR_AREAS}," == *",$a,"* ]]; then ctest_areas="${ctest_areas:+$ctest_areas|}$a"; fi
+done
+if [ -z "$ctest_areas" ]; then
+  echo "── ctest -L characterization: no area in '${CHAR_AREAS:-}' declares a ctest; skipped"
+else
+  echo "── ctest -L characterization ($BUILD) -R '^(char|characterization)_($ctest_areas)_'"
+  (cd "$BUILD" && ctest -L characterization -R "^(char|characterization)_($ctest_areas)_" --no-tests=error --output-on-failure) || fail=1
+fi
 # Processes launched from this checkout that outlive an area's run would pollute the next area's
 # captures (LEDGER D33: a straggler simulator once fed PT data into lifecycle's ball-valve capture).
 # Under the stack lock nothing else from this checkout runs, so anything matching ROOT is a leak.

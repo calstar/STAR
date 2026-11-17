@@ -23,14 +23,42 @@ if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr
   exit 3
 fi
 
-LOG="$ROOT/.tmp/gate"
-mkdir -p "$LOG"
+# A modified calibration store taints the run before any step: the lifecycle goldens take HEAD's
+# blobs, but the integration stack's services read the live files (LEDGER D103). Refuse up front.
+dirty_cal="$(git -C "$ROOT" status --porcelain -- scripts/calibration/calibrations)"
+if [ -n "$dirty_cal" ]; then
+  echo "gate: scripts/calibration/calibrations is modified; commit or restore it before a gate:" >&2
+  echo "$dirty_cal" >&2
+  exit 3
+fi
+
+load_1m() { uptime | sed -E 's/.*load averages?: *([0-9.]+).*/\1/'; }
+
+# Every run keeps its evidence: .tmp/runs/<sha>-<time>/ holds the step logs and steps.txt, the
+# 1-minute load before and after each step with its duration; .tmp/gate is a link to the latest
+# run, where the messages below and the docs point. Until LEDGER D61c the directory was
+# overwritten per run, so the load a golden had failed at was gone by the next gate.
 STARTED="$(date '+%Y-%m-%d %H:%M:%S')"
+RUNS="$ROOT/.tmp/runs"
+LOG="$RUNS/$(git -C "$ROOT" rev-parse --short HEAD)-$(date '+%Y%m%d-%H%M%S')"
+mkdir -p "$LOG"
+[ -L "$ROOT/.tmp/gate" ] || [ ! -d "$ROOT/.tmp/gate" ] || mv "$ROOT/.tmp/gate" "$RUNS/pre-archive-$(date '+%Y%m%d-%H%M%S')"
+ln -sfn "$LOG" "$ROOT/.tmp/gate"
+{
+  echo "gate $([ "$FAST" = 1 ] && echo '--fast' || echo full) started $STARTED on $(hostname) ($(uname -sm))"
+  echo "rev $(git -C "$ROOT" rev-parse HEAD) ($(git -C "$ROOT" rev-parse --abbrev-ref HEAD)), load $(load_1m)"
+} > "$LOG/run.txt"
+echo "gate: evidence in $LOG"
 fails=()
 step() {
-  local name="$1"; shift
+  local name="$1" load_before load_after t0=$SECONDS verdict; shift
+  load_before="$(load_1m)"
   printf '── %-28s ' "$name"
-  if "$@" > "$LOG/$name.log" 2>&1; then echo ok; else echo "FAIL (see .tmp/gate/$name.log)"; fails+=("$name"); fi
+  if "$@" > "$LOG/$name.log" 2>&1; then verdict=ok; else verdict=FAIL; fails+=("$name"); fi
+  load_after="$(load_1m)"
+  if [ "$verdict" = ok ]; then echo "ok (load $load_before → $load_after, $((SECONDS - t0)) s)"
+  else echo "FAIL (load $load_before → $load_after, $((SECONDS - t0)) s; see .tmp/gate/$name.log)"; fi
+  printf '%s %-20s %-4s load %6s → %-6s %5d s\n' "$(date '+%H:%M:%S')" "$name" "$verdict" "$load_before" "$load_after" "$((SECONDS - t0))" >> "$LOG/steps.txt"
 }
 
 # Warnings are compared without line numbers so a moved line is not a new warning.
@@ -111,12 +139,26 @@ characterization() {
   wait_for_load || return 1
   CHAR_BUILD_DIR="$ROOT/build-gate" bash "$CHAR/with_stack_lock.sh" bash "$CHAR/run.sh"
 }
-integration() { wait_for_load && bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"; }
+integration() {
+  wait_for_load || return 1
+  touch "$LOG/.integration-start"
+  bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"
+  local rc=$?
+  # This run's service logs (backend, t7_bridge, sequencer, …) stay with its evidence: diagnosing a
+  # recurrence of OI-1 needs them (LEDGER D61f). Under the stack lock only this run wrote them.
+  mkdir -p "$LOG/integration" &&
+    find "$ROOT/.tmp" -maxdepth 1 -name 'integration_*.log' -newer "$LOG/.integration-start" -exec cp {} "$LOG/integration/" \;
+  return $rc
+}
 # format.sh --check is red on main in firmware/ Python (out of scope), so the gate checks what this
 # refactor owns: every daq-server C/C++ file format.sh targets must be clang-format-19 clean (it is
-# on main), and every Python file added since main must be black-clean.
+# on main), and every Python file added since main must be black-clean. The pinned clang-format 19
+# and black live in the clone's common git dir (LEDGER: remaster-tools/fmtvenv, shared by every
+# worktree); CLANG_FORMAT_19_DIR overrides, and is needed only where that directory is absent.
 format_check() {
-  local cf="${CLANG_FORMAT_19_DIR:-}"
+  local cf="${CLANG_FORMAT_19_DIR:-}" pinned
+  pinned="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/remaster-tools/fmtvenv/bin"
+  [ -n "$cf" ] || [ ! -d "$pinned" ] || cf="$pinned"
   export PATH="${cf:+$cf:}$PATH"
   clang-format --version | grep -q 'version 19\.' || { echo "need clang-format 19 (CLANG_FORMAT_19_DIR)"; return 1; }
   (cd "$REPO" && git ls-files 'daq-server/diablo_server' 'daq-server/test' |
@@ -138,6 +180,8 @@ tree_unchanged() {
 }
 
 step build build_clean
+# WP3's include guard (skips until diablo_server/lib/third_party/elodin exists; LEDGER D96).
+step include-guard bash "$CHAR/include_guard.sh" "$ROOT/build-gate"
 step ctest ctest_all
 step backend-vitest backend_vitest
 step video-gateway video_gateway
