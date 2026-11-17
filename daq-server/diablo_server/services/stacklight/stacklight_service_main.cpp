@@ -28,15 +28,11 @@
 #include "daq-protocol.h"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "service/StopSignals.hpp"
 
 namespace {
-std::atomic<bool> g_running{true};
+auto& g_running = fsw::service::running();
 std::atomic<uint8_t> g_seq_state{static_cast<uint8_t>(sequencer::State::UNKNOWN)};
-
-void signalHandler(int /*sig*/) {
-    std::cout << "\n[StacklightService] Shutting down..." << std::endl;
-    g_running = false;
-}
 
 // ── sequencer::State → StacklightCommandPacket ──────────────────────────────
 // Standard industrial convention: red = danger, yellow = caution,
@@ -261,8 +257,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    signal(SIGINT, signalHandler);
-    signal(SIGTERM, signalHandler);
+    fsw::service::installStopHandlers(fsw::service::ShutdownNotice::kPrintThenStop,
+                                      "\n[StacklightService] Shutting down...",
+                                      fsw::service::Sigpipe::kDefault);
 
     // UDP unicast socket
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
