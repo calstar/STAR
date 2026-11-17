@@ -189,7 +189,7 @@ fi
 #
 # Know what this exposes. The backend has no auth of its own: it reads the
 # X-Auth-Email header Caddy injects, and treats an ABSENT header as a trusted
-# local operator (backend/src/server.ts:855). Anything reaching :8081 directly
+# local operator (backend/src/server.ts, the WS upgrade handler). Anything reaching :8081 directly
 # is therefore an operator, and can drive state_transition (ARMED / FUEL_FILL /
 # OX_FILL / FIRE / VENT), actuator open-close, extend_fire and session
 # start-stop; /api/ota-flash and /api/ota-flash/flash-all have no operator gate
