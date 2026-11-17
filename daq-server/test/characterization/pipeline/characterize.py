@@ -435,6 +435,138 @@ def selftest_section(steps, ctx):
     return out
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def log_lines(ctx, name):
+    """A service's log from the run (run.sh keeps them under ctx['logs']), colour codes off."""
+    try:
+        with open(os.path.join(ctx["logs"], name + ".log"), errors="replace") as f:
+            return [ANSI.sub("", ln.rstrip("\n")) for ln in f]
+    except FileNotFoundError:
+        return []
+
+
+def show_values(vals):
+    """P7 rendering of a value set: one value, up to four in braces, else <varies>."""
+    vals = sorted(vals)
+    if len(vals) == 1:
+        return vals[0]
+    return "{" + ", ".join(vals) + "}" if len(vals) <= 4 else "<varies>"
+
+
+def stalesub_report(steps, ctx):
+    """stalesub.txt: the D-SUB window (README "The stalesub session"), channel by channel.
+
+    run.sh arranged it: registrar A (calibration_service on a config holding only the slot-10
+    startup board) re-registered [0x20,0x31] as PT10_Cal.CH1; the backend subscribed; the real
+    calibration_service re-registered it as PT2_Cal.CH1 and board 22's rows flowed. Frozen: what
+    each registrar logged, how often elodin-db saw each table inserted, that the backend never
+    gave the pair up, and -- per channel of board 22 -- what reached client A live and from
+    history over 2 x RESUBSCRIBE_MIN_MS + 2 s. Channel 2 is the control: the startup board never
+    touched its tables. A channel's calibrated line reads `absent` when no frame carried it.
+    """
+    out = [
+        "## D-SUB: a VTableStream accepted while its table was being re-registered (D41)"
+    ]
+    rega = log_lines(ctx, "registrar_a")
+    slot10 = any("[Config] ERROR" in ln and "maps to slot 10" in ln for ln in rega)
+    registered = lambda lines, kind: "; ".join(  # noqa: E731
+        ln.split("] ", 1)[1]
+        for ln in lines
+        if "Registered" in ln and f"{kind} VTables" in ln
+    )
+    out.append(
+        "registrar A (calibration_service, [boards.integration_startup] only): "
+        f"slot-10 config error logged: {'yes' if slot10 else 'no'}; "
+        + registered(rega, "CALIBRATED")
+    )
+    out.append("daq_bridge: " + registered(log_lines(ctx, "daq_bridge"), "CALIBRATED"))
+    out.append(
+        "calibration_service: "
+        + registered(log_lines(ctx, "calibration"), "CALIBRATED")
+    )
+    el = log_lines(ctx, "elodin")
+    for vid, what in (
+        ("[32, 49]", "[0x20,0x31]: PT10_Cal.CH1 / PT2_Cal.CH1"),
+        ("[32, 50]", "[0x20,0x32]: PT2_Cal.CH2, the control"),
+    ):
+        k = sum(1 for ln in el if f"inserting vtable id={vid}" in ln)
+        out.append(f"elodin-db: vtable {vid} inserted {k} times ({what})")
+    be = log_lines(ctx, "backend")
+    out.append(
+        "backend: gave up on [0x20, 0x31] (refusals exhausted): "
+        f"{sum(1 for ln in be if 'giving up on [0x20, 0x31]' in ln)} time(s)"
+    )
+    out.append("")
+
+    # Client A's frames for board 22. Raw rows come from daq_bridge ([0x20,0x21..]), whose
+    # tables the window never touched; calibrated rows from calibration_service.
+    live = defaultdict(set)
+    hist = {"connect": {}, "history": {}}
+    for st, frames in steps:
+        for m in frames.get("A", []):
+            if m["type"] == "sensor_update":
+                p = m["payload"]
+                if str(p["entity"]).startswith("PT2"):
+                    live[(p["entity"], p["component"])].add(dumps(p["value"]))
+            elif m["type"] == "historical_data" and st["name"] in hist:
+                for k, series in m["payload"].items():
+                    if k.startswith("PT2"):
+                        hist[st["name"]].setdefault(k, set()).update(
+                            dumps(v) for v in series.get("values", [])
+                        )
+    chans = sorted(
+        int(ent.split(".CH")[1]) for (ent, comp) in live if ent.startswith("PT2.CH")
+    )
+    cal_comps = sorted({comp for (ent, comp) in live if ent.startswith("PT2_Cal.")})
+    out.append(
+        "## sensor_update, client A, 2 x RESUBSCRIBE_MIN_MS (server.ts 5000) + 2 s from "
+        "PT2_Cal.CH2's first sample; board 22 channel by channel (P7 values)"
+    )
+    for ch in chans:
+        for comp in ("raw_adc_counts",):
+            out.append(
+                f"PT2.CH{ch}.{comp}  value={show_values(live[('PT2.CH%d' % ch, comp)])}"
+            )
+        for comp in cal_comps:
+            vals = live.get((f"PT2_Cal.CH{ch}", comp))
+            out.append(
+                f"PT2_Cal.CH{ch}.{comp}  "
+                + (
+                    f"value={show_values(vals)}"
+                    if vals
+                    else "absent (no frame carried it)"
+                )
+            )
+    out.append("")
+    out.append(
+        "## historical_data, client A: board 22 series on connect, then the 12 s query"
+    )
+    for name, keys in hist.items():
+        out.append(f"# {name}: {len(keys)} PT2* series")
+        for ch in chans:
+            for k in [f"PT2.CH{ch}.raw_adc_counts"] + [
+                f"PT2_Cal.CH{ch}.{c}" for c in cal_comps
+            ]:
+                if name == "history" and k not in (
+                    "PT2.CH1.raw_adc_counts",
+                    "PT2_Cal.CH1.pressure_psi",
+                    "PT2_Cal.CH2.pressure_psi",
+                ):
+                    continue  # the query asked for these three
+                out.append(
+                    f"  {k} "
+                    + (
+                        "{" + ", ".join(sorted(keys[k])) + "}"
+                        if k in keys
+                        else "absent"
+                    )
+                )
+    out.append("")
+    return "\n".join(out)
+
+
 def main():
     cap_path, ctx_path, out_dir = sys.argv[1:4]
     cap = json.load(open(cap_path))
@@ -450,6 +582,12 @@ def main():
         for f in st["frames"]:
             frames[f["client"]].append(json.loads(f["raw"]))
         steps.append((st, frames))
+
+    if ctx.get("mode") == "stalesub":
+        open(os.path.join(out_dir, "stalesub.txt"), "w").write(
+            stalesub_report(steps, ctx)
+        )
+        return
 
     # ── ws_handshake.txt ────────────────────────────────────────────────────
     hs = []
