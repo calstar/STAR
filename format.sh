@@ -25,7 +25,6 @@ FORMAT_ALL=false
 # C/C++ trees to format. Each path is relative to the repo root.
 TARGETS=(
     "daq-server/diablo_server"
-    "daq-server/archive/legacy/utl"
     "firmware"
 )
 

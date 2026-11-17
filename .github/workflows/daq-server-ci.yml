@@ -224,7 +224,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('daq-server/CMakeLists.txt', 'daq-server/diablo_server/CMakeLists.txt', 'daq-server/archive/legacy/utl/**/*.cpp', 'daq-server/archive/legacy/utl/**/*.hpp', 'daq-server/diablo_server/**/*.cpp', 'daq-server/diablo_server/**/*.hpp') }}
+        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('daq-server/CMakeLists.txt', 'daq-server/diablo_server/CMakeLists.txt', 'daq-server/diablo_server/**/*.cpp', 'daq-server/diablo_server/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-${{ matrix.compiler }}-
 
@@ -300,7 +300,7 @@ jobs:
           --include="*.hpp" \
           --include="*.c" \
           --include="*.h" \
-          diablo_server/ archive/legacy/utl/ || true)
+          diablo_server/ || true)
         if [ -n "$TODOS" ]; then
           echo "::warning::Found TODO/FIXME/HACK comments:"
           echo "$TODOS"
@@ -322,7 +322,7 @@ jobs:
     - name: Check for missing includes
       run: |
         echo "Checking for common include issues..."
-        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" diablo_server/ archive/legacy/utl/ | \
+        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" diablo_server/ | \
            grep -v "#include <iostream>" | head -5; then
           echo "::warning::Potential missing includes detected"
         fi
@@ -380,7 +380,7 @@ jobs:
           --include="*.hpp" \
           --include="*.py" \
           --include="*.sh" \
-          diablo_server/ archive/legacy/utl/ scripts/ || true)
+          diablo_server/ scripts/ || true)
         if [ -n "$SECRETS" ]; then
           echo "::warning::Potential hardcoded secrets found:"
           echo "$SECRETS"
@@ -394,7 +394,7 @@ jobs:
         UNSAFE=$(grep -rE "\b(strcpy|sprintf|gets|scanf|strcat)\s*\(" \
           --include="*.cpp" \
           --include="*.hpp" \
-          diablo_server/ archive/legacy/utl/ || true)
+          diablo_server/ || true)
         if [ -n "$UNSAFE" ]; then
           echo "::warning::Potentially unsafe C functions found:"
           echo "$UNSAFE"
