@@ -62,14 +62,6 @@ import type { SensorUpdate, StateUpdate, CommandPayload, BoardStatus, ActuatorUp
 // Command types that actuate/transition the engine — gated by the operator
 // unlock. Read-only queries and countdown display are not.
 const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
-// Per-connection control-auth state, stashed on the WebSocket.
-type WsWithControl = WebSocket & {
-  __daqOperator?: boolean;
-  __daqControlAuthorized?: boolean;
-  /** Cleared each keepalive sweep, set again on pong. A socket that misses a
-   *  sweep is gone in a way TCP never reported (Wi-Fi drop, closed lid). */
-  __daqAlive?: boolean;
-};
 
 // ~20 Hz × 800 s ≈ 13 min per full series; rings grow lazily so sparse/event
 // streams stay small. Key cap must exceed the live stream count (>200) or
@@ -177,30 +169,6 @@ function saneSampleTimeMs(tsMs: number, fallbackMs: number): number {
     ? tsMs : fallbackMs;
 }
 
-/**
- * Per-client sensor staging. Sensor samples go here rather than straight to
- * ws.send(), so a client that cannot keep up loses resolution instead of
- * falling further and further behind (see client-outbox.ts).
- *
- * Control and event messages deliberately do NOT pass through this — they keep
- * using send()/broadcast() directly. Sensor samples are idempotent and the next
- * supersedes the last, which is what makes them safe to compact; a state
- * transition or an abort notification is not.
- */
-interface ClientStream {
-  outbox: ClientOutbox;
-  pacer: FlushPacer;
-  /** This link's observations, surfaced to the operator via CONNECTION_STATUS. Recomputed
-   *  every tick from what has actually been delivered — NOT only on a successful flush,
-   *  which is how a starved client used to report itself perfectly healthy. */
-  throttled: boolean;
-  lagMs: number;
-  resolutionPct: number;
-  /** Newest sample put on this socket, or null if nothing ever has been. */
-  lastDeliveredTsMs: number | null;
-}
-const clientStreams = new Map<WebSocket, ClientStream>();
-
 /** Single exit point for streams that bypass downsampling (event-like: state,
  *  self-test, controller, sequencer). Broadcast immediately, never staged. */
 function emitSensorPoint(key: string, entity: string, component: string, value: number, tMs: number): void {
@@ -219,58 +187,9 @@ function emitSensorWindow(key: string, entity: string, component: string, points
   for (const cs of clientStreams.values()) cs.outbox.push(key, entity, component, points);
 }
 
-// Drain each client's outbox as fast as its own socket allows. The interval
-// between a client's flushes is set by how long its socket took to clear the
-// last dump — that measurement is also what sizes the next one, so resolution
-// (not currency) absorbs a slow link.
-setInterval(() => {
-  const now = Date.now();
-  for (const [ws, cs] of clientStreams) {
-    if (ws.readyState !== WebSocket.OPEN) continue;
+setInterval(flushClientOutboxes, 100);
 
-    // Status FIRST, before either `continue` below. A client that cannot flush is exactly
-    // the one whose status matters, and it is the one that never reached the old
-    // assignment at the end of this loop.
-    {
-      const st = linkStatus({
-        lastDeliveredTsMs: cs.lastDeliveredTsMs,
-        nowMs: now,
-        resolutionRatio: cs.outbox.resolutionRatio(),
-        squeezeDropped: cs.outbox.squeezeDroppedLast,
-      });
-      cs.throttled = st.throttled;
-      cs.lagMs = st.lagMs;
-      cs.resolutionPct = st.resolutionPct;
-    }
-
-    if (!cs.pacer.shouldFlush(ws.bufferedAmount, now)) continue;
-
-    const newest = cs.outbox.newestTimestamp();
-    cs.outbox.squeeze(cs.pacer.budgetBytes);
-    const flushed = cs.outbox.drain();
-    if (flushed.length === 0) continue;
-
-    let bytes = 0;
-    for (const series of flushed) {
-      for (const p of series.points) {
-        const update: SensorUpdate = {
-          entity: series.entity, component: series.component, value: p.value, timestamp: p.tMs,
-        };
-        const data = JSON.stringify({ type: MessageType.SENSOR_UPDATE, timestamp: now, payload: update });
-        bytes += data.length;
-        try { ws.send(data); } catch { /* closing; the reaper will collect it */ }
-      }
-    }
-    cs.pacer.noteFlush(bytes, now);
-    if (newest !== null) cs.lastDeliveredTsMs = newest;
-  }
-}, 100);
-
-// Reset the resolution window periodically so the reported percentage tracks
-// the link's recent behavior rather than averaging over the whole session.
-setInterval(() => {
-  for (const cs of clientStreams.values()) cs.outbox.resetStats();
-}, 10_000);
+setInterval(resetOutboxStats, 10_000);
 
 // Timer flush so trickling/stopped streams don't hold their last window open.
 // Runs regardless of mode so a runtime envelope→throttle switch drains any
@@ -297,6 +216,7 @@ import { countByLevel, t7Channels } from '../../shared/config-validation.js';
 import { sendToSequencer, SEQUENCER_PORT } from './sequencer-client.js';
 import { WS_PORT, GUI_PORT, ELODIN_HOST, ELODIN_PORT, THIN_VERBOSE_CONNECTION_LOG, THIN_HEARTBEAT_DIAG_LOG, THIN_STATS_LOG } from './server/env.js';
 import { stats, initStats } from './server/stats.js';
+import { type WsWithControl, wss, attachWebSocketServer, broadcast, send, clientStreams, clientStreamStatus, flushClientOutboxes, resetOutboxStats, reapUnresponsiveClients, KEEPALIVE_MS } from './server/ws-clients.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -896,23 +816,8 @@ const httpServer = http.createServer(async (req, res) => {
   res.writeHead(404);
   res.end();
 });
-const wss = new WebSocketServer({ server: httpServer });
+attachWebSocketServer(httpServer);
 let wsConnCounter = 0;
-
-function broadcast(message: object): void {
-  if (wss.clients.size === 0) return;
-  const data = JSON.stringify(message);
-  wss.clients.forEach((ws) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      try { ws.send(data); } catch (_) { /* ignore disconnected */ }
-    }
-  });
-}
-
-function send(ws: WebSocket, message: object): void {
-  if (ws.readyState !== WebSocket.OPEN) return;
-  try { ws.send(JSON.stringify(message)); } catch (_) { }
-}
 
 function broadcastBoardStatus(): void {
   const boards = Array.from(boardsStatus.values());
@@ -936,26 +841,7 @@ function broadcastBoardStatus(): void {
 startDhcpStatusPoller();
 setInterval(broadcastBoardStatus, 1000 / BOARD_STATUS_HZ);
 
-// ── Keepalive ────────────────────────────────────────────────────────────────
-//
-// TCP does not reliably report a peer that vanished without a FIN — a closed
-// laptop lid or a walk out of Wi-Fi range leaves the socket readyState OPEN
-// forever, and it keeps being fed. The outbox bounds what such a client costs,
-// but nothing else ever removes it from wss.clients, so probe and reap.
-const KEEPALIVE_MS = 30_000;
-setInterval(() => {
-  for (const ws of wss.clients) {
-    const w = ws as WsWithControl;
-    if (w.__daqAlive === false) {
-      console.warn('[ThinServer] Reaping unresponsive WS client (missed keepalive)');
-      clientStreams.delete(ws);
-      ws.terminate();
-      continue;
-    }
-    w.__daqAlive = false;
-    try { ws.ping(); } catch { /* already closing */ }
-  }
-}, KEEPALIVE_MS);
+setInterval(reapUnresponsiveClients, KEEPALIVE_MS);
 
 // ── Client connection ─────────────────────────────────────────────────────────
 
@@ -1506,13 +1392,6 @@ function connectionStatusPayload(extra: Record<string, unknown> = {}) {
     lagMs: 0,
     ...extra,
   };
-}
-
-/** This client's own outbox observations, for connectionStatusPayload(). */
-function clientStreamStatus(ws: WebSocket): Record<string, unknown> {
-  const cs = clientStreams.get(ws);
-  if (!cs) return {};
-  return { throttled: cs.throttled, resolutionPct: cs.resolutionPct, lagMs: cs.lagMs };
 }
 
 // Re-send connection status. Per-client rather than a single broadcast: each
