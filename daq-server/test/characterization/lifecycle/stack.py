@@ -100,9 +100,12 @@ def build_config(
     p: dict,
     heartbeat_service_enabled: bool = True,
     boards: dict | None = None,
+    keep_t7: bool = False,
 ):
     """Write the lifecycle config. `boards` maps board key -> listen_port for the boards kept
-    enabled (all on 127.0.0.1); every other board is disabled."""
+    enabled (all on 127.0.0.1); every other board is disabled. `keep_t7` leaves the LabJack T7
+    section's `enabled` as config_base has it (a T7 has no listen_port, and `t7_bridge --fake`
+    exits 0 at once with no enabled T7); its address still lands on loopback below."""
     base = open(os.path.join(ROOT, "config", "config_base.toml")).read()
     boards = boards or {}
     sections = _split_sections(base)
@@ -116,6 +119,8 @@ def build_config(
                 sec = _set_key(sec, "enabled", "true")
                 sec = _set_key(sec, "ip", '"127.0.0.1"')
                 sec = _set_key(sec, "listen_port", str(boards[key]))
+            elif keep_t7 and any(re.match(r'^type\s*=\s*"T7"', ln) for ln in sec):
+                pass
             else:
                 sec = _set_key(sec, "enabled", "false")
         elif head.startswith("[network]"):
@@ -289,7 +294,8 @@ class Proc:
         return rc, time.monotonic() - (self.signalled_at or time.monotonic())
 
     def output(self) -> str:
-        self.logf.flush()
+        if not self.logf.closed:  # reap() closes it; the file on disk is complete then
+            self.logf.flush()
         try:
             return open(self.log, "rb").read().decode("utf-8", "replace")
         except OSError:
