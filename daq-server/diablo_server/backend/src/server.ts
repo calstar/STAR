@@ -114,6 +114,7 @@ import { activeNotificationKeys, notificationBuffer, pruneNotificationBuffer, br
 import { history, pruneHistory, sendHistoricalData } from './server/history.js';
 import { firstPacketTimeMs, countdownTargetMs, initMissionTime, setFirstPacketTimeMs, setCountdownTargetMs } from './server/mission-time.js';
 import { guiStreamConfig, envelope, encoderEnvelope, broadcastLastTime, BROADCAST_MIN_MS, streamBudgetFor, saneSampleTimeMs, initGuiStream, reloadGuiStreamConfig, emitSensorPoint, emitSensorWindow, flushEnvelopes } from './server/sensor-stream.js';
+import { _hpBoardNumbers, _t7CalFields, _t7SlotToBoardId, initConfigCaches, resetConfigCaches, uniqueIdFromPtEntity } from './server/config-caches.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -137,53 +138,7 @@ try {
 // this via its channelToEntityMap property (updated in lockstep below).
 let calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
 
-/** Cached HP (4-20 mA) PT board-number set for the Elodin decode hot path. Rebuilt on config
- *  reload (onConfigUpdated) so moving/adding an HP board takes effect without a restart. */
-let _hpBoardNumbers = hpBoardNumbers();
-/** Cached T7 calibrated-table -> field map (which float is psi, °C or kg); rebuilt with it. */
-let _t7CalFields = t7CalFields();
-
-/** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
-const _ptSlotToBoardId = new Map<number, number>();
-function _ensurePtSlotCache(): void {
-  if (_ptSlotToBoardId.size > 0) return;
-  try {
-    const config = readConfig();
-    const boards = (config.boards || {}) as Record<string, Record<string, unknown>>;
-    for (const [, raw] of Object.entries(boards)) {
-      const bid = raw.board_id;
-      const typ = raw.type;
-      if (typeof bid !== 'number' || typ !== 'PT') continue;
-      const mod = bid % 10;
-      _ptSlotToBoardId.set(mod === 0 ? 10 : mod, bid);
-    }
-  } catch { /* fine — fallback below */ }
-}
-
-/** T7 slot -> board_id, for T7<slot>_Cal.AIN<n> (built with the PT cache, cleared with it). */
-const _t7SlotToBoardId = new Map<number, number>();
-
-/** Map PT{n}.CH{m} — or a T7 input's T7{n}_Cal.AIN{m} — to uniqueId = board_id*100+channel
- *  (matches calibration_service, where a T7 input's channel is its AIN). */
-function uniqueIdFromPtEntity(entity: string): number | null {
-  const t7 = entity.match(/^T7(\d+)_Cal\.AIN(\d+)$/);
-  if (t7) {
-    if (_t7SlotToBoardId.size === 0) {
-      try {
-        for (const ch of t7Channels(readConfig().boards)) _t7SlotToBoardId.set(ch.slot, ch.boardId);
-      } catch { /* no config: no T7 uid */ }
-    }
-    const bid = _t7SlotToBoardId.get(parseInt(t7[1], 10));
-    return bid !== undefined ? bid * 100 + parseInt(t7[2], 10) : null;
-  }
-  const m = entity.match(/^PT(\d+)(?:_Cal)?\.CH(\d+)$/);
-  if (!m) return null;
-  const slot = parseInt(m[1], 10);
-  const ch = parseInt(m[2], 10);
-  _ensurePtSlotCache();
-  const bid = _ptSlotToBoardId.get(slot);
-  return bid !== undefined ? bid * 100 + ch : slot * 100 + ch;
-}
+initConfigCaches();
 
 const calibrationHost: CalibrationHost = {
   ptCalibration,
@@ -644,10 +599,7 @@ export function applyDeployedConfigChange(): void {
   // live (the backend is always-on and isn't restarted by a session start).
   calChannelToEntityMap = loadSensorRoleMap().channelToEntityMap;
   calibrationHost.channelToEntityMap = calChannelToEntityMap;
-  _ptSlotToBoardId.clear();
-  _t7SlotToBoardId.clear();
-  _hpBoardNumbers = hpBoardNumbers();
-  _t7CalFields = t7CalFields();
+  resetConfigCaches();
   // The state CSVs are deployed in the same step, so rebuild what is derived from them too
   // rather than relying on onStateCsvUpdated, which the session path never fires.
   try {
