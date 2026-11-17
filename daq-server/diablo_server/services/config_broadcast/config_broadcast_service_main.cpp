@@ -603,6 +603,8 @@ int main(int argc, char* argv[]) {
             close(sock);
             return 1;
         }
+        // Kept: D-BIND (D17) — observation/startup: S14, bindToDaqInterface's bool dropped; loud
+        // half: its own cerr line (DaqInterface.cpp:198, 202)
         fsw::net::bindToDaqInterface(sock, nic.address, "ConfigBroadcast");
     }
 
