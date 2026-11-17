@@ -23,6 +23,15 @@
 
 import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
+// ── Bare imports (WP6 step 1, R1a; kept through step 2, D49(8)) ─────────────
+// These fifteen modules were value-imported by the original server.ts and are now used only
+// from src/server/*. tsc, tsx/esbuild and vitest elide an import with no value specifier, which
+// would move each one's first evaluation to wherever src/server/* first imports it; a bare
+// import is never elided, so each stays at today's position in the evaluation order
+// (test/remaster-checks/wp6-module-order.sh diffs that order against the base). Fourteen pin
+// order only; one has an import-time effect: state-csv/state-actuators builds three config maps
+// at import and can warn (state-actuators.ts:79-81). The fifteenth, countdown-state, sits with
+// its original line further down. Never add, delete, reorder or rewrite any of them.
 import './elodin-client.js';
 import './elodin-protocol.js';
 import './lc-tare.js';
@@ -71,6 +80,7 @@ setInterval(flushEnvelopes, 50);
 
 // ── Mission time ─────────────────────────────────────────────────────────────
 
+// R1a bare import (see the block above the first imports): pins countdown-state's position.
 import './countdown-state.js';
 initMissionTime();
 import { sessionManager } from './session-manager.js';
