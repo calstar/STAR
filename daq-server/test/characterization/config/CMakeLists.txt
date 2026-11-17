@@ -16,6 +16,7 @@ add_executable(char_config_dump
     char_ac_private.cpp
     ${_DS}/services/sequencer/StateMachine.cpp
     ${_DS}/services/sequencer/ActuatorCommander.cpp
+    ${_DS}/services/sequencer/ActuatorCommander_load.cpp
     ${_DS}/services/sequencer/ScriptStates.cpp
 )
 target_include_directories(char_config_dump PRIVATE ${_CFG_INCLUDES})
@@ -38,6 +39,7 @@ foreach(_svc STACKLIGHT DAQ_BRIDGE CONFIG_BROADCAST)
     target_link_libraries(char_cfg_${_lc}
         fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
 endforeach()
+target_sources(char_cfg_daq_bridge PRIVATE ${_DS}/daq_bridge/BoardMap.cpp)
 
 add_test(NAME characterization_config_cpp
     COMMAND bash ${_CFG_DIR}/check.sh cpp $<TARGET_FILE_DIR:char_config_dump>

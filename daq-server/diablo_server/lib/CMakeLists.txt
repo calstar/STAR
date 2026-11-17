@@ -163,7 +163,7 @@ add_executable(test_fire_lifecycle
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
 )
 target_include_directories(test_fire_lifecycle PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -212,7 +212,7 @@ set_tests_properties(pressure_feed PROPERTIES TIMEOUT 60)
 
 add_executable(test_actuator_delays
     test/test_actuator_delays.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
 )
 target_include_directories(test_actuator_delays PRIVATE
@@ -232,7 +232,7 @@ set_tests_properties(actuator_delays PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 add_executable(test_script_positions
     test/test_script_positions.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
 )
 target_include_directories(test_script_positions PRIVATE
@@ -248,7 +248,7 @@ set_tests_properties(script_positions PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 add_executable(test_ball_valve_commander
     test/test_ball_valve_commander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
 )
 target_include_directories(test_ball_valve_commander PRIVATE
@@ -263,14 +263,7 @@ set_tests_properties(ball_valve_commander PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 
 add_executable(test_sequencer_elodin
     test/test_sequencer_elodin.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_sequencer_elodin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -285,14 +278,7 @@ target_link_libraries(test_sequencer_elodin
 
 add_executable(test_hold_rules
     test/test_hold_rules.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_hold_rules PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -330,14 +316,7 @@ set_tests_properties(valve_plan PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
 add_executable(test_script_states
     test/test_script_states.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_script_states PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -356,14 +335,7 @@ set_tests_properties(script_states PROPERTIES
 
 add_executable(test_script_runtime
     test/test_script_runtime.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_script_runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -441,14 +413,7 @@ add_test(NAME controller_pwm_roles COMMAND test_controller_pwm_roles)
 foreach(seq_test test_sequencer_concurrency test_abort_ordering)
     add_executable(${seq_test}
         test/${seq_test}.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+        ${SEQUENCER_SOURCES}
     )
     target_include_directories(${seq_test} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
