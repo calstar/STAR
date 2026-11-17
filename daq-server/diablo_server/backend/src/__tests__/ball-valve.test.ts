@@ -19,7 +19,7 @@ vi.mock('../routes/config.js', () => ({ readConfig: () => config, readDeployedCo
 
 const { parseElodinPacket } = await import('../elodin-protocol.js');
 const { buildVTableStreamSubscriptionList } = await import('../elodin-vtable-registry.js');
-const { resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } = await import('../legacy/state-actuators.js');
+const { resolveActuatorCmdEntity, resolveActuatorTelemetryEntity } = await import('../state-csv/state-actuators.js');
 const {
   sensedStateFromPosition, ballValveSensedEntity, BALL_VALVE_STATUS_NO_SIGNAL,
 } = await import('../ball-valve.js');

@@ -5,7 +5,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { SystemState } from '../shared-types.js';
+import type { SystemState } from '../shared-types.js';
 import { readConfig } from '../routes/config.js';
 import { csvStateMap } from './state-ids.js';
 
@@ -109,44 +109,4 @@ export function getStateTransitions(): Transition[] {
   }
 
   return [];
-}
-
-// Build a lookup map for fast validation: fromState -> Set<toState>
-let _transitionMap: Map<SystemState, Set<SystemState>> | null = null;
-
-export function buildTransitionMap(): Map<SystemState, Set<SystemState>> {
-  if (_transitionMap) {
-    return _transitionMap;
-  }
-
-  _transitionMap = new Map();
-  const transitions = getStateTransitions();
-
-  for (const { from, to } of transitions) {
-    if (!_transitionMap.has(from)) {
-      _transitionMap.set(from, new Set());
-    }
-    _transitionMap.get(from)!.add(to);
-  }
-
-  console.log(`📋 Built transition map: ${transitions.length} allowed transitions`);
-  // Label from the same map the ids came from — SystemState[id] here would name a different
-  // state than the row describes, which is the confusion this class of bug creates.
-  const nameById: Record<number, string> = {};
-  for (const [n, id] of Object.entries(csvStateMap())) nameById[id as number] = n;
-  const nm = (id: number) => nameById[id] ?? SystemState[id] ?? `STATE ${id}`;
-  // Debug: log all transitions
-  for (const [from, allowed] of _transitionMap.entries()) {
-    console.log(`   ${nm(from)}: can go to [${Array.from(allowed).map(s => nm(s)).join(', ')}]`);
-  }
-  return _transitionMap;
-}
-
-export function isTransitionAllowed(from: SystemState, to: SystemState): boolean {
-  const map = buildTransitionMap();
-  const allowed = map.get(from);
-  if (!allowed) {
-    return false; // No transitions defined for this state
-  }
-  return allowed.has(to);
 }

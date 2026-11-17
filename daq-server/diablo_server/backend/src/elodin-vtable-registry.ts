@@ -9,6 +9,7 @@
 import { ElodinClient, ElodinPacketType } from './elodin-client.js';
 import { readDeployedConfig } from './routes/config.js';
 import { t7Channels } from '../../shared/config-validation.js';
+import { boardSlot } from './sensor-config.js';
 
 // ── FNV-1a hash (matching db.hpp msg_id) ────────────────────────────────────
 
@@ -246,8 +247,7 @@ export function buildVTableStreamSubscriptionList(cfgIn?: unknown): Array<[numbe
             if (t === 'T7') continue;
             const id = Number(b.board_id ?? b.id ?? 0);
             if (!Number.isInteger(id) || id <= 0 || id > 255) continue;
-            const mod = id % 10;
-            const boardNumberRaw = mod === 0 ? 10 : mod;
+            const boardNumberRaw = boardSlot(id);
             const boardNumber = ((boardNumberRaw - 1) % 8) + 1;
             // active_connectors (active_connections is the older spelling) is the only
             // statement of which channels exist. No 1..num_sensors fallback: a board with an

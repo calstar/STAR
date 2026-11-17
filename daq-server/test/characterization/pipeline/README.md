@@ -62,7 +62,7 @@ at all, which would freeze a dead pipeline.
   `daq-server/`. Everything the backend resolves relative to its own file then lands in the
   fixture, not the checkout: its PT calibration (`calibration.ts`: `srv/calibration/*.json`, the
   newest by mtime), `/api/cubic_calibration` (`srv/scripts/calibration/calibrations`, the
-  fixture's store), the legacy state-CSV loaders (`srv/../config` — the fixture's), the
+  fixture's store), the state-CSV loaders (`srv/../config` — the fixture's), the
   state-script checker (`srv/build`). The source is copied unchanged at every run, so an edit to
   `diablo_server/backend/src` is what runs. pt and boards put exactly one file in
   `srv/calibration/` (`calibration_2026-02-25T03-44-09.json`, chosen by name); nocal puts none.
@@ -223,7 +223,7 @@ the pt session from its `unlock` step on (client A, no header), the first reds n
 
 ### The holds session (`run.sh holds` → `golden/holds/`)
 
-The backend's `:9998` line client (`server.ts sendToActuatorService`) has three replies no other
+The backend's `:9998` line client (`sequencer-client.ts sendToSequencer`) has three replies no other
 session reaches (DESIGN-WP5 §6 G4, LEDGER D64(1), D70): an **accepted hold** — the sequencer answers
 `OK:<ms>` rather than `OK`, and the client's predicate must take it — and the two ways the
 sequencer can fail to answer: **stalled** (`State transition failed: timeout` after the client's
@@ -241,7 +241,7 @@ pointed at them by the same relative form (an absolute path is found by the sequ
 writes it. The sequencer refuses a hold into a state it cannot return from, which is why the CSV
 column exists. One step `test_integration.sh` does not take: ten rows of the shipped
 `state_transitions.csv` are one cell short (`feed-twin/backend/statemachines/NEEDS-REPAIR.md`;
-`StateMachine.cpp` and `legacy/state-transitions.ts` both read a row left-aligned and a missing
+`StateMachine.cpp` and `state-csv/state-transitions.ts` both read a row left-aligned and a missing
 cell as "not allowed"), so a column appended to such a row lands under the previous header —
 Press Standby's `1` under Emergency Abort — and the hold is refused `transition rejected`.
 `test_integration.sh` enters Flow Test with debug mode on, which bypasses the table
@@ -394,7 +394,7 @@ P7 also applies to history series (more than four distinct values → `<varies>`
 | bound | how | assumption |
 |---|---|---|
 | T1 | the 10 s `query_historical` of `PT1.CH1.raw_adc_counts`: median spacing of consecutive points within [0.9 W, 2 W], W = 2000 / `[gui] points_per_second` (4 → 500 ms) | the envelope (`gui-stream.ts`) opens a window at a sample and closes it at the first sample ≥ W later, emitting a constant stream's window at its first sample time; samples come every 100 ms (sim 10 Hz). Measured on sample timestamps, so load cannot move it |
-| T2 | `holds` `sequencer_stalled`: the `State transition failed: timeout` error frame arrives ≤ 2800 ms after the command was sent (`= timeout_reply_within_2800ms: yes`) | `server.ts sendToActuatorService` `socket.setTimeout(2000, …)` plus 800 ms for D34's macOS timer overshoot and the WS hop, below the next round number (a 3000 ms timeout fails). CI-judged (D34, D70) |
+| T2 | `holds` `sequencer_stalled`: the `State transition failed: timeout` error frame arrives ≤ 2800 ms after the command was sent (`= timeout_reply_within_2800ms: yes`) | `sequencer-client.ts sendToSequencer` `socket.setTimeout(2000, …)` plus 800 ms for D34's macOS timer overshoot and the WS hop, below the next round number (a 3000 ms timeout fails). CI-judged (D34, D70) |
 | — | `QUIET_MS` 1.5 s / cap 20 s per step | a reply arrives within 20 s on a machine under 1× load |
 
 Determinism (final evidence, commit `d4b56670`):
@@ -451,9 +451,9 @@ Each applied to the backend source, run, reverted (none committed):
 | `server.ts`: `const isOp = true` at the WS upgrade (every client an operator) (H8) | `ws_handshake.txt` (client B `control_status` `operator: true`), `ws_events.txt` `viewer_client` (`control_unlock_result` `ok`, then B's `state_transition` reaches the sequencer) |
 | `server.ts`: `const isOp = authEmail === '' ? true : false` at the WS upgrade (every non-empty header a viewer) (H8b) | `operator/ws_handshake.txt` (client A `control_status` `operator: false`), `operator/ws_events.txt` `unlock` (`control_unlock_result` `not_operator`). pt, nocal, boards, stalesub stay green: no other session sends an operator's header over WS |
 | `server.ts`: `const op = false` in the `CONTROL_UNLOCK` handler (unlock always refuses) (H8b) | `operator/ws_events.txt` `unlock` (`not_operator`); also the pt session, from its `unlock` step (client A, no header) through everything A does armed after it (`ws_events.txt`, `http.txt`: no session ever starts) |
-| `server.ts` `sendToActuatorService`: the reply predicate `reply === 'OK' \|\| reply.startsWith('OK:')` → `reply === 'OK'` (holds) | `golden/holds/ws_events.txt` `hold_accepted`: one new line, `error` "State transition failed: OK:800" |
-| `server.ts` `sendToActuatorService`: `socket.setTimeout(2000, …)` → `3000` (holds) | `golden/holds/ws_events.txt` `sequencer_stalled`: `= timeout_reply_within_2800ms: no` |
-| `server.ts` `sendToActuatorService`: `done(false, err.message)` → `done(false, 'connect error')` (holds) | `golden/holds/ws_events.txt` `sequencer_down`: the `ECONNREFUSED` error text |
+| `sequencer-client.ts` `sendToSequencer`: the reply predicate `reply === 'OK' \|\| reply.startsWith('OK:')` → `reply === 'OK'` (holds) | `golden/holds/ws_events.txt` `hold_accepted`: one new line, `error` "State transition failed: OK:800" |
+| `sequencer-client.ts` `sendToSequencer`: `socket.setTimeout(2000, …)` → `3000` (holds) | `golden/holds/ws_events.txt` `sequencer_stalled`: `= timeout_reply_within_2800ms: no` |
+| `sequencer-client.ts` `sendToSequencer`: `done(false, err.message)` → `done(false, 'connect error')` (holds) | `golden/holds/ws_events.txt` `sequencer_down`: the `ECONNREFUSED` error text |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
@@ -463,7 +463,7 @@ Each applied to the backend source, run, reverted (none committed):
 - In mock mode the run's `dbDir` is never created, so `POST /api/feed-char/results` during a
   session answers 500 `ENOENT`.
 - `debug_mode` produces two identical `state_update`s (the TCP-reply path and the Elodin path).
-- The legacy state-CSV loaders `join()` `[state_machine]` paths onto fixed directories, so an
+- The state-CSV loaders `join()` `[state_machine]` paths onto fixed directories, so an
   absolute path in config is never found (`get_state_transitions` → `[]`, no commanded snapshot).
 - `/api/cubic_calibration` ignores `DAQ_CALIBRATIONS_DIR`; the backend's own PT calibration and
   `calibration_status.calibrationFilePath` come from `daq-server/calibration/*.json` via `__dirname`.
