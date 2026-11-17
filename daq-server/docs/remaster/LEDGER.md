@@ -143,6 +143,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D107 | **char/c0-wp8 ready (b310f092; 3 commits, +590/−4; shutdown.txt +78 lines, 0 removed).** The D89 narrow tail plus the ordered checks: calibration saves its adjustments on shutdown and the file exists; daq_bridge prints `Shutdown complete` and then `Disconnected` (main's order, the reverse of the ruling's wording: the client is destroyed after main returns). The controller is frozen as `still running 3 s … killed` (D-CTRLSTOP). Mutations m1-m6 are all red. Proof: macOS ×3 below load 8; Linux ×3, with legs 2 and 3 PASS and leg 1 red only on the existing `digital-twin/script/Script Loop` +700→+800 ms bucket (D34 class, log retained). linux_gate step-log retention is included (per-run dirs). D95 owner: by exclusion, c31c3bf90d9f was the agent's own leg-1 container. | Queue item. |
 | D108 | **G-W5/G4 merged (queue/G4; rebased onto H8b with a union of the operator and holds modes in run.sh, session.ts and README; 0 golden lines removed).** macOS full PASS. Linux PASS on every step (all six pipeline modes, integration) except ctest script_runtime (D76 class); CI on this push judges it. | C0 landed. |
 | D109 | **C0 WP8-gaps merged (queue/WP8gaps; linux_gate.sh conflict resolved by keeping both the D90 lock line and per-run log dirs).** macOS and Linux PASS on every step except the D34-class timing ctests (macOS actuator_delays and script_positions; Linux script_runtime); the package changes no C++. Lifecycle (with the new shutdown goldens) PASS on both. CI on this push judges the timing tests. G4's CI 44098601961: green. | C0 landed. |
+| D110 | **WS fan-out benchmark (N=16, one run each, load ≤ 4, evidence only):** the tag and wp/WP6-step2 both deliver 1382 fps total (the fixture's ceiling, 100% delivered). Fan-out p50/p99 1.88/3.71 ms vs 1.99/4.20 ms; CPU 1.3% vs 1.5%. No detectable regression; the deltas are below single-run resolution. Scripts and results are in the job tmp perf/. | Evidence. |
 
 ## Baseline on `main` (this machine)
 
@@ -222,6 +223,8 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 - Deleting `tools/` operator GUIs (`tools/gui/**`, the orphaned calibration GUIs): operator-facing, the team's decision, not a refactor's.
 
 ## Defects found in the original (kept as-is, for the team)
+- **D-STRINGIFY (S4):** `server.ts:258-268` stringifies the same point once per client and sends once per point, so serialization runs N times.
+- **D-BCASTCOUNT (S4):** `server.ts:225` counts `sensorUpdatesBroadcast` per produced point regardless of clients; the comment at :751 says 'actually sent (post-throttle)'.
 - **D-REQUIRE (S3):** `routes/config.ts:213` calls `require('fs')` in an ESM module, which always throws, so every save logs 'File may not exist yet' and its size check never runs.
 - **D-TESTPTR (S4):** `__tests__/config-profile-create-calibration.test.ts:51` writes `profiles/.active`, but the product reads `config/.active_profile` (config-profiles.ts:45-46); a dead fixture line.
 - **D-AREAS-VITEST (S4):** `linux_gate.sh --areas` skips backend-vitest and ctest, so a vitest-only package can't be proven by an `--areas` leg.
