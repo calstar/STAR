@@ -13,9 +13,9 @@
 //             ignored (as today); a failed sendto is ignored. Never throws.
 // Must not know: Elodin, board identity (main resolves board_id), the backend's parsing.
 // Contract:   log envelope bytes — packets/golden/service_daq_bridge.txt.
-// Cleanup:    may adopt fsw::net::openUdpSocket(false) / ipv4Destination only where the statement
-//             sequence is identical (DESIGN-WP10 §0); the ignored inet_pton result must stay
-//             ignored.
+// Cleanup:    none for the socket: WP8 shares no UDP helper (its openUdpSocket / ipv4Destination
+//             were dropped by the WP8 debate verdict, D54), so socket creation and the destination
+//             fill stay here verbatim; the ignored inet_pton result must stay ignored.
 #pragma once
 
 #include <netinet/in.h>
