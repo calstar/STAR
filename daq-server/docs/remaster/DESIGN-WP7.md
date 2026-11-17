@@ -476,9 +476,15 @@ Each is its own commit, with the per-commit checks of §6.1; `pipeline/run.sh pt
 
    The check script (the ~20-line grep check in the package's scripts, outside `src/`; no linter,
    STYLE-S40) identifies sites **by content, not by these line numbers**: for every `sendJson(`
-   call in `api/*.ts` it takes the body argument (which may span lines), strips string literals, and
-   fails on a `(` (a call) or a `.` that is not part of `?.` (a property read). Everything in the
-   eligible list passes that rule and nothing in the other lists does. Expected saving ≈ 100 lines.
+   call in `api/*.ts` it takes the body argument (which may span lines), strips string literals
+   **but keeps template-literal `${…}` interpolations** (426 hides `pwmIssues.join('; ')` inside
+   one), and fails on a `(` (a call) or a `.` that is not part of `?.` (a property read). Run over
+   the 91 bodies at `b2599617`, that rule passes exactly the 50 eligible sites and every
+   function-call and property-read site fails it; of the four non-adjacent sites 995 fails it too
+   (`currentTares()`) and 955, 958, 997 pass by content and are excluded only by the second
+   condition, which is the reviewer's: each `sendJson` replaces exactly one adjacent pair — the
+   diff shows a `writeHead` line deleted directly above it and nothing else. Expected saving
+   ≈ 100 lines.
 
    `denyUnlessOperator(req, res)` replaces the 14 identical
    `if (!isConfigWriteAuthorized(req)) { 403 …; return true; }` blocks (their bodies are literals).
@@ -583,8 +589,10 @@ with a stable signature); H9 is a backend vitest.
   **as the viewer, frozen as today's 200** so that D-OTA/SEC-2 stays visible until the team fixes
   it: `POST /api/ota-flash/flash-all` against a config with no enabled boards → 200
   `{"success":false,"message":"No enabled boards in config"}` (never against the pipeline fixture:
-  with boards it would flash them), and `POST /api/ota-flash` with `firmwareBase64` in lifecycle's
-  fake-board case → 200 `{"success":true,…}`. Plus, for WP6, the WS control-unlock/operator path.
+  with boards it would flash them), and `POST /api/ota-flash` with `firmwareBase64` as a
+  **viewer-header variant** of lifecycle's fake-board case (`lifecycle.py:1340` sends no
+  `X-Auth-Email` today, so its existing 200 is the implicit operator's) → 200
+  `{"success":true,…}`. Plus, for WP6, the WS control-unlock/operator path.
   Gates WP7 step 1 and WP6 step 1; mutation: drop one gate → its line goes red.
 - **H1 Success paths of the writes and their callbacks.** Only error shapes are frozen for
   `POST /api/config`, `/api/config/import`, `/api/state-csv`, `/api/state-script`,
