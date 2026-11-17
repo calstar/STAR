@@ -9,6 +9,7 @@ bash test/characterization/pipeline/run.sh stalesub    # D-SUB: a subscription a
 bash test/characterization/pipeline/run.sh operator    # a WS client whose X-Auth-Email is an approved operator → golden/operator/
 bash test/characterization/pipeline/run.sh holds       # an accepted timed hold, then :9998 stalled and down → golden/holds/
 bash test/characterization/pipeline/run.sh startlog    # the backend alone, its startup log (G12) → golden/startlog/
+bash test/characterization/pipeline/run.sh selftest    # one failed self-test connector (G2) → golden/selftest/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
@@ -286,6 +287,21 @@ No `git grep` of the other goldens finds any of these lines: this is the only pl
 (`shared-types.ts`'s top-level `await`, WP5 5.4), a reordered startup row (WP6 §1.2) or a loader's
 import-time read moving out of import time shows.
 
+### The WP6 gap sessions (`run.sh selftest` → `golden/<mode>/`)
+
+`DESIGN-WP6.md` §7's G2, G3 and G1 (LEDGER D48): three notifications no other golden raised (G3 and G1 follow), each
+in a session cut to its one path so a change elsewhere on the WS/HTTP surface cannot fail it, and
+each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate difference:
+
+- **selftest (G2, `self_test_fail_<id>`).** The simulator is started with `--fail-connector 21:3`
+  — an opt-in flag this package added to `sim/board_simulator.py`, default off, so every
+  existing launch sends the packet it always sent (`sim_selftest_check.py` pins main's SELF_TEST
+  bytes for board 21 and runs first, with no ports; a `0` elsewhere or a changed default is red
+  there). pt_board's one-shot SELF_TEST then carries `sensor_3 = 0`; `server.ts` raises
+  `self_test_fail_21` "Board 21 (PT) failed self-test" once (the `break` after the first failing
+  row) during readiness. Client A's connect burst freezes the replay with the 0 (P12, whose expected
+  values come from `selftest_expected.py --fail 21:3`: the board's line reads `all 1 but sensor_3 =
+  0`) and the notification replay; the unnarrowed `query_historical` freezes the series.
 ## The scripted session (`session.ts`)
 
 GET sweep → connect A → 3 s live → viewer client B (`X-Auth-Email`, not an operator) → unknown `subscribe`, non-JSON, `get_state_transitions` →
@@ -413,7 +429,7 @@ those byte for byte (header, column order, cell format).
 | P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema | counters / wall clock |
 | P10 | the handshake's self-test replay is regrouped by board id (each board's frames keep their order) | `selfTestLatest` replays in Elodin arrival order, a race across boards |
 | P11 | in a run of consecutive `error` / `state_update` frames within a step, errors are recorded first (each kind keeps its own order) | a command's TCP reply (`error`) and the sequencer's Elodin publish (`state_update`) take independent paths; their order swapped under load |
-| P12 | self-test results are one line per board the simulators self-test (expected set from `selftest_expected.py`: adc_good + every active connector; board 60: 0 and 2), written as `<exact result> | not-received (one-shot UDP self-test, defect)`, and a rule line that fails if (a) a received result differs, (b) more than half the boards are not-received, or (c) the run is quiet (`CHAR_UNDER_LOAD` unset) and any board is not-received. The handshake replay and the history series are summarised there | on a loaded Linux box some boards' one-shot self-test never reaches the backend |
+| P12 | self-test results are one line per board the simulators self-test (expected set from `selftest_expected.py`: adc_good + every active connector; board 60: 0 and 2), written as `<exact result> | not-received (one-shot UDP self-test, defect)`, and a rule line that fails if (a) a received result differs, (b) more than half the boards are not-received, or (c) the run is quiet (`CHAR_UNDER_LOAD` unset) and any board is not-received. The handshake replay and the history series are summarised there. A connector `selftest_expected.py --fail` names (the selftest session) is expected `0`, and the board's line says `all 1 but sensor_<n> = 0`; without `--fail` nothing changes | on a loaded Linux box some boards' one-shot self-test never reaches the backend |
 | P12d | in a quiet run every self-test path must carry every expected board exactly, checked separately: each client's handshake replay (A, B, C) and each full history reply (connect A, the unnarrowed query in `history`, viewer B), with the startup board exempt from paths that closed before it self-tested. A late client C (after the session) freezes the notification-buffer replay; its own backfill is past the 60 s horizon and is not frozen | the old golden froze each path line by line |
 | P14 | `GET /api/debug?values`: P9's schema, plus the values of `ingestConnected`, `useRelay` and `wsClients` (rendered `>=1` when at least one client is connected, else the number) | D64(3): these say how the backend is wired, not how much it has counted; the plain `/api/debug` line stays P9 |
 | A1 | `ACT_CMD.B2.CH7` (Fuel Main) commanded: `{0} \| {0, 1}`, an explicit alternative, only for that series | the sequencer's boot-time de-energized row is replayed by elodin-db on subscribe on a loaded Linux box (defect) |

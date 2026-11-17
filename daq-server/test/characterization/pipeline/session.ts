@@ -3,7 +3,7 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds]
+ *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds|selftest]
  *
  * pt: the full scripted session against the one routed PT board. boards: every simulated board
  * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
@@ -14,6 +14,8 @@
  * what PT board 22 delivers, channel by channel, live and from history. holds: one accepted timed
  * hold, then the sequencer stalled (SIGSTOP) and gone (SIGTERM) under the backend's :9998 client;
  * run.sh hands over the sequencer's PID in <CHAR_FIXTURE>/ports.json (README "The holds session").
+ * selftest: WP6 gap G2 (DESIGN-WP6 §7), a session cut to its one notification (README "The WP6 gap
+ * sessions").
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
@@ -714,7 +716,36 @@ async function holds(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
-(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub() : MODE === 'operator' ? operator() : MODE === 'holds' ? holds() : main()).then(() => process.exit(0)).catch((err) => {
+/** G2 (DESIGN-WP6 §7): run.sh started the simulator with --fail-connector 21:3, so pt_board's
+ *  one-shot SELF_TEST carries sensor_3 = 0. The backend raises `self_test_fail_21` once (the
+ *  `break` after the first failing row) during readiness; client A's connect burst freezes the
+ *  self-test replay with the 0 (ws_streams.txt P12, expected from selftest_expected.py --fail) and
+ *  the notification replay; the unnarrowed history query freezes the series. Nothing else. */
+async function selftest(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A');
+  await settle(2500);
+
+  step('history');
+  send('A', { type: 'query_historical', payload: {} });
+  await settle(1500);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub()
+  : MODE === 'operator' ? operator() : MODE === 'holds' ? holds()
+  : MODE === 'selftest' ? selftest()
+  : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);
