@@ -14,6 +14,10 @@ from .base import RocketComponent
 from .position import AngleMethod, AxialMethod, RadiusMethod
 
 
+#: FlightConfigurationId.DEFAULT_VALUE_UUID (new UUID(0xFFFFFFFFF4F2F1F0L, 5676))
+DEFAULT_CONFIG_ID = "ffffffff-f4f2-f1f0-0000-00000000162c"
+
+
 class ComponentAssembly(RocketComponent):
     def __init__(self, axial_method: AxialMethod = AxialMethod.AFTER):
         super().__init__(axial_method)
@@ -112,7 +116,8 @@ class Rocket(ComponentAssembly):
         self.reference_type = "maximum"  # ReferenceType: nosecone | maximum | custom
         self.custom_reference_length = self.DEFAULT_REFERENCE_LENGTH
         self.stage_map: dict[int, AxialStage] = {}
-        self.default_configuration = FlightConfiguration(self, None)
+        # FlightConfigurationId.DEFAULT_VALUE_FCID: the configuration with no motors
+        self.default_configuration = FlightConfiguration(self, DEFAULT_CONFIG_ID)
         self.configurations: dict[str, FlightConfiguration] = {}
         self.selected_configuration = self.default_configuration
 

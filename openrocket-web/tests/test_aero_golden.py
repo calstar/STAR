@@ -22,7 +22,11 @@ from orweb.aero import BarrowmanCalculator, flight_conditions, resolve_configura
 from orweb.aero import _compat as compat
 
 HERE = Path(__file__).parent
-GOLDEN = sorted((HERE / "golden").glob("*.json"))
+# OpenRocket's examples (shared with the mass/model tests), then the aerodynamics
+# test-bed (tools/oracle/aero_testbed.py: noses, finishes, fin counts, boattails,
+# CD overrides the examples never reach).
+GOLDEN = sorted((HERE / "golden").glob("*.json")) + sorted((HERE / "golden_aero").glob("*.json"))
+ROCKET_DIR = {"golden": "rockets", "golden_aero": "rockets_aero"}
 REL = 1e-9
 ABS = 1e-12
 
@@ -45,12 +49,13 @@ ROLL_FIELDS = {
 }
 
 
-def load(name: str):
+def load(golden_path: Path):
     """The rocket through the real orweb model: .ork -> document -> components."""
     from orweb.build import build_rocket
     from orweb.ork import read_ork
 
-    return build_rocket(read_ork(HERE / "rockets" / f"{name}.ork"))
+    ork = HERE / ROCKET_DIR[golden_path.parent.name] / f"{golden_path.stem}.ork"
+    return build_rocket(read_ork(ork))
 
 
 def close(a, b) -> bool:
@@ -89,7 +94,7 @@ def compare_grid(config, points, fields, with_roll: bool):
 @pytest.mark.parametrize("path", GOLDEN, ids=[p.stem for p in GOLDEN])
 def test_force_analysis_matches_openrocket(path):
     golden = json.loads(path.read_text())
-    config = resolve_configuration(load(path.stem))
+    config = resolve_configuration(load(path))
     n, bad = compare_grid(config, golden["aero"], FIELDS, with_roll=False)
     assert not bad, f"{len(bad)}/{n} values off:\n" + "\n".join(bad[:40])
 
@@ -99,7 +104,7 @@ def test_roll_and_theta_match_openrocket(path):
     golden = json.loads(path.read_text())
     if "aeroRoll" not in golden:
         pytest.skip("golden file predates the aeroRoll grid; rerun tools/oracle/run.sh")
-    config = resolve_configuration(load(path.stem))
+    config = resolve_configuration(load(path))
     n, bad = compare_grid(config, golden["aeroRoll"], {**FIELDS, **ROLL_FIELDS}, with_roll=True)
     assert not bad, f"{len(bad)}/{n} values off:\n" + "\n".join(bad[:40])
 
@@ -107,7 +112,7 @@ def test_roll_and_theta_match_openrocket(path):
 @pytest.mark.parametrize("path", GOLDEN, ids=[p.stem for p in GOLDEN])
 def test_reference_and_analyze_entry_point(path):
     golden = json.loads(path.read_text())
-    rocket = load(path.stem)
+    rocket = load(path)
     from orweb.aero import analyze
 
     out = analyze(rocket, 0.3, 0.0)

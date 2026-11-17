@@ -60,10 +60,14 @@ def _auto_setter(set_value, set_auto, with_separator: bool):
         auto, value = _auto(v)
         if auto:
             if with_separator and value is not None:
-                set_value(c, float(value))
+                x = _finite(value, c, ctx)
+                if x is not None:
+                    set_value(c, x)
             set_auto(c, True)
         else:
-            set_value(c, float(value))
+            x = _finite(value, c, ctx)
+            if x is not None:
+                set_value(c, x)
     return apply
 
 
@@ -109,8 +113,10 @@ def _radius_position(c, v, ctx):
 
 def _override(set_value, set_flag):
     def apply(c, v, ctx):
-        set_value(c, float(v))
-        set_flag(c, True)
+        x = _finite(v, c, ctx)
+        if x is not None:  # OverrideSetter: a bad number sets neither
+            set_value(c, x)
+            set_flag(c, True)
     return apply
 
 
@@ -134,7 +140,9 @@ def _symmetric_thickness(c, v, ctx):
     if v == "filled" or (isinstance(v, dict) and v.get("filled")):
         c.set_filled(True)
     else:
-        c.set_thickness(float(v), False)
+        x = _finite(v, c, ctx)
+        if x is not None:
+            c.set_thickness(x, False)
 
 
 def _motor_mount(c, v, ctx):
@@ -163,8 +171,29 @@ def _rocket_reftype(c, v, ctx):
     c.reference_type = v
 
 
+def _finite(v, c, ctx) -> float | None:
+    """DoubleSetter's checkForValidDouble: NaN and infinities are rejected with a warning."""
+    x = float(v) if v is not None else math.nan
+    if math.isnan(x) or math.isinf(x):
+        ctx.warn(f"{c.get_name()}: invalid parameter value {v!r}, ignoring.")
+        return None
+    return x
+
+
 def _f(method_name):
-    return lambda c, v, ctx: getattr(c, method_name)(float(v))
+    def apply(c, v, ctx):
+        x = _finite(v, c, ctx)
+        if x is not None:
+            getattr(c, method_name)(x)
+    return apply
+
+
+def _f2(method_name, *extra):
+    def apply(c, v, ctx):
+        x = _finite(v, c, ctx)
+        if x is not None:
+            getattr(c, method_name)(x, *extra)
+    return apply
 
 
 def _i(method_name):
@@ -223,11 +252,11 @@ SETTERS = {
                                                lambda c, b: c.set_fore_radius_automatic(b), True),
     ("Transition", "aftradius"): _auto_setter(lambda c, x: c.set_aft_radius(x, False),
                                               lambda c, b: c.set_aft_radius_automatic(b), True),
-    ("Transition", "foreshoulderradius"): lambda c, v, ctx: c.set_fore_shoulder_radius(float(v), False),
+    ("Transition", "foreshoulderradius"): _f2("set_fore_shoulder_radius", False),
     ("Transition", "foreshoulderlength"): _f("set_fore_shoulder_length"),
     ("Transition", "foreshoulderthickness"): _f("set_fore_shoulder_thickness"),
     ("Transition", "foreshouldercapped"): _b("set_fore_shoulder_capped"),
-    ("Transition", "aftshoulderradius"): lambda c, v, ctx: c.set_aft_shoulder_radius(float(v), False),
+    ("Transition", "aftshoulderradius"): _f2("set_aft_shoulder_radius", False),
     ("Transition", "aftshoulderlength"): _f("set_aft_shoulder_length"),
     ("Transition", "aftshoulderthickness"): _f("set_aft_shoulder_thickness"),
     ("Transition", "aftshouldercapped"): _b("set_aft_shoulder_capped"),
@@ -275,7 +304,7 @@ SETTERS = {
                                                  lambda c, b: c.set_outer_radius_automatic(b), False),
     ("TubeCoupler", "outerradius"): _auto_setter(lambda c, x: c.set_outer_radius(x),
                                                  lambda c, b: c.set_outer_radius_automatic(b), False),
-    ("InnerTube", "outerradius"): lambda c, v, ctx: c.set_outer_radius(float(_auto(v)[1])),
+    ("InnerTube", "outerradius"): lambda c, v, ctx: _f("set_outer_radius")(c, _auto(v)[1], ctx),
     ("InnerTube", "clusterconfiguration"): lambda c, v, ctx: (
         c.set_cluster_configuration(CLUSTERS_BY_NAME[v]) if v in CLUSTERS_BY_NAME
         else ctx.warn("Illegal cluster configuration specified.")),
@@ -283,7 +312,7 @@ SETTERS = {
     ("InnerTube", "clusterrotation"): _f("set_cluster_rotation"),
     ("RadiusRingComponent", "instancecount"): _i("set_instance_count"),
     ("RadiusRingComponent", "instanceseparation"): _f("set_instance_separation"),
-    ("RadiusRingComponent", "innerradius"): lambda c, v, ctx: c.set_inner_radius(float(_auto(v)[1])),
+    ("RadiusRingComponent", "innerradius"): lambda c, v, ctx: _f("set_inner_radius")(c, _auto(v)[1], ctx),
     ("Bulkhead", "outerradius"): _auto_setter(lambda c, x: c.set_outer_radius(x),
                                               lambda c, b: c.set_outer_radius_automatic(b), False),
     ("CenteringRing", "innerradius"): _auto_setter(lambda c, x: c.set_inner_radius(x),
@@ -551,7 +580,8 @@ def model_params(c: RocketComponent) -> dict:
     if isinstance(c, TubeFinSet):
         p["radius"] = {"auto": c.is_outer_radius_automatic(), "value": c.get_outer_radius()}
         p["length"] = c.get_length()
-        p["thickness"] = c.get_thickness()
+        if not math.isnan(c.get_thickness()):  # NaN until the fins join a body tube
+            p["thickness"] = c.get_thickness()
     if isinstance(c, LaunchLug):
         p["radius"] = c.get_outer_radius()
         p["length"] = c.get_length()
