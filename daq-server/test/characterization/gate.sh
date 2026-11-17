@@ -114,9 +114,13 @@ characterization() {
 integration() { wait_for_load && bash "$CHAR/with_stack_lock.sh" bash "$ROOT/test/test_integration.sh"; }
 # format.sh --check is red on main in firmware/ Python (out of scope), so the gate checks what this
 # refactor owns: every daq-server C/C++ file format.sh targets must be clang-format-19 clean (it is
-# on main), and every Python file added since main must be black-clean.
+# on main), and every Python file added since main must be black-clean. The pinned clang-format 19
+# and black live in the clone's common git dir (LEDGER: remaster-tools/fmtvenv, shared by every
+# worktree); CLANG_FORMAT_19_DIR overrides, and is needed only where that directory is absent.
 format_check() {
-  local cf="${CLANG_FORMAT_19_DIR:-}"
+  local cf="${CLANG_FORMAT_19_DIR:-}" pinned
+  pinned="$(cd "$REPO" && cd "$(git rev-parse --git-common-dir)" && pwd -P)/remaster-tools/fmtvenv/bin"
+  [ -n "$cf" ] || [ ! -d "$pinned" ] || cf="$pinned"
   export PATH="${cf:+$cf:}$PATH"
   clang-format --version | grep -q 'version 19\.' || { echo "need clang-format 19 (CLANG_FORMAT_19_DIR)"; return 1; }
   (cd "$REPO" && git ls-files 'daq-server/diablo_server' 'daq-server/test' |
