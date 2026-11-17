@@ -9,6 +9,8 @@
 #   bash test/characterization/pipeline/run.sh boards     # every simulated board type → golden/boards/
 #   bash test/characterization/pipeline/run.sh stalesub   # D-SUB: a subscription accepted inside a
 #                                                        # re-registration window → golden/stalesub/
+#   bash test/characterization/pipeline/run.sh operator   # a WS client whose X-Auth-Email is in
+#                                                        # operators.txt (H8b) → golden/operator/
 #
 # "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
 # 127.0.0.22); it fails, never skips, when one is missing. Linux has all of 127/8.
@@ -43,9 +45,10 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" nocal || rc=1
   bash "$HERE/run.sh" boards || rc=1
   bash "$HERE/run.sh" stalesub || rc=1
+  bash "$HERE/run.sh" operator || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards|stalesub) ;; *) echo "usage: run.sh [pt|nocal|boards|stalesub]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub|operator) ;; *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -128,7 +131,7 @@ cat > "$FX/ports.json" <<EOF
  "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-FXMODE="$MODE"; [ "$MODE" = nocal ] && FXMODE=pt
+FXMODE="$MODE"; case "$MODE" in nocal|operator) FXMODE=pt ;; esac  # the pt fixture, one routed board
 "$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$FXMODE"
 
 # The backend runs from a copy of its own source under the fixture (srv/, the same layout as
@@ -316,7 +319,7 @@ if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal -x stalesub "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub -x operator "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2
