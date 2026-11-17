@@ -178,7 +178,9 @@ def build_config(
 
 
 def make_cwd(path: str):
-    """Scratch cwd with the tracked calibration files (never the checkout's live store)."""
+    """Scratch cwd with the tracked calibration files as committed (never the checkout's live
+    store, and not the working tree's copy either: a dirty abort_thresholds.txt, which the
+    calibration service rewrites in place, moved the startup golden — LEDGER D103)."""
     try:
         files = subprocess.run(
             ["git", "-C", ROOT, "ls-files", "scripts/calibration/calibrations"],
@@ -188,6 +190,7 @@ def make_cwd(path: str):
         ).stdout.split()
     except (OSError, subprocess.CalledProcessError):
         files = []
+    from_head = bool(files)
     if not files:
         # Not a git checkout (a `git archive` export, as the Linux gate runs): the directory then
         # holds exactly the tracked files, so take all of them.
@@ -198,7 +201,17 @@ def make_cwd(path: str):
     for rel in files:
         dst = os.path.join(path, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copyfile(os.path.join(ROOT, rel), dst)
+        if from_head:
+            # HEAD's blob, bytes as committed ("HEAD:./rel" is relative to -C ROOT, a subdirectory).
+            blob = subprocess.run(
+                ["git", "-C", ROOT, "show", f"HEAD:./{rel}"],
+                capture_output=True,
+                check=True,
+            ).stdout
+            with open(dst, "wb") as f:
+                f.write(blob)
+        else:
+            shutil.copyfile(os.path.join(ROOT, rel), dst)
     os.makedirs(
         os.path.join(path, "scripts", "calibration", "calibrations"), exist_ok=True
     )
