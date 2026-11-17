@@ -207,13 +207,18 @@ designated_survivor = false
     if mode == "mismatch":
         # The patched CSVs are copies beside the originals (an absolute [state_machine] path is
         # found by the sequencer only, README "Frozen behaviour"); every existing row is kept.
-        for name in ("state_machine_actuators.csv", "state_machine_actuator_delays.csv"):
+        for name in (
+            "state_machine_actuators.csv",
+            "state_machine_actuator_delays.csv",
+        ):
             rows = open(os.path.join(cfg_dir, name)).read().rstrip("\n").split("\n")
             width = len(rows[0].split(","))
             cell = "CLOSE" if name == "state_machine_actuators.csv" else "0"
             rows.append(",".join(["Main Ball Valve"] + [cell] * (width - 1)))
             for d in (cfg_dir, prof_dir):
-                open(os.path.join(d, "mismatch_" + name), "w").write("\n".join(rows) + "\n")
+                open(os.path.join(d, "mismatch_" + name), "w").write(
+                    "\n".join(rows) + "\n"
+                )
     for path in (
         os.path.join(cfg_dir, "config.toml"),
         os.path.join(prof_dir, "config.toml"),
