@@ -9,12 +9,15 @@ deepened note with its alternatives A/B/C, the comparison matrix, the dropped `t
 **Baseline.** WP3 runs **after WP2**, so product code (`diablo_server/`, `archive/`) is read from
 the WP2 tree, `wp/WP2-dead-cpp` @ **`4cc0b2e4`**; everything else (`test/`, `githooks/`, root
 `format.sh`, the CI yml, these docs) from `backend-remastered` @ **`3b618ab6`** (whose
-`diablo_server/` is `b2599617`'s = `main` @ `15b5a0c5`). Every file WP3 edits is byte-identical on
-the two branches except `lib/CMakeLists.txt` (WP2 drops the `IMUCalibration` comment at 42, so
-lines after 41 are one lower) and `gate.sh` (`backend-remastered` gained a line at 28 after WP2
-branched); where a number differs it is given as **WP2 / BR**. Re-anchor with the `grep -n`
-anchors given; names, not numbers, are the contract. Paths are relative to
-`daq-server/diablo_server/` unless they start with `test/`, `archive/`, `githooks/`, `docs/` or
+`diablo_server/` is `b2599617`'s = `main` @ `15b5a0c5`). Every line this note cites is the same
+on the two branches except in `lib/CMakeLists.txt` (WP2 drops the `IMUCalibration` comment at 42,
+so lines after 41 are one lower) and `gate.sh` (the orchestrator's file; `backend-remastered`
+gained a line at 28 after WP2 branched); `services/CMakeLists.txt` and
+`test/characterization/config/CMakeLists.txt` differ between the branches only below the lines
+cited (WP2 removes the uWebSockets block at 85-100; BR's harness file has `TIMEOUT 120` at 47).
+Where a number differs it is given as **WP2 / BR**. Re-anchor with the `grep -n` anchors given;
+names, not numbers, are the contract. Paths are relative to `daq-server/diablo_server/` unless they
+start with `test/`, `archive/`, `githooks/`, `docs/`, `tools/`, `flash/`, `build-clang-ci/` or
 `.github/`.
 
 **Prerequisites:** WP2 merged; C1 (`packets/`, `elodin/`) merged (its `comms_messages.cpp` and the
@@ -200,7 +203,8 @@ which resolves only on the `SYSTEM PRIVATE` directory of §2.2; a service or har
 includes `SendMsg.hpp` fails with "db.hpp not found" (§4). The privacy is enforced by the
 compiler, not by a convention or a directory property, and the stub's doc comment says so.
 
-**For WP10** (DESIGN-WP10 §3.3 "if WP3 has already replaced `send_msg`… the include moves"): the
+**For WP10** (DESIGN-WP10 §3, "If WP3 has replaced `send_msg` … the include moves instead of the
+template"): the
 include to move into `ControllerService_elodin.cpp` is `#include "elodin/SendMsg.hpp"`; the calls
 are `fsw::elodin::send_msg(*elodin_client_, …, nullptr)`; `#include "db.hpp"` and the two
 `using namespace vtable…` lines (35-36) move with `registerControllerTables`.
