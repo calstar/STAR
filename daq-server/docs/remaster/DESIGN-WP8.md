@@ -2,10 +2,13 @@
 
 The "as decided" execution note for WP8 (D17(a)): what an implementer does, in what order, and
 why. Decisions: D39 (review), D43 (casing, `// Kept:`), D45 (deepening), D46 (tag long form),
-and the debate verdict (`debates/WP8/verdict.md`, ratified under D39; LEDGER **D54**). How it got
-here — the reviewed text, its amendments, the withdrawn `UdpSocket`/`ConfigFile` interfaces, the
-alternatives (B RAII types, C signals only), the walkthroughs and the first gate classification —
-is preserved verbatim in [`debates/WP8/history.md`](debates/WP8/history.md).
+the debate verdict (`debates/WP8/verdict.md`, ratified under D39; LEDGER **D54**) and the
+simplicity round that followed it (LEDGER **D57**: `parseArgs` and `follow_sequencer_state`
+dropped, the `// Kept:` tags moved to pass 1, `StopSignals`' notice reduced to a print order plus
+a nullable line, no read-site edits). How it got here — the reviewed text, its amendments, the
+withdrawn `UdpSocket`/`ConfigFile` interfaces, the alternatives (B RAII types, C signals only),
+the walkthroughs and the first gate classification — is preserved verbatim in
+[`debates/WP8/history.md`](debates/WP8/history.md).
 
 **Baseline.** Every line number below is from `git show backend-remastered:daq-server/<path>` at
 `backend-remastered` @ **`91ee0bc8`**, whose `diablo_server/` is byte-identical to `main` @
@@ -14,9 +17,10 @@ is preserved verbatim in [`debates/WP8/history.md`](debates/WP8/history.md).
 (`packets/`, `elodin/`) is on the tip. Function names, not numbers, are the contract: if WP3
 lands first, re-anchor with `grep -n`.
 
-**Prerequisites.** Pass 1: §7.2 gaps 1-3 (`lifecycle/`) merged and gated. Pass 2: gaps 4, 5, 7
-(`config/`, `sequencer/`, `packets/`) merged as one D32 batch. Pass 1 never waits on gaps 5-7.
-The passes are **separate queue items, each fully gated** (full gate + Linux leg + CI, D19).
+**Prerequisites.** Pass 1: §7.2 gaps 1-3 (`lifecycle/`) merged and gated. Pass 2: gap 5
+(`sequencer/`) merged green — the D32 batch for pass 2 is gap 5 alone; if it is not green, pass 2
+is not queued (ledger entry). Pass 1 never waits on gap 5. The passes are **separate queue
+items, each fully gated** (full gate + Linux leg + CI, D19).
 
 **Scope.** WP3 → **WP8** → WP9 → WP10. WP8 edits only
 `services/{heartbeat,stacklight,config_broadcast,ota,controller}/*_main.cpp`,
@@ -42,16 +46,16 @@ changes any of that and an abstraction with one user. What survives, after the d
 | shared | users (today's lines) | pass | gate |
 |---|---|---|---|
 | `fsw::service::running()`, `installStopHandlers` — §2.1, `::signal`, install points of §1.2 | the seven WP8 services; calibration (WP9), daq_bridge (WP10) | **1** | gaps 1, 2, 3 |
-| `fsw::net::serveTcpClients` + `TcpServeOptions`; `Conn`, `reap_finished` verbatim from `sequencer_main.cpp:284-301`; `on_client` only through the public enqueueing API (D42 binding 1) | sequencer 303-349, controller 171-214 | **2** | gap 5 |
-| `fsw::elodin::follow_sequencer_state` + `SequencerStateFollowerText`, called from each main's file-static wrapper | heartbeat 103-152, stacklight 99-136 | **2** | gap 7 |
-| file-static `parseArgs` per main (§6.2; t7's `exit(2)` verbatim) | seven mains | 2 | gap 4 |
-| `// Kept:` tags, S12 long form (D46) | `controller_main.cpp:147` (D-CTL); heartbeat 252, config_broadcast 526 (D-BIND) | 2 | — |
+| `// Kept:` tags, S12 long form (D46); comment lines only | `controller_main.cpp:147` (D-CTL); heartbeat 252, config_broadcast 526 (D-BIND) | **1** | — |
+| `fsw::net::serveTcpClients` + `TcpServeOptions`; `Conn`, `reap_finished` verbatim from `sequencer_main.cpp:284-301`; `on_client` only through the public enqueueing API (D42 binding 1) | sequencer 282-349, controller 151-214 | **2** | gap 5 |
 
 **Stays per service, every `close()` on its line:** listener setup (sequencer 252-276, controller
 128-147, ota 410-434); UDP sockets and destinations (heartbeat 232-263, stacklight 268-282,
 config_broadcast 509-531 and 554-558); `AbortBroadcaster.cpp`; the config-path blocks (heartbeat
-202-213, stacklight 211-228, config_broadcast 468-485, controller 276-301); per-client readers;
-`trim`; encoders. ota adopts `StopSignals` only.
+202-213, stacklight 211-228, config_broadcast 468-485, controller 276-301); the argv loops
+(§1.4); the two Elodin followers (heartbeat `elodinThread` 103-152, stacklight 99-136); per-client
+readers; `trim`; encoders. ota, heartbeat, stacklight, config_broadcast and t7_bridge adopt
+`StopSignals` only.
 
 Rejected, with the reason kept so a later package does not reintroduce it:
 
@@ -75,9 +79,20 @@ Rejected, with the reason kept so a later package does not reintroduce it:
   a SIGTERM before installation kills with −15, after it exits 0; a framework that owns the order
   changes exit codes. **A shared argv parser:** nine flag sets and `--help` texts, three
   missing-value policies (ignore / t7's `exit(2)` / daq_bridge's `std::stoi` that throws), two
-  unknown-flag policies; each main keeps its loop, pass 2 only moves it into a file-static
-  `parseArgs()`. **A generic `SubscriberLoop`:** the eight B3 sites are four different things
-  (§1.7); only the two identical followers are shared. **An owning `UdpSender` / RAII sockets:**
+  unknown-flag policies; each main keeps its loop **where it is**. **A file-static `parseArgs()`
+  per main** (D57): it is per-main, so it shares nothing; it rewrites the 8-29 post-argv sites
+  per main that read the parsed values (`config_path`, ports, hosts, …) through an `Options`
+  struct, and no golden can see any of that; and t7_bridge's loop is only half convertible (its
+  `next` lambda's `std::exit(2)` cannot become a returned code without changing how the process
+  exits). Gap 4 (`--help` texts) is still worth writing; nothing in WP8 is gated on it.
+  **`follow_sequencer_state`** (D57): heartbeat 103-152 and stacklight 99-136 are identical in
+  control flow (§1.7), but the helper plus a three-field text struct, two file-static wrappers
+  and two `on_state` lambdas nets ≤ ~20 lines out of the tree, for a new TU, a new header, a
+  callback type and a gating characterization (gap 7) that cannot be made to fail deterministically
+  on its refused half (§7.2). D49's test — the simplest design that keeps every golden — says
+  the two bodies stay where they are. **A generic `SubscriberLoop`:** the eight B3 sites are
+  four different things (§1.7); after D57 not even the two identical followers are shared.
+  **An owning `UdpSender` / RAII sockets:**
   AbortBroadcaster and ActuatorCommander open a socket per send, heartbeat closes its socket
   **before** joining the Elodin thread (295-296), ControllerService closes in its destructor — a
   type bypassed at its first three users is not the abstraction (S34).
@@ -140,8 +155,9 @@ socket (`transport/src/transport/TCPClient.cpp:148`, `::write`), i.e. a db resta
 
 ### 1.4 CLI and config loading today
 
-Flags, `--help` texts and config resolution are per service and stay so (gap 4 pins the help
-texts): argv loops at heartbeat 179-199, stacklight 186-208 (help **omits `--force-state`**;
+Flags, `--help` texts and config resolution are per service and stay so, **and so do the loops
+that parse them** (D57; gap 4 would pin the help texts, worth writing, not gating): argv loops at
+heartbeat 179-199, stacklight 186-208 (help **omits `--force-state`**;
 **config overrides CLI**, C1-11/C6-7), config_broadcast 456-466, ota 383-396, sequencer 229-239,
 controller 239-273, t7_bridge 280-309 (`<flag> needs a value` → `exit(2)` 283-286; unknown flag →
 usage, **exit 2**), calibration 602-617 (WP9), daq_bridge positional `argv[1..3]` 313-318
@@ -189,8 +205,10 @@ The two followers — heartbeat `elodinThread` 103-152 (`sleep_for(2 s)` 109; 30
 `elodinThread` 99-136 (2 s at 105; 500 ms `kStacklightRecvTimeoutMs` 97; silent `disconnect` 123)
 — are identical in control flow (ruling 3): connect → 2 s → subscribe → cerr + `disconnect` →
 timeout → cout → `read_packet` → `n < 0` disconnect → `n < 8` → `buf[5]/buf[6]`, `n >= 17`.
-Differences: three literals, the timeout, and whether `n < 0` logs. Everything else stays its
-owner's: `PressureFeed::runLoop` (`services/sequencer/PressureFeed.cpp:78-193`),
+Differences: three literals, the timeout, and whether `n < 0` logs. **Both stay in their mains**
+(D57, §0 Rejected); WP8 changes neither body — the `g_running` reads at heartbeat 106 and
+stacklight 102 keep their spelling (§2.1). Everything else stays its owner's too:
+`PressureFeed::runLoop` (`services/sequencer/PressureFeed.cpp:78-193`),
 `ControllerService::connectSubscriber`/`elodinSubscriberLoop` (`ControllerService.cpp:763-818`,
 WP10), calibration 1477-1595 (first connect `return 1` at 1544-1545; WP9), the publishers
 `SequencerService.cpp:1253-1293`, t7_bridge 195-206, daq_bridge 574-606 and 745-776.
@@ -203,23 +221,28 @@ every service and the config harness (`test/characterization/config/CMakeLists.t
 Headers in `lib/include/` under the directory of their namespace. Inside `namespace fsw`, spell
 config types `::fsw::config::Config` (the `fsw::fsw` trap, `lib/include/net/DaqInterface.hpp:54-57`).
 The full declarations with S36 doc comments are the stubs `docs/remaster/design-stubs/cpp/lib/
-include/{service/StopSignals,net/TcpCommandServer,elodin/SequencerStateFollower}.hpp`; the
-signatures and the load-bearing facts are restated here.
+include/{service/StopSignals,net/TcpCommandServer}.hpp` (two headers, two TUs; D57 struck the
+third); the signatures and the load-bearing facts are restated here.
 
 ### 2.1 `lib/include/service/StopSignals.hpp` + `lib/src/service/StopSignals.cpp` (pass 1)
 
 ```cpp
 namespace fsw::service {
-enum class ShutdownNotice { kSilent, kPrintThenStop, kStopThenPrint };  // t7 / seven / daq_bridge
+enum class ShutdownNotice { kPrintThenStop, kStopThenPrint };  // print order: eight / daq_bridge
 enum class Sigpipe { kDefault, kIgnore };  // LEDGER Parked; never changed in a refactor
 std::atomic<bool>& running();              // true until SIGINT/SIGTERM; constant-initialised
 /** signal(SIGINT, h); signal(SIGTERM, h); and, for kIgnore, signal(SIGPIPE, SIG_IGN) — in that
  *  order, with ::signal, never sigaction. `line` is printed verbatim (callers include the
- *  leading "\n"), must outlive the process, and is nullptr iff notice == kSilent. */
+ *  leading "\n") and must outlive the process; nullptr prints nothing (t7_bridge), and the
+ *  notice is then immaterial. */
 void installStopHandlers(ShutdownNotice notice, const char* line, Sigpipe sigpipe);
 }
 ```
 
+- The notice is a **two-value print order plus a nullable line** (D57): there is no `kSilent`
+  — "print nothing" is `line == nullptr`, the shape `StopSignals` already used for the text and
+  the one D45's `send_msg` uses. t7_bridge passes `kPrintThenStop, nullptr` (the common order,
+  so daq_bridge stays the only `kStopThenPrint` user; with no line the value is unobservable).
 - One file-static `std::atomic<bool> g_running{true}` (constant initialisation), one file-static
   `const char* g_line` and `ShutdownNotice g_notice`, written by `installStopHandlers` before the
   `signal()` calls. Plain globals, not atomics (S24's stated exception): every thread in every
@@ -230,11 +253,18 @@ void installStopHandlers(ShutdownNotice notice, const char* line, Sigpipe sigpip
   none — its threads start in `start()`, `ControllerService.cpp:203,208`). If a future change
   starts a thread before the call, these must become atomics.
 - The handler is one function with a `switch (g_notice)`; each case is today's body **statement
-  for statement**, including the non-async-signal-safe `std::cout << … << std::endl` and not
-  saving `errno` (parked: BLOAT-MAP defect 6; a `write(2)` would change line order in captured
-  logs). `::signal`, not `sigaction`: without `SA_RESTART` blocked `recv`/`accept`/`select`/
-  `usleep`/`waitpid` return `EINTR`; `SA_RESETHAND` makes a second SIGTERM fatal (gap 2 catches
-  it). No static object in the TU prints or works at load (§7.3). No identifier spelled `main`.
+  for statement** — `kPrintThenStop`: `if (g_line) std::cout << g_line << std::endl;` then
+  `g_running = false;`; `kStopThenPrint`: the same two in the other order — including the
+  non-async-signal-safe `std::cout << … << std::endl` and not saving `errno` (parked: BLOAT-MAP
+  defect 6; a `write(2)` would change line order in captured logs). The `if (g_line)` test is the
+  one statement no handler has today; it is true in every printing service and false only in
+  t7_bridge, whose handler prints nothing today — unobservable. `::signal`, not `sigaction`:
+  with BSD semantics `SA_RESTART` restarts the blocked `recv`/`accept`/`waitpid`; **`select`,
+  `usleep` and the `SO_RCVTIMEO`/`SO_SNDTIMEO` socket calls return `EINTR` regardless** of
+  `SA_RESTART` (research §0.2), so today's exposure is kept exactly (the loops already `continue`
+  on `select() <= 0` and the sleeps are 100 ms slices); dropping `SA_RESTART` would widen it to
+  `accept`/`recv`/`waitpid`, and `SA_RESETHAND` makes a second SIGTERM fatal (gap 2 catches it).
+  No static object in the TU prints or works at load (§7.3). No identifier spelled `main`.
 
 Per-service settings (the whole table is the contract; the call goes exactly where today's
 `signal()` lines are, §1.2, always before the service's first thread, even where that order
@@ -246,15 +276,42 @@ looks wrong):
 | stacklight | `(kPrintThenStop, "\n[StacklightService] Shutting down...", kDefault)` | 264-265, 33, 36-39 |
 | config_broadcast | `(kPrintThenStop, "\n[ConfigBroadcast] Shutting down...", kDefault)` | 498-499, 44, 46-49 |
 | ota | `(kPrintThenStop, "\n[OTAService] Shutting down...", kIgnore)` | 406-408, 43, 45-48 |
-| sequencer | `(kPrintThenStop, "\n[Sequencer] Shutting down...", kIgnore)` | 241-243, 46, 55-58 |
-| controller | `(kPrintThenStop, "\n[controller_service] Caught signal, shutting down…", kDefault)` | 490-491, 54, 56-59 |
-| t7_bridge | `(kSilent, nullptr, kIgnore)` | 343-345, 56, 83-85 |
+| sequencer | `(kPrintThenStop, "\n[Sequencer] Shutting down...", kIgnore)`; 243's trailing comment moves onto the call | 241-243, 46, 55-58 |
+| controller | `(kPrintThenStop, "\n[controller_service] Caught signal, shutting down…", kDefault)`; the 489 banner stays | 490-491, 54, 56-59 |
+| t7_bridge | `(kPrintThenStop, nullptr, kIgnore)` — prints nothing; 345's trailing comment moves onto the call | 343-345, 56, 83-85 |
 | calibration (WP9 cleanup) | `(kPrintThenStop, "\n[CalibrationService] Caught signal, shutting down...", kDefault)` | 656-657, 154, 459-462 |
-| daq_bridge (WP10 cleanup) | `(kStopThenPrint, "\n[DAQ Bridge] Shutting down...", kIgnore)` | 341-344, 106, 108-111 |
+| daq_bridge (WP10 cleanup) | `(kStopThenPrint, "\n[DAQ Bridge] Shutting down...", kIgnore)`; the full-line comment 343 stays above the call | 341-344, 106, 108-111 |
 
-Every read of the old flag becomes `fsw::service::running()` (a main may bind
-`auto& g_running = fsw::service::running();` at the top of `main` to keep the diff to the
-declaration; file-static functions and lambdas call `running()`).
+Trailing comments (S38, comments move with their code): sequencer 243 `// don't crash on broken
+TCP connections` and t7_bridge 345 `// a dropped Elodin socket must not kill the process` each
+become the trailing comment of the `installStopHandlers` call that replaces their statement —
+they say *why this service* ignores SIGPIPE, which the `kIgnore` argument alone does not, and the
+Parked SIGPIPE item leans on that. daq_bridge's 343 is a full line above 344 and stays above the
+call (WP10). clang-format will rewrap the call with its comment; that is the expected non-dimmed
+diff (D43(6)).
+
+**No read site changes** (D57). Every main keeps its reads byte-identical by binding the old
+name to the library's flag at namespace scope, where the deleted declaration stood:
+
+```cpp
+auto& g_running = fsw::service::running();          // six mains, inside their `namespace {`
+static auto& g_running = fsw::service::running();   // controller_main.cpp:54 is file-scope static
+```
+
+All seven WP8 mains spell the flag `g_running` (heartbeat 37, stacklight 33, config_broadcast 44,
+ota 43, sequencer 46, controller 54, t7_bridge 56); keep each main's own name — calibration's and
+daq_bridge's is `running` (154 / 106, the latter with external linkage) and WP9/WP10 bind that
+name instead. The reference binds, at the main's dynamic initialisation, to an atomic that is
+**constant-initialised** in `fsw_daq_lib` (`std::atomic<bool> g_running{true}`, a `constexpr`
+constructor), so DSO initialisation order cannot bite and the binding does no I/O — S26 holds, and
+the three harness executables that `#include` a main (§7.3) run the same binding at load with
+nothing printed. `fsw_daq_lib` is **`SHARED`** (`lib/CMakeLists.txt:45`): the one `running()`
+call goes through the PLT; thereafter each `g_running` read is an atomic load through the stored
+address, into the shared object's data — had the sites called `running()` instead, each read
+would be a PLT call. Either way unobservable, and nothing a golden can see. The controller keeps
+`static` so its symbol stays internal, as today; the other six are already inside an anonymous
+namespace. File-static functions and lambdas that read `g_running` (heartbeat 106, t7 96/172/
+192/268, sequencer 203, controller 82/171, ota 311) therefore change nothing either.
 
 ### 2.2 `lib/include/net/TcpCommandServer.hpp` + `lib/src/net/TcpCommandServer.cpp` (pass 2)
 
@@ -272,9 +329,13 @@ void serveTcpClients(int listen_fd, const std::atomic<bool>& running,
 }
 ```
 
-- **Body:** `Conn` and `reap_finished` move **verbatim** from `sequencer_main.cpp:284-301`; the
-  loop and the shutdown/join tail from 303-349. The controller's copy (152-214) is deleted. The
-  10 ms select timeout is a constant inside (both users; D17d).
+- **Body:** `Conn` and `reap_finished` move **verbatim** from `sequencer_main.cpp:284-301`, with
+  their leading comment 282-283 (S38); the loop and the shutdown/join tail from 303-349. The
+  controller's copy (151-214, its comment 151 included) is deleted. Deleting the `Conn`/
+  `reap_finished` block from both mains is not optional: a `Conn` struct and a `reap_finished`
+  lambda left behind with no loop to use them are `-Wunused-variable` on the lambda, and
+  `baseline_warnings.txt` (10 lines) admits no new line. The 10 ms select timeout is a constant
+  inside (both users; D17d).
 - **Ownership:** `listen_fd` is opened and closed by the main as today (sequencer 252-276, `close`
   351; controller 128-147, `close` 216); the helper never closes it. The `Conn` vector lives on
   the calling thread's stack. `on_client` runs on the client thread and closes its client fd
@@ -292,55 +353,25 @@ void serveTcpClients(int listen_fd, const std::atomic<bool>& running,
   the prefix at the call site plus `"client limit ("` in the helper; the sorted multiset of
   literals is not identical and the commit says so. Bytes on the wire and in the log are. The
   helper keeps the statement sequence and with it the D-FD race (§8).
-- Adoption: sequencer 303-349 → `serveTcpClients(listen_fd, fsw::service::running(), {kMaxClients,
-  "[Sequencer] "}, [&svc](int fd){ handleClient(fd, svc); })`; 351-353 unchanged. Controller
-  171-214 → `serveTcpClients(listen_fd, fsw::service::running(), {kMaxControlClients,
-  "[ControllerService] ⚠️  "}, [svc](int fd){ handleControlClient(fd, svc); })`; 216 unchanged.
-  `kMaxClients` (51) and `kMaxControlClients` (72) stay named constants in their mains (§5).
+- Adoption: sequencer 282-349 → `serveTcpClients(listen_fd, g_running, {kMaxClients,
+  "[Sequencer] "}, [&svc](int fd){ handleClient(fd, svc); })`; 252-280 (listener and the two ready
+  lines) and 351-353 unchanged. Controller 151-214 → `serveTcpClients(listen_fd, g_running,
+  {kMaxControlClients, "[ControllerService] ⚠️  "}, [svc](int fd){ handleControlClient(fd, svc);
+  })`; 128-149 and 216 unchanged. `g_running` is the main's reference to
+  `fsw::service::running()` (§2.1), so the argument is the library's atomic. `kMaxClients` (51)
+  and `kMaxControlClients` (72) stay named constants in their mains (§5).
 
-### 2.3 `lib/include/elodin/SequencerStateFollower.hpp` + `lib/src/elodin/SequencerStateFollower.cpp` (pass 2)
+### 2.3 The Elodin followers — not shared (D57)
 
-```cpp
-namespace fsw::elodin {
-struct SequencerStateFollowerText {
-    const char* subscribe_failed;    // cerr, whole line
-    const char* connected;           // cout, whole line
-    const char* read_failed_prefix;  // cerr: prefix << last_error() << ") — reconnecting"; nullptr = silent
-};
-/** heartbeat_service_main.cpp:103-152 statement for statement: connect (sleep_for(2 s) on
- *  failure) → subscribe_tables({kTableSequencerState}) (failure: subscribe_failed, disconnect,
- *  retry at once) → set_recv_timeout_ms(recv_timeout_ms) → connected → read_packet into a
- *  4096-byte stack buffer; n < 0 → optional log, disconnect; n < 8 → continue; buf[5]/buf[6] ==
- *  0x50/0x00 and n >= 17 → on_state(buf[16]). Runs until `running` is false. */
-void follow_sequencer_state(const std::string& host, uint16_t port,
-                            const std::atomic<bool>& running, int recv_timeout_ms,
-                            const SequencerStateFollowerText& text,
-                            const std::function<void(uint8_t)>& on_state);
-}
-```
-
-- **Call form (decided): each main's file-static wrapper.** `elodinThread(std::string host,
-  uint16_t port)` stays in heartbeat (103) and stacklight (99) with its body replaced by one call,
-  so the `std::thread` lines 271 and 295 are **byte-identical**. The alternative is
-  `std::thread(follow_sequencer_state, host, port, std::ref(fsw::service::running()), …)`:
-  `std::thread` decay-copies its arguments and `std::atomic<bool>` is non-copyable, so a bare
-  `running()` does not compile (ruling 6). Not chosen: it edits 271/295.
-- heartbeat: `recv_timeout_ms = kElodinRecvTimeoutMs` (3000, stays at 41 — the lifecycle bounds
-  cite it by name), text = the literals at 113-115, 122-123, 135-136,
-  `on_state = [](uint8_t s){ g_engine_state.store(stateToEngine(s)); }`. stacklight:
-  `kStacklightRecvTimeoutMs` (500, stays at 97), texts 109-110, 116-117, `nullptr`,
-  `on_state = [](uint8_t s){ g_seq_state.store(s); }`. Joined where today (296, 344-345).
-- **The nullptr text field is data, not a knob** (verdict §3): a literal-or-nothing per-service
-  setting is the explicit setting S12 and D17's boundary clause require, the shape of
-  `StopSignals`' `line` and of D45's `send_msg`. `on_state` is a callback type by D43(3): both
-  users agree observably. **Must not know `fsw::service`** (takes the caller's atomic), what a
-  state means (`on_state`), or the mains' sockets and send loops.
-- **Back-off is a latency fact, not a tunable:** the `sleep_for(2 s)` at heartbeat 109 /
-  stacklight 105 is **uninterruptible** — not sliced on `running`. With elodin-db down, each
-  follower notices a stop only between connect attempts, so the exit bound is ≈ 2 s, not
-  `recv_timeout_ms`. `lifecycle/golden/shutdown.txt:7` records stacklight `[0, 1.2] s` *before*
-  elodin-db is killed; the bound holds only with the db up (team question 5). The helper keeps the
-  unsliced sleep.
+Struck by the simplicity round; the section number is kept so citations hold. The decided text
+(`follow_sequencer_state`, `SequencerStateFollowerText`, the file-static wrapper call form, the
+back-off fact) is in `debates/WP8/history.md` and the verdict; the reason it is out is in §0
+Rejected. What WP8 leaves exactly as it is: heartbeat `elodinThread` 103-152 and stacklight 99-136,
+`kElodinRecvTimeoutMs` (41) and `kStacklightRecvTimeoutMs` (97), the `std::thread` lines 271 and
+295, the joins 296 and 344-345, and the uninterruptible `sleep_for(2 s)` at heartbeat 109 /
+stacklight 105 (with elodin-db down a stop is noticed only between connect attempts, so the exit
+bound is ≈ 2 s, not the receive timeout; `lifecycle/golden/shutdown.txt:7` records stacklight
+`[0, 1.2] s` with the db up — team question 5 stands, now as a fact about the mains).
 
 ## 3. Ownership and data flow
 
@@ -348,8 +379,7 @@ void follow_sequencer_state(const std::string& host, uint16_t port,
 |---|---|---|---|
 | `StopSignals` | the process stop flag, the notice settings | written by the signal handler (any thread the kernel picks), read by every loop | `std::atomic<bool>` (seq_cst, as today); settings written once before `signal()` |
 | `serveTcpClients` | the `Conn` vector (calling thread's stack) and the client threads; **not** `listen_fd` | the calling thread (sequencer: main; controller: the detached control thread) + one per client | `Conn::done` atomic; the vector is touched only by the calling thread |
-| `follow_sequencer_state` | its own `ElodinClient` (on its stack) | the thread the main's wrapper runs on | publishes through the caller's `on_state`, which stores into the main's atomic |
-| listener fds, UDP sockets, destinations, config paths | **the mains, unchanged** | — | — |
+| listener fds, UDP sockets, destinations, config paths, argv loops, the two Elodin followers and their `ElodinClient`s | **the mains, unchanged** | — | — |
 
 No new mutex. No lock is held across any call into shared code. The command-path locks inside
 `SequencerService` and `ControllerService` are untouched (WP10 §1, incl. C4-1). Lifetimes that
@@ -361,14 +391,14 @@ must not move: sequencer's client threads are joined before `svc` is destroyed a
 
 | failure | today | after WP8 |
 |---|---|---|
-| UDP `socket()`, bad IP, NIC resolve, `bindToDaqInterface` (heartbeat, stacklight, config_broadcast, AbortBroadcaster) | per-service text and exit code (§1.5) | **unchanged** (not shared); the two ignored binds gain a `// Kept: D-BIND` tag in pass 2 |
+| UDP `socket()`, bad IP, NIC resolve, `bindToDaqInterface` (heartbeat, stacklight, config_broadcast, AbortBroadcaster) | per-service text and exit code (§1.5) | **unchanged** (not shared); the two ignored binds gain a `// Kept: D-BIND` tag in pass 1 |
 | TCP socket/bind/listen (sequencer, ota); socket/bind (controller: logged with `strerror`, control thread returns, service runs on) | logged, `close`, exit 1 / D-CTL | **unchanged** (listeners stay in the mains) |
-| TCP listen (controller) | ignored (147) | unchanged; `// Kept: D-CTL` tag in pass 2 |
+| TCP listen (controller) | ignored (147) | unchanged; `// Kept: D-CTL` tag in pass 1 |
 | 65th concurrent client | busy line + log, `close` | inside `serveTcpClients`, same bytes and log |
 | oversized sequencer line, controller junk, ota junk | per-service reader (§1.6) | unchanged |
-| Elodin subscribe refused / read error (heartbeat, stacklight) | log, `disconnect`, retry at once / heartbeat logs, stacklight silent, both disconnect | inside `follow_sequencer_state`: same / `read_failed_prefix` set or `nullptr` |
+| Elodin subscribe refused / read error (heartbeat, stacklight) | log, `disconnect`, retry at once / heartbeat logs, stacklight silent, both disconnect | **unchanged** (the followers stay in their mains, D57) |
 | bad TOML / missing file | `config::load` logs and returns defaults (C2-4); config_broadcast SIGABRT (C2-12) | no shared code catches or checks anything around `config::load` |
-| bad CLI value | `atoi` → 0; t7 `exit(2)`; daq_bridge `stoi` throws → abort | unchanged (`parseArgs` is file-static, per service) |
+| bad CLI value | `atoi` → 0; t7 `exit(2)`; daq_bridge `stoi` throws → abort | **unchanged** (the argv loops are not touched, D57) |
 
 Exit codes that must not change: 0 on clean stop and on `--help` everywhere; 1 for the startup
 failures above; t7_bridge 2 (bad argv, T7 config errors), 3 (no LJM without `--fake`), 0 (no T7);
@@ -378,61 +408,60 @@ any service whose SIGPIPE is default and is hit by one: −13.
 ## 5. Naming
 
 - Namespaces follow the tree: `fsw::service` (new, process-level, camelCase with
-  `installStopHandlers`), `fsw::net` (next to `DaqInterface`, camelCase), `fsw::elodin`
-  (snake_case: `follow_sequencer_state`; the type `SequencerStateFollowerText` is PascalCase, S3).
+  `installStopHandlers`), `fsw::net` (next to `DaqInterface`, camelCase). WP8 adds nothing to
+  `fsw::elodin` (D57; D43(2)'s snake_case ruling for it stands for WP10's `register_all_tables`).
 - `installStopHandlers`, `running()`: what they do to the process. Not "ServiceMain".
   `TcpCommandServer.hpp` holds `serveTcpClients`; not "LineCommandServer" (line reading stays in
-  the mains). `follow_sequencer_state`: two callers follow one table; not "SubscriberLoop".
+  the mains).
 - Per-service constants keep their names and stay in their mains (`kElodinRecvTimeoutMs`,
-  `kStacklightRecvTimeoutMs`, `kMaxClients`, `kMaxLineBytes`, `kMaxControlClients`): the lifecycle
-  and sequencer READMEs cite them by name. Log tags are not renamed (S16): tests grep them.
+  `kStacklightRecvTimeoutMs`, `kMaxClients`, `kMaxLineBytes`, `kMaxControlClients`) because
+  **nothing in WP8 moves them**: `serveTcpClients` takes `max_clients` as a value, and the
+  followers are untouched. What cites them is narrower than "the READMEs": only
+  `test/characterization/lifecycle/README.md:26` and `lifecycle/golden/shutdown.txt:7,27` (with
+  the `[0, 4] s` rows 34-39 and `lifecycle.py:1381,1388,1535` that print them) name
+  `kStacklightRecvTimeoutMs` and `kElodinRecvTimeoutMs`, as the *reason* for a bound, not as a
+  symbol under test; **nothing under `test/` names `kMaxClients`, `kMaxLineBytes` or
+  `kMaxControlClients`** (they appear only in `docs/`). Renaming any of them would break no
+  test; they keep their names because a move-only pass renames nothing (S16). Log tags are not
+  renamed (S16): tests grep them.
 
 ## 6. Passes
 
 Pass 1 adopts the one piece that is behaviour-identical by construction and is the prerequisite
-of WP9 and WP10. Pass 2 adopts the two statement-identical moves and does the cleanup. One commit
-per (helper, service) pair, so a red golden names its cause (D12e). Run the guards in §7 after
-each commit (under the stack lock, subsets per D23); format only touched files with the pinned
-clang-format 19.1.7; clang-format's include regrouping is an expected non-dimmed diff (D43(6)).
+of WP9 and WP10, and places the three `// Kept:` tags (comment lines, no gate). Pass 2 adopts the
+one statement-identical move, `serveTcpClients`. One commit per (helper, service) pair, so a red
+golden names its cause (D12e). Run the guards in §7 after each commit (under the stack lock,
+subsets per D23); format only touched files with the pinned clang-format 19.1.7; clang-format's
+include regrouping and rewraps are an expected non-dimmed diff (D43(6)).
 
-### 6.1 Pass 1 — `StopSignals` (one queue item; gaps 1-3 merged first)
+### 6.1 Pass 1 — `StopSignals` + tags (one queue item; gaps 1-3 merged first)
+
+In every main the edit is the same four things and nothing else: add
+`#include "service/StopSignals.hpp"`; replace the flag's declaration with the namespace-scope
+reference of §2.1 (same name, same place, `static` where it was `static`); delete the handler;
+replace the `signal()` lines with the one `installStopHandlers` call from §2.1's table. **No read
+site is touched** (D57): the lists below are what stays byte-identical, checked with `git diff`.
 
 1. `lib/src/service/StopSignals.cpp` + header; append to `FSW_SOURCES`. Build.
-2. t7_bridge: delete `g_running` (56) and `on_signal` (83-85); replace 343-345 with
-   `fsw::service::installStopHandlers(kSilent, nullptr, kIgnore)`; every `g_running` read (96,
-   172, 192, 268) → `fsw::service::running()`. Guard: `t7_integration` (CI, D34) + `t7` ctest.
-3. heartbeat: delete 37, 43-46; 228-229 → its call (§2.1 table); reads at 106, 276, 291.
-4. stacklight: delete 33, 36-39; 264-265 → its call; reads at 102, 305.
-5. config_broadcast: delete 44, 46-49; 498-499 → its call; reads at 545, 600.
-6. ota: delete 43, 45-48; 406-408 → its call with `kIgnore`; reads at 311, 439.
-7. sequencer: delete 46, 55-58; 241-243 → its call with `kIgnore`; reads at 203, 303.
-8. controller: delete 54, 56-59; 490-491 → its call (`…` is U+2026, copy the bytes); reads at
-   82, 171, 507.
-
-### 6.2 Pass 2 — `serveTcpClients`, `follow_sequencer_state`, `parseArgs`, tags (one queue item; gaps 4, 5, 7 merged first as one D32 batch, gap 7 after C1)
-
-Commit order — helper TU → each (helper, service) adoption → `parseArgs` → tags — so a bisect
-names its commit and an ejected helper is a contiguous block:
-
-1. `lib/src/net/TcpCommandServer.cpp` + header; append to `FSW_SOURCES`. `Conn` and
-   `reap_finished` **verbatim** from `sequencer_main.cpp:284-301`.
-2. sequencer 303-349 → `serveTcpClients` (§2.2). 252-276 and 351-353 unchanged.
-3. controller 152-214 → `serveTcpClients`; 128-149 and 216 unchanged. The ready line 148-149
-   stays after `listen()` (whose failure is ignored, so it prints whenever bind succeeded).
-   Commit message lists the S15 literal split (§2.2).
-4. `lib/src/elodin/SequencerStateFollower.cpp` + header; append.
-5. heartbeat: `elodinThread` body 104-151 → one call to `follow_sequencer_state` with §2.3's
-   arguments; 271 byte-identical; `kElodinRecvTimeoutMs` stays at 41.
-6. stacklight: `elodinThread` body 100-135 likewise; 295 byte-identical;
-   `kStacklightRecvTimeoutMs` stays at 97.
-7. In each of the seven mains, move the argv loop into a file-static
-   `parseArgs(int, char**, Options&)` returning `std::optional<int>` (exit code for `--help`).
-   Help text and flag order byte-identical (gap 4 pins them). Not daq_bridge or calibration.
-   t7_bridge's `next` lambda (282-288) moves **verbatim**, `std::exit(2)` included: it is not
-   converted to a returned exit code (an `exit` from inside the loop skips destructors and
-   flushes differently from a `return` out of `main`).
-8. Tags, S12 long form (D46: `// Kept: <id> (D17) — <class>/<phase>: <rule violated>; loud
-   half: <surface>`), comment lines only:
+2. t7_bridge: 56 → `auto& g_running = fsw::service::running();`; delete `on_signal` (83-85);
+   343-345 → `fsw::service::installStopHandlers(fsw::service::ShutdownNotice::kPrintThenStop,
+   nullptr, fsw::service::Sigpipe::kIgnore);` with 345's trailing comment on the call. Reads at
+   96, 172, 192, 268 unchanged. Guard: `t7_integration` (CI, D34) + `t7` ctest.
+3. heartbeat: 37 → the reference; delete 43-46; 228-229 → its call (§2.1 table). Reads at 106,
+   276, 291 unchanged.
+4. stacklight: 33 → the reference; delete 36-39; 264-265 → its call. Reads at 102, 305 unchanged.
+   Run `config/check.sh cpp` (§7.3).
+5. config_broadcast: 44 → the reference; delete 46-49; 498-499 → its call. Reads at 545, 600
+   unchanged. Run `config/check.sh cpp` (§7.3).
+6. ota: 43 → the reference; delete 45-48; 406-408 → its call with `kIgnore`. Reads at 311, 439
+   unchanged.
+7. sequencer: 46 → the reference; delete 55-58; 241-243 → its call with `kIgnore`, 243's trailing
+   comment on the call. Reads at 203, 303 unchanged.
+8. controller: 54 → `static auto& g_running = fsw::service::running();`; delete 56-59; 490-491 →
+   its call (`…` is U+2026, copy the bytes); the `// ── Install signal handlers ──` banner 489
+   stays (S38). Reads at 82, 171, 507 unchanged.
+9. Tags, S12 long form (D46: `// Kept: <id> (D17) — <class>/<phase>: <rule violated>; loud
+   half: <surface>`), comment lines only, one commit:
    - `controller_main.cpp:147`, above `::listen(listen_fd, 4);` —
      `// Kept: D-CTL (D17) — control/startup: S14, listen() status dropped, the service runs on
      with no TCP fire gate; loud half: none (the ready line 148-149 prints regardless; gap 6)`.
@@ -441,13 +470,34 @@ names its commit and an ejected helper is a contiguous block:
    - `heartbeat_service_main.cpp:252` and `config_broadcast_service_main.cpp:526`, above the
      `bindToDaqInterface` call — `// Kept: D-BIND (D17) — observation/startup: S14,
      bindToDaqInterface's bool dropped; loud half: its own cerr line (DaqInterface.cpp:198, 202)`.
-9. Leave stacklight's `trim`/`getTomlValue` (141-175) where they are, with external linkage
-   (§7.3). Do not touch the B4 encoders, the per-service constants, the precedence code, or the
-   `buf[5]/buf[6]` checks outside the follower.
+     The config_broadcast tag is the third commit that touches a `#include`d main; run
+     `config/check.sh cpp` again.
 
-**Fallback (verdict §2).** Pass 2 ships whichever of `serveTcpClients` / `follow_sequencer_state`
-has its gap merged green; a piece whose gap is ejected (D32) stays in its mains, with a ledger
-entry; if both, pass 2 is `parseArgs` + tags. Pass 1 never waits on gaps 5-7.
+### 6.2 Pass 2 — `serveTcpClients` alone (one queue item; gap 5 merged green first)
+
+Commit order — helper TU → sequencer → controller — so a bisect names its commit and the helper is
+a contiguous block:
+
+1. `lib/src/net/TcpCommandServer.cpp` + header; append to `FSW_SOURCES`. `Conn` and
+   `reap_finished` **verbatim** from `sequencer_main.cpp:284-301`, with the comment 282-283 as
+   `Conn`'s leading comment (S38). Build.
+2. sequencer 282-349 → `serveTcpClients` (§2.2): the comment and the `Conn`/`reap_finished`
+   block 282-301 go with the loop (left behind they are `-Wunused-variable`, and
+   `baseline_warnings.txt` admits no new line); 252-280 (listener, the `Listening on port` line
+   and the `Commands:` line) and 351-353 unchanged.
+3. controller 151-214 → `serveTcpClients`; the comment 151 is dropped with the duplicate
+   definition it introduced (S38: the surviving copy is the sequencer's, with its own comment);
+   128-149 and 216 unchanged. The ready line 148-149 stays after `listen()` (whose failure is
+   ignored, so it prints whenever bind succeeded). Commit message lists the S15 literal split
+   (§2.2).
+
+Do not touch, in either pass: stacklight's `trim`/`getTomlValue` (141-175, external linkage,
+§7.3); the B4 encoders; the per-service constants; the precedence code; the argv loops; the two
+followers and their `buf[5]/buf[6]` checks.
+
+**Fallback (verdict §2, re-cut by D57).** Pass 2 has one piece and one gate: if gap 5 is not
+merged green, pass 2 is **not queued** and the ledger records that `serveTcpClients` stays in its
+two mains. There is no residual pass 2 (the tags are pass 1's). Pass 1 never waits on gap 5.
 
 ### 6.3 What must not change (checked by §7; this list is the acceptance test)
 
@@ -489,17 +539,18 @@ entry; if both, pass 2 is `parseArgs` + tags. Pass 1 never waits on gaps 5-7.
 | stop handlers: exit code and latency on SIGTERM/SIGINT; final log lines | `lifecycle/golden/shutdown.txt` | heartbeat, stacklight, config_broadcast, ota, calibration, daq_bridge: exit 0 within bounds citing `kElodinRecvTimeoutMs`, `kStacklightRecvTimeoutMs`, ota's 1 s select, 100 ms slices; no packets after the signal; `[HeartbeatService] Stopped.`, `[DAQ Bridge] Shutdown complete`, `[Cal] Stopped.` |
 | UDP setup + bytes | `packets/golden/service_{heartbeat,stacklight,config_broadcast,abort,daq_bridge}.txt`; `lifecycle/golden/startup.txt` | black box |
 | TCP servers | `sequencer/golden/*` (every reply, CRLF, two commands per write, oversize close), `sequencer/golden/controller__*.txt`, `lifecycle/golden/ota.txt`, `shutdown.txt` (`command port still accepting: False`) | black box |
-| followers | `packets/golden/service_{heartbeat,stacklight}.txt` (subscribe bytes, state→output map), `startup.txt` | black box with a stand-in elodin-db |
+| followers (**not touched by WP8**, D57) | `packets/golden/service_{heartbeat,stacklight}.txt` (subscribe bytes, state→output map), `startup.txt` | black box with a stand-in elodin-db; listed so a red here is known not to be WP8's |
 | config loading | `config/golden/bin/{daq_bridge,stacklight,config_broadcast}`; `config/golden/cpp/*` (§7.3); sequencer N6 load-time lines | black box + D18 white box |
 | t7_bridge | ctest `t7_integration` (D31 list; D34: CI only), `t7` | ctest |
 | everything | TSan CI job; integration (167 checks) | — |
 
 ### 7.2 Gaps (proposed cases; design only, none written here)
 
-Classification (verdict, ratified under D39): **before pass 1** — 1, 2, 3 (`lifecycle/`);
-**before pass 2, one D32 batch** — 4 (`config/`), 5 (`sequencer/`), 7 (`packets/`, after C1);
-**worth writing, not gating** — 6 (the only D-CTL characterization) and 8; **nice-to-have** — 9.
-Numbers are stable: DESIGN-WP10 and the research cite them.
+Classification (verdict, ratified under D39; re-cut by D57): **before pass 1** — 1, 2, 3
+(`lifecycle/`); **before pass 2** — 5 (`sequencer/`) alone, the whole D32 batch for pass 2;
+**worth writing, not gating** — 4 (`config/`), 6 (the only D-CTL characterization), 7
+(`packets/`) and 8; **nice-to-have** — 9. Numbers are stable: DESIGN-WP10 and the research cite
+them.
 
 1. **[before pass 1] SIGPIPE disposition is not covered anywhere.** Case for `lifecycle/`: start
    each of the nine services alone (loopback config), `kill -PIPE <pid>`, record `alive after 1 s`
@@ -515,8 +566,9 @@ Numbers are stable: DESIGN-WP10 and the research cite them.
    daq_bridge's flag-then-print order. Add, per service, the handler's exact line (bytes, incl.
    the leading newline and controller's U+2026) and its position relative to the service's final
    line to `shutdown.txt`.
-4. **[before pass 2] `--help` text and exit code** of all nine binaries, and t7_bridge's exit 2 on
-   an unknown flag and on a missing value: a `config/golden/bin/help/` golden (stdout, exit code).
+4. **[worth writing, not gating] `--help` text and exit code** of all nine binaries, and
+   t7_bridge's exit 2 on an unknown flag and on a missing value: a `config/golden/bin/help/`
+   golden (stdout, exit code). Not gating since D57: WP8 no longer touches an argv loop.
 5. **[before pass 2] `ERR:too many connections`**: no session opens 65 connections. Add to
    `sequencer/` for both ports, :9998 and :9999 (hold 64 idle connections, the 65th gets the busy
    bytes; the 64 then close; a 66th gets a normal reply). Bounded by `SO_RCVTIMEO` 5 s; the
@@ -529,13 +581,31 @@ Numbers are stable: DESIGN-WP10 and the research cite them.
    gate unreachable by TCP (D-CTL's only characterization). Sequencer with :9998 pre-bound:
    `[Sequencer] bind() failed on port N`, exit 1. ota likewise. Not gating: WP8 no longer moves
    these ladders (team question 1 asks who writes it).
-7. **[before pass 2, after C1] Follower reconnect and subscribe-refused**: no case restarts
-   elodin-db and checks that heartbeat/stacklight re-subscribe. Add to `packets/` with the
-   stand-in db: drop the connection, expect a second identical subscribe request and resumed
-   state tracking. Also the subscribe-refused path (stand-in replies with an error).
+7. **[worth writing, not gating] Follower reconnect and subscribe-refused**: no case drops a
+   follower's connection and checks that heartbeat/stacklight re-subscribe. Not gating since D57
+   (the followers stay in their mains). **Reconnect half**, as before: with the stand-in db
+   (`packets/bb.py` `FakeElodin`, 278-385), drop the connection, expect a second identical
+   subscribe request (`len=6 ty=0 id=[0x11,0x0d] payload 50 00`) and resumed state tracking.
+   `FakeElodin` cannot do this today: its only teardown is `close()`, which shuts every accepted
+   socket and the listener; the case needs a **per-connection close** (shutdown + close one
+   accepted socket, let its `_read` thread exit, keep the listener up) — add that to `bb.py`
+   first. **Refused half, re-specified so it can fail.** The old text ("stand-in replies with an
+   error") tests nothing: `subscribe_tables` (`ElodinClient.cpp:95-103` → `subscribe_table`
+   105-118 → `send_msg` 255-285) returns false only when the socket is not connected, `write_all`
+   fails, or it throws; an ErrorResponse from the db is never read on this path, so the stand-in's
+   reply cannot reach the `Failed to subscribe` branch. The branch is reached only if the
+   **subscribe write itself fails**: specify "the stand-in closes the accepted socket before the
+   follower's first write". Know its limit before writing it: a plain `close()` sends FIN, and
+   the first `write()` after a FIN normally succeeds (the RST comes back after the data), which
+   lands in the `read failed` branch instead; forcing the write to fail needs an RST on the wire
+   (`SO_LINGER {1, 0}` then `close()`), and even that races the follower's connect → write on
+   loopback. If the author cannot make it deterministic, **delete that half** rather than keep a
+   case that cannot go red; the reconnect half covers the retry-at-once path's observable (a
+   second subscribe) either way.
 8. **[worth writing, not gating] Config path fallback** (heartbeat, stacklight, config_broadcast,
    controller) has no case where `--config` names a missing file and a fallback exists. Add to
-   `config/golden/bin/`. Not gating: the blocks stay in their mains.
+   `config/golden/bin/`. Not gating: the blocks stay in their mains — and since D57 the argv loops
+   that feed them stay too, so WP8 touches nothing between `argv` and `config::load`.
 9. **[nice-to-have] ota concurrency**: a second client during a flash, and SIGTERM during a flash
    (detached threads: process exits without finishing). Add to `lifecycle/ota`.
 
@@ -550,17 +620,23 @@ daq_bridge's board-map helpers (WP10's file) and config_broadcast's `parseVentAb
 **everything the process printed during `dump()`**.
 
 WP8 needs **no harness edit** if it keeps these rules, which make the three `golden/cpp/` dirs
-byte-identical by construction: do not move, rename or change the linkage of any symbol above
-(WP8 touches only stacklight's and config_broadcast's `main`, flag, handler and — in stacklight —
-`elodinThread`'s body); every header a WP8 main newly includes lives under `lib/include` with its
-source in `fsw_daq_lib` (nothing new on `_CFG_INCLUDES` or the link line); no identifier spelled
-`main` in any new header; no static object in a new TU prints or reads a file at load (S26);
-`follow_sequencer_state`, `serveTcpClients` and the `StopSignals` TU are linked but never called
-by the harness and must not register anything at load. If a change nevertheless needs the harness
+byte-identical by construction: do not move, rename or change the linkage of any symbol above —
+and since D57 this is true by inspection: in stacklight and config_broadcast WP8 touches only the
+flag declaration (33 / 44, now the reference), the handler (36-39 / 46-49), the two `signal()`
+lines (264-265 / 498-499), one `#include`, and the D-BIND tag comment at config_broadcast 526;
+`main`'s body, `elodinThread`, `trim`, `getTomlValue`, `parseVentAbortFromCsv` and `buildPackets`
+are not edited. Every header a WP8 main newly includes lives under `lib/include` with its source
+in `fsw_daq_lib` (nothing new on `_CFG_INCLUDES` or the link line); no identifier spelled `main`
+in any new header; no static object in a new TU prints or reads a file at load (S26); the
+namespace-scope `g_running` reference (§2.1) also runs its dynamic initialisation inside the three
+harness executables — one call into `fsw_daq_lib` returning a constant-initialised atomic, no I/O,
+nothing printed; `serveTcpClients` and the `StopSignals` TU are linked but never called by the
+harness and must not register anything at load. If a change nevertheless needs the harness
 touched, D18 applies (those two files only, goldens byte-identical, mutations re-run, orchestrator
 reviews). Run `bash test/characterization/config/check.sh cpp <bin dirs>` (ctest
 `characterization_config_cpp`, no lock) after every commit that touches stacklight or
-config_broadcast, and `config/run.sh` (bin half, under the lock) once per such commit.
+config_broadcast (pass 1 steps 4, 5 and 9), and `config/run.sh` (bin half, under the lock) once
+per such commit.
 
 ## 8. Risks
 
@@ -578,9 +654,11 @@ config_broadcast, and `config/run.sh` (bin half, under the lock) once per such c
 - **Timing ctests (D31, D34): exposure is `t7_integration` only** (pass 1 step 2; CI-judged).
   `sequencer_main.cpp` and `controller_main.cpp` build only their binaries
   (`services/CMakeLists.txt:15,36`), `AbortBroadcaster.cpp` is untouched, and heartbeat/stacklight
-  are in no timing ctest — so pass 2 has no timing-ctest exposure. What pass 2 does touch: the sequencer
-  characterization's republish bounds (`[0.8, 1.5]×`, judged on the Linux leg and CI) and the
-  config `golden/cpp/` via the stacklight `#include` (§7.3).
+  are in no timing ctest — so pass 2 has no timing-ctest exposure. What each pass does touch
+  beyond the goldens that gate it: pass 1, the config `golden/cpp/` via the stacklight and
+  config_broadcast `#include`s (§7.3; the flag, handler and signal lines, and the D-BIND tag);
+  pass 2, the sequencer characterization's republish bounds (`[0.8, 1.5]×`, judged on the Linux
+  leg and CI) — pass 2 edits no `#include`d main.
 - **Lifecycle shutdown bounds** cite the mains' constants by name (`kElodinRecvTimeoutMs` 3000 →
   heartbeat's `[0, 3.6] s`, `shutdown.txt:27`); keep the names and the constants in the mains.
 - **D-FD, fix shape (team note, verdict §3).** A `closed` flag only narrows the window: flag read
@@ -594,9 +672,11 @@ config_broadcast, and `config/run.sh` (bin half, under the lock) once per such c
 
 Still open from the review: SIGPIPE is the team's decision (LEDGER Parked) — until then §2.1's
 column is frozen; daq_bridge's `std::stoi(argv[3])` abort on junk and t7_bridge's
-usage-on-unknown-flag stay per service — confirm nobody wants them in a shared parser later.
+usage-on-unknown-flag stay per service — confirm nobody wants them in a shared parser later (D57
+left every argv loop where it is, so this is now purely a question for a later package).
 
-Remaining team questions (verdict §6, verbatim):
+Remaining team questions (verdict §6, verbatim; after D57, 4 and 5 are about the followers in
+their mains and no longer about a WP8 helper):
 
 1. Who writes gap 6, the only D-CTL characterization, now that no WP owes it?
 2. Add research §1's second-SIGTERM case (catches `SA_RESETHAND`) to gap 2?
