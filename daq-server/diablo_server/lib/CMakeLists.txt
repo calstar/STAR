@@ -39,6 +39,8 @@ set(FSW_SOURCES
     src/control/ControllerLUT.cpp
     src/control/RobustDDPController.cpp
     src/control/ControllerService.cpp
+    src/control/ControllerService_pwm.cpp
+    src/control/ControllerService_elodin.cpp
     src/service/StopSignals.cpp
     src/net/TcpCommandServer.cpp
 )
