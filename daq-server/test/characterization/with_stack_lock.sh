@@ -52,12 +52,16 @@ if [ "${DAQ_STACK_LOCK_PRIORITY:-}" = 1 ]; then
   touch "$PRIO_DIR/$$"
   trap 'rm -f "$PRIO_DIR/$$"' EXIT INT TERM
 fi
+# A pid is alive when it exists and is not a zombie: kill -0 succeeds on a zombie (a holder whose
+# shell was killed and never reaped it) on macOS and Linux alike, so a dead owner would hold the
+# lock until something reaped it (LEDGER D98: a guard, not a diagnosed cause).
+alive() { kill -0 "$1" 2>/dev/null && [[ "$(ps -o stat= -p "$1" 2>/dev/null)" != Z* ]]; }
 priority_waiting() {
   [ "${DAQ_STACK_LOCK_PRIORITY:-}" = 1 ] && return 1
   local t
   for t in "$PRIO_DIR"/*; do
     [ -e "$t" ] || continue
-    if kill -0 "$(basename "$t")" 2>/dev/null; then return 0; else rm -f "$t"; fi
+    if alive "$(basename "$t")"; then return 0; else rm -f "$t"; fi
   done
   return 1
 }
@@ -66,7 +70,7 @@ deadline=$((SECONDS + WAIT_S))
 announced=0
 while priority_waiting || ! mkdir "$LOCK_DIR" 2>/dev/null; do
   owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-  if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+  if [ -n "$owner" ] && ! alive "$owner"; then
     echo "with_stack_lock: taking over stale lock from pid $owner" >&2
     rm -rf "$LOCK_DIR"
     continue
