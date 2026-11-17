@@ -21,7 +21,7 @@
 #if CHAR_SERVICE_STACKLIGHT
 #include "../../../diablo_server/services/stacklight/stacklight_service_main.cpp"
 #elif CHAR_SERVICE_DAQ_BRIDGE
-#include "../../../diablo_server/daq_bridge/daq_bridge_main.cpp"
+#include "../../../diablo_server/daq_bridge/BoardMap.hpp"
 #elif CHAR_SERVICE_CONFIG_BROADCAST
 #include "../../../diablo_server/services/config_broadcast/config_broadcast_service_main.cpp"
 #else
