@@ -47,6 +47,7 @@ import { handleHistoryRequest } from './api/history.js';
 import { handleGuiConfigRequest } from './api/gui-config.js';
 import { handleBoardLogsRequest } from './api/board-logs.js';
 import { handleDebugRequest } from './api/debug.js';
+import { handleCalibrationRequest } from './api/calibration.js';
 
 /**
  * Create an HTTP request handler for all /api/* routes.
@@ -86,73 +87,8 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
       if (await handleGuiConfigRequest(req, res, url, opts)) return true;
       if (await handleBoardLogsRequest(req, res, url, opts)) return true;
       if (await handleDebugRequest(req, res, url, opts)) return true;
-      if (url.pathname === '/api/calibration_status' && req.method === 'GET') {
-        const status = getCalibrationStatus ? await getCalibrationStatus() : null;
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(status ?? { error: 'Calibration status not available' }));
-      } else if (url.pathname === '/api/cubic_calibration' && req.method === 'GET') {
-        // Read-only view of the calibration service's cubic_calibration.json (the service is the
-        // sole writer; it rewrites the file atomically per capture). Search the same candidate
-        // roots loadPTCalibration() uses, covering both dev (tsx) and dist layouts.
-        const candidates = [
-          path.join(__dirname, '../../../scripts/calibration/calibrations/cubic_calibration.json'),
-          path.join(__dirname, '../../../../scripts/calibration/calibrations/cubic_calibration.json'),
-          path.join(process.cwd(), 'scripts/calibration/calibrations/cubic_calibration.json'),
-          path.join(process.cwd(), '../../scripts/calibration/calibrations/cubic_calibration.json'),
-        ];
-        let body: string | null = null;
-        for (const c of candidates) {
-          try {
-            if (fs.existsSync(c)) { body = fs.readFileSync(c, 'utf8'); break; }
-          } catch { /* try next candidate */ }
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        if (body == null) {
-          res.end(JSON.stringify({ cubic_state: {} }));
-        } else {
-          try { JSON.parse(body); res.end(body); }
-          catch { res.end(JSON.stringify({ cubic_state: {} })); }  // partial/corrupt → empty
-        }
-      } else if (url.pathname === '/api/ball_valve_cal' && req.method === 'GET') {
-        // Each ball valve channel's stored closed/open endpoints and its live reading.
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ valves: valveCalibrationSnapshot() }));
-      } else if (url.pathname === '/api/ball_valve_cal' && req.method === 'POST') {
-        // { entity: "BV1_Cal.CH1", action: "closed" | "open" | "clear" }
-        if (!isConfigWriteAuthorized(req)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Not an approved operator' }));
-          return true;
-        }
-        const body = await readJsonBody(req);
-        const entity = String(body?.entity ?? '');
-        const action = String(body?.action ?? '');
-        if (action === 'clear') {
-          clearEndpoints(entity);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ valves: valveCalibrationSnapshot() }));
-        } else if (action === 'closed' || action === 'open') {
-          const r = captureEndpoint(entity, action);
-          res.writeHead(r.ok ? 200 : 409, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(r.ok ? { valves: valveCalibrationSnapshot() } : { error: r.error }));
-        } else {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'action must be closed, open or clear' }));
-        }
-      } else if (url.pathname === '/api/lc_tare' && req.method === 'GET') {
-        // The live load-cell tares, for the UI to badge tared channels and show their offsets.
-        //
-        // Read from the same file the stream subtraction uses, so the badge and the number on
-        // the plot can never disagree. This is the authoritative source for tare UI state — do
-        // NOT let the page assume a tare landed because it sent the command; [0x46,0x00] carries
-        // no reply, so only the file says whether the service accepted it.
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        try {
-          res.end(JSON.stringify({ tares: currentTares() }));
-        } catch {
-          res.end(JSON.stringify({ tares: [] }));
-        }
-      } else if (url.pathname === '/api/feed-char/results') {
+      if (await handleCalibrationRequest(req, res, url, opts)) return true;
+      if (url.pathname === '/api/feed-char/results') {
         /**
          * Feed-characterization results, stored WITH the run rather than in the browser.
          *
@@ -209,43 +145,6 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
 
         res.writeHead(405, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'GET or POST' }));
-      } else if (url.pathname === '/api/calibration_profiles' && req.method === 'GET') {
-        // List committed whole-rig calibration snapshots + which one is loaded.
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(listCalibrationProfiles()));
-      } else if (url.pathname === '/api/calibration_profiles/save' && req.method === 'POST') {
-        if (!isConfigWriteAuthorized(req)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Not an approved operator' }));
-          return true;
-        }
-        const body = await readJsonBody(req);
-        saveCalibrationProfile(String(body?.name ?? ''));
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(listCalibrationProfiles()));
-      } else if (url.pathname === '/api/calibration_profiles/load' && req.method === 'POST') {
-        if (!isConfigWriteAuthorized(req)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Not an approved operator' }));
-          return true;
-        }
-        const body = await readJsonBody(req);
-        loadCalibrationProfile(String(body?.name ?? ''));
-        if (onCalibrationReload) onCalibrationReload();  // service re-reads the swapped live store
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(listCalibrationProfiles()));
-      } else if (url.pathname === '/api/calibration_profiles/new_blank' && req.method === 'POST') {
-        if (!isConfigWriteAuthorized(req)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Not an approved operator' }));
-          return true;
-        }
-        const body = await readJsonBody(req);
-        const name = body?.name ? String(body.name) : undefined;
-        newBlankCalibration(name);
-        if (onCalibrationReload) onCalibrationReload();  // service re-reads the blank live store
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(listCalibrationProfiles()));
       } else if (url.pathname === '/api/ota-flash/projects' && req.method === 'GET') {
         const projects = discoverProjects();
         res.writeHead(200, { 'Content-Type': 'application/json' });
