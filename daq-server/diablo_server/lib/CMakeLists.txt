@@ -26,7 +26,6 @@ set(FSW_SOURCES
     src/elodin/ElodinClient.cpp
     src/streams/SensorFramePipeline.cpp
     src/fsw/FSWConfigManager.cpp
-    src/control/PressureStateMachine.cpp
     src/calibration/PTCalibration.cpp
     src/calibration/CubicCalibrationStore.cpp
     src/calibration/LcTareStore.cpp
