@@ -3,7 +3,7 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds|selftest|unrecognized]
+ *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds|selftest|unrecognized|mismatch]
  *
  * pt: the full scripted session against the one routed PT board. boards: every simulated board
  * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
@@ -14,8 +14,8 @@
  * what PT board 22 delivers, channel by channel, live and from history. holds: one accepted timed
  * hold, then the sequencer stalled (SIGSTOP) and gone (SIGTERM) under the backend's :9998 client;
  * run.sh hands over the sequencer's PID in <CHAR_FIXTURE>/ports.json (README "The holds session").
- * selftest, unrecognized: WP6 gaps G2 and G3 (DESIGN-WP6 §7), each a session cut to its one
- * notification (README "The WP6 gap sessions").
+ * selftest, unrecognized, mismatch: the three WP6 gaps (DESIGN-WP6 §7 G2, G3, G1), each a session
+ * cut to its one notification (README "The WP6 gap sessions").
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
@@ -716,6 +716,24 @@ async function holds(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
+
+/** Wait (bounded) for a frame of client `name` that `pred` accepts; the frame, or undefined. */
+async function waitForFrame(name: string, pred: (m: any) => boolean, boundMs: number): Promise<Frame | undefined> {
+  const by = Date.now() + boundMs;
+  const match = (f: Frame) => {
+    if (f.client !== name) return false;
+    try { return pred(JSON.parse(f.raw)); } catch { return false; }
+  };
+  while (Date.now() < by) {
+    const f = capture.steps.flatMap((s) => s.frames).find(match);
+    if (f) return f;
+    await sleep(100);
+  }
+  return undefined;
+}
+const notificationWith = (key: string, ongoing: boolean) => (m: any) =>
+  m.type === 'notification' && m.payload?.key === key && m.payload?.ongoing === ongoing;
+
 /** G2 (DESIGN-WP6 §7): run.sh started the simulator with --fail-connector 21:3, so pt_board's
  *  one-shot SELF_TEST carries sensor_3 = 0. The backend raises `self_test_fail_21` once (the
  *  `break` after the first failing row) during readiness; client A's connect burst freezes the
@@ -766,9 +784,69 @@ async function unrecognized(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
+/** G1 (DESIGN-WP6 §7, LEDGER D48): the actuator-mismatch check, which no other golden ever
+ *  fires. The fixture names the ball valve ("Main Ball Valve" = ["NC", 1, 71], CLOSE in every
+ *  state; make_fixture.py mismatch), and a ball valve is the one actuator the simulated stack
+ *  reports a sensed position for (BV1_Cal.CH1.position_pct -> sensed BV1.CH1, ball-valve.ts).
+ *  Unlock -> debug on -> open the valve -> wait out its 3 s travel (board_simulator.py
+ *  BALL_VALVE_TRAVEL_S) -> debug on AGAIN: doSetDebugMode(true) publishes state without clearing
+ *  overrides (SequencerService.cpp), which is what schedules the backend's 5 s check ->
+ *  `actuator_mismatch` ongoing:true "… BV1.CH1 (expected CLOSED, sensed OPEN)" -> close the valve:
+ *  each sensed change with the key active reschedules the check -> "Actuator positions match
+ *  expected" ongoing:false -> debug off. The two notifications are waited for by predicate with a
+ *  bound (the 5 s timer can straddle a step boundary under load), never by quiet; a late or
+ *  missing one is a frame in the wrong step, which the golden shows. */
+async function mismatch(): Promise<void> {
+  step('readiness');
+  await waitForData(60000);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A', OPERATOR);
+  await settle(2500);
+
+  step('unlock');
+  send('A', { type: 'control_unlock', payload: {} });
+  await settle(600);
+
+  step('debug_on');
+  command('A', 'debug_mode', { debugMode: true });
+  // This publish schedules a check too (server.ts ACTUATOR_MISMATCH_DELAY_MS, 5 s). Let it fire
+  // while the valve is still closed -- a match, nothing raised -- before the valve is told to
+  // open; opened right away, whether the valve was past 95 % by the time it fired was a 0.4 s
+  // race, and the mismatch landed in one step or the next.
+  await settle(6500);
+
+  step('valve_open');
+  command('A', 'actuator', { actuatorName: 'Main Ball Valve', actuatorState: 1 });
+  await settle(4500);  // 3 s of travel, then the sensed OPEN is on record; no publish, no check
+
+  step('mismatch_raised');
+  command('A', 'debug_mode', { debugMode: true });
+  // Waited for by predicate, not by quiet: the frame lands in this step or the golden differs.
+  await waitForFrame('A', notificationWith('actuator_mismatch', true), 12000);
+  await settle(600);
+
+  step('valve_close');
+  command('A', 'actuator', { actuatorName: 'Main Ball Valve', actuatorState: 0 });
+  await waitForFrame('A', notificationWith('actuator_mismatch', false), 15000);
+  await settle(600);
+
+  step('debug_off');
+  command('A', 'debug_mode', { debugMode: false });
+  await settle(1200);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
 (MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub()
   : MODE === 'operator' ? operator() : MODE === 'holds' ? holds()
-  : MODE === 'selftest' ? selftest() : MODE === 'unrecognized' ? unrecognized()
+  : MODE === 'selftest' ? selftest() : MODE === 'unrecognized' ? unrecognized() : MODE === 'mismatch' ? mismatch()
   : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
