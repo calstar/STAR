@@ -254,6 +254,21 @@ if [ "$(uname)" = "Darwin" ]; then
     for i in "${LOOPBACK_IPS[@]}"; do
       sudo ifconfig lo0 alias "127.0.0.$i" up 2>/dev/null || true
     done
+    # Re-check after the loop: sudo can fail (no tty, denied, wrong password) and the `|| true`
+    # above hides it. This used to print the ✅ below regardless and the run died minutes later on
+    # a bind deep in the stack. Fail here, before anything is launched, naming what is missing.
+    # (A string, not an array: an empty array expansion under set -u errors on macOS bash 3.2.)
+    MISSING_ALIASES=""
+    for i in "${LOOPBACK_IPS[@]}"; do
+      if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then
+        MISSING_ALIASES="$MISSING_ALIASES 127.0.0.$i"
+      fi
+    done
+    if [ -n "$MISSING_ALIASES" ]; then
+      echo "  ❌ Loopback aliases still missing:$MISSING_ALIASES"
+      echo "     Add them by hand: sudo ifconfig lo0 alias 127.0.0.<octet> up  (for each octet above)"
+      fail "macOS loopback aliases missing — sudo ifconfig failed"
+    fi
     echo "  ✅ Loopback aliases added (127.0.0.{board_id octets})"
   fi
 fi
