@@ -30,7 +30,7 @@ import { applyValveCalibration } from './ball-valve-cal.js';
 import './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
-import { parseScriptStatus } from './script-status.js';
+import './script-status.js';
 import { createAPIHandler } from './api-server.js';
 import { VideoService } from './video/service.js';
 import { startBoardLogReceiver } from './board-logs.js';
@@ -67,26 +67,6 @@ setInterval(pruneHistory, 60_000);
 
 initGuiStream();
 
-/**
- * Name of a state id as the ACTIVE config declares it, or null if the config declares no [[states]]
- * (or not this id).
- *
- * Served from the deployed-config cache. A profile CAN be redeployed under a running backend —
- * the backend is always-on, not one of the session-gated pipeline units — which is why this is a
- * cache with invalidation rather than a boot-time read. deployActiveProfile() drops it, so the
- * next command after a deploy resolves against the new rig's names.
- */
-function configStateName(id: number): string | null {
-  try {
-    const raw = (readDeployedConfig() as any)?.states;
-    if (!Array.isArray(raw)) return null;
-    const hit = raw.find((e: any) => e?.id === id && typeof e?.name === 'string');
-    return hit ? (hit.name as string) : null;
-  } catch {
-    return null;
-  }
-}
-
 setInterval(flushClientOutboxes, 100);
 
 setInterval(resetOutboxStats, 10_000);
@@ -112,6 +92,7 @@ import { guiStreamConfig, envelope, encoderEnvelope, broadcastLastTime, BROADCAS
 import { _hpBoardNumbers, _t7CalFields, _t7SlotToBoardId, initConfigCaches, resetConfigCaches, uniqueIdFromPtEntity } from './server/config-caches.js';
 import { calibrationHost, lastRawAdc, initCalibrationState, reloadCalibrationEntityMap } from './server/calibration-state.js';
 import { BOARD_STATUS_HZ, boardsStatus, loadBoardsFromConfig, updateBoard, countHeartbeat, noteT7Alive, markStaleBoards, broadcastBoardStatus, boardLabel, logDiagnostics, selfTestLatest, selfTestNotifiedBoards } from './server/board-status.js';
+import { currentState, debugMode, STATE_ACTUATOR_MAP, initEngineState, reloadStateActuatorMap, configStateName, getExpectedPositions, broadcastCommandedActuatorsForState, broadcastStateUpdate, refreshScriptStatus, setDebugMode, applySequencerState } from './server/engine-state.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -125,51 +106,7 @@ loadBoardsFromConfig();
 
 // ── State actuator map (expected positions per state from CSV) ────────────────
 
-// `let`, not `const`: this is parsed from state_machine_actuators.csv at import time, and the
-// State Management tab can now change that file at runtime. It used to be a const that nothing
-// ever rebuilt, so expected-position / mismatch detection kept using the CSV as it was when the
-// backend booted.
-let STATE_ACTUATOR_MAP: StateActuatorMap = getStateActuatorMap();
-
-/**
- * Build entity→expected map for a given state.
- * Keys must match Elodin [0x31] actuator_state entities (ACT{n}.CH{m}), not ACT.Role_Name,
- * or mismatch detection never lines up with sensed state.
- */
-function getExpectedPositions(state: SystemState): Record<string, number> {
-  const expected = STATE_ACTUATOR_MAP[state];
-  if (!expected) return {};
-  const result: Record<string, number> = {};
-  for (const [name, value] of Object.entries(expected)) {
-    const tel = resolveActuatorTelemetryEntity(name);
-    if (tel) {
-      result[tel] = value;
-      continue;
-    }
-    const entity = CSV_ACTUATOR_TO_ENTITY[name] || `ACT.${name.replace(/\s+/g, '_')}`;
-    result[entity] = value;
-  }
-  return result;
-}
-
-/** Push CSV-derived commanded actuator states using ACT_CMD.B*.CH* keys (matches Elodin [0x32] + GUI). */
-function broadcastCommandedActuatorsForState(state: SystemState): void {
-  const raw = STATE_ACTUATOR_MAP[state];
-  if (!raw) return;
-  const epochNow = Date.now();
-  for (const [actuatorName, value] of Object.entries(raw)) {
-    const cmdEntity = resolveActuatorCmdEntity(actuatorName);
-    if (!cmdEntity) continue;
-    const key = `${cmdEntity}.actuator_state_commanded`;
-    history.record(key, epochNow, value);
-    stats.sensorUpdatesBroadcast++;
-    broadcast({
-      type: MessageType.SENSOR_UPDATE,
-      timestamp: epochNow,
-      payload: { entity: cmdEntity, component: 'actuator_state_commanded', value, timestamp: epochNow },
-    });
-  }
-}
+reloadStateActuatorMap();
 
 // ── Actuator state mismatch detection ────────────────────────────────────────
 
@@ -231,25 +168,8 @@ const DATA_FRESH_MS = 3000; // no ingest for this long ⇒ pipeline is not deliv
 initStats();
 
 // ── Local state (sequencer / actuator_service authoritative) ────────────────
-/** Boot state id from the config's [[states]] (is_boot), or IDLE if none is flagged. This was a
- *  bare SystemState.IDLE — a literal 1 — which names a different state on a rig that renumbered,
- *  so the backend reported and mismatch-checked against the wrong state until the first
- *  _SEQUENCER_STATE packet arrived. */
-function configBootStateId(): SystemState {
-  try {
-    const raw = (readConfig() as any)?.states;
-    if (Array.isArray(raw)) {
-      const boot = raw.find((e: any) => e?.is_boot === true && typeof e?.id === 'number');
-      if (boot) return boot.id as SystemState;
-    }
-  } catch {
-    /* fall through */
-  }
-  return SystemState.IDLE;
-}
 
-let currentState: SystemState = configBootStateId();
-let debugMode = false;
+initEngineState();
 
 // ── HTTP + WebSocket server ──────────────────────────────────────────────────
 
@@ -291,7 +211,7 @@ const apiHandler = createAPIHandler({
     // the CSV was actually *deployed*, and a deploy only happens when no session is active, so
     // there was never a running sequencer for it to reach.
     try {
-      STATE_ACTUATOR_MAP = getStateActuatorMap();
+      reloadStateActuatorMap();
     } catch (e) {
       console.warn('\u26a0\ufe0f Failed to rebuild STATE_ACTUATOR_MAP:', e);
     }
@@ -329,7 +249,7 @@ export function applyDeployedConfigChange(): void {
   // The state CSVs are deployed in the same step, so rebuild what is derived from them too
   // rather than relying on onStateCsvUpdated, which the session path never fires.
   try {
-    STATE_ACTUATOR_MAP = getStateActuatorMap();
+    reloadStateActuatorMap();
   } catch (e) {
     console.warn('Failed to rebuild STATE_ACTUATOR_MAP:', e);
   }
@@ -594,37 +514,6 @@ function handleMessage(ws: WebSocket, message: any): void {
   }
 }
 
-/** Latest advertised-allowed set from the sequencer; undefined until it first publishes. */
-let allowedBitmask: number | undefined;
-/** State id -> why it cannot be entered, from the sequencer's SCRIPTS report. */
-let stateRefusalReasons: Record<number, string> = {};
-
-/**
- * Refresh the per-state refusal reasons.
- *
- * Load refusals are fixed for the run, but the sensor gate is live — a state blocks and unblocks
- * as a feed comes and goes — so this is polled rather than read once. Slow on purpose: the reasons
- * only decorate a button that is already greyed by the bitmask, and nothing here may ever raise a
- * notification, or a poll would spam the panel once a second.
- */
-function refreshScriptStatus(): void {
-  // Between runs the sequencer is stopped on purpose; asking it anyway logged a connect error
-  // every 15 s. Nothing is enterable then, and the bitmask already says so.
-  if (!sessionManager.pipelineExpected()) return;
-  sendToSequencer('SCRIPTS\n')
-    .then(({ reply }) => {
-      stateRefusalReasons = parseScriptStatus(reply).reasons;
-    })
-    .catch(() => { /* sequencer down — the bitmask already says nothing is enterable */ });
-}
-
-function broadcastStateUpdate(): void {
-  broadcast({
-    type: MessageType.STATE_UPDATE, timestamp: Date.now(),
-    payload: { currentState, stateName: configStateName(currentState) ?? SystemState[currentState] ?? 'UNKNOWN', timestamp: Date.now(), debugMode, allowedBitmask, stateRefusalReasons },
-  });
-}
-
 function handleCommand(ws: WebSocket, command: CommandPayload): void {
   // The real, unbypassable gate: engine-control commands require an armed
   // (approved-operator) connection, regardless of what the UI shows.
@@ -704,7 +593,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       sendToSequencer(`DEBUG_MODE:${newDebug ? 1 : 0}\n`).then(({ ok, reply }) => {
         console.log(`[ThinServer] Debug mode ${newDebug ? 'ON' : 'OFF'}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (ok) {
-          debugMode = newDebug;
+          setDebugMode(newDebug);
           broadcastStateUpdate();
         }
       }).catch(() => { });
@@ -989,22 +878,7 @@ elodin.on('packet', (header: any, payload: Buffer) => {
 
     // ── SequencerState packet → STATE_UPDATE broadcast ───────────────────
     if (parsedList[0]?.entity === '_SEQUENCER_STATE') {
-      const prevState = currentState;
-      const stateVal = parsedList.find(p => p.component === 'state')?.value ?? 0;
-      const bitmask = parsedList.find(p => p.component === 'allowedBitmask')?.value ?? 0;
-      // Kept, not discarded. This is the sequencer's own statement of what it will accept, and
-      // the publish happens on every refusal too, so a greyed button corrects itself.
-      allowedBitmask = bitmask;
-      const debugModeVal = parsedList.find(p => p.component === 'debugMode')?.value ?? 0;
-      if (THIN_VERBOSE_CONNECTION_LOG) {
-        console.log(`[ThinServer] SequencerState from Elodin: state=${stateVal} bitmask=0x${bitmask.toString(16)} debug=${debugModeVal}`);
-      }
-      stats.sequencerStatesReceived++;
-      // Sync local state from Elodin (backup path — primary is TCP reply)
-      currentState = stateVal as SystemState;
-      debugMode = debugModeVal === 1;
-      broadcastStateUpdate();
-      broadcastCommandedActuatorsForState(currentState);
+      applySequencerState(parsedList);
       scheduleActuatorMismatchCheck(currentState);
       // FIRE_START / FIRE_STOP are NOT sent from here. The sequencer owns the burn gate and
       // notifies controller_service itself (SequencerService::notifyControllerFire). This branch
