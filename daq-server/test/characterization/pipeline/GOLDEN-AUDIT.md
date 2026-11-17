@@ -43,3 +43,15 @@ to `backend-remastered`; the branch only adds `golden/stalesub/stalesub.txt` (th
 "The stalesub session"). Board 60 stays in the boards fixture, so every line that freezes D-SLOT
 (`boards/http.txt` validator slot-10 error, `boards/ws_events.txt` setup-stuck / lost / connected,
 `boards/ws_streams.txt` board 60 self-test) is untouched.
+
+## char/c0-h8 (H8: the viewer's operator gates)
+
+```bash
+git diff queue/T...char/c0-h8 -- 'daq-server/test/characterization/pipeline/golden/*' | grep '^-[^-]'
+```
+
+Zero lines removed, zero modified. The branch only adds the `http_viewer_gates` step: a new
+section in `golden/http.txt` (eight viewer 403s and five witness GETs, README "Operator gates as
+the viewer") and its empty header in `golden/ws_events.txt`. The six viewer 403s already in
+`http_errors`, and client B's WS lines (`ws_handshake.txt` `control_status`, `ws_events.txt`
+`viewer_client`), are untouched.

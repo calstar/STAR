@@ -72,3 +72,7 @@
   -> 400 {"error":"Missing or invalid ip"}
 == backend POST /api/ota-flash: neither firmware nor project
   -> 400 {"error":"Provide firmwareBase64 or projectPath"}
+== backend POST /api/ota-flash: firmwareBase64, board answers OK, as viewer@example.com (not an operator; no gate)
+  -> 200 {"bytesSent":10000,"durationMs":"<dur>","success":true}
+    board: size header [00 00 27 10] = 10000 (big-endian)
+    board: received 10000 bytes, identical to the file: True

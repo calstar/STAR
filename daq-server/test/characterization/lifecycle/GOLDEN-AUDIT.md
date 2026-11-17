@@ -74,3 +74,14 @@ alive after the 30 s deadline, changes the line). The bound is the same 4 s as b
 cites the slowest loop of the services in that SIGINT batch (heartbeat_service's 3000 ms Elodin
 receive timeout), since all six share one bound. ota_service's own SIGTERM line in the same golden
 carries its tighter bound, `[0, 1.6] s: select timeout 1 s, + 0.6 s`.
+
+## char/c0-h8 (H8: `POST /api/ota-flash` as the viewer)
+
+```bash
+git diff queue/T...char/c0-h8 -- 'daq-server/test/characterization/lifecycle/golden/*' | grep '^-[^-]'
+```
+
+Zero lines removed, zero modified. `golden/ota.txt` gains one case at its end, the viewer-header
+variant of "firmwareBase64, board answers OK" (LEDGER D-OTA / SEC-2: the route has no operator
+gate, so the viewer's 200 is frozen until the team closes the hole). `stack.http()` gained an
+optional `headers` parameter for it; every existing call passes none.

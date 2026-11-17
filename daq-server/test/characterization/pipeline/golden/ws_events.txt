@@ -104,6 +104,8 @@
 
 ## http_during_session
 
+## http_viewer_gates
+
 ## session_extend
 > A {"type":"send_command","payload":{"commandType":"session_extend","data":{"addMs":60000}}}
 > A {"type":"send_command","payload":{"commandType":"session_extend","data":{"addMs":-1}}}
