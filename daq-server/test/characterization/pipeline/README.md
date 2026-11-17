@@ -7,6 +7,7 @@ bash test/characterization/pipeline/run.sh nocal       # the backend with no PT 
 bash test/characterization/pipeline/run.sh boards      # every simulated board type → golden/boards/
 bash test/characterization/pipeline/run.sh stalesub    # D-SUB: a subscription accepted inside a re-registration window → golden/stalesub/
 bash test/characterization/pipeline/run.sh operator    # a WS client whose X-Auth-Email is an approved operator → golden/operator/
+bash test/characterization/pipeline/run.sh holds       # an accepted timed hold, then :9998 stalled and down → golden/holds/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
@@ -218,6 +219,54 @@ pt session's `transition_armed`). It is its own session because `ws_streams.txt`
 counts every client's handshake replay in its "paths checked" line; another client in the pt
 session would change that line. The two mutations below are what it is for; the second also reds
 the pt session from its `unlock` step on (client A, no header), the first reds nothing else. ~20 s.
+### The holds session (`run.sh holds` → `golden/holds/`)
+
+The backend's `:9998` line client (`server.ts sendToActuatorService`) has three replies no other
+session reaches (DESIGN-WP5 §6 G4, LEDGER D64(1), D70): an **accepted hold** — the sequencer answers
+`OK:<ms>` rather than `OK`, and the client's predicate must take it — and the two ways the
+sequencer can fail to answer: **stalled** (`State transition failed: timeout` after the client's
+2000 ms socket timeout) and **down** (`… connect ECONNREFUSED 127.0.0.1:<port>`). `pt` sends only
+an invalid hold (`holdMs: -5`, rejected before the wire), and `test_integration.sh` sends an
+accepted one without asserting its errors, so none of the three was frozen.
+
+Fixture: the `pt` fixture (`make_fixture.py pt`), plus a state that takes a hold. The shipped
+config has none, so `run.sh` builds one the way `test_integration.sh` does: a `Flow Test` column
+appended to copies of the three state-machine CSVs (`config/holds_*.csv` — reachable from Press
+Standby and back, the gate valve `Fuel Main` OPEN, staggered 0.4 s on the way in), `[state_machine]`
+pointed at them by the same relative form (an absolute path is found by the sequencer only — see
+"Frozen behaviour"), and the `[[states]] id = 21 … is_flow = true` + `[flow]` block (800 ms, max
+5000, return `Press Standby`) appended to `config.toml` exactly as `test_integration.sh:538-548`
+writes it. The sequencer refuses a hold into a state it cannot return from, which is why the CSV
+column exists. One step `test_integration.sh` does not take: ten rows of the shipped
+`state_transitions.csv` are one cell short (`feed-twin/backend/statemachines/NEEDS-REPAIR.md`;
+`StateMachine.cpp` and `legacy/state-transitions.ts` both read a row left-aligned and a missing
+cell as "not allowed"), so a column appended to such a row lands under the previous header —
+Press Standby's `1` under Emergency Abort — and the hold is refused `transition rejected`.
+`test_integration.sh` enters Flow Test with debug mode on, which bypasses the table
+(`SequencerService.cpp` `if (!debug_mode_)`), so it never saw that. Here each transitions row is
+first padded with `0` to the header's width, which neither parser can tell from a missing cell;
+the actuator and delay CSVs are full width and are not touched.
+
+Script (`session.ts holds`; client A connects as the operator): readiness → connect → unlock →
+park on the hub (`Idle → Armed → Press Standby`, the CSV's only route) → **hold_accepted**:
+`state_transition {state: 21, holdMs: 800}` — no `error` frame, the `state_update` into 21, the
+auto-return `state_update` to 20 after 800 + 400 ms, all inside the step → **sequencer_stalled**:
+`SIGSTOP` the sequencer (its PID comes from `run.sh` through `ports.json`'s `sequencer_pid`),
+`state_transition {state: 20}` — a self-transition on the hub, so the line changes no state when
+it is eventually read — wait for the `timeout` error, note whether it arrived within T2, `SIGCONT`,
+settle: the backend destroyed its socket at 2 s but the connection and the line sit in the
+sequencer's listen backlog, so the resumed sequencer reads and applies it and its reply write fails
+harmlessly (`SIGPIPE` ignored, `MSG_NOSIGNAL`); whatever it publishes lands in this step (D-LATE:
+a transition the operator was told failed still happens later) → **sequencer_down**: `SIGTERM`,
+wait until `:9998` refuses a connection (not a signal-0 probe: the sequencer is `run.sh`'s child
+and stays a zombie until reaped), `state_transition {state: 20}` → `ECONNREFUSED`; `debug_mode` →
+no reply at all (its `.catch(() => {})` path) → disconnect. Nothing else, so a change elsewhere in
+the WS/HTTP surface cannot fail this golden. ~45 s; it needs nothing a Mac lacks.
+
+What it freezes: the usual six files for its steps. The one timing line is categorical (P13):
+`= timeout_reply_within_2800ms: yes`. It is judged on CI (LEDGER D34: this Mac's timer overshoot
+can make it `no` under load); the bound is 2000 ms + a margin for that overshoot, narrower than
+the next round number, so a 3000 ms socket timeout goes red.
 
 ## The scripted session (`session.ts`)
 
@@ -317,6 +366,7 @@ those byte for byte (header, column order, cell format).
 | P12 | self-test results are one line per board the simulators self-test (expected set from `selftest_expected.py`: adc_good + every active connector; board 60: 0 and 2), written as `<exact result> | not-received (one-shot UDP self-test, defect)`, and a rule line that fails if (a) a received result differs, (b) more than half the boards are not-received, or (c) the run is quiet (`CHAR_UNDER_LOAD` unset) and any board is not-received. The handshake replay and the history series are summarised there | on a loaded Linux box some boards' one-shot self-test never reaches the backend |
 | P12d | in a quiet run every self-test path must carry every expected board exactly, checked separately: each client's handshake replay (A, B, C) and each full history reply (connect A, the unnarrowed query in `history`, viewer B), with the startup board exempt from paths that closed before it self-tested. A late client C (after the session) freezes the notification-buffer replay; its own backfill is past the 60 s horizon and is not frozen | the old golden froze each path line by line |
 | A1 | `ACT_CMD.B2.CH7` (Fuel Main) commanded: `{0} \| {0, 1}`, an explicit alternative, only for that series | the sequencer's boot-time de-energized row is replayed by elodin-db on subscribe on a loaded Linux box (defect) |
+| P13 | a step's `notes` (lines the session derives from its own `Sent.t` / `Frame.t` stamps) are printed under the step in `ws_events.txt` as `= <text>`, categorical only (`…: yes` / `no`), never a raw ms. Only `holds` writes any; a capture without the key prints nothing | a measured latency drifts; whether it met a bound derived from a config/spec value does not |
 
 P7 also applies to history series (more than four distinct values → `<varies>`).
 
@@ -325,6 +375,7 @@ P7 also applies to history series (more than four distinct values → `<varies>`
 | bound | how | assumption |
 |---|---|---|
 | T1 | the 10 s `query_historical` of `PT1.CH1.raw_adc_counts`: median spacing of consecutive points within [0.9 W, 2 W], W = 2000 / `[gui] points_per_second` (4 → 500 ms) | the envelope (`gui-stream.ts`) opens a window at a sample and closes it at the first sample ≥ W later, emitting a constant stream's window at its first sample time; samples come every 100 ms (sim 10 Hz). Measured on sample timestamps, so load cannot move it |
+| T2 | `holds` `sequencer_stalled`: the `State transition failed: timeout` error frame arrives ≤ 2800 ms after the command was sent (`= timeout_reply_within_2800ms: yes`) | `server.ts sendToActuatorService` `socket.setTimeout(2000, …)` plus 800 ms for D34's macOS timer overshoot and the WS hop, below the next round number (a 3000 ms timeout fails). CI-judged (D34, D70) |
 | — | `QUIET_MS` 1.5 s / cap 20 s per step | a reply arrives within 20 s on a machine under 1× load |
 
 Determinism (final evidence, commit `d4b56670`):
@@ -381,6 +432,9 @@ Each applied to the backend source, run, reverted (none committed):
 | `server.ts`: `const isOp = true` at the WS upgrade (every client an operator) (H8) | `ws_handshake.txt` (client B `control_status` `operator: true`), `ws_events.txt` `viewer_client` (`control_unlock_result` `ok`, then B's `state_transition` reaches the sequencer) |
 | `server.ts`: `const isOp = authEmail === '' ? true : false` at the WS upgrade (every non-empty header a viewer) (H8b) | `operator/ws_handshake.txt` (client A `control_status` `operator: false`), `operator/ws_events.txt` `unlock` (`control_unlock_result` `not_operator`). pt, nocal, boards, stalesub stay green: no other session sends an operator's header over WS |
 | `server.ts`: `const op = false` in the `CONTROL_UNLOCK` handler (unlock always refuses) (H8b) | `operator/ws_events.txt` `unlock` (`not_operator`); also the pt session, from its `unlock` step (client A, no header) through everything A does armed after it (`ws_events.txt`, `http.txt`: no session ever starts) |
+| `server.ts` `sendToActuatorService`: the reply predicate `reply === 'OK' \|\| reply.startsWith('OK:')` → `reply === 'OK'` (holds) | `golden/holds/ws_events.txt` `hold_accepted`: one new line, `error` "State transition failed: OK:800" |
+| `server.ts` `sendToActuatorService`: `socket.setTimeout(2000, …)` → `3000` (holds) | `golden/holds/ws_events.txt` `sequencer_stalled`: `= timeout_reply_within_2800ms: no` |
+| `server.ts` `sendToActuatorService`: `done(false, err.message)` → `done(false, 'connect error')` (holds) | `golden/holds/ws_events.txt` `sequencer_down`: the `ECONNREFUSED` error text |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
