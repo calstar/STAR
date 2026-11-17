@@ -171,6 +171,8 @@ tree_unchanged() {
 }
 
 step build build_clean
+# WP3's include guard (skips until diablo_server/lib/third_party/elodin exists; LEDGER D96).
+step include-guard bash "$CHAR/include_guard.sh" "$ROOT/build-gate"
 step ctest ctest_all
 step backend-vitest backend_vitest
 step video-gateway video_gateway
