@@ -318,7 +318,8 @@ namespace. File-static functions and lambdas that read `g_running` (heartbeat 10
 ```cpp
 namespace fsw::net {
 struct TcpServeOptions { size_t max_clients; const char* busy_log_prefix; };  // 64; "[Sequencer] " | "[ControllerService] ⚠️  "
-/** sequencer_main.cpp:303-349 / controller_main.cpp:171-214 statement for statement: while
+/** The loop sequencer_main.cpp:303-349 / controller_main.cpp:171-214 statement for statement
+ *  (the Conn/reap_finished block 284-301 / 152-169 moves in front of it, §6.2): while
  *  (running) { reap; select(listen_fd, 10 ms); accept; reap; cap check: "ERR:too many
  *  connections\n" (MSG_NOSIGNAL), cerr << busy_log_prefix << "client limit (" << max_clients <<
  *  ") reached — refusing connection", close; spawn a tracked thread running on_client(fd) then
