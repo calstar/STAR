@@ -7,6 +7,9 @@
  * the GUI's diagram).
  *
  * Deleted by WP5 5.4 (no caller): `buildTransitionMap`, `isTransitionAllowed`, `_transitionMap`.
+ * With them goes the module's only *value* use of `SystemState` (`SystemState[id]`), so 5.4 makes
+ * the product's `import { SystemState } from '../shared-types.js'` an explicit `import type`;
+ * `shared-types.ts` then leaves the esbuild module order and is dead code (DESIGN-WP5 §1.1, D60).
  * Short rows read left-aligned (C2-8, known NEEDS-REPAIR): kept.
  */
 
