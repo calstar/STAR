@@ -485,17 +485,20 @@ Release; the lib is `SHARED` (`lib/CMakeLists.txt:45`) and the service is one TU
   and require equality **only for names present on both sides** — with one expected exception:
   `main`. The move relocates symbols, so a per-symbol-for-every-symbol compare cannot pass by
   construction: pre, the Blend (300) and `PtSmoother::step` (1879, 2015) sites are inlined into
-  `main` and the bisection's forward lambda into `main`'s `write_abort_thresholds` lambda (an
-  `operator()` symbol or inlined into `main`); post, the same sites are inlined into
-  `handle_t7_raw`, `handle_esp32_raw` and the file-static `write_abort_thresholds` /
-  `invert_abort_psi_to_adc`, none of which exist pre. `main`'s count therefore drops by exactly
-  the sum of the counts of the new symbols (`handle_t7_raw` + `handle_esp32_raw` +
-  `write_abort_thresholds` + `invert_abort_psi_to_adc` if it keeps an out-of-line copy), which
-  the total-count equality already enforces; every other name present on both sides (`convert_*`,
-  `select_*`, `sample_robust_curve`, the lib symbols the binary carries) must be equal. A
-  symbol present on one side only is reported, not compared. What this catches: a contraction
-  appearing or vanishing anywhere in the binary (total), and one moving into or out of a body
-  that did not move (per symbol).
+  `main`, and the bisection's forward lambda (565-578) wherever `invert_abort_psi_to_adc` lands
+  pre (its own `_ZL…` symbol, or inlined into the `write_abort_thresholds` lambda's `operator()`
+  or into `main`); post, the stream sites are inlined into `handle_t7_raw` and `handle_esp32_raw`
+  and the bisection into the file-static `write_abort_thresholds` / `invert_abort_psi_to_adc`.
+  `handle_t7_raw`, `handle_esp32_raw` and `write_abort_thresholds` are new symbols; `main`'s
+  count therefore drops by exactly the sum of their counts, which the total-count equality
+  already enforces. `invert_abort_psi_to_adc` is today's function (554, two callers 1078, 1084):
+  (c) reports whether it has an out-of-line copy on each side; present on both, it is compared
+  like any surviving symbol (expected equal: its body and the Blend inlined into it are
+  unchanged); present on one side only, its count joins the `main` delta. Every other name
+  present on both sides (`convert_*`, `select_*`, `sample_robust_curve`, the lib symbols the
+  binary carries) must be equal. A symbol present on one side only is reported, not compared.
+  What this catches: a contraction appearing or vanishing anywhere in the binary (total), and
+  one moving into or out of a body that did not move (per symbol).
 - **(c) Defined-symbol census — informational (D58).** `nm -C --defined-only` filtered to the
   moved function names, compared **demangled and unqualified**: pre they are `_ZL…` (`t`,
   file-local), post `fsw::calibration_service::…` (`W`, inline with an out-of-line copy). Report
@@ -530,9 +533,10 @@ Release; the lib is `SHARED` (`lib/CMakeLists.txt:45`) and the service is one TU
   **not** dimmed must be one of: an `#include` or include guard; a namespace line; `static` →
   `inline`; an `extern` declaration or a `using` line; a function signature replacing a lambda
   head (**16 heads**: 727, 999, 1032, 1110, 1130, 1164, 1169, 1178, 1194, 1205, 1216, 1220,
-  1228, 1243, 1254, 1294; 3 handler signatures) or a `{`/`}` closing it; a `SensorModels`
-  signature (`load_pt_lc_models`, `load_t7_models`, `register_store_channels`,
-  `print_model_summary`) or its call in `main`; one of the 11 `continue` → `return` lines (§4);
+  1228, 1243, 1254, 1294; 3 handler signatures and their 3 dispatch calls in `main`'s loop) or a
+  `{`/`}` closing it; a `SensorModels` signature (`load_pt_lc_models`, `load_t7_models`,
+  `register_store_channels`, `print_model_summary`) or its call in `main`; one of the 11
+  `continue` → `return` lines (§4);
   the `StreamState`/`CalibrationContext` initialisers; CMake; clang-format's regrouping. Any
   other non-dimmed line is a review stop. The ~126 prefixed lines (60 actions, 13 commands, 53
   stream) are thereby a script result, not a reading task.
