@@ -56,7 +56,7 @@ config under test, cited in the golden line itself, plus stated headroom:
 | what | bound | from |
 |---|---|---|
 | periodic senders | median gap in [0.75 P, 1.5 P] | `[heartbeat_service]`/`[server_heartbeat].interval_ms` 200, `[stacklight_service]`/`[config_broadcast_service].interval_ms` 1000, sim `heartbeat_interval` 1.0, `sensor_interval` 0.1 |
-| board marked lost after its heartbeats stop | [4, 8] s | `BOARD_HEARTBEAT_STALE_MS` 5000 (server.ts), 1 s `markStaleBoards` sweep, 1 s sim heartbeat; +1 s |
+| board marked lost after its heartbeats stop | [4, 8] s | `BOARD_HEARTBEAT_STALE_MS` 5000 (server/board-status.ts), 1 s `markStaleBoards` sweep, 1 s sim heartbeat; +1 s |
 | restarted board seen / ACTIVE | [0, 6] s | 1 s config interval + 1 Hz status + 1 s sweep, + 3 s interpreter start-up |
 | ball valve opens after server heartbeats stop | [4.8, 6] s | `BALL_VALVE_HEARTBEAT_TIMEOUT_S` 5 from the last of a 200 ms heartbeat stream |
 | skip-startup one-shot SELF_TEST | [1.8, 2.6] s after first heartbeat | `now - run_started >= 2.0` |

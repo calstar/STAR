@@ -109,7 +109,7 @@ STACK_PERIOD = periodic(1.0, "[stacklight_service].interval_ms = 1000")
 CFG_PERIOD = periodic(1.0, "[config_broadcast_service].interval_ms = 1000")
 SIM_HB_PERIOD = periodic(1.0, "board_simulator heartbeat_interval = 1.0")
 SIM_DATA_PERIOD = periodic(0.1, "board_simulator sensor_interval = 0.1")
-# Board marked lost after its heartbeats stop: BOARD_HEARTBEAT_STALE_MS = 5000 (server.ts), swept
+# Board marked lost after its heartbeats stop: BOARD_HEARTBEAT_STALE_MS = 5000 (server/board-status.ts), swept
 # by markStaleBoards every 1000 ms, last heartbeat up to the sim's 1.0 s heartbeat_interval before
 # the stop: [5 - 1, 5 + 1 + 1] = [4, 7] s, + 1 s headroom. A doubled stale time (10 s) lands at
 # [9, 12] s, outside.
