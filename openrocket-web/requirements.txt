@@ -5,3 +5,6 @@ pydantic>=2.12
 python-multipart>=0.0.20
 numpy>=1.26
 pytest>=8
+# FastAPI's TestClient (tests/test_api.py): starlette's test client needs an HTTP
+# client of its own, and current starlette asks for httpx2, which nothing above pulls in.
+httpx2>=2.13
