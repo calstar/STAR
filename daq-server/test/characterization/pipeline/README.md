@@ -9,6 +9,10 @@ bash test/characterization/pipeline/run.sh stalesub    # D-SUB: a subscription a
 bash test/characterization/pipeline/run.sh operator    # a WS client whose X-Auth-Email is an approved operator → golden/operator/
 bash test/characterization/pipeline/run.sh holds       # an accepted timed hold, then :9998 stalled and down → golden/holds/
 bash test/characterization/pipeline/run.sh startlog    # the backend alone, its startup log (G12) → golden/startlog/
+bash test/characterization/pipeline/run.sh selftest    # one failed self-test connector (G2) → golden/selftest/
+bash test/characterization/pipeline/run.sh unrecognized  # a board the backend does not expect (G3) → golden/unrecognized/
+bash test/characterization/pipeline/run.sh mismatch    # the ball valve against its CLOSE row (G1) → golden/mismatch/
+bash test/characterization/pipeline/run.sh statecsv    # an idle-mode state-CSV deploy (G8) → golden/statecsv/
 CHAR_UPDATE=1 bash test/characterization/pipeline/run.sh   # rewrite goldens (main's behaviour only)
 ```
 
@@ -286,6 +290,69 @@ No `git grep` of the other goldens finds any of these lines: this is the only pl
 (`shared-types.ts`'s top-level `await`, WP5 5.4), a reordered startup row (WP6 §1.2) or a loader's
 import-time read moving out of import time shows.
 
+### The WP6 gap sessions (`run.sh selftest|unrecognized|mismatch|statecsv` → `golden/<mode>/`)
+
+`DESIGN-WP6.md` §7's G2, G3 and G1 (LEDGER D48): three notifications no other golden raised, each
+in a session cut to its one path so a change elsewhere on the WS/HTTP surface cannot fail it, and
+each on the pt fixture (one routed PT board at 127.0.0.1) with one deliberate difference. Their
+readiness is `waitForData` with its board arguments (`session.ts`): the one probe until the backend lists
+board 21 (and 71 in mismatch) connected and, for selftest, has its self-test -- the heartbeat and
+self-test tables are later subscription passes than the PT tables, and on a loaded Linux leg they
+went live ~3 s after the PT data, so a client connecting on PT data alone saw a board list without
+21 and no replay, and the one-shot self-test landed live in a later step. Bounded (20 s): a result
+that never arrives is still red.
+
+- **selftest (G2, `self_test_fail_<id>`).** The simulator is started with `--fail-connector 21:3`
+  — an opt-in flag this package added to `sim/board_simulator.py`, default off, so every
+  existing launch sends the packet it always sent (`sim_selftest_check.py` pins main's SELF_TEST
+  bytes for board 21 and runs first, with no ports; a `0` elsewhere or a changed default is red
+  there). pt_board's one-shot SELF_TEST then carries `sensor_3 = 0`; `server.ts` raises
+  `self_test_fail_21` "Board 21 (PT) failed self-test" once (the `break` after the first failing
+  row) during readiness. Client A's connect burst freezes the replay with the 0 (P12, whose expected
+  values come from `selftest_expected.py --fail 21:3`: the board's line reads `all 1 but sensor_3 =
+  0`) and the notification replay; the unnarrowed `query_historical` freezes the series.
+- **unrecognized (G3, `unrecognized_<id>`).** The backend's `CONFIG_PATH` is `config_backend/`, a
+  copy of the fixture's config in which pt_board's `board_id = 21` is spelled `id = 21`
+  (`make_fixture.py`); every service keeps `config/`. The VTable registry subscribes to board 21
+  either way (`elodin-vtable-registry.ts`: `b.board_id ?? b.id`), so its data flows, but
+  `loadBoardsFromConfig` (`server.ts`, numeric `board_id` only) never listed it: its first heartbeat
+  creates it `expected: false`, and the next 1 Hz sweep raises `unrecognized_21`. Frozen as main
+  does it: the board's `ip` and the message's address are the backend's **invented**
+  `192.168.2.21` (`updateBoard` hard-codes `192.168.2.<id>` for a board it has no config for),
+  `boardNumber` is `null`, its type comes from the heartbeat. Not an empty `[boards]` (that trips
+  the registry's 1..255 heartbeat fallback). WS only: the HTTP routes read `board_id` too, with
+  their own defaults for a board that lacks it, and those shapes are not what this session freezes.
+- **mismatch (G1, `actuator_mismatch`).** The fixture names the ball valve — `"Main Ball Valve" =
+  ["NC", 1, 71]` in `[actuator_roles]`, a CLOSE-in-every-state row in the actuators CSV and a 0 row
+  in the delays CSV, exactly as `test/test_integration.sh` adds them, as copies beside the
+  originals with `[state_machine]` repointed by the same relative form — and the simulator runs
+  pt_board plus `ball_valve_board` (71, from 127.0.0.71: that alias is checked first on macOS).
+  A ball valve is the one actuator the simulated stack reports a sensed position for
+  (`BV1_Cal.CH1.position_pct` → sensed `BV1.CH1`, `ball-valve.ts`; an ACTUATOR board's current is a
+  free sine). Unlock → debug on → `actuator "Main Ball Valve" 1` → 4.5 s (3 s of travel,
+  `BALL_VALVE_TRAVEL_S`) → debug on **again**: `doSetDebugMode(true)` publishes state without
+  clearing overrides (`SequencerService.cpp`), and that `_SEQUENCER_STATE` row is what schedules
+  the backend's 5 s check → `actuator_mismatch ongoing: true` "Actuator mismatch in Idle: BV1.CH1
+  (expected CLOSED, sensed OPEN)" → `actuator 0`: the valve travels back, each sensed change with
+  the key active reschedules the check → "Actuator positions match expected" `ongoing: false` →
+  debug off. The two notifications are waited for by predicate with a bound (12 s / 15 s), not by
+  quiet, so the 5 s timer cannot straddle a step boundary under load; a late or missing one is a
+  frame in the wrong step, which the golden shows. (Debug off first does not work: it clears
+  overrides before publishing, so the valve closes before the check runs.) The valve never hears a
+  SERVER_HEARTBEAT here (daq_bridge sends them to `broadcast_ip`:hb_udp, the valve listens on
+  127.0.0.71:act_udp), so the simulator's failsafe-open never arms.
+- **statecsv (G8, LEDGER D105, the idle-mode state-CSV deploy).** Client A connected, the session
+  GETs the actuators CSV, flips one cell (Fuel Vent's Idle column, CLOSE → OPEN) and POSTs it back
+  as the operator with no session active: `writeStateCsv` writes the active profile and, idle,
+  copies it over the deployed file (both under the fixture's `config/`), and `setImmediate` fires
+  `onStateCsvUpdated` (`server.ts`), which rebuilds `STATE_ACTUATOR_MAP` and broadcasts one
+  `config_updated`. Frozen: that frame is all A gets (its commanded snapshot was sent at connect
+  and is never re-sent), the POST's `{"success":true,"deployed":true,…}`, the CSV before and after
+  (`csv.txt`, both), and the next client's connect burst — B's snapshot carries `ACT_CMD.B2.CH2`
+  (Fuel Vent) `= 1` where A's carried `0`, the one line that shows the map was rebuilt from the
+  new file. Nothing reaches the sequencer (it read its CSVs at boot; a deploy reaches the pipeline
+  only at session start), so `BV_CMD`/`ACT_CMD` Elodin rows do not change.
+
 ## The scripted session (`session.ts`)
 
 GET sweep → connect A → 3 s live → viewer client B (`X-Auth-Email`, not an operator) → unknown `subscribe`, non-JSON, `get_state_transitions` →
@@ -358,7 +425,9 @@ backfill horizon (`history-backfill.ts HISTORY_CONNECT_SPAN_MS`); at ~60 s, wher
 whether the one-shot self-test series made the cut depended on the machine's speed.
 
 There is no subscription protocol in the thin backend (every client gets every stream); the
-`subscribe` step records that an unknown message type gets no reply.
+`subscribe` step records that an unknown message type gets no reply, and (G10, `DESIGN-WP6.md` §7)
+that a well-formed message whose handler throws — `{"type":"send_command"}` with no payload — is
+caught at the WS boundary (`Bad message` log) and gets no reply either.
 
 ## Goldens
 
@@ -413,7 +482,7 @@ those byte for byte (header, column order, cell format).
 | P9 | `/stats`, `/api/debug`, `/api/board-logs*` bodies → key/type schema | counters / wall clock |
 | P10 | the handshake's self-test replay is regrouped by board id (each board's frames keep their order) | `selfTestLatest` replays in Elodin arrival order, a race across boards |
 | P11 | in a run of consecutive `error` / `state_update` frames within a step, errors are recorded first (each kind keeps its own order) | a command's TCP reply (`error`) and the sequencer's Elodin publish (`state_update`) take independent paths; their order swapped under load |
-| P12 | self-test results are one line per board the simulators self-test (expected set from `selftest_expected.py`: adc_good + every active connector; board 60: 0 and 2), written as `<exact result> | not-received (one-shot UDP self-test, defect)`, and a rule line that fails if (a) a received result differs, (b) more than half the boards are not-received, or (c) the run is quiet (`CHAR_UNDER_LOAD` unset) and any board is not-received. The handshake replay and the history series are summarised there | on a loaded Linux box some boards' one-shot self-test never reaches the backend |
+| P12 | self-test results are one line per board the simulators self-test (expected set from `selftest_expected.py`: adc_good + every active connector; board 60: 0 and 2), written as `<exact result> | not-received (one-shot UDP self-test, defect)`, and a rule line that fails if (a) a received result differs, (b) more than half the boards are not-received, or (c) the run is quiet (`CHAR_UNDER_LOAD` unset) and any board is not-received. The handshake replay and the history series are summarised there. A connector `selftest_expected.py --fail` names (the selftest session) is expected `0`, and the board's line says `all 1 but sensor_<n> = 0`; without `--fail` nothing changes | on a loaded Linux box some boards' one-shot self-test never reaches the backend |
 | P12d | in a quiet run every self-test path must carry every expected board exactly, checked separately: each client's handshake replay (A, B, C) and each full history reply (connect A, the unnarrowed query in `history`, viewer B), with the startup board exempt from paths that closed before it self-tested. A late client C (after the session) freezes the notification-buffer replay; its own backfill is past the 60 s horizon and is not frozen | the old golden froze each path line by line |
 | P14 | `GET /api/debug?values`: P9's schema, plus the values of `ingestConnected`, `useRelay` and `wsClients` (rendered `>=1` when at least one client is connected, else the number) | D64(3): these say how the backend is wired, not how much it has counted; the plain `/api/debug` line stays P9 |
 | A1 | `ACT_CMD.B2.CH7` (Fuel Main) commanded: `{0} \| {0, 1}`, an explicit alternative, only for that series | the sequencer's boot-time de-energized row is replayed by elodin-db on subscribe on a loaded Linux box (defect) |
@@ -490,9 +559,22 @@ Each applied to the backend source, run, reverted (none committed):
 | `server.ts` `getDebugInfo`: `ingestConnected: false` (D64(3)) | `http.txt`: all three `GET /api/debug?values` lines (P14 values) |
 | `api-server.ts` `POST /api/config`: save the profile but never `deployActiveProfile()` (H1) | `http.txt` `http_operator_writes`: `FILE config/config.toml` is the old deployed file, the profile's no longer "same as" it, and every later FILE that copied it moves |
 | `server.ts` `applyDeployedConfigChange`: drop its `CONFIG_UPDATED` broadcast (H1) | `ws_events.txt` `http_operator_writes`: four of the five `config_updated` frames gone (the CSV write's own broadcast stays), and `session_start_forced`'s |
+| `server.ts`: swap the startup rows `loadBoardsFromConfig()` and the `STATE_ACTUATOR_MAP` read (G12) | `startlog/backend_startup.txt`: `Loaded 11 boards` moves below the `Trying:` lines |
+| `server.ts`: `parsed.value === 0` → `=== 2` in the self-test block (never notify) (G2) | `selftest/ws_handshake.txt`: client A's replay loses `self_test_fail_21`; `ws_schema.txt` loses the notification key |
+| `sim/board_simulator.py`: `adc_good = 0`; the result byte always 1 (the flag ignored) | `sim_selftest_check.py` (run first by `run.sh selftest`): default bytes differ / the flag changes no byte |
+| `server.ts` `loadBoardsFromConfig`: accept `board.id` as the board id (G3) | `unrecognized/ws_handshake.txt`: board 21 listed `expected: true` at `127.0.0.1`, no `unrecognized_21` replay; `ws_streams.txt` `board_status_update` payloads |
+| `server.ts`: drop the `scheduleActuatorMismatchCheck` in the `position_pct` block (the reschedule on a sensed change) (G1) | `mismatch/ws_events.txt` `valve_close`: no `Actuator positions match expected` |
+| `ball-valve.ts` `ballValveSensedEntity` → `null` (no ball valve is ever sensed) (G1) | `mismatch/ws_events.txt`: neither `actuator_mismatch` frame; `ws_schema.txt` loses the notification keys |
+| `server.ts`: reply an `error` from the WS `Bad message` catch (G10) | `ws_events.txt` `subscribe`: two `error` frames (the non-JSON line and the payload-less `send_command`) |
+| `server.ts` `onStateCsvUpdated`: drop the `STATE_ACTUATOR_MAP` rebuild (G8) | `statecsv/ws_handshake.txt`: client B's `ACT_CMD.B2.CH2` snapshot stays `0` |
+| `server.ts` `onStateCsvUpdated`: drop the `config_updated` broadcast (G8) | `statecsv/ws_events.txt` `state_csv_deploy`: no frame |
 
 ## Frozen behaviour that looks like a defect (recorded, not fixed)
 
+- A heartbeating board the backend's config does not list is created with an invented address,
+  `192.168.2.<id>` (`updateBoard`), which is what `unrecognized_<id>`'s "Unrecognized board at …"
+  then names; on a stand whose boards are not on that subnet the message points at the wrong
+  host (the `unrecognized` session).
 - Session start and stop reload board status from config (`applyDeployedConfigChange` /
   `onStopped` → `loadBoardsFromConfig`), so a board that is heartbeating can be reported
   "connection lost" and then "connected" a second later (P1).

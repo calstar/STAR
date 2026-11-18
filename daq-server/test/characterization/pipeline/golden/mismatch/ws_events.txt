@@ -1,0 +1,36 @@
+## readiness
+
+## connect
+
+## unlock
+> A {"type":"control_unlock","payload":{}}
+< A {"payload": {"ok": true, "reason": "ok"}, "timestamp": "<ts>", "type": "control_unlock_result"}
+
+## debug_on
+> A {"type":"send_command","payload":{"commandType":"debug_mode","data":{"debugMode":true}}}
+< A {"payload": {"currentState": 1, "debugMode": true, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+< A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": true, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## valve_open
+> A {"type":"send_command","payload":{"commandType":"actuator","data":{"actuatorName":"Main Ball Valve","actuatorState":1}}}
+
+## mismatch_raised
+> A {"type":"send_command","payload":{"commandType":"debug_mode","data":{"debugMode":true}}}
+< A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": true, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+< A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": true, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+< A {"payload": {"category": "warning", "key": "actuator_mismatch", "message": "Actuator mismatch in Idle: BV1.CH1 (expected CLOSED, sensed OPEN)", "ongoing": true, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+
+## valve_close
+> A {"type":"send_command","payload":{"commandType":"actuator","data":{"actuatorName":"Main Ball Valve","actuatorState":0}}}
+< A {"payload": {"category": "warning", "key": "actuator_mismatch", "message": "Actuator positions match expected", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+
+## debug_off
+> A {"type":"send_command","payload":{"commandType":"debug_mode","data":{"debugMode":false}}}
+< A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": false, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+< A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": false, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## disconnect
+
+## board-health notifications seen (any step, any client; P1, reset flaps P1b)
+{"category": "info", "message": "Board 21 (PT) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 71 (BALL_VALVE) connected", "timestampMs": "<ts>"}

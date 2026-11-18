@@ -15,9 +15,17 @@
 #                                                        # :9998 stalled and down → golden/holds/
 #   bash test/characterization/pipeline/run.sh startlog   # the backend alone: its startup log to the
 #                                                        # end of the synchronous start → golden/startlog/
+#   bash test/characterization/pipeline/run.sh selftest   # a board whose SELF_TEST reports one failed
+#                                                        # connector (self_test_fail_<id>) → golden/selftest/
+#   bash test/characterization/pipeline/run.sh unrecognized  # a heartbeating board the backend's config
+#                                                        # does not expect (unrecognized_<id>) → golden/unrecognized/
+#   bash test/characterization/pipeline/run.sh mismatch   # the ball valve opened in debug mode against a
+#                                                        # CLOSE row: actuator_mismatch raised and cleared → golden/mismatch/
+#   bash test/characterization/pipeline/run.sh statecsv   # an idle-mode POST /api/state-csv deploy: config_updated,
+#                                                        # the next client's commanded snapshot → golden/statecsv/
 #
 # "boards" needs the board_id loopback aliases (127.0.0.<id>) on macOS ("stalesub" needs
-# 127.0.0.22); it fails, never skips, when one is missing. Linux has all of 127/8.
+# 127.0.0.22, "mismatch" 127.0.0.71); it fails, never skips, when one is missing. Linux has all of 127/8.
 #
 # Takes the machine-wide stack lock itself (re-entrant under gate.sh / run.sh). Off the stand
 # only. Every service runs against a private fixture tree in .tmp/char_pipeline_<pid>/ with its
@@ -52,10 +60,14 @@ if [ "$MODE" = all ]; then
   bash "$HERE/run.sh" operator || rc=1
   bash "$HERE/run.sh" holds || rc=1
   bash "$HERE/run.sh" startlog || rc=1
+  bash "$HERE/run.sh" selftest || rc=1
+  bash "$HERE/run.sh" unrecognized || rc=1
+  bash "$HERE/run.sh" mismatch || rc=1
+  bash "$HERE/run.sh" statecsv || rc=1
   exit $rc
 fi
-case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog) ;;
-  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog]" >&2; exit 2 ;; esac
+case "$MODE" in pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized|mismatch|statecsv) ;;
+  *) echo "usage: run.sh [pt|nocal|boards|stalesub|operator|holds|startlog|selftest|unrecognized|mismatch|statecsv]" >&2; exit 2 ;; esac
 
 if [ "$(hostname)" = "star-rfs" ] || { command -v ip >/dev/null && ip -4 -o addr | grep -q ' 192\.168\.2\.'; } \
   || ifconfig 2>/dev/null | grep -q 'inet 192\.168\.2\.'; then
@@ -65,10 +77,11 @@ fi
 
 # The boards session sends as every simulated board from 127.0.0.<board_id>. Same list as
 # test/test_integration.sh: every board_id octet in config_base.toml plus the startup board (60).
-# stalesub sends only as pt_board_2 (22).
-if { [ "$MODE" = boards ] || [ "$MODE" = stalesub ]; } && [ "$(uname)" = "Darwin" ]; then
+# stalesub sends only as pt_board_2 (22); mismatch adds the ball valve (71) to pt's board.
+if { [ "$MODE" = boards ] || [ "$MODE" = stalesub ] || [ "$MODE" = mismatch ]; } && [ "$(uname)" = "Darwin" ]; then
   missing=()
   ALIASES="11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71"; [ "$MODE" = stalesub ] && ALIASES=22
+  [ "$MODE" = mismatch ] && ALIASES=71
   for i in $ALIASES; do
     ifconfig lo0 2>/dev/null | grep -q "inet 127\.0\.0\.$i " || missing+=("127.0.0.$i")
   done
@@ -138,8 +151,15 @@ cat > "$FX/ports.json" <<EOF
  "sequencer":$P_SEQ,"controller":$P_CTRL,"hb_udp":$P_HB_UDP,"startup_udp":$P_START,"video_api":$P_VID_API,
  "video_webrtc":$P_VID_RTC,"video_agent":$P_VID_AGENT,"ota":$P_OTA}
 EOF
-FXMODE="$MODE"; case "$MODE" in nocal|operator|holds|startlog) FXMODE=pt ;; esac  # the pt fixture, one routed board
+FXMODE="$MODE"; case "$MODE" in nocal|operator|holds|startlog|selftest|statecsv) FXMODE=pt ;; esac  # the pt fixture, one routed board
 "$PY" "$HERE/make_fixture.py" "$ROOT" "$FX" "$FX/ports.json" "$FXMODE"
+# selftest: the simulator reports pt_board's connector 3 as failed (--fail-connector, opt-in,
+# LEDGER D48(1)); its default packet is proven byte-identical first, with no ports involved.
+SIM_FAIL=""
+if [ "$MODE" = selftest ]; then
+  SIM_FAIL="21:3"
+  "$PY" "$HERE/sim_selftest_check.py" || exit 1
+fi
 
 if [ "$MODE" = holds ]; then
   # A state that takes a timed hold. The shipped config has none (test_integration.sh builds one
@@ -240,7 +260,9 @@ ln -s "$FX/scripts/calibration/calibrations" "$SRV/scripts/calibration/calibrati
 ln -s "$BUILD" "$SRV/build"
 [ "$MODE" = nocal ] || cp "$ROOT/calibration/calibration_2026-02-25T03-44-09.json" "$SRV/calibration/"
 CFG="$FX/config/config.toml"
-BACKEND_CFG="$CFG"
+# unrecognized: the backend reads its own copy of the config (make_fixture.py config_backend/);
+# every service keeps $CFG.
+BACKEND_CFG="$CFG"; [ "$MODE" = unrecognized ] && BACKEND_CFG="$FX/config_backend/config.toml"
 
 wait_port() {  # port name seconds
   local i=0
@@ -406,7 +428,7 @@ done
 # --low-noise: constant ADC per channel. No timing pathologies, no --allow-ip-fallback: the pt
 # sim config enables only pt_board, at 127.0.0.1; the boards one every board at 127.0.0.<id>.
 "$PY" "$ROOT/sim/board_simulator.py" --config "$FX/sim_config.toml" --target 127.0.0.1 \
-  --port $P_DAQ_UDP --low-noise --skip-startup > "$FX/logs/sim.log" 2>&1 &
+  --port $P_DAQ_UDP --low-noise --skip-startup ${SIM_FAIL:+--fail-connector "$SIM_FAIL"} > "$FX/logs/sim.log" 2>&1 &
 PIDS+=($!); sleep 1; alive "${PIDS[-1]}" sim
 
 if [ -n "${CHAR_HOLD:-}" ]; then  # debugging: leave the stack up for poking, then tear down
@@ -428,7 +450,7 @@ cat > "$FX/context.json" <<EOF
            "$ROOT": "<daq>"},
  "ports": $(cat "$FX/ports.json" | "$PY" -c 'import json,sys; print(json.dumps({str(v): k for k, v in json.load(sys.stdin).items() if k != "sequencer_pid"}))'),
  "under_load": $([ "${CHAR_UNDER_LOAD:-0}" = 1 ] && echo true || echo false),
- "selftest_expected": $("$PY" "$HERE/selftest_expected.py" "$FX/sim_config.toml" "$CFG")}
+ "selftest_expected": $("$PY" "$HERE/selftest_expected.py" "$FX/sim_config.toml" "$CFG" ${SIM_FAIL:+--fail "$SIM_FAIL"})}
 EOF
 
 if [ -n "${CHAR_CAPTURE_ONLY:-}" ]; then
@@ -444,7 +466,7 @@ if [ "${CHAR_UPDATE:-0}" = 1 ]; then
   echo "pipeline[$MODE]: goldens rewritten ($(ls "$OUT" | wc -l | tr -d ' ') files in ${GOLD#$HERE/})"
   exit 0
 fi
-if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog "$GOLD" "$OUT"; then
+if diff -ru -x boards -x nocal -x stalesub -x operator -x holds -x startlog -x selftest -x unrecognized -x mismatch -x statecsv "$GOLD" "$OUT"; then
   echo "pipeline[$MODE]: PASS"
 else
   echo "pipeline[$MODE]: FAIL — observable behaviour differs from ${GOLD#$HERE/} (diff above)" >&2

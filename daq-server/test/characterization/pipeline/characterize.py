@@ -362,9 +362,16 @@ def selftest_section(steps, ctx):
       (d) the run is quiet and any handshake replay or full history reply lacks any board: every
           path that carried the self-test in the old golden must carry all of it exactly.
     `under_load` comes from run.sh (CHAR_UNDER_LOAD, set by whoever starts the synthetic load).
+    A board's entry may carry "fail": [connectors] (selftest_expected.py --fail, the selftest
+    session only): those connectors' expected result is 0 and the board's line says so; every
+    other board, and every session without the key, renders exactly as before.
     """
     expected = ctx.get("selftest_expected", {})
     want = {b: sorted(f"sensor_{i}" for i in e["sensors"]) for b, e in expected.items()}
+    want_value = {
+        b: {f"sensor_{i}": (0 if i in e.get("fail", []) else 1) for i in e["sensors"]}
+        for b, e in expected.items()
+    }
     paths = selftest_paths(steps)
     union = defaultdict(dict)
     problems = []
@@ -373,7 +380,9 @@ def selftest_section(steps, ctx):
             union[board].update(got)
             if board not in want:
                 problems.append(f"{path}: board {board} (not expected) {dumps(got)}")
-            elif sorted(got) != want[board] or any(v != 1 for v in got.values()):
+            elif sorted(got) != want[board] or any(
+                v != want_value[board][k] for k, v in got.items()
+            ):
                 problems.append(f"{path}: board {board} received {dumps(got)}")
     out = [
         "## self-test (P12): per board, the exact expected result | not-received (one-shot UDP"
@@ -381,8 +390,10 @@ def selftest_section(steps, ctx):
     ]
     missing = []
     for board in sorted(expected, key=int):
+        failed = [f"sensor_{i}" for i in expected[board].get("fail", [])]
+        verdict = "all 1" if not failed else f"all 1 but {', '.join(failed)} = 0"
         out.append(
-            f"board {board} ({expected[board]['type']}): {', '.join(want[board])} all 1"
+            f"board {board} ({expected[board]['type']}): {', '.join(want[board])} {verdict}"
             " | not-received (one-shot UDP self-test, defect)"
         )
         if board not in union:

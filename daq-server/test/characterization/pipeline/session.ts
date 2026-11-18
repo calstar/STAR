@@ -3,7 +3,7 @@
  * WebSocket and HTTP and writes everything it saw, raw, to a JSON capture; characterize.py turns
  * that into the goldens. Nothing here judges the backend — it only records.
  *
- *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds]
+ *   tsx session.ts <ws_port> <capture.json> [pt|nocal|boards|stalesub|operator|holds|selftest|unrecognized|mismatch|statecsv]
  *
  * pt: the full scripted session against the one routed PT board. boards: every simulated board
  * type streaming at once, plus the startup board's SETUP -> SELF_TEST lifecycle (board 60, played
@@ -14,6 +14,9 @@
  * what PT board 22 delivers, channel by channel, live and from history. holds: one accepted timed
  * hold, then the sequencer stalled (SIGSTOP) and gone (SIGTERM) under the backend's :9998 client;
  * run.sh hands over the sequencer's PID in <CHAR_FIXTURE>/ports.json (README "The holds session").
+ * selftest, unrecognized, mismatch: the three WP6 gaps (DESIGN-WP6 §7 G2, G3, G1), each a session
+ * cut to its one notification; statecsv: G8, an idle-mode state-CSV deploy and what the next client
+ * is handed (README "The WP6 gap sessions").
  *
  * Run from diablo_server/backend (NODE_PATH there) so `ws` resolves.
  */
@@ -176,23 +179,43 @@ async function getSweep(): Promise<void> {
   for (const p of gets) await request('GET', p);
 }
 
-/** Wait until the pipeline delivers: a probe client sees a raw and a calibrated PT sample. */
-async function waitForData(timeoutMs: number): Promise<void> {
+/** Wait until the pipeline delivers: a probe client sees a raw and a calibrated PT sample.
+ *  `boards` / `selfTestBoard` (the WP6 gap sessions): the same probe also waits, bounded by
+ *  `extraMs`, until the backend lists each of those boards connected (a `board_status_update`)
+ *  and, for `selfTestBoard`, has its self-test (`SELF_TEST.BOARD_<id>.*`, replayed or live). The
+ *  heartbeat and self-test tables are later subscription passes than the PT tables, and on a
+ *  loaded Linux leg they went live ~3 s after the PT data: a client connecting on PT data alone
+ *  saw a board list without 21 and no replay, and the one-shot self-test landed live in a later
+ *  step. One probe for all of it, so client A's connId is c2 in every session. On timeout the
+ *  session goes on and the golden shows what was missing. */
+async function waitForData(
+  timeoutMs: number, boards: number[] = [], selfTestBoard?: number, extraMs = 20000,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  const seen = { raw: false, cal: false };
+  const seen = { raw: false, cal: false, st: selfTestBoard === undefined };
+  const connected = new Set<number>();
   const probe = new WebSocket(`ws://127.0.0.1:${PORT}`);
   probe.on('message', (d) => {
     try {
       const m = JSON.parse(d.toString());
+      if (m.type === 'board_status_update') {
+        for (const b of m.payload?.boards ?? []) if (b.connected === true) connected.add(b.id);
+        return;
+      }
       if (m.type !== 'sensor_update') return;
       const e = String(m.payload?.entity ?? '');
       if (/^PT\d+\.CH\d+$/.test(e)) seen.raw = true;
       if (/^PT\d+_Cal\.CH\d+$/.test(e)) seen.cal = true;
+      if (selfTestBoard !== undefined && e === `SELF_TEST.BOARD_${selfTestBoard}`) seen.st = true;
     } catch { /* ignore */ }
   });
   while (Date.now() < deadline && !(seen.raw && seen.cal)) await sleep(200);
+  const ready = () => seen.st && boards.every((b) => connected.has(b));
+  const extraBy = Date.now() + extraMs;
+  while (Date.now() < extraBy && !ready()) await sleep(200);
   probe.close();
   if (!(seen.raw && seen.cal)) throw new Error(`pipeline not delivering (raw=${seen.raw} cal=${seen.cal})`);
+  if (!ready()) console.log(`[session] boards ${boards} / self-test ${selfTestBoard} not ready within ${extraMs} ms`);
 }
 
 async function main(): Promise<void> {
@@ -227,6 +250,9 @@ async function main(): Promise<void> {
   send('A', { type: 'subscribe', payload: { keys: ['PT1.CH1.raw_adc_counts'] } });
   send('A', 'not json');
   send('A', { type: 'get_state_transitions' });
+  // G10 (DESIGN-WP6 §7): a well-formed message whose handler throws -- send_command with no payload
+  // -- is caught at the WS boundary ("Bad message" log) and gets no reply either.
+  send('A', { type: 'send_command' });
   await settle(1000);
 
   step('history');
@@ -693,7 +719,183 @@ async function holds(): Promise<void> {
   console.log(`[session] wrote ${OUT}`);
 }
 
-(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub() : MODE === 'operator' ? operator() : MODE === 'holds' ? holds() : main()).then(() => process.exit(0)).catch((err) => {
+
+/** Wait (bounded) for a frame of client `name` that `pred` accepts; the frame, or undefined. */
+async function waitForFrame(name: string, pred: (m: any) => boolean, boundMs: number): Promise<Frame | undefined> {
+  const by = Date.now() + boundMs;
+  const match = (f: Frame) => {
+    if (f.client !== name) return false;
+    try { return pred(JSON.parse(f.raw)); } catch { return false; }
+  };
+  while (Date.now() < by) {
+    const f = capture.steps.flatMap((s) => s.frames).find(match);
+    if (f) return f;
+    await sleep(100);
+  }
+  return undefined;
+}
+const notificationWith = (key: string, ongoing: boolean) => (m: any) =>
+  m.type === 'notification' && m.payload?.key === key && m.payload?.ongoing === ongoing;
+
+/** G2 (DESIGN-WP6 §7): run.sh started the simulator with --fail-connector 21:3, so pt_board's
+ *  one-shot SELF_TEST carries sensor_3 = 0. The backend raises `self_test_fail_21` once (the
+ *  `break` after the first failing row) during readiness; client A's connect burst freezes the
+ *  self-test replay with the 0 (ws_streams.txt P12, expected from selftest_expected.py --fail) and
+ *  the notification replay; the unnarrowed history query freezes the series. Nothing else. */
+async function selftest(): Promise<void> {
+  step('readiness');
+  await waitForData(60000, [21], 21);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A');
+  await settle(2500);
+
+  step('history');
+  send('A', { type: 'query_historical', payload: {} });
+  await settle(1500);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+/** G3 (DESIGN-WP6 §7): the backend read a config in which pt_board's id is spelled `id = 21`
+ *  (make_fixture.py config_backend/): the registry subscribes to board 21's tables (its data
+ *  flows -- readiness needs it) but loadBoardsFromConfig never listed it, so its first heartbeat
+ *  creates it `expected: false` at the backend's invented `192.168.2.21`, and the next 1 Hz sweep
+ *  raises `unrecognized_21`. All during readiness: client A's burst freezes the board list and the
+ *  notification replay. WS only -- the HTTP routes read board_id too, and their shapes for a board
+ *  without one are not what this session is for. */
+async function unrecognized(): Promise<void> {
+  step('readiness');
+  await waitForData(60000, [21]);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A');
+  await settle(2500);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+/** G1 (DESIGN-WP6 §7, LEDGER D48): the actuator-mismatch check, which no other golden ever
+ *  fires. The fixture names the ball valve ("Main Ball Valve" = ["NC", 1, 71], CLOSE in every
+ *  state; make_fixture.py mismatch), and a ball valve is the one actuator the simulated stack
+ *  reports a sensed position for (BV1_Cal.CH1.position_pct -> sensed BV1.CH1, ball-valve.ts).
+ *  Unlock -> debug on -> open the valve -> wait out its 3 s travel (board_simulator.py
+ *  BALL_VALVE_TRAVEL_S) -> debug on AGAIN: doSetDebugMode(true) publishes state without clearing
+ *  overrides (SequencerService.cpp), which is what schedules the backend's 5 s check ->
+ *  `actuator_mismatch` ongoing:true "… BV1.CH1 (expected CLOSED, sensed OPEN)" -> close the valve:
+ *  each sensed change with the key active reschedules the check -> "Actuator positions match
+ *  expected" ongoing:false -> debug off. The two notifications are waited for by predicate with a
+ *  bound (the 5 s timer can straddle a step boundary under load), never by quiet; a late or
+ *  missing one is a frame in the wrong step, which the golden shows. */
+async function mismatch(): Promise<void> {
+  step('readiness');
+  await waitForData(60000, [21, 71]);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A', OPERATOR);
+  await settle(2500);
+
+  step('unlock');
+  send('A', { type: 'control_unlock', payload: {} });
+  await settle(600);
+
+  step('debug_on');
+  command('A', 'debug_mode', { debugMode: true });
+  // This publish schedules a check too (server.ts ACTUATOR_MISMATCH_DELAY_MS, 5 s). Let it fire
+  // while the valve is still closed -- a match, nothing raised -- before the valve is told to
+  // open; opened right away, whether the valve was past 95 % by the time it fired was a 0.4 s
+  // race, and the mismatch landed in one step or the next.
+  await settle(6500);
+
+  step('valve_open');
+  command('A', 'actuator', { actuatorName: 'Main Ball Valve', actuatorState: 1 });
+  await settle(4500);  // 3 s of travel, then the sensed OPEN is on record; no publish, no check
+
+  step('mismatch_raised');
+  command('A', 'debug_mode', { debugMode: true });
+  // Waited for by predicate, not by quiet: the frame lands in this step or the golden differs.
+  await waitForFrame('A', notificationWith('actuator_mismatch', true), 12000);
+  await settle(600);
+
+  step('valve_close');
+  command('A', 'actuator', { actuatorName: 'Main Ball Valve', actuatorState: 0 });
+  await waitForFrame('A', notificationWith('actuator_mismatch', false), 15000);
+  await settle(600);
+
+  step('debug_off');
+  command('A', 'debug_mode', { debugMode: false });
+  await settle(1200);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+/** G8 (DESIGN-WP6 §7, LEDGER D105): an idle-mode POST /api/state-csv, as the operator, with the
+ *  actuators CSV changed in one cell -- Fuel Vent's Idle column, CLOSE -> OPEN -- and what the
+ *  always-on backend does with it: writeStateCsv deploys it (no session), setImmediate fires
+ *  onStateCsvUpdated (server.ts), which rebuilds STATE_ACTUATOR_MAP and broadcasts one
+ *  `config_updated` to client A -- and nothing else to A: its commanded snapshot was sent at
+ *  connect and is not re-sent. The rebuild is observable only through the next client: B's connect
+ *  burst (ws_handshake.txt) carries ACT_CMD.B2.CH2 (Fuel Vent, board 12 channel 2) = 1 where A's
+ *  carried 0. The GETs before and after are the witnesses in http.txt / csv.txt. The body is built
+ *  from the GET so the fixture's CSV, not a copy of it, is what is deployed. */
+async function statecsv(): Promise<void> {
+  step('readiness');
+  await waitForData(60000, [21]);
+  await sleep(3000);
+
+  step('connect');
+  await openClient('A');
+  await settle(2500);
+
+  step('state_csv_deploy');
+  const before = await request('GET', '/api/state-csv?name=actuators');
+  const rows = before.body.split('\n');
+  const i = rows.findIndex((r) => r.startsWith('Fuel Vent,'));
+  if (i < 0) throw new Error('actuators CSV has no Fuel Vent row');
+  const cells = rows[i].split(',');
+  if (cells[1] !== 'CLOSE') throw new Error(`Fuel Vent Idle is ${cells[1]}, expected CLOSE`);
+  cells[1] = 'OPEN';
+  rows[i] = cells.join(',');
+  await request('POST', '/api/state-csv?name=actuators', { headers: OPERATOR, body: rows.join('\n') });
+  await settle(1500);
+  await request('GET', '/api/state-csv?name=actuators');
+
+  step('late_client');
+  await openClient('B');
+  await settle(1500);
+  await closeClient('B');
+  await settle(300);
+
+  step('disconnect');
+  await closeClient('A');
+  await settle(500);
+  cur!.t1 = Date.now();
+  fs.writeFileSync(OUT, JSON.stringify(capture));
+  console.log(`[session] wrote ${OUT}`);
+}
+
+(MODE === 'boards' ? boards() : MODE === 'nocal' ? nocal() : MODE === 'stalesub' ? stalesub()
+  : MODE === 'operator' ? operator() : MODE === 'holds' ? holds()
+  : MODE === 'selftest' ? selftest() : MODE === 'unrecognized' ? unrecognized() : MODE === 'mismatch' ? mismatch()
+  : MODE === 'statecsv' ? statecsv() : main()).then(() => process.exit(0)).catch((err) => {
   console.error('[session] FAILED:', err);
   try { fs.writeFileSync(OUT, JSON.stringify(capture)); } catch { /* best effort */ }
   process.exit(1);
