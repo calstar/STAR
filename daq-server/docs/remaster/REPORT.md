@@ -577,8 +577,7 @@ REPORT-DEFECTS-DRAFT.md §5)
 - None: every package is merged or parked (D142). WP9 is parked (D113). WP7 step 2 and WP10's §6.2
   cleanup are deferred items, not queued. The final §5 delta review of WP6, WP9-lite and WP10
   and Phase 4 (fresh-clone gate, `dev.sh --sim`, e2e Playwright) are tracked in D133.
-- H3 harness fixes merged (D121); the D12a golden-diff gate step against the tag is not recorded
-  as done.
+- H3 harness fixes merged (D121). D12a (goldens only grow) was checked by hand at every merge and over the whole range remaster-baseline → final tip: 0 golden lines removed or changed, 3,736 added across 44 golden files (D144). It was not automated as a gate step.
 - WP3's six path-only lines outside `daq-server/` were applied at queue time (D115, D117); WP4's
   no-op CI step (`daq-server-ci.yml:569-576`) is still the orchestrator's (D86).
 
