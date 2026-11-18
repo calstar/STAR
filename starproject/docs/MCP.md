@@ -285,12 +285,13 @@ defineTool(server, "archive_task", {
 
 ## Tools
 
-**PVPs only, for now:** every reimbursement tool (from `list_reimbursements` through
-`get_worker_status`, drafts included) and the purchase-request tools
-(`list_`/`get_`/`create_`/`approve_`/`reject_`/`cancel_purchase_request`) refuse anyone
-who is not a PVP (`src/lib/pvp.ts`), admins included, before they run
-(`guardedDefine` in `src/mcp/tools/_shared.ts`). The web pages are unchanged. The
-"admins only" notes below still apply on top.
+**Admins or PVPs:** every reimbursement tool (from `list_reimbursements` through
+`get_worker_status`, drafts included) refuses anyone who is neither an admin nor a PVP
+before it runs (`guardedDefine` in `src/mcp/tools/_shared.ts`); the notes below still
+apply on top (any admin approves, only a PVP sends to CalLink or retries). **Purchase requests** are
+open to every member, as the page is (any member lists, reads and makes one, and cancels
+their own); `approve_`/`reject_purchase_request` refuse anyone who is not a PVP
+(`src/lib/pvp.ts`), admins included. The web pages are unchanged.
 The Finance tab's tools (`get_finance_overview`, accounts, planned income) are
 admins only, as the tab is; the budget-line tools are open to every member, as
 Subteams → Budget is.
@@ -375,17 +376,19 @@ Subteams → Budget is.
 | `get_reimbursement` | One reimbursement by R-number: fields, items + receipts, timeline, `can`; PII and receipt links redacted unless you are the payee, the filer or an admin | read |
 | `get_reimbursement_receipts` | A reimbursement's line items plus the receipt files: PDFs as embedded resources, images as images (`item` for one item; up to 20 MB per call). A CalLink receipt not yet held is downloaded for that call (callink-worker, up to 30 s wait) and kept; nothing is downloaded unless asked for | read; payee, filer and admins only |
 | `get_payee_defaults` | What the New reimbursement form pre-fills for you (saved profile, else your newest CalLink request, else account) | read |
-| `file_reimbursement` | File a reimbursement like the form: the form's fields plus `receipts` (base64 PDF/PNG/JPEG, one per item, under 4 MB); lands as `pending_approval` | write; same code path as `POST /api/finance/requests` |
+| `create_receipt_upload` | One-time upload links (`count`, 15 min) for receipt files: PUT the raw bytes (`curl -T receipt.pdf "<uploadUrl>"`, optional `&name=`) to `/api/mcp/uploads/<id>`, then name the `uploadId` in a receipt | write; only the minter can use an upload; deleted once filed |
+| `file_reimbursement` | File a reimbursement like the form: the form's fields plus `receipts`, one per item, each an `uploadId` from `create_receipt_upload` or inline base64 (PDF/PNG/JPEG under 4 MB); lands as `pending_approval` | write; same code path as `POST /api/finance/requests` |
 | `draft_reimbursement` | Start a draft (D-number): any of the form's fields so far, plus `receipts` by item index; returns `problems`, what filing still needs | write; private to you |
 | `update_reimbursement_draft` | Change a draft: fields given replace (payee merges, `items` replaces the list), `receipts` set by item index, `removeReceipts` | write |
 | `list_reimbursement_drafts` / `get_reimbursement_draft` | Your drafts with their fields, receipts and `problems` | read |
 | `file_reimbursement_draft` | File a ready draft exactly as `file_reimbursement` does, then delete it | write; refused while it has problems |
 | `delete_reimbursement_draft` | Throw a draft away | destructive |
-| `approve_reimbursement` | Queue a pending reimbursement for the CalLink worker | admins only; write |
-| `reject_reimbursement` | Reject a pending reimbursement with a reason (≤1000 chars) | admins only; destructive (final) |
-| `retry_reimbursement` | Put a failed filing back in the queue | admins only; write |
-| `cancel_reimbursement` | Cancel before it reaches CalLink: the filer while pending, an admin also when approved or failed | destructive (final) |
-| `resolve_needs_check` | Record whether a filing the worker could not confirm is on CalLink (`filed`) | admins only; write |
+| `approve_reimbursement` | Approve a pending reimbursement; it waits (`awaiting_send`) on STARProject until a PVP sends it | admins or PVPs; write |
+| `send_reimbursement` | Send an approved (`awaiting_send`) reimbursement to CalLink: queue it for the worker | PVPs only; write |
+| `reject_reimbursement` | Reject a pending or awaiting-send reimbursement with a reason (≤1000 chars) | admins or PVPs; destructive (final) |
+| `retry_reimbursement` | Put a failed filing back in the CalLink queue | PVPs only; write |
+| `cancel_reimbursement` | Cancel before it reaches CalLink: the filer while pending, an admin or PVP also when awaiting send, approved or failed | destructive (final) |
+| `resolve_needs_check` | Record whether a filing the worker could not confirm is on CalLink (`filed`); not filed goes back to awaiting send | admins only; write |
 | `request_callink_login` | Ask callink-worker to sign in to CalLink (sends the Duo push) | admins only; write |
 | `get_worker_status` | The CalLink worker's last report and the sign-in banner state | admins only; read |
 | `tag_reimbursement` | Set the project and subteam a reimbursement counts under in the Finance tab's spending breakdown (left out stays, null clears) | write; admins or its filer |

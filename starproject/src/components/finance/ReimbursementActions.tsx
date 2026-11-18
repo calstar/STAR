@@ -8,6 +8,7 @@ import {
   rejectReimbursement,
   resolveNeedsCheck,
   retryReimbursement,
+  sendReimbursement,
 } from "@/lib/actions/finance";
 import type { FinanceDetail } from "@/lib/finance/queries";
 
@@ -16,7 +17,7 @@ const primary = `${btn} bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-n
 const secondary = `${btn} border border-neutral-300 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800`;
 const danger = `${btn} border border-red-300 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950`;
 
-/** Approve / reject / retry / cancel, as the viewer is allowed (the server checks again). */
+/** Approve / send / reject / retry / cancel, as the viewer is allowed (the server checks again). */
 export function ReimbursementActions({ data, onChanged }: { data: FinanceDetail; onChanged: () => void }) {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -35,14 +36,25 @@ export function ReimbursementActions({ data, onChanged }: { data: FinanceDetail;
       }
     });
 
-  if (!can.approve && !can.reject && !can.retry && !can.cancel && !can.resolve) return null;
+  if (!can.approve && !can.send && !can.reject && !can.retry && !can.cancel && !can.resolve) return null;
 
   return (
     <div className="w-full">
       <div className="flex flex-wrap items-center gap-2">
         {can.approve && (
           <button className={primary} disabled={pending} onClick={() => run(() => approveReimbursement(data.id))}>
-            Approve and queue for CalLink
+            Approve
+          </button>
+        )}
+        {can.send && (
+          <button
+            className={primary}
+            disabled={pending}
+            onClick={() => {
+              if (window.confirm(`Send R-${data.number} to CalLink? The worker files it under MISC-STAR.`)) run(() => sendReimbursement(data.id));
+            }}
+          >
+            Send to CalLink
           </button>
         )}
         {can.reject && !rejecting && (
@@ -61,7 +73,7 @@ export function ReimbursementActions({ data, onChanged }: { data: FinanceDetail;
               It&apos;s on CalLink
             </button>
             <button className={secondary} disabled={pending} onClick={() => run(() => resolveNeedsCheck(data.id, false))}>
-              Not on CalLink: queue again
+              Not on CalLink: back to awaiting send
             </button>
           </>
         )}
@@ -102,7 +114,15 @@ export function ReimbursementActions({ data, onChanged }: { data: FinanceDetail;
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       {data.status === "pending_approval" && can.approve && (
         <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
-          Approving queues it; the worker then files it on CalLink under STAR&apos;s MISC-STAR account.
+          Approving keeps it here; nothing goes to CalLink until a PVP sends it.
+        </p>
+      )}
+      {data.status === "awaiting_send" && !can.send && (
+        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">Approved. Only a PVP can send it to CalLink.</p>
+      )}
+      {can.send && (
+        <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400">
+          Sending queues it; the worker then files it on CalLink under STAR&apos;s MISC-STAR account.
         </p>
       )}
     </div>

@@ -1,8 +1,9 @@
 import type { ReimbursementStatus } from "@prisma/client";
 
 import { isAdmin } from "@/lib/admins";
+import { isPvp } from "@/lib/pvp";
 import { canSeePii, isMine, redact, type DetailDto, type ItemDto, type PiiDto, type Viewer } from "@/lib/finance/access";
-import { displayStatus, needsAdmin, type Tone } from "@/lib/finance/status";
+import { displayStatus, needsAdmin, needsPvp, type Tone } from "@/lib/finance/status";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
 import { pathOf } from "@/lib/project-tree";
@@ -14,7 +15,8 @@ import { getCurrentDbUser } from "@/lib/user";
 
 export async function getViewer(): Promise<Viewer> {
   const user = await getCurrentDbUser();
-  return { id: user.id, email: user.email, isAdmin: await isAdmin(user.email) };
+  const [admin, pvp] = await Promise.all([isAdmin(user.email), isPvp(user.email)]);
+  return { id: user.id, email: user.email, isAdmin: admin, isPvp: pvp };
 }
 
 export type FinanceRow = {
@@ -30,6 +32,7 @@ export type FinanceRow = {
   callinkRequestNumber: string | null;
   vendors: string;
   mine: boolean;
+  /** Waiting on this viewer: an admin's review, or (for a PVP) a send to CalLink. */
   needsAdmin: boolean;
   /** Filed through STARProject, or imported from CalLink. */
   source: "callink" | "starproject";
@@ -76,7 +79,7 @@ export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
       callinkRequestNumber: r.callinkRequestNumber,
       vendors: [...new Set(r.items.map((i) => i.vendor).filter(Boolean))].join(", "),
       mine: isMine(viewer, r),
-      needsAdmin: needsAdmin(r),
+      needsAdmin: (viewer.isAdmin && needsAdmin(r)) || (viewer.isPvp && needsPvp(r)),
       source: r.source,
       projectId: r.projectId,
       subteamId: r.subteamId,
@@ -127,7 +130,7 @@ export type FinanceDetail = DetailDto<{
   subteamName: string | null;
   events: FinanceEvent[];
   /** What this viewer may do; the actions check again on the server. */
-  can: { seePii: boolean; approve: boolean; reject: boolean; retry: boolean; cancel: boolean; resolve: boolean; tag: boolean };
+  can: { seePii: boolean; approve: boolean; reject: boolean; send: boolean; retry: boolean; cancel: boolean; resolve: boolean; tag: boolean };
 }>;
 
 export async function getFinanceDetail(number: number, viewer: Viewer): Promise<FinanceDetail | null> {
@@ -159,6 +162,7 @@ export async function getFinanceDetail(number: number, viewer: Viewer): Promise<
     : null;
 
   const owner = !!r.createdById && r.createdById === viewer.id;
+  const staff = viewer.isAdmin || viewer.isPvp;
   const items: ItemDto[] = r.items.map((i) => ({
     position: i.position,
     date: i.date,
@@ -220,11 +224,12 @@ export async function getFinanceDetail(number: number, viewer: Viewer): Promise<
     })),
     can: {
       seePii: allowed,
-      approve: viewer.isAdmin && r.status === "pending_approval",
-      reject: viewer.isAdmin && r.status === "pending_approval",
-      retry: viewer.isAdmin && r.status === "failed",
+      approve: staff && r.status === "pending_approval",
+      reject: staff && ["pending_approval", "awaiting_send"].includes(r.status),
+      send: viewer.isPvp && r.status === "awaiting_send",
+      retry: viewer.isPvp && r.status === "failed",
       cancel:
-        (viewer.isAdmin && ["pending_approval", "approved", "failed"].includes(r.status)) ||
+        (staff && ["pending_approval", "awaiting_send", "approved", "failed"].includes(r.status)) ||
         (owner && r.status === "pending_approval"),
       resolve: viewer.isAdmin && r.status === "submitting" && r.needsCheck,
       tag: canTag(viewer, r),

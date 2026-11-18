@@ -6,7 +6,7 @@
 // gate, user id) only. A payee-profile email is something a member can type, so
 // it never grants access.
 
-export type Viewer = { id: string; email: string; isAdmin: boolean };
+export type Viewer = { id: string; email: string; isAdmin: boolean; isPvp: boolean };
 
 export type Ownership = {
   createdById: string | null;

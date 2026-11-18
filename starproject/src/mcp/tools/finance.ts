@@ -7,12 +7,13 @@ import {
   requestCallinkLogin,
   resolveNeedsCheck,
   retryReimbursement,
+  sendReimbursement,
   tagReimbursement,
 } from "@/lib/actions/finance";
-import { requireAdmin } from "@/lib/admins";
+import { isAdmin, requireAdmin } from "@/lib/admins";
 import { canSeePii } from "@/lib/finance/access";
 import { FETCH_WAIT_MS, isInlineMime } from "@/lib/finance/receipt-fetch";
-import { requirePvp } from "@/lib/pvp";
+import { isPvp } from "@/lib/pvp";
 import { prisma } from "@/lib/db";
 import { createDraft, deleteDraft, fileDraft, getDraft, listDrafts, updateDraft } from "@/lib/finance/draft-data";
 import { draftPatchShape } from "@/lib/finance/drafts";
@@ -21,6 +22,7 @@ import { schoolYearOf } from "@/lib/finance/ledger";
 import { loginView } from "@/lib/finance/login";
 import { getFinanceDetail, getProfileDefaults, getViewer, listFinanceRows, type FinanceRow } from "@/lib/finance/queries";
 import { MAX_RECEIPT_BYTES, RECEIPT_ACCEPT } from "@/lib/finance/receipts";
+import { consumeUploads, loadUploads, MAX_UPLOADS_PER_CALL, mintUploads } from "@/lib/finance/receipt-upload";
 import { MAX_ITEMS, reimbursementInputSchema } from "@/lib/finance/schema";
 import { getCurrentDbUser } from "@/lib/user";
 
@@ -34,8 +36,8 @@ import { DESTRUCTIVE, READ, WRITE, guardedDefine, rawContent, type ToolModule } 
 // POST /api/finance/requests. The pure helpers at the top are tested without a
 // database (finance.test.ts).
 //
-// Over MCP the whole module is for PVPs only, for now: every tool refuses
-// anyone else before it runs, whatever the page would let them do.
+// Over MCP the whole module is for admins and PVPs: every tool refuses anyone
+// else before it runs, whatever the page would let them do (requireAdminOrPvp).
 
 export type FinanceFilter = {
   /** A displayStatus key: pending_approval, approved, needs_check, "callink:Approved", ... */
@@ -113,6 +115,9 @@ export function sortFinanceRows(rows: FinanceRow[], sort: FinanceSort): FinanceR
 
 export type ReceiptInput = { fileName: string; mimeType: string; base64: string };
 
+/** A receipt as a tool takes it: inline base64, or the id of a file uploaded through create_receipt_upload. */
+export type ReceiptArg = { fileName?: string; mimeType?: string; base64?: string; uploadId?: string };
+
 /** The bare base64 text: no `data:` URL prefix, no MIME line wrapping. */
 export function stripBase64(s: string): string {
   return s.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
@@ -133,11 +138,27 @@ export function receiptToFile(r: ReceiptInput): File {
 }
 
 /** The multipart body ReimbursementForm.tsx builds: `payload` JSON + `receipt-<i>` files. */
-export function buildFilingForm(payload: unknown, receipts: ReceiptInput[]): FormData {
+export function buildFilingForm(payload: unknown, receipts: File[]): FormData {
   const form = new FormData();
   form.set("payload", JSON.stringify(payload));
-  receipts.forEach((r, i) => form.set(`receipt-${i}`, receiptToFile(r)));
+  receipts.forEach((f, i) => form.set(`receipt-${i}`, f));
   return form;
+}
+
+/**
+ * Each receipt as the File the form would have attached: base64 decoded here, an
+ * upload read from ReceiptUpload (the caller's own, uploaded, not expired). Also
+ * the upload ids used, to drop once the filing or draft has its copy.
+ */
+export async function resolveReceipts(userId: string, receipts: ReceiptArg[]): Promise<{ files: File[]; uploadIds: string[] }> {
+  const uploadIds = receipts.flatMap((r) => (r.uploadId ? [r.uploadId] : []));
+  const uploads = await loadUploads(userId, uploadIds);
+  const files = receipts.map((r) =>
+    r.uploadId
+      ? uploads.get(r.uploadId)!
+      : receiptToFile({ fileName: r.fileName ?? "", mimeType: r.mimeType ?? "", base64: r.base64 ?? "" }),
+  );
+  return { files, uploadIds };
 }
 
 // Base64 grows bytes by 4/3; anything longer than a 4 MB file encodes to is
@@ -145,28 +166,54 @@ export function buildFilingForm(payload: unknown, receipts: ReceiptInput[]): For
 // wrapping). `checkReceipt` still rules on the decoded size.
 const MAX_BASE64 = Math.ceil(MAX_RECEIPT_BYTES / 3) * 4;
 
-const receiptSchema = z.object({
-  fileName: z.string().trim().min(1).max(200).describe(`Name with extension; one of ${RECEIPT_ACCEPT}`),
-  mimeType: z.string().trim().min(1).max(100).describe("application/pdf, image/png or image/jpeg (the bytes are what is checked)"),
+// A receipt is either uploaded (uploadId, from create_receipt_upload: the way to
+// send a file the agent has on disk) or inline (base64 with its fileName and
+// mimeType). Exactly one of the two.
+const receiptShape = {
+  uploadId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe("A file uploaded through create_receipt_upload (PUT to its uploadUrl first). Use this or base64"),
+  fileName: z.string().trim().min(1).max(200).optional().describe(`With base64: name with extension; one of ${RECEIPT_ACCEPT}`),
+  mimeType: z.string().trim().min(1).max(100).optional().describe("With base64: application/pdf, image/png or image/jpeg (the bytes are what is checked)"),
   base64: z
     .string()
     .min(1)
     .refine((s) => stripBase64(s).length <= MAX_BASE64, "A receipt must be under 4 MB")
-    .describe("The file's bytes, base64 (a data: URL prefix or line wrapping is fine)"),
-});
+    .optional()
+    .describe("The file's bytes, base64 (a data: URL prefix or line wrapping is fine). Use this or uploadId"),
+};
+
+const oneSource = (r: ReceiptArg, ctx: z.RefinementCtx) => {
+  if (!!r.uploadId === !!r.base64) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Give each receipt either uploadId or base64, not both" });
+  else if (r.base64 && (!r.fileName || !r.mimeType)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "A base64 receipt needs fileName and mimeType" });
+};
+
+export const receiptSchema = z.object(receiptShape).superRefine(oneSource);
 
 const numberSchema = z.number().int().min(1).describe("The reimbursement's R-number (from list_reimbursements)");
 
 const draftNumberSchema = z.number().int().min(1).describe("The draft's D-number (from list_reimbursement_drafts)");
 
 const draftReceiptsSchema = z
-  .array(receiptSchema.extend({ item: z.number().int().min(0).max(MAX_ITEMS - 1).describe("The item it is the receipt for, from 0") }))
+  .array(
+    z
+      .object({ ...receiptShape, item: z.number().int().min(0).max(MAX_ITEMS - 1).describe("The item it is the receipt for, from 0") })
+      .superRefine(oneSource),
+  )
   .max(MAX_ITEMS)
   .refine((rs) => new Set(rs.map((r) => r.item)).size === rs.length, "One receipt per item")
   .optional()
   .describe("Receipts by item index; one given for an item replaces the one it had");
 
-const asDraftReceipts = (rs: z.infer<typeof draftReceiptsSchema>) => (rs ?? []).map((r) => ({ item: r.item, file: receiptToFile(r) }));
+async function asDraftReceipts(userId: string, rs: z.infer<typeof draftReceiptsSchema>) {
+  const list = rs ?? [];
+  const { files, uploadIds } = await resolveReceipts(userId, list);
+  return { receipts: list.map((r, i) => ({ item: r.item, file: files[i] })), uploadIds };
+}
 
 /** Each row's items (date, vendor, amount, CalLink's type, receipt names), by reimbursement id. */
 async function itemsByReimbursement(ids: string[]) {
@@ -342,16 +389,24 @@ async function act(number: number, run: (id: string) => Promise<{ ok: true } | {
   return readDetail(number);
 }
 
+// Over MCP the reimbursement tools are for admins and PVPs. The actions decide the
+// rest: any admin approves, only a PVP sends to CalLink (src/lib/finance/status.ts).
+async function requireAdminOrPvp() {
+  const user = await getCurrentDbUser();
+  if (!(await isAdmin(user.email)) && !(await isPvp(user.email))) throw new Error("Only an admin or a PVP can do that.");
+  return user;
+}
+
 export const financeTools: ToolModule = (server) => {
-  const define = guardedDefine(server, requirePvp);
+  const define = guardedDefine(server, requireAdminOrPvp);
   define(
     "list_reimbursements",
     {
       description:
-        "PVPs only (MCP). Every reimbursement, STAR's own and those imported from CalLink, with the display " +
+        "Admins or PVPs (MCP). Every reimbursement, STAR's own and those imported from CalLink, with the display " +
         "status a member sees, payee, submitter, vendors, amount in cents, date, source, and whether it is yours " +
         "(mine) or waiting on an admin (needsAdmin). Filters, all optional and combined with AND: status (a " +
-        "display-status key: pending_approval, approved, submitting, failed, rejected, cancelled, needs_check, " +
+        "display-status key: pending_approval, awaiting_send, approved, submitting, failed, rejected, cancelled, needs_check, " +
         "submitted, callink:<Status> such as callink:Approved), mine, review (needs an admin), search (number, " +
         "subject, payee, submitter, vendors, CalLink #), person (payee or submitter name), vendor, minAmount / " +
         "maxAmount in dollars, from / to (YYYY-MM-DD, Berkeley days), schoolYear (2026 = 2026-27), source " +
@@ -396,7 +451,7 @@ export const financeTools: ToolModule = (server) => {
     "get_reimbursement",
     {
       description:
-        "PVPs only (MCP). One reimbursement by its R-number, as its card on Reimbursements shows it: fields, items with receipts, the event " +
+        "Admins or PVPs (MCP). One reimbursement by its R-number, as its card on Reimbursements shows it: fields, items with receipts, the event " +
         "timeline, and `can` (what you may do to it). The payee's address, phone, UID and the receipt links are " +
         "included only for the payee, the filer and admins; everyone else gets them redacted.",
       inputSchema: { number: numberSchema },
@@ -409,7 +464,7 @@ export const financeTools: ToolModule = (server) => {
     "get_reimbursement_receipts",
     {
       description:
-        "PVPs only (MCP). A reimbursement's line items (date, vendor, amount, CalLink's type, location, invoice, " +
+        "Admins or PVPs (MCP). A reimbursement's line items (date, vendor, amount, CalLink's type, location, invoice, " +
         "comment) and the receipt files themselves: a PDF comes back as an embedded resource, an image as an " +
         "image. item (1-6) narrows it to one item. A CalLink receipt not yet held is downloaded from CalLink " +
         "for this call (it can take up to 30 s) and kept; nothing is downloaded unless asked for. Each receipt " +
@@ -428,7 +483,7 @@ export const financeTools: ToolModule = (server) => {
     "get_payee_defaults",
     {
       description:
-        "PVPs only (MCP). What the New reimbursement form pre-fills for you: your saved payee profile, else the payee details on " +
+        "Admins or PVPs (MCP). What the New reimbursement form pre-fills for you: your saved payee profile, else the payee details on " +
         "your newest CalLink request, else your account email and name. `saved` says whether a profile exists; " +
         "`seededFrom` names the CalLink request the values came from.",
       inputSchema: {},
@@ -438,12 +493,33 @@ export const financeTools: ToolModule = (server) => {
   );
 
   define(
+    "create_receipt_upload",
+    {
+      description:
+        "Admins or PVPs (MCP). Upload receipt files directly instead of inlining them as base64. Returns `count` one-time upload " +
+        "links (open 15 minutes). PUT each file's raw bytes to its uploadUrl, e.g. `curl -sS -T receipt.pdf \"<uploadUrl>\"` " +
+        "(optionally add &name=<file name> to the URL); the reply says the name, type and size it was kept as. Then name the " +
+        "uploadId in a receipt of file_reimbursement, draft_reimbursement or update_reimbursement_draft. PDF, PNG or JPEG under " +
+        "4 MB, checked by its bytes. One file per link; only you can use your uploads, and each is deleted once filed.",
+      inputSchema: {
+        count: z.number().int().min(1).max(MAX_UPLOADS_PER_CALL).optional().describe("How many links (one per receipt); default 1"),
+      },
+      annotations: WRITE,
+    },
+    async ({ count }) => {
+      const uploads = await mintUploads((await getCurrentDbUser()).id, count ?? 1);
+      return { uploads, method: "PUT", maxBytes: MAX_RECEIPT_BYTES, example: `curl -sS -T receipt.pdf "${uploads[0].uploadUrl}"` };
+    },
+  );
+
+  define(
     "file_reimbursement",
     {
       description:
-        "PVPs only (MCP). File a reimbursement, exactly as the New reimbursement form does. It lands as pending_approval; nothing " +
-        `goes to CalLink until an admin approves it. 1 to ${MAX_ITEMS} items, each with its receipt in \`receipts\` at the ` +
-        "same index (PDF, PNG or JPEG under 4 MB, checked by its bytes). Amounts are text like \"12.34\"; the " +
+        "Admins or PVPs (MCP). File a reimbursement, exactly as the New reimbursement form does. It lands as pending_approval; nothing " +
+        `goes to CalLink until it is approved and a PVP sends it. 1 to ${MAX_ITEMS} items, each with its receipt in \`receipts\` at the ` +
+        "same index (PDF, PNG or JPEG under 4 MB, checked by its bytes): a file on disk goes up through create_receipt_upload " +
+        "and is named by uploadId; base64 inline still works. Amounts are text like \"12.34\"; the " +
         "total is their sum. saveProfile (default true) remembers the payee details as your profile. Returns the " +
         "new R-number and the reimbursement. bomItemIds (ids from list_bom) marks the BOM lines this filing pays back.",
       inputSchema: {
@@ -457,11 +533,13 @@ export const financeTools: ToolModule = (server) => {
         throw new Error(`Attach one receipt per item: ${payload.items.length} item(s), ${receipts.length} receipt(s).`);
       }
       const user = await getCurrentDbUser();
-      const result = await fileReimbursement(user, buildFilingForm(payload, receipts));
+      const { files, uploadIds } = await resolveReceipts(user.id, receipts);
+      const result = await fileReimbursement(user, buildFilingForm(payload, files));
       if ("error" in result) {
         const fields = Object.entries(result.fieldErrors ?? {}).map(([k, v]) => `${k}: ${v}`);
         throw new Error([result.error, ...fields].join(" -- "));
       }
+      await consumeUploads(user.id, uploadIds);
       return { number: result.number, reimbursement: await readDetail(result.number) };
     },
   );
@@ -470,7 +548,7 @@ export const financeTools: ToolModule = (server) => {
     "list_reimbursement_drafts",
     {
       description:
-        "PVPs only (MCP). Your reimbursement drafts (only yours), last changed first: the fields so far, the receipts attached by " +
+        "Admins or PVPs (MCP). Your reimbursement drafts (only yours), last changed first: the fields so far, the receipts attached by " +
         "item index, and `problems`, everything still missing before it can be filed (empty when `ready`).",
       inputSchema: {},
       annotations: READ,
@@ -481,7 +559,7 @@ export const financeTools: ToolModule = (server) => {
   define(
     "get_reimbursement_draft",
     {
-      description: "PVPs only (MCP). One of your drafts by its D-number, with its fields, receipts and what is still missing (`problems`).",
+      description: "Admins or PVPs (MCP). One of your drafts by its D-number, with its fields, receipts and what is still missing (`problems`).",
       inputSchema: { number: draftNumberSchema },
       annotations: READ,
     },
@@ -492,21 +570,27 @@ export const financeTools: ToolModule = (server) => {
     "draft_reimbursement",
     {
       description:
-        "PVPs only (MCP). Start a reimbursement draft: any of file_reimbursement's fields, as many as are known, plus receipts by " +
+        "Admins or PVPs (MCP). Start a reimbursement draft: any of file_reimbursement's fields, as many as are known, plus receipts by " +
         "item index. Nothing is filed and nobody else sees it. Values are checked as the form would check them " +
         "(an email must look like one) but nothing is required yet; `problems` in the result lists what filing " +
         "still needs. get_payee_defaults has the payee details the form would pre-fill. Returns the draft (D-number).",
       inputSchema: { ...draftPatchShape, receipts: draftReceiptsSchema },
       annotations: WRITE,
     },
-    async ({ receipts, ...patch }) => createDraft((await getCurrentDbUser()).id, patch, asDraftReceipts(receipts)),
+    async ({ receipts, ...patch }) => {
+      const user = await getCurrentDbUser();
+      const r = await asDraftReceipts(user.id, receipts);
+      const draft = await createDraft(user.id, patch, r.receipts);
+      await consumeUploads(user.id, r.uploadIds);
+      return draft;
+    },
   );
 
   define(
     "update_reimbursement_draft",
     {
       description:
-        "PVPs only (MCP). Change one of your drafts. Fields given replace the draft's (payee merges field by field; items replaces " +
+        "Admins or PVPs (MCP). Change one of your drafts. Fields given replace the draft's (payee merges field by field; items replaces " +
         "the whole list), fields left out stay. receipts sets the receipt for those item indexes; removeReceipts " +
         "drops the ones at those indexes. Returns the draft with what is still missing.",
       inputSchema: {
@@ -517,16 +601,21 @@ export const financeTools: ToolModule = (server) => {
       },
       annotations: WRITE,
     },
-    async ({ number, receipts, removeReceipts, ...patch }) =>
-      updateDraft((await getCurrentDbUser()).id, number, patch, asDraftReceipts(receipts), removeReceipts ?? []),
+    async ({ number, receipts, removeReceipts, ...patch }) => {
+      const user = await getCurrentDbUser();
+      const r = await asDraftReceipts(user.id, receipts);
+      const draft = await updateDraft(user.id, number, patch, r.receipts, removeReceipts ?? []);
+      await consumeUploads(user.id, r.uploadIds);
+      return draft;
+    },
   );
 
   define(
     "file_reimbursement_draft",
     {
       description:
-        "PVPs only (MCP). File one of your drafts, exactly as file_reimbursement does (it lands as pending_approval; nothing goes " +
-        "to CalLink until an admin approves it), then delete the draft. Refused, with the list, while the draft " +
+        "Admins or PVPs (MCP). File one of your drafts, exactly as file_reimbursement does (it lands as pending_approval; nothing goes " +
+        "to CalLink until it is approved and a PVP sends it), then delete the draft. Refused, with the list, while the draft " +
         "has problems. Returns the new R-number and the reimbursement.",
       inputSchema: { number: draftNumberSchema },
       annotations: WRITE,
@@ -540,7 +629,7 @@ export const financeTools: ToolModule = (server) => {
   define(
     "delete_reimbursement_draft",
     {
-      description: "PVPs only (MCP). Throw away one of your drafts and its receipts.",
+      description: "Admins or PVPs (MCP). Throw away one of your drafts and its receipts.",
       inputSchema: { number: draftNumberSchema },
       annotations: DESTRUCTIVE,
     },
@@ -554,8 +643,8 @@ export const financeTools: ToolModule = (server) => {
     "approve_reimbursement",
     {
       description:
-        "PVPs only (MCP). Admins only. Approve a pending_approval reimbursement: it is queued for the CalLink worker to file. " +
-        "Returns the refreshed reimbursement.",
+        "Admins or PVPs. Approve a pending_approval reimbursement: it moves to awaiting_send and stays on " +
+        "STARProject; nothing goes to CalLink until a PVP sends it (send_reimbursement). Returns the refreshed reimbursement.",
       inputSchema: { number: numberSchema },
       annotations: WRITE,
     },
@@ -563,10 +652,22 @@ export const financeTools: ToolModule = (server) => {
   );
 
   define(
+    "send_reimbursement",
+    {
+      description:
+        "PVPs only. Send an approved reimbursement (awaiting_send) to CalLink: it is queued (approved) for the CalLink worker " +
+        "to file under MISC-STAR. Returns the refreshed reimbursement.",
+      inputSchema: { number: numberSchema },
+      annotations: WRITE,
+    },
+    async ({ number }) => act(number, (id) => sendReimbursement(id)),
+  );
+
+  define(
     "reject_reimbursement",
     {
       description:
-        "PVPs only (MCP). Admins only. Reject a pending_approval reimbursement with a reason the member sees (required, under 1000 " +
+        "Admins or PVPs. Reject a pending_approval or awaiting_send reimbursement with a reason the member sees (required, under 1000 " +
         "characters). Final: a rejected reimbursement cannot be reopened.",
       inputSchema: {
         number: numberSchema,
@@ -580,7 +681,7 @@ export const financeTools: ToolModule = (server) => {
   define(
     "retry_reimbursement",
     {
-      description: "PVPs only (MCP). Admins only. Put a failed filing back in the queue (failed -> approved) and clear its last error.",
+      description: "PVPs only. Put a failed filing back in the CalLink queue (failed -> approved) and clear its last error.",
       inputSchema: { number: numberSchema },
       annotations: WRITE,
     },
@@ -591,8 +692,8 @@ export const financeTools: ToolModule = (server) => {
     "cancel_reimbursement",
     {
       description:
-        "PVPs only (MCP). Cancel a reimbursement before it reaches CalLink. The member who filed it may cancel while it is " +
-        "pending_approval; an admin may also cancel one that is approved (queued) or failed. Final.",
+        "Admins or PVPs (MCP). Cancel a reimbursement before it reaches CalLink. The member who filed it may cancel while it is " +
+        "pending_approval; an admin or PVP may also cancel one that is awaiting_send, approved (queued) or failed. Final.",
       inputSchema: { number: numberSchema },
       annotations: DESTRUCTIVE,
     },
@@ -603,9 +704,9 @@ export const financeTools: ToolModule = (server) => {
     "resolve_needs_check",
     {
       description:
-        "PVPs only (MCP). Admins only. A filing the worker could not confirm (status submitting, needsCheck): record what you found " +
+        "Admins only. A filing the worker could not confirm (status submitting, needsCheck): record what you found " +
         "on CalLink by searching its [STAR R-n] tag. filed: true marks it submitted (the next scrape links it); " +
-        "filed: false queues it again.",
+        "filed: false puts it back to awaiting_send for a PVP to send again.",
       inputSchema: {
         number: numberSchema,
         filed: z.boolean().describe("true if the request is on CalLink, false if it is not"),
@@ -619,7 +720,7 @@ export const financeTools: ToolModule = (server) => {
     "tag_reimbursement",
     {
       description:
-        "PVPs only (MCP). Say what a reimbursement was for, the project and subteam the Finance tab's spending " +
+        "Admins or PVPs (MCP). Say what a reimbursement was for, the project and subteam the Finance tab's spending " +
         "breakdown files it under. Admins or whoever filed it. A field left out stays; null or empty clears it.",
       inputSchema: {
         number: numberSchema,
@@ -635,7 +736,7 @@ export const financeTools: ToolModule = (server) => {
     "request_callink_login",
     {
       description:
-        "PVPs only (MCP). Admins only. Ask callink-worker to sign in to CalLink (the Reimbursements banner's button). The worker picks it " +
+        "Admins only. Ask callink-worker to sign in to CalLink (the Reimbursements banner's button). The worker picks it " +
         "up within seconds and Duo pushes to the CalNet account owner's phone. Refused while a sign-in is under way " +
         "or if the worker has never reported in.",
       inputSchema: {},
@@ -652,7 +753,7 @@ export const financeTools: ToolModule = (server) => {
     "get_worker_status",
     {
       description:
-        "PVPs only (MCP). Admins only. The CalLink worker's last report (the Reimbursements banner): session state and expiry, last seen, " +
+        "Admins only. The CalLink worker's last report (the Reimbursements banner): session state and expiry, last seen, " +
         "last scrape, and the sign-in request's state, plus `login` as the banner words it. `worker` is null when " +
         "the worker has never reported in.",
       inputSchema: {},
