@@ -22,6 +22,7 @@ import { schoolYearOf } from "@/lib/finance/ledger";
 import { loginView } from "@/lib/finance/login";
 import { getFinanceDetail, getProfileDefaults, getViewer, listFinanceRows, type FinanceRow } from "@/lib/finance/queries";
 import { MAX_RECEIPT_BYTES, RECEIPT_ACCEPT } from "@/lib/finance/receipts";
+import { consumeUploads, loadUploads, MAX_UPLOADS_PER_CALL, mintUploads } from "@/lib/finance/receipt-upload";
 import { MAX_ITEMS, reimbursementInputSchema } from "@/lib/finance/schema";
 import { getCurrentDbUser } from "@/lib/user";
 
@@ -114,6 +115,9 @@ export function sortFinanceRows(rows: FinanceRow[], sort: FinanceSort): FinanceR
 
 export type ReceiptInput = { fileName: string; mimeType: string; base64: string };
 
+/** A receipt as a tool takes it: inline base64, or the id of a file uploaded through create_receipt_upload. */
+export type ReceiptArg = { fileName?: string; mimeType?: string; base64?: string; uploadId?: string };
+
 /** The bare base64 text: no `data:` URL prefix, no MIME line wrapping. */
 export function stripBase64(s: string): string {
   return s.replace(/^data:[^,]*,/, "").replace(/\s+/g, "");
@@ -134,11 +138,27 @@ export function receiptToFile(r: ReceiptInput): File {
 }
 
 /** The multipart body ReimbursementForm.tsx builds: `payload` JSON + `receipt-<i>` files. */
-export function buildFilingForm(payload: unknown, receipts: ReceiptInput[]): FormData {
+export function buildFilingForm(payload: unknown, receipts: File[]): FormData {
   const form = new FormData();
   form.set("payload", JSON.stringify(payload));
-  receipts.forEach((r, i) => form.set(`receipt-${i}`, receiptToFile(r)));
+  receipts.forEach((f, i) => form.set(`receipt-${i}`, f));
   return form;
+}
+
+/**
+ * Each receipt as the File the form would have attached: base64 decoded here, an
+ * upload read from ReceiptUpload (the caller's own, uploaded, not expired). Also
+ * the upload ids used, to drop once the filing or draft has its copy.
+ */
+export async function resolveReceipts(userId: string, receipts: ReceiptArg[]): Promise<{ files: File[]; uploadIds: string[] }> {
+  const uploadIds = receipts.flatMap((r) => (r.uploadId ? [r.uploadId] : []));
+  const uploads = await loadUploads(userId, uploadIds);
+  const files = receipts.map((r) =>
+    r.uploadId
+      ? uploads.get(r.uploadId)!
+      : receiptToFile({ fileName: r.fileName ?? "", mimeType: r.mimeType ?? "", base64: r.base64 ?? "" }),
+  );
+  return { files, uploadIds };
 }
 
 // Base64 grows bytes by 4/3; anything longer than a 4 MB file encodes to is
@@ -146,28 +166,54 @@ export function buildFilingForm(payload: unknown, receipts: ReceiptInput[]): For
 // wrapping). `checkReceipt` still rules on the decoded size.
 const MAX_BASE64 = Math.ceil(MAX_RECEIPT_BYTES / 3) * 4;
 
-const receiptSchema = z.object({
-  fileName: z.string().trim().min(1).max(200).describe(`Name with extension; one of ${RECEIPT_ACCEPT}`),
-  mimeType: z.string().trim().min(1).max(100).describe("application/pdf, image/png or image/jpeg (the bytes are what is checked)"),
+// A receipt is either uploaded (uploadId, from create_receipt_upload: the way to
+// send a file the agent has on disk) or inline (base64 with its fileName and
+// mimeType). Exactly one of the two.
+const receiptShape = {
+  uploadId: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe("A file uploaded through create_receipt_upload (PUT to its uploadUrl first). Use this or base64"),
+  fileName: z.string().trim().min(1).max(200).optional().describe(`With base64: name with extension; one of ${RECEIPT_ACCEPT}`),
+  mimeType: z.string().trim().min(1).max(100).optional().describe("With base64: application/pdf, image/png or image/jpeg (the bytes are what is checked)"),
   base64: z
     .string()
     .min(1)
     .refine((s) => stripBase64(s).length <= MAX_BASE64, "A receipt must be under 4 MB")
-    .describe("The file's bytes, base64 (a data: URL prefix or line wrapping is fine)"),
-});
+    .optional()
+    .describe("The file's bytes, base64 (a data: URL prefix or line wrapping is fine). Use this or uploadId"),
+};
+
+const oneSource = (r: ReceiptArg, ctx: z.RefinementCtx) => {
+  if (!!r.uploadId === !!r.base64) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Give each receipt either uploadId or base64, not both" });
+  else if (r.base64 && (!r.fileName || !r.mimeType)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "A base64 receipt needs fileName and mimeType" });
+};
+
+export const receiptSchema = z.object(receiptShape).superRefine(oneSource);
 
 const numberSchema = z.number().int().min(1).describe("The reimbursement's R-number (from list_reimbursements)");
 
 const draftNumberSchema = z.number().int().min(1).describe("The draft's D-number (from list_reimbursement_drafts)");
 
 const draftReceiptsSchema = z
-  .array(receiptSchema.extend({ item: z.number().int().min(0).max(MAX_ITEMS - 1).describe("The item it is the receipt for, from 0") }))
+  .array(
+    z
+      .object({ ...receiptShape, item: z.number().int().min(0).max(MAX_ITEMS - 1).describe("The item it is the receipt for, from 0") })
+      .superRefine(oneSource),
+  )
   .max(MAX_ITEMS)
   .refine((rs) => new Set(rs.map((r) => r.item)).size === rs.length, "One receipt per item")
   .optional()
   .describe("Receipts by item index; one given for an item replaces the one it had");
 
-const asDraftReceipts = (rs: z.infer<typeof draftReceiptsSchema>) => (rs ?? []).map((r) => ({ item: r.item, file: receiptToFile(r) }));
+async function asDraftReceipts(userId: string, rs: z.infer<typeof draftReceiptsSchema>) {
+  const list = rs ?? [];
+  const { files, uploadIds } = await resolveReceipts(userId, list);
+  return { receipts: list.map((r, i) => ({ item: r.item, file: files[i] })), uploadIds };
+}
 
 /** Each row's items (date, vendor, amount, CalLink's type, receipt names), by reimbursement id. */
 async function itemsByReimbursement(ids: string[]) {
@@ -447,12 +493,33 @@ export const financeTools: ToolModule = (server) => {
   );
 
   define(
+    "create_receipt_upload",
+    {
+      description:
+        "Admins or PVPs (MCP). Upload receipt files directly instead of inlining them as base64. Returns `count` one-time upload " +
+        "links (open 15 minutes). PUT each file's raw bytes to its uploadUrl, e.g. `curl -sS -T receipt.pdf \"<uploadUrl>\"` " +
+        "(optionally add &name=<file name> to the URL); the reply says the name, type and size it was kept as. Then name the " +
+        "uploadId in a receipt of file_reimbursement, draft_reimbursement or update_reimbursement_draft. PDF, PNG or JPEG under " +
+        "4 MB, checked by its bytes. One file per link; only you can use your uploads, and each is deleted once filed.",
+      inputSchema: {
+        count: z.number().int().min(1).max(MAX_UPLOADS_PER_CALL).optional().describe("How many links (one per receipt); default 1"),
+      },
+      annotations: WRITE,
+    },
+    async ({ count }) => {
+      const uploads = await mintUploads((await getCurrentDbUser()).id, count ?? 1);
+      return { uploads, method: "PUT", maxBytes: MAX_RECEIPT_BYTES, example: `curl -sS -T receipt.pdf "${uploads[0].uploadUrl}"` };
+    },
+  );
+
+  define(
     "file_reimbursement",
     {
       description:
         "Admins or PVPs (MCP). File a reimbursement, exactly as the New reimbursement form does. It lands as pending_approval; nothing " +
-        `goes to CalLink until an admin approves it. 1 to ${MAX_ITEMS} items, each with its receipt in \`receipts\` at the ` +
-        "same index (PDF, PNG or JPEG under 4 MB, checked by its bytes). Amounts are text like \"12.34\"; the " +
+        `goes to CalLink until it is approved and a PVP sends it. 1 to ${MAX_ITEMS} items, each with its receipt in \`receipts\` at the ` +
+        "same index (PDF, PNG or JPEG under 4 MB, checked by its bytes): a file on disk goes up through create_receipt_upload " +
+        "and is named by uploadId; base64 inline still works. Amounts are text like \"12.34\"; the " +
         "total is their sum. saveProfile (default true) remembers the payee details as your profile. Returns the " +
         "new R-number and the reimbursement. bomItemIds (ids from list_bom) marks the BOM lines this filing pays back.",
       inputSchema: {
@@ -466,11 +533,13 @@ export const financeTools: ToolModule = (server) => {
         throw new Error(`Attach one receipt per item: ${payload.items.length} item(s), ${receipts.length} receipt(s).`);
       }
       const user = await getCurrentDbUser();
-      const result = await fileReimbursement(user, buildFilingForm(payload, receipts));
+      const { files, uploadIds } = await resolveReceipts(user.id, receipts);
+      const result = await fileReimbursement(user, buildFilingForm(payload, files));
       if ("error" in result) {
         const fields = Object.entries(result.fieldErrors ?? {}).map(([k, v]) => `${k}: ${v}`);
         throw new Error([result.error, ...fields].join(" -- "));
       }
+      await consumeUploads(user.id, uploadIds);
       return { number: result.number, reimbursement: await readDetail(result.number) };
     },
   );
@@ -508,7 +577,13 @@ export const financeTools: ToolModule = (server) => {
       inputSchema: { ...draftPatchShape, receipts: draftReceiptsSchema },
       annotations: WRITE,
     },
-    async ({ receipts, ...patch }) => createDraft((await getCurrentDbUser()).id, patch, asDraftReceipts(receipts)),
+    async ({ receipts, ...patch }) => {
+      const user = await getCurrentDbUser();
+      const r = await asDraftReceipts(user.id, receipts);
+      const draft = await createDraft(user.id, patch, r.receipts);
+      await consumeUploads(user.id, r.uploadIds);
+      return draft;
+    },
   );
 
   define(
@@ -526,8 +601,13 @@ export const financeTools: ToolModule = (server) => {
       },
       annotations: WRITE,
     },
-    async ({ number, receipts, removeReceipts, ...patch }) =>
-      updateDraft((await getCurrentDbUser()).id, number, patch, asDraftReceipts(receipts), removeReceipts ?? []),
+    async ({ number, receipts, removeReceipts, ...patch }) => {
+      const user = await getCurrentDbUser();
+      const r = await asDraftReceipts(user.id, receipts);
+      const draft = await updateDraft(user.id, number, patch, r.receipts, removeReceipts ?? []);
+      await consumeUploads(user.id, r.uploadIds);
+      return draft;
+    },
   );
 
   define(
@@ -535,7 +615,7 @@ export const financeTools: ToolModule = (server) => {
     {
       description:
         "Admins or PVPs (MCP). File one of your drafts, exactly as file_reimbursement does (it lands as pending_approval; nothing goes " +
-        "to CalLink until an admin approves it), then delete the draft. Refused, with the list, while the draft " +
+        "to CalLink until it is approved and a PVP sends it), then delete the draft. Refused, with the list, while the draft " +
         "has problems. Returns the new R-number and the reimbursement.",
       inputSchema: { number: draftNumberSchema },
       annotations: WRITE,
