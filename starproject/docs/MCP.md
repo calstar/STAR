@@ -288,9 +288,10 @@ defineTool(server, "archive_task", {
 **Admins or PVPs:** every reimbursement tool (from `list_reimbursements` through
 `get_worker_status`, drafts included) refuses anyone who is neither an admin nor a PVP
 before it runs (`guardedDefine` in `src/mcp/tools/_shared.ts`); the notes below still
-apply on top (any admin approves, only a PVP sends to CalLink or retries). **PVPs only:**
-the purchase-request tools (`list_`/`get_`/`create_`/`approve_`/`reject_`/`cancel_purchase_request`)
-refuse anyone who is not a PVP (`src/lib/pvp.ts`), admins included. The web pages are unchanged.
+apply on top (any admin approves, only a PVP sends to CalLink or retries). **Purchase requests** are
+open to every member, as the page is (any member lists, reads and makes one, and cancels
+their own); `approve_`/`reject_purchase_request` refuse anyone who is not a PVP
+(`src/lib/pvp.ts`), admins included. The web pages are unchanged.
 The Finance tab's tools (`get_finance_overview`, accounts, planned income) are
 admins only, as the tab is; the budget-line tools are open to every member, as
 Subteams → Budget is.

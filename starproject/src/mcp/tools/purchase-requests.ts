@@ -37,11 +37,12 @@ async function check(res: { error?: string }, number: number) {
 
 export const purchaseRequestTools: ToolModule = (server) => {
   const pvpOnly = guardedDefine(server, requirePvp);
-  pvpOnly(
+  defineTool(
+    server,
     "list_purchase_requests",
     {
       description:
-        "PVPs only (MCP). Purchase requests, newest first, as the Purchase Requests page lists them: PR number, status " +
+        "Purchase requests, newest first, as the Purchase Requests page lists them: PR number, status " +
         `(${PR_STATUSES.join(", ")}), project, who made it and when, who decided and when, the note and decision ` +
         "note, the total, and each line as requested (with the live BOM line and whether it changed since).",
       inputSchema: { status: z.enum(PR_STATUSES).optional().describe("Only this status; omit for all") },
@@ -50,10 +51,11 @@ export const purchaseRequestTools: ToolModule = (server) => {
     async ({ status }) => listPurchaseRequests(status),
   );
 
-  pvpOnly(
+  defineTool(
+    server,
     "get_purchase_request",
     {
-      description: "PVPs only (MCP). One purchase request by its PR number, with every line as requested and as it is on the BOM now.",
+      description: "One purchase request by its PR number, with every line as requested and as it is on the BOM now.",
       inputSchema: { number: numberSchema },
       annotations: READ,
     },
@@ -73,11 +75,12 @@ export const purchaseRequestTools: ToolModule = (server) => {
     async () => budgetOptions(),
   );
 
-  pvpOnly(
+  defineTool(
+    server,
     "create_purchase_request",
     {
       description:
-        "PVPs only (MCP). Ask a PVP to approve buying BOM lines (ids from list_bom), as the BOM tab's Request purchase does. Every " +
+        "Ask a PVP to approve buying BOM lines (ids from list_bom), as the BOM tab's Request purchase does. Every " +
         "line must still be Planned and not already on a request waiting for a PVP. projectId is the project " +
         "whose BOM it is made from. subteamId and budgetLineId (from list_budget_lines) say whose budget it " +
         "spends: the line must be that subteam's, for this school year. Returns the new request.",
@@ -126,10 +129,11 @@ export const purchaseRequestTools: ToolModule = (server) => {
     async ({ number, reason }) => check(await rejectPurchaseRequest((await byNumber(number)).id, reason), number),
   );
 
-  pvpOnly(
+  defineTool(
+    server,
     "cancel_purchase_request",
     {
-      description: "PVPs only (MCP). Withdraw a waiting purchase request (whoever made it, or a PVP). Its lines stay Planned.",
+      description: "Withdraw a waiting purchase request (whoever made it, or a PVP). Its lines stay Planned.",
       inputSchema: { number: numberSchema },
       annotations: WRITE,
     },
