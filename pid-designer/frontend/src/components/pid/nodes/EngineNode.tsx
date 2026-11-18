@@ -64,7 +64,7 @@ export function EngineNode({ id, data, selected }: NodeProps) {
             the symbol with room for two lines that no port or tag reaches. */}
         {readout.map((line, i) => (
           <Upright key={line} rotation={rotation} x={36} y={56 + i * 11}>
-            <text x="36" y={56 + i * 11} textAnchor="middle" fontSize="7.5"
+            <text data-pid-value="" x="36" y={56 + i * 11} textAnchor="middle" fontSize="7.5"
               fill={i === 0 ? 'var(--color-text-primary)' : 'var(--color-text-secondary)'} fontFamily="monospace">{line}</text>
           </Upright>
         ))}

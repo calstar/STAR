@@ -34,7 +34,7 @@ export function RVNode({ id, data, selected }: NodeProps) {
         <Port position={turn(Position.Left, rotation)}  id="l" />
         <Port position={turn(Position.Right, rotation)} id="r" />
         {(set || reseat) && (
-        <span
+        <span data-pid-value=""
           style={{
             position: 'absolute', left: '50%', top: H - 8,
             transform: `translateX(-50%) rotate(${-spin}deg)`,

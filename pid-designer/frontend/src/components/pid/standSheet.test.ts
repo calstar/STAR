@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAPTION, GAP, composeStand, mateLabel, matesOf } from './standSheet';
+import { CAPTION, GAP, composeStand, mateLabel, matesOf, mateSuffixes, stripValues } from './standSheet';
 import type { SheetShot, StandNode } from './standSheet';
 
 /** A sheet as shootSheet hands it back: tagged symbols and lines in a foreignObject. */
@@ -52,10 +52,14 @@ describe('the whole stand as one picture', () => {
     expect(stand.boxes.bottle).toEqual([800 + GAP + 10 + 200, CAPTION + 20 + 100, 80, 60]);
   });
 
-  it('labels each half of a disconnect pair with its mate', () => {
+  it('knows each half of a disconnect pair and its mate', () => {
     expect(stand.mates).toEqual({ 'qd-v': 'qd-g', 'qd-g': 'qd-v' });
-    expect(stand.svg).toContain('data-pid-mate="qd-v">⇄ QD-G (GSE)</text>');
-    expect(stand.svg).toContain('data-pid-mate="qd-g">⇄ QD-V (Rocket)</text>');
+  });
+
+  it("puts each half's mate in its own tag, not beside it", () => {
+    // Floating labels landed on tags dragged above their symbol (OU-QD-B).
+    expect(mateSuffixes([...ROCKET, ...GSE])).toEqual({ 'qd-v': ' ⇄ QD-G (GSE)', 'qd-g': ' ⇄ QD-V (Rocket)' });
+    expect(stand.svg).not.toContain('data-pid-mate');
   });
 
   it('refuses a sheet that is not an SVG', () => {
@@ -88,5 +92,23 @@ describe('which disconnects are a pair', () => {
   it('names the mate, and its page only when it is another', () => {
     expect(mateLabel(node('a', 'P'), node('b', 'P'))).toBe('⇄ B');
     expect(mateLabel(node('a', 'P'), node('b', 'Q', { label: '' }))).toBe('⇄ b (Q)');
+  });
+});
+
+describe("a symbol's own printed values", () => {
+  it('are cut out of an inline svg, which html-to-image copies whole', () => {
+    const svg = '<svg><g data-pid-symbol="t"><svg><text x="1">LOX</text>' +
+      '<text data-pid-value="" x="30" y="55">599.7 psia</text><text data-pid-value="" x="30">90.2 K</text></svg></g></svg>';
+    expect(stripValues(svg)).toBe('<svg><g data-pid-symbol="t"><svg><text x="1">LOX</text></svg></g></svg>');
+  });
+
+  it('refuse the export when one survives in a shape it cannot cut', () => {
+    expect(() => stripValues('<svg><span data-pid-value="">750 psi</span></svg>')).toThrow(/nothing was exported/);
+  });
+
+  it('never reach the stand picture', () => {
+    const s = composeStand([{ ...shot('Rocket', 10, 10, ['n'], []),
+      svg: '<svg><div data-pid-symbol="n"></div><text data-pid-value="">1 psia</text></svg>' }], [node('n', 'Rocket')], []);
+    expect(s.svg).not.toContain('psia');
   });
 });

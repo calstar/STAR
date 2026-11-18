@@ -18,7 +18,7 @@ import { DrawingView, useSheetReady } from '@pid/DrawingView';
 import { download, shootSheet } from '@pid/exportImage';
 import { migrate } from '@pid/migrate';
 import { listPages } from '@pid/pages';
-import { composeStand } from '@pid/standSheet';
+import { composeStand, mateSuffixes } from '@pid/standSheet';
 import type { SheetShot, StandNode } from '@pid/standSheet';
 import type { Drawing } from '../api';
 import { buildBundle, drawingHash, drawnLines } from '../lib/daqBundle';
@@ -39,6 +39,13 @@ export function DaqExport({ diagram, drawing, artifact }: Props) {
   const [page, setPage] = useState<string | null>(null);
   const shots = useRef<Shot[]>([]);
   const pages = listPages(drawing.nodes);
+  // Each half of a QD pair names its mate in its tag, on the picture only.
+  const suffixes = mateSuffixes(
+    drawing.nodes.map((n) => {
+      const d = (n.data ?? {}) as { label?: string; page?: string; options?: Record<string, string> };
+      return { id: n.id, page: d.page || 'Main', label: d.label ?? '', pairedWith: d.options?.pairedWith || undefined };
+    }),
+  );
 
   const blocked = !hookup.data
     ? 'The hookup has not loaded.'
@@ -144,7 +151,7 @@ export function DaqExport({ diagram, drawing, artifact }: Props) {
           style={{ position: 'fixed', left: -20000, top: 0, width: 1600, height: 1000, pointerEvents: 'none' }}
         >
           <DrawingView nodes={drawing.nodes} edges={drawing.edges} page={page}>
-            <Shooter key={page} page={page} onShot={onShot} onFail={onFail} />
+            <Shooter key={page} page={page} suffixes={suffixes} onShot={onShot} onFail={onFail} />
           </DrawingView>
         </div>
       )}
@@ -153,7 +160,9 @@ export function DaqExport({ diagram, drawing, artifact }: Props) {
 }
 
 /** Shoots its page once, as soon as every symbol on it is measured. */
-function Shooter({ page, onShot, onFail }: { page: string; onShot: (s: Shot) => void; onFail: (e: unknown) => void }) {
+function Shooter({
+  page, suffixes, onShot, onFail,
+}: { page: string; suffixes: Record<string, string>; onShot: (s: Shot) => void; onFail: (e: unknown) => void }) {
   const ready = useSheetReady();
   const nodes = useNodes();
   const taken = useRef(false);
@@ -172,10 +181,10 @@ function Shooter({ page, onShot, onFail }: { page: string; onShot: (s: Shot) => 
           onFail(new Error('no canvas to export'));
           return;
         }
-        shootSheet(flow, shown, page).then((shot) => onShot({ shot, nodes: shown }), onFail);
+        shootSheet(flow, shown, page, suffixes).then((shot) => onShot({ shot, nodes: shown }), onFail);
       }),
     );
-  }, [ready, nodes, page, onShot, onFail]);
+  }, [ready, nodes, page, suffixes, onShot, onFail]);
 
   return <span ref={anchor} hidden />;
 }

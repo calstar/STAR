@@ -161,6 +161,15 @@ const notChrome = (el: HTMLElement) =>
     || el.classList?.contains('react-flow__panel'));
 
 /**
+ * The stand picture also leaves out the numbers a symbol prints about itself
+ * (a tank's pressure and temperature, a setpoint, a relief's set): each is
+ * marked `data-pid-value`. On the DAQ's screen a design-time "2766.7 psia"
+ * beside a live "512 psig" is a number somebody reads as the stand's.
+ */
+export const notChromeOrValue = (el: HTMLElement) =>
+  notChrome(el) && !el.hasAttribute?.('data-pid-value');
+
+/**
  * The PNG is rasterised here, from the SVG, rather than by the library's own
  * `toPng`. That one hands the SVG to `HTMLImageElement.decode()`, which a
  * background tab defers indefinitely for a document this size -- the same
@@ -221,8 +230,26 @@ export async function exportSvg(flow: HTMLElement, nodes: Node[], meta: SheetMet
  * rather than React Flow's `data-id`, so the DAQ's overlay does not depend on
  * which library drew the sheet.
  */
-export async function shootSheet(flow: HTMLElement, nodes: Node[], page: string): Promise<SheetShot> {
-  const f = frame(flow, nodes);
+export async function shootSheet(
+  flow: HTMLElement, nodes: Node[], page: string, tagSuffix: Record<string, string> = {},
+): Promise<SheetShot> {
+  const added: HTMLElement[] = [];
+  for (const [id, text] of Object.entries(tagSuffix)) {
+    const tag = flow.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"] [data-pid-tag]`);
+    if (!tag) continue;
+    const extra = document.createElement('span');
+    extra.textContent = text;
+    tag.appendChild(extra);
+    added.push(extra);
+  }
+  // Framed after the tags grew: a pair at the edge of a sheet keeps its mate.
+  let f: ReturnType<typeof frame>;
+  try {
+    f = frame(flow, nodes);
+  } catch (e) {
+    for (const el of added) el.remove();
+    throw e;
+  }
   const tagged: [HTMLElement | SVGElement, string][] = [];
   const tag = (selector: string, attr: string) => {
     for (const el of flow.querySelectorAll<HTMLElement | SVGElement>(selector)) {
@@ -236,7 +263,7 @@ export async function shootSheet(flow: HTMLElement, nodes: Node[], page: string)
   tag('.react-flow__edge[data-id]', 'data-pid-line');
   try {
     const url = await within(toSvg(f.viewport, {
-      backgroundColor: BG(flow), width: f.width, height: f.height, style: f.style, filter: notChrome,
+      backgroundColor: BG(flow), width: f.width, height: f.height, style: f.style, filter: notChromeOrValue,
     }), `rendering the ${page} page`);
     return {
       page,
@@ -245,6 +272,7 @@ export async function shootSheet(flow: HTMLElement, nodes: Node[], page: string)
     };
   } finally {
     for (const [el, attr] of tagged) el.removeAttribute(attr);
+    for (const el of added) el.remove();
   }
 }
 

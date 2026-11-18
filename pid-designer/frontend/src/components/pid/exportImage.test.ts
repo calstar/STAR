@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileStem, titleRows } from './exportImage';
+import { fileStem, notChromeOrValue, titleRows } from './exportImage';
 
 describe('what an exported sheet says about itself', () => {
   it('names the drawing, the sheet, the revision and the date', () => {
@@ -34,5 +34,38 @@ describe('what the export menu says each file is for', () => {
     expect(row[1]).toMatch(/browser/i);
     expect(row[2]).not.toMatch(/scalable, for a document/);
     expect(row[2]).toMatch(/for a document, use a PNG/);
+  });
+});
+
+describe('what the stand picture leaves out', () => {
+  const el = (attrs: string[] = [], classes: string[] = []) => ({
+    hasAttribute: (a: string) => attrs.includes(a),
+    getAttribute: (a: string) => (attrs.includes(a) ? '' : null),
+    classList: { contains: (c: string) => classes.includes(c) },
+  }) as unknown as HTMLElement;
+
+  it("drops a symbol's own printed value", () => {
+    expect(notChromeOrValue(el(['data-pid-value']))).toBe(false);
+  });
+
+  it('keeps the drawing, and still drops the canvas chrome', () => {
+    expect(notChromeOrValue(el())).toBe(true);
+    expect(notChromeOrValue(el([], ['react-flow__minimap']))).toBe(false);
+  });
+
+  it('keeps a text node, which has no attributes', () => {
+    expect(notChromeOrValue({} as HTMLElement)).toBe(true);
+  });
+});
+
+const NODES = Object.entries(import.meta.glob('./nodes/*.tsx', {
+  eager: true, query: '?raw', import: 'default',
+}) as Record<string, string>);
+
+describe('which symbols mark their printed values', () => {
+  it.each(['TankNode', 'EngineNode', 'PRNode', 'RVNode', 'SupplyNode'])('%s does', (name) => {
+    // A value left unmarked ends up on the DAQ's screen as if it were live.
+    const src = NODES.find(([p]) => p.endsWith(`/${name}.tsx`))![1];
+    expect(src).toContain('data-pid-value');
   });
 });

@@ -100,7 +100,7 @@ export function SupplyNode({ id, data, selected }: NodeProps) {
         <TurnedPort nodeId={id} id="t" side={Position.Top}   w={KB_W} h={KB_H} rotation={rotation} />
         <TurnedPort nodeId={id} id="r" side={outletSide} along={KB_OUTLET_ALONG} w={KB_W} h={KB_H} rotation={rotation} />
         {p && (
-          <span
+          <span data-pid-value=""
             style={{
               position: 'absolute', left: '50%', top: bottleBoxH + 1,
               transform: 'translateX(-50%)',

@@ -149,7 +149,7 @@ export function TankNode({ id, data, selected }: NodeProps) {
           <Upright key={line} rotation={rotation} x={30} y={55 + i * 11}>
             {/* Fitted inside the barrel: a pressure of 1000 psia or more is
                 eleven characters and ran through both walls (`fitMono`). */}
-            <text x="30" y={55 + i * 11} textAnchor="middle" fontSize={fitMono(line, TANK_READOUT_W, 7.5)}
+            <text data-pid-value="" x="30" y={55 + i * 11} textAnchor="middle" fontSize={fitMono(line, TANK_READOUT_W, 7.5)}
               fill="var(--color-text-secondary)" fontFamily="monospace">{line}</text>
           </Upright>
         ))}

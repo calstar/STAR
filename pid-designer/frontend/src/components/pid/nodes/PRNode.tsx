@@ -73,7 +73,7 @@ export function PRNode({ id, data, selected }: NodeProps) {
             reviewer scans a sheet for, and two clicks into a dialog is two
             clicks nobody takes while scanning. */}
         {setpoint && (
-          <span style={{ ...lettering, ...numberStyle, color: 'var(--color-text-primary)' }}>
+          <span data-pid-value="" style={{ ...lettering, ...numberStyle, color: 'var(--color-text-primary)' }}>
             {fmtPressure('setpoint', setpoint)}
           </span>
         )}

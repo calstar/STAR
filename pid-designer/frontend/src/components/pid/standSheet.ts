@@ -15,9 +15,9 @@
  *
  * A page is a sheet shot on its own, as the sheet export takes it; this lays
  * the sheets side by side under their page names. Pages are joined at paired
- * disconnects and nowhere else (pages.ts), so each half of a pair is labelled
- * with its mate: following a fill across the umbilical means finding the
- * other half.
+ * disconnects and nowhere else (pages.ts), so each half of a pair has its
+ * mate in its tag (`mateSuffixes`): following a fill across the umbilical
+ * means finding the other half.
  *
  * Pure string work, so it runs where the tests do: no DOM.
  */
@@ -94,6 +94,20 @@ export function mateLabel(node: StandNode, mate: StandNode): string {
 }
 
 /**
+ * What each half of a pair adds to its own tag in the picture: " ⇄ OU-QD-A
+ * (GSE)". In the tag rather than beside it, because a tag can be dragged to
+ * any side of its symbol and a label put anywhere fixed landed on one.
+ * `shootSheet` appends it for the length of the shot.
+ */
+export function mateSuffixes(nodes: Pick<StandNode, 'id' | 'page' | 'label' | 'pairedWith'>[]): Record<string, string> {
+  const full = nodes.map(n => ({ x: 0, y: 0, width: 0, height: 0, ...n }));
+  const byId = new Map(full.map(n => [n.id, n]));
+  const out: Record<string, string> = {};
+  for (const [id, mate] of Object.entries(matesOf(full))) out[id] = ` ${mateLabel(byId.get(id)!, byId.get(mate)!)}`;
+  return out;
+}
+
+/**
  * Lay the pages side by side and say what is missing.
  *
  * `lines` is every edge that should be drawn: an edge between two symbols on
@@ -105,7 +119,6 @@ export function composeStand(
   lines: string[],
   ink = '#f2f2f2',
 ): StandSheet {
-  const byId = new Map(nodes.map(n => [n.id, n]));
   const mates = matesOf(nodes);
   const boxes: StandSheet['boxes'] = {};
   const parts: string[] = [];
@@ -133,17 +146,6 @@ export function composeStand(
   }
   const width = Math.max(0, x - GAP);
 
-  for (const [id, mateId] of Object.entries(mates)) {
-    const box = boxes[id];
-    const node = byId.get(id)!;
-    if (!box) continue;
-    const [bx, by, bw, bh] = box;
-    parts.push(
-      `<text x="${bx + bw / 2}" y="${by + bh + 28}" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" ` +
-      `font-size="22" fill="${esc(ink)}" data-pid-mate="${esc(id)}">${esc(mateLabel(node, byId.get(mateId)!))}</text>`,
-    );
-  }
-
   const svg =
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
     parts.join('') + '</svg>';
@@ -159,9 +161,24 @@ export function composeStand(
   };
 }
 
+/**
+ * The sheet without the numbers its symbols print about themselves (marked
+ * `data-pid-value`, exportImage.ts). The HTML ones never reach here -- the
+ * shot's filter drops them -- but html-to-image copies an inline `<svg>`
+ * whole, without asking the filter about what is inside it, so a tank's
+ * `<text>` readout arrives and is cut out here.
+ */
+export function stripValues(svg: string): string {
+  const out = svg.replace(/<text\b[^>]*\bdata-pid-value\b[^>]*>[\s\S]*?<\/text>/g, '');
+  if (/\bdata-pid-value\b/.test(out)) {
+    throw new Error('a symbol\'s printed value could not be removed from the picture; nothing was exported');
+  }
+  return out;
+}
+
 /** A sheet's own `<svg>` placed at (x, y) inside the stand's. */
 function nest(svg: string, x: number, y: number, page: string): string {
-  const body = svg.replace(/^\s*<\?xml[^>]*>\s*/, '');
+  const body = stripValues(svg.replace(/^\s*<\?xml[^>]*>\s*/, ''));
   if (!/^<svg[\s>]/.test(body)) throw new Error(`sheet "${page}" is not an SVG`);
   return body.replace(/^<svg/, `<svg x="${x}" y="${y}" data-pid-page="${esc(page)}"`);
 }
