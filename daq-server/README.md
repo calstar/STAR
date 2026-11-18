@@ -217,9 +217,9 @@ Runtime config is `config/config.toml`, generated from the active profile in `co
 - `[calibration]` — Calibration service parameters
 
 State machine transitions and actuator positions per state are defined in:
-- `config/state_transitions.csv`
-- `config/state_machine_actuators.csv`
-- `config/state_machine_actuator_delays.csv`
+- `config/profiles/<profile>/state_transitions.csv`
+- `config/profiles/<profile>/state_machine_actuators.csv`
+- `config/profiles/<profile>/state_machine_actuator_delays.csv`
 
 ---
 
