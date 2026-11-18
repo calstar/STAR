@@ -2,17 +2,15 @@
 
 Single source of truth for the remaster. **After any context loss, read this first.**
 
-## CHECKPOINT — read this first after any context loss (updated 2026-11-17 ~04:00)
+## CHECKPOINT — read this first after any context loss (updated 2026-11-17 ~17:30)
 
-Then read `git log --oneline -30 backend-remastered` and the Merge log below before acting.
+Then read `git log --oneline -30 backend-remastered` and the Merge log / D-rows below before acting.
 
-- **Tag:** `remaster-baseline` (c39dcb91 → 9f97c884) is pushed (D77, D79).
-- **Merged after the tag:** WP1, WP2, WP4, C0 H8 (Merge log), with CI green on each push.
-- **Queue order now (D25, D79, D90):** H8b (Linux PASS; macOS rerun pending at load below 8), then the batch G-W5/G4 + WP8-gaps (WP8-gaps is being reworked under D89), then WP5 with the D94 queue-time edits, then WP3 with the D83/D94 edits, then WP11 (gate --fast; CI as its Linux leg).
-- **Implementing (D91):** WP6 and WP7 (stacked on wp/WP5), WP8 (stacked on wp/WP3), H3, C0 WP6 (G1-G3), C0 WP7 (H9), and the perf baseline.
-- **Reviews done:** WP5 security (D93), STYLE for WP3/WP5 (D94). REPORT.md is drafted on docs/report-draft (f1fdb15b).
-- **Rules in force:** questions go to the supervising session (D79). The Linux leg has its own lock (D90). At most about 4 agents build at once. Load must be below 8 for gates and below 12 for builds. No new agent sessions while the cce hook issue is open (2026-11-17). Kill only your own captured PIDs (D95).
-- **Open:** SECURITY-REVIEW.md exists only uncommitted in `.claude/worktrees/security-review`, because that agent's commit was denied; it is left for the user (SEC-1…12 are summarized in the Defects section).
+- **All bloat-map packages are landed or parked.** Merged: WP1-WP5, WP6 (D142), WP7 step 1 (D128), WP8 (D132), WP9-lite (D136), WP10 move-only (D138), WP11, WP12, plus every C0 package, H3 and the Phase 5 docs. Parked: WP9 (D113) and C0 WP9 (D120). Deferred: WP7 step 2 and WP10 §6.2 cleanup.
+- **Goldens only grew** from remaster-baseline to the tip: 0 lines removed or changed, +3,736 (D144).
+- **§5 independent review** (Opus, fresh context): full pass D135 and delta D140 both clean; the WP6 delta is in progress.
+- **Phase 4 fresh-clone retest:** in progress (D143).
+- **Rules in force:** D79 (questions go to the supervisor), D90/D91/D99 (Linux lock, parallelism, models), D95 (kill only captured PIDs), D103 (full logs, clean calibration store), D130 (focus).
 
 ## Orientation (what you need to resume)
 
@@ -177,6 +175,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D141 | **WP6 (both steps) rebased and re-verified** (queue/WP6 51c631d2, 25 commits; cherry-picked with no conflicts; range-diff all '='). Per commit: tsc, vitest (only the Bonjour baseline fails), module order (only src/server/ moves; 57→73 modules), G11 startup order and cycle greps. Tip: all 11 pipeline modes and lifecycle PASS (load < 8). Mutations, all 7 red: tare-in-drain, expandWithTare, G6 slot, T7 map, G1, G10, G8. Note: 2.1 kept the ball-valve and actuator_state blocks in ingest (the D51 fallback); now that G1 exists they could move, but that is out of scope. Full gate running. | Queue item. |
 | D142 | **WP6 merged** (steps 1 and 2; server.ts 1700+ → 332 lines plus 16 src/server/*.ts). macOS: every step PASS except the D34 C++ ctest script_positions (WP6 is TypeScript-only). Linux PASS except script_runtime. All 11 pipeline modes, lifecycle and integration PASS on both. Every bloat-map package is now merged or parked (WP9 parked, D113). The final §5 delta (WP6) follows, then the final docs refresh. | WP6 landed. |
 | D143 | **Phase 4/5 closeout started:** the final §5 delta (WP6) goes to the same Opus reviewer; the post-merge docs refresh to the Phase 5 agent (README tree, the REPORT table and package status, D-LIFECYCLE-COMMENT); a fresh-clone retest (Sonnet: clone, follow the README, integration, characterization, the unmodified frontend tests, dev.sh --sim) under the shared stack lock. | Closeout. |
+| D144 | **D12a verified over the whole run:** remaster-baseline → tip changes 0 existing golden lines and adds 3,736 across 44 golden files. It was checked by hand per merge rather than as an automated gate step; REPORT says so. Post-merge docs refresh merged (docs/phase5b: README tree, REPORT table 6,902/1.00M → 1,707/413k files/lines, package status, D-LIFECYCLE-COMMENT fixed). CHECKPOINT refreshed. | Closeout. |
 
 ## Baseline on `main` (this machine)
 
