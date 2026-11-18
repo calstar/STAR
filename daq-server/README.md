@@ -12,9 +12,13 @@ The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge
 daq-server/                 # this subproject (inside the STAR monorepo)
 ├── diablo_server/          # All pipeline product code
 │   ├── daq_bridge/         # C++ UDP receiver → Elodin DB publisher
+│   │   ├── BoardMap.{hpp,cpp}        # [boards.*] map, source IP → board
+│   │   └── BackendLogForwarder.hpp   # board LOG text → backend over loopback UDP
 │   ├── services/           # C++ service executables (one main per service)
 │   │   ├── sequencer/      # State machine + actuator UDP (TCP :9998); also holds the
-│   │   │                   #   sequencer classes (StateMachine, ScriptRunner, HoldTimer, …)
+│   │   │                   #   sequencer classes (StateMachine, ScriptRunner, HoldTimer, …),
+│   │   │                   #   split by concern: SequencerService_{config,controller_notify,elodin}.cpp,
+│   │   │                   #   ActuatorCommander_load.cpp
 │   │   ├── calibration/    # Raw sensor → calibrated sensor (Elodin→Elodin)
 │   │   ├── controller/     # RobustDDP controller (Elodin→PWM UDP)
 │   │   ├── heartbeat/      # SERVER_HEARTBEAT UDP to boards
@@ -25,6 +29,7 @@ daq-server/                 # this subproject (inside the STAR monorepo)
 │   ├── lib/                # Shared C++ library (fsw_daq_lib.so)
 │   │   ├── include/        # Public headers (ElodinClient, StateMachine, StopSignals, TcpCommandServer, …)
 │   │   ├── src/            # Implementation; subdirs by area (elodin/, script/, service/, net/, …)
+│   │   │   ├── control/ControllerService_{elodin,pwm}.cpp  # ControllerService, split by concern
 │   │   │   ├── elodin/SendMsg.hpp     # encode + send one Elodin db.hpp message
 │   │   │   ├── script/Printer.cpp     # canonical printer for state scripts (beside Lexer, Parser, Validate)
 │   │   │   ├── service/StopSignals.cpp  # stop flag + SIGINT/SIGTERM/SIGPIPE installer (header in include/service/)
@@ -35,7 +40,11 @@ daq-server/                 # this subproject (inside the STAR monorepo)
 │   │   ├── include/
 │   │   └── src/
 │   ├── backend/            # Node.js/TypeScript backend
-│   │   ├── src/server.ts   # entry point: WebSocket + HTTP on :8081
+│   │   ├── src/server.ts   # entry point: WebSocket + HTTP on :8081 (wiring; state lives in src/server/)
+│   │   ├── src/server/     # server state and handlers by owner: env, stats, ws-clients, ws-connection,
+│   │   │                   #   notifications, history, mission-time, sensor-stream, config-caches,
+│   │   │                   #   calibration-state, board-status, engine-state, actuator-mismatch,
+│   │   │                   #   elodin-link, ingest, commands (all .ts)
 │   │   ├── src/api-server.ts  # HTTP API wiring
 │   │   ├── src/api/        # HTTP handlers by area (config, calibration, ota, history, states, …)
 │   │   ├── src/routes/     # route modules (calibration/config profiles, script check)
