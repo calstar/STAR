@@ -20,6 +20,7 @@
 
 import type { StandSheet } from '@pid/standSheet';
 import type { ChannelDef, Drawing } from '../api';
+import { ATMOSPHERE_PSI, PRESSURE_UNIT, isGaugeUnit } from './pressure';
 
 export const FORMAT = 'star.stand-pid/1';
 
@@ -49,6 +50,34 @@ export interface DaqBundle {
   mates: StandSheet['mates'];
   symbols: Record<string, BundleSymbol>;
   channels: ChannelDef[];
+  /** Runs of line one pressure holds, for shading (`bundleSections`). */
+  sections: Record<string, BundleSection>;
+  /** The section each transducer reads. */
+  sectionOf: Record<string, string>;
+}
+
+export interface BundleSection {
+  lines: string[];
+  /** What the section is shaded against, from the drawing; null leaves it to
+   *  the DAQ (its transducers' full scale). Data, not words: the DAQ's screen
+   *  says it (in gauge, as the DAQ reads), feed-twin's never does. */
+  limit: SectionLimit | null;
+}
+
+export interface SectionLimit {
+  /** Gauge. */
+  psig: number;
+  /** The vessel's tag. */
+  vessel: string;
+  /** A drawn MAWP, or burst pressure over the factor of safety. */
+  basis: 'MAWP' | 'burst';
+  burst_psig?: number;
+  factor?: number;
+}
+
+interface Param {
+  value: number;
+  unit: string;
 }
 
 interface NodeData {
@@ -56,6 +85,117 @@ interface NodeData {
   label?: string;
   page?: string;
   options?: Record<string, string>;
+  params?: Record<string, Param>;
+  attachedTo?: string;
+}
+
+/**
+ * What a section ends at: anything that can hold two pressures across it.
+ * Everything else -- a junction, a manifold, a tank, a disconnect, a
+ * transducer -- is one pressure on every port.
+ */
+export const SECTION_BOUNDARY = new Set([
+  'SOL', 'ROT', 'MOV', 'MAN', 'VALVE_BANK', 'PR', 'RV', 'CV', 'ENGINE',
+]);
+
+/** What carries a vessel limit on the drawing. */
+const VESSELS = new Set(['TANK', 'KBOTTLE', 'DEWAR']);
+
+/**
+ * feed-twin trips a vessel at its burst pressure over this factor
+ * (`Setup.burst_safety_factor`, default 2.0); the shading reaches red there too.
+ */
+export const BURST_SAFETY_FACTOR = 2.0;
+
+/** A drawn pressure as gauge psi: bare psi is gauge on the drawing (ADR 0004). */
+function drawnPsig(p: Param | undefined): number | null {
+  if (!p || !Number.isFinite(p.value)) return null;
+  const u = p.unit.trim().toLowerCase();
+  if (u === 'psi' || isGaugeUnit(u)) return p.value;
+  if (u === PRESSURE_UNIT) return p.value - ATMOSPHERE_PSI;
+  return null;
+}
+
+/** A vessel's limit, gauge: its MAWP, else its burst over the factor of safety. */
+export function vesselLimit(d: NodeData): SectionLimit | null {
+  const vessel = d.label || 'vessel';
+  const mawp = drawnPsig(d.params?.MAWP);
+  if (mawp !== null && mawp > 0) return { psig: mawp, vessel, basis: 'MAWP' };
+  const burst = drawnPsig(d.params?.burst_pressure);
+  if (burst !== null && burst > 0) {
+    return { psig: burst / BURST_SAFETY_FACTOR, vessel, basis: 'burst', burst_psig: burst, factor: BURST_SAFETY_FACTOR };
+  }
+  return null;
+}
+
+/**
+ * The drawing cut into sections: lines joined through every symbol that is
+ * not a boundary, the two halves of a mated disconnect joined to each other.
+ * A section takes the lowest limit of the vessels on it.
+ */
+export function bundleSections(drawing: Drawing, mates: Record<string, string>): {
+  sections: Record<string, BundleSection>;
+  sectionOf: Record<string, string>;
+} {
+  const data = new Map(drawing.nodes.map((n) => [n.id, (n.data ?? {}) as NodeData]));
+  const type = (id: string) => data.get(id)?.componentType ?? '';
+  const parent = new Map<string, string>();
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(x, r);
+    return r;
+  };
+  const union = (a: string, b: string) => parent.set(find(a), find(b));
+  const edges = drawing.edges.filter((e) => data.has(e.source) && data.has(e.target));
+  for (const e of edges) parent.set(e.id, e.id);
+
+  // Lines meeting at a symbol that is not a boundary hold one pressure.
+  const at = new Map<string, string[]>();
+  for (const e of edges) {
+    for (const end of [e.source, e.target]) at.set(end, [...(at.get(end) ?? []), e.id]);
+  }
+  const joined = (id: string) => !SECTION_BOUNDARY.has(type(id));
+  for (const [node, ids] of at) if (joined(node)) for (const id of ids.slice(1)) union(ids[0], id);
+  for (const [a, b] of Object.entries(mates)) {
+    const la = at.get(a)?.[0];
+    const lb = at.get(b)?.[0];
+    if (la && lb && joined(a) && joined(b)) union(la, lb);
+  }
+
+  const sid = new Map<string, string>();
+  const sections: Record<string, BundleSection> = {};
+  for (const e of edges) {
+    const root = find(e.id);
+    if (!sid.has(root)) sid.set(root, `s${sid.size + 1}`);
+    const s = sid.get(root)!;
+    (sections[s] ??= { lines: [], limit: null }).lines.push(e.id);
+  }
+  const sectionOfNode = (id: string): string | undefined => {
+    const line = at.get(id)?.[0];
+    return line && joined(id) ? sid.get(find(line)) : undefined;
+  };
+
+  for (const [id, d] of data) {
+    if (!VESSELS.has(d.componentType ?? '')) continue;
+    const s = sectionOfNode(id);
+    const limit = vesselLimit(d);
+    if (!s || !limit) continue;
+    const cur = sections[s].limit;
+    if (!cur || limit.psig < cur.psig) sections[s].limit = limit;
+  }
+
+  // A transducer reads the section its line is on, or the line or symbol it
+  // is clipped to.
+  const sectionOf: Record<string, string> = {};
+  const lineSection = new Map(edges.map((e) => [e.id, sid.get(find(e.id))!]));
+  for (const [id, d] of data) {
+    if (d.componentType !== 'PT') continue;
+    const s = sectionOfNode(id)
+      ?? (d.attachedTo ? lineSection.get(d.attachedTo) ?? sectionOfNode(d.attachedTo) : undefined);
+    if (s) sectionOf[id] = s;
+  }
+  return { sections, sectionOf };
 }
 
 /**
@@ -142,6 +282,7 @@ export function buildBundle(args: {
       symbols,
       // Only cabled connectors: one with no symbol tells the DAQ nothing.
       channels: args.channels.filter((c) => c.symbol),
+      ...bundleSections(drawing, stand.mates),
     },
   };
 }
