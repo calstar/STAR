@@ -16,6 +16,7 @@
 
 import { toSvg } from 'html-to-image';
 import { getNodesBounds, type Node } from '@xyflow/react';
+import type { SheetShot } from './standSheet';
 
 /** What the title block says. */
 export interface SheetMeta {
@@ -114,7 +115,7 @@ function frame(flow: HTMLElement, nodes: Node[]) {
   const viewport = flow.querySelector<HTMLElement>('.react-flow__viewport');
   if (!viewport) throw new Error('no canvas to export');
   return {
-    viewport, width, height,
+    viewport, width, height, origin: { x, y },
     style: {
       width: `${width}px`,
       height: `${height}px`,
@@ -208,6 +209,43 @@ export async function exportSvg(flow: HTMLElement, nodes: Node[], meta: SheetMet
   svg.appendChild(titleBlockSvg(doc, f.width, f.height, meta, ink));
   const out = new XMLSerializer().serializeToString(svg);
   return new Blob([out], { type: 'image/svg+xml;charset=utf-8' });
+}
+
+/**
+ * One page as the stand picture takes it (standSheet.ts): no title block, and
+ * every symbol and line tagged with its drawing id.
+ *
+ * The tags go on the live canvas for the length of the shot and come off
+ * after, as the paper theme does: html-to-image copies what is on screen, so
+ * an attribute on the canvas is an attribute in the picture. Our own names
+ * rather than React Flow's `data-id`, so the DAQ's overlay does not depend on
+ * which library drew the sheet.
+ */
+export async function shootSheet(flow: HTMLElement, nodes: Node[], page: string): Promise<SheetShot> {
+  const f = frame(flow, nodes);
+  const tagged: [HTMLElement | SVGElement, string][] = [];
+  const tag = (selector: string, attr: string) => {
+    for (const el of flow.querySelectorAll<HTMLElement | SVGElement>(selector)) {
+      const id = el.getAttribute('data-id');
+      if (!id) continue;
+      el.setAttribute(attr, id);
+      tagged.push([el, attr]);
+    }
+  };
+  tag('.react-flow__node[data-id]', 'data-pid-symbol');
+  tag('.react-flow__edge[data-id]', 'data-pid-line');
+  try {
+    const url = await within(toSvg(f.viewport, {
+      backgroundColor: BG(flow), width: f.width, height: f.height, style: f.style, filter: notChrome,
+    }), `rendering the ${page} page`);
+    return {
+      page,
+      svg: decodeURIComponent(url.replace(/^data:image\/svg\+xml;charset=utf-8,/, '')),
+      width: f.width, height: f.height, origin: f.origin, scale: SCALE,
+    };
+  } finally {
+    for (const [el, attr] of tagged) el.removeAttribute(attr);
+  }
 }
 
 export function download(blob: Blob, filename: string): void {
