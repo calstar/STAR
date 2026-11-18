@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the private fixture tree one pipeline characterization run reads and writes.
 
-    make_fixture.py <daq_root> <fixture_dir> <ports.json> [pt|boards|stalesub]
+    make_fixture.py <daq_root> <fixture_dir> <ports.json> [pt|boards|stalesub|mismatch|unrecognized]
 
 Everything a service writes lands under <fixture_dir>; nothing in the checkout is moved or
 touched (the integration harness parks the live calibration store instead — this does not).
@@ -19,7 +19,21 @@ Layout (the C++ services run with cwd = <fixture_dir>; every path they hard-code
   sim_config.toml                      the simulator's view: pt — only pt_board enabled;
                                        boards — every board config enables but the T7,
                                        at 127.0.0.<id>; stalesub — only pt_board_2 (board 22,
-                                       the slot the startup board's ids wrap onto)
+                                       the slot the startup board's ids wrap onto); mismatch —
+                                       pt_board and ball_valve_board (board 71 at 127.0.0.71);
+                                       unrecognized — pt_board
+  config/mismatch_*.csv                mismatch only: the actuators and delays CSVs with a
+                                       "Main Ball Valve" row (CLOSE in every state, delay 0), as
+                                       test/test_integration.sh adds it; [state_machine] points
+                                       at them by the same relative form, and [actuator_roles]
+                                       gains "Main Ball Valve" = ["NC", 1, 71] (G1)
+  config_backend/                      unrecognized only: the backend's CONFIG_PATH -- a copy of
+                                       config/ in which pt_board's `board_id = 21` is spelled
+                                       `id = 21`. The VTable registry still subscribes to it
+                                       (elodin-vtable-registry.ts: b.board_id ?? b.id) while
+                                       loadBoardsFromConfig (server.ts, numeric board_id only)
+                                       leaves it out, so its heartbeats arrive from a board the
+                                       backend does not expect (G3). The services keep config/.
   registrar_a.toml                     stalesub only: the services config with every board but
                                        [boards.integration_startup] disabled -- what a
                                        calibration_service run on it registers is exactly the
@@ -59,7 +73,7 @@ def sub_line(text, pattern, repl, count=0, section=None):
 def main():
     daq_root, fx, ports_path = sys.argv[1:4]
     mode = sys.argv[4] if len(sys.argv) > 4 else "pt"
-    assert mode in ("pt", "boards", "stalesub"), mode
+    assert mode in ("pt", "boards", "stalesub", "mismatch", "unrecognized"), mode
     ports = json.load(open(ports_path))
     root = fx
     cfg_dir = os.path.join(root, "config")
@@ -79,7 +93,7 @@ def main():
     text = open(os.path.join(daq_root, "config", "config_base.toml")).read()
     # Hardware safety: no address on the board LAN survives into a config anything runs against.
     text = text.replace("192.168.2.", "127.0.0.")
-    if mode == "pt":
+    if mode in ("pt", "mismatch", "unrecognized"):
         # The one routed sensor board sends from 127.0.0.1, the only loopback address every host
         # has.
         text = sub_line(
@@ -123,6 +137,31 @@ def main():
     text = sub_line(
         text, r"^enabled = true$", "enabled = false", 1, "heartbeat_service"
     )
+    if mode == "mismatch":
+        # G1: a ball valve the state machine knows. config_base enables [boards.ball_valve_board]
+        # (71) but names no valve on it; the role and its CSV rows are test_integration.sh's
+        # (":675" / ":517"). The sequencer then commands BV_CMD.B1.CH1 and the backend expects
+        # BV1.CH1 CLOSED in every state (state-actuators.ts resolveActuatorTelemetryEntity).
+        text = sub_line(
+            text,
+            r"^\[actuator_roles\]$",
+            '[actuator_roles]\n"Main Ball Valve" = ["NC", 1, 71]',
+            1,
+        )
+        text = sub_line(
+            text,
+            r"^actuator_csv = .*$",
+            'actuator_csv = "config/mismatch_state_machine_actuators.csv"',
+            1,
+            "state_machine",
+        )
+        text = sub_line(
+            text,
+            r"^actuator_delay_csv = .*$",
+            'actuator_delay_csv = "config/mismatch_state_machine_actuator_delays.csv"',
+            1,
+            "state_machine",
+        )
     # [state_machine] keeps production's relative "config/<name>.csv" paths. The C++ services
     # resolve them against cwd (the fixture); the backend against its cwd's ../.. (run.sh starts
     # it in char/backend). An absolute path is NOT equivalent: the backend's state-CSV loaders join
@@ -165,12 +204,39 @@ designated_survivor = false
             src = os.path.join(daq_root, "config", "profiles", "default", name)
             shutil.copy(src, os.path.join(cfg_dir, name))
             shutil.copy(src, os.path.join(prof_dir, name))
+    if mode == "mismatch":
+        # The patched CSVs are copies beside the originals (an absolute [state_machine] path is
+        # found by the sequencer only, README "Frozen behaviour"); every existing row is kept.
+        for name in (
+            "state_machine_actuators.csv",
+            "state_machine_actuator_delays.csv",
+        ):
+            rows = open(os.path.join(cfg_dir, name)).read().rstrip("\n").split("\n")
+            width = len(rows[0].split(","))
+            cell = "CLOSE" if name == "state_machine_actuators.csv" else "0"
+            rows.append(",".join(["Main Ball Valve"] + [cell] * (width - 1)))
+            for d in (cfg_dir, prof_dir):
+                open(os.path.join(d, "mismatch_" + name), "w").write(
+                    "\n".join(rows) + "\n"
+                )
     for path in (
         os.path.join(cfg_dir, "config.toml"),
         os.path.join(prof_dir, "config.toml"),
     ):
         open(path, "w").write(text)
     open(os.path.join(cfg_dir, ".active_profile"), "w").write("default\n")
+    if mode == "unrecognized":
+        # G3: the backend's own copy of the config, pt_board's id spelled so that the registry
+        # subscribes to its tables but the board list does not expect it. Not an empty
+        # [boards]: that trips the registry's 1..255 heartbeat fallback.
+        be_text = sub_line(text, r"^board_id = 21$", "id = 21", 1, "boards.pt_board")
+        be_dir = os.path.join(root, "config_backend")
+        shutil.copytree(cfg_dir, be_dir)
+        for path in (
+            os.path.join(be_dir, "config.toml"),
+            os.path.join(be_dir, "profiles", "default", "config.toml"),
+        ):
+            open(path, "w").write(be_text)
     # The operator allowlist the WS/HTTP gates read: one operator, so both answers are reachable.
     open(os.path.join(fx, "operators.txt"), "w").write("operator@example.com\n")
 
@@ -202,6 +268,8 @@ designated_survivor = false
             "pt": lambda name, _b: name == "pt_board",
             "boards": not_t7,
             "stalesub": lambda name, _b: name == "pt_board_2",
+            "mismatch": lambda name, _b: name in ("pt_board", "ball_valve_board"),
+            "unrecognized": lambda name, _b: name == "pt_board",
         }[mode]
     )
     open(os.path.join(fx, "sim_config.toml"), "w").write(sim)
