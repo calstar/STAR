@@ -21,6 +21,7 @@ import {
   undeployedChanges,
 } from './routes/config-profiles.js';
 import { checkStateScript } from './routes/script-check.js';
+import { readStandPid, standPidDir } from './routes/stand-pid.js';
 import {
   listCalibrationProfiles,
   saveCalibrationProfile,
@@ -402,6 +403,11 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         // active profile), which differs from it during a session and in every simulated run.
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ config: readDeployedConfig(), path: getRunningConfigPath() }));
+      } else if (url.pathname === '/api/stand-pid' && req.method === 'GET') {
+        // The Schematic page's drawing (routes/stand-pid.ts), beside config.toml.
+        const answer = readStandPid(standPidDir(getConfigPath()));
+        res.writeHead(answer.status, { 'Content-Type': 'application/json' });
+        res.end(answer.body);
       } else if (url.pathname === '/api/config' && req.method === 'POST') {
         // Save to the ACTIVE PROFILE. When idle, also deploy it to config.toml (the running file);
         // during a session config.toml is frozen — the write is a draft applied at the next start.

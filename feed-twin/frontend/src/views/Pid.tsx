@@ -32,6 +32,7 @@ import { listPages } from '@pid/pages';
 import { getDrawing, getFreshness } from '../api';
 import type { BoardId, Drawing, Freshness } from '../api';
 import { DaqBox, type Drawn, plugIn } from '../components/DaqBox';
+import { DaqExport } from '../components/DaqExport';
 import { DrawingPanel } from '../components/DrawingPanel';
 import { HookupSaveBar } from '../components/HookupSaveBar';
 import { HookupOverlay } from '../components/HookupOverlay';
@@ -297,12 +298,15 @@ export function Pid() {
             GSE not simulated except its vents
           </Link>
         )}
+        <span className="ml-auto flex items-baseline gap-2">
+          <DaqExport diagram={drawing.id} drawing={drawing.doc} artifact={fresh?.artifact_id ?? null} />
+        </span>
         <button
           type="button"
           onClick={() => openPanel(!panel)}
           aria-expanded={panel}
           title={mode === 'daq' ? 'The DAQ box' : 'Symbols: what each one is wired to, called and set to'}
-          className="ml-auto rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ink-2)] hover:text-[var(--ink)]"
+          className="rounded border border-[var(--line-strong)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ink-2)] hover:text-[var(--ink)]"
         >
           {panel ? 'Hide panel' : 'Show panel'}
         </button>

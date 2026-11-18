@@ -19,6 +19,7 @@ export const FlashPage          = lazy(() => import('@/app/flash/page'));
 export const LivestreamPage     = lazy(() => import('@/app/livestream/page'));
 export const SelfTestsPage      = lazy(() => import('@/app/self-tests/page'));
 export const SensorInfoPage     = lazy(() => import('@/app/sensor-info/page'));
+export const SchematicPage      = lazy(() => import('@/app/schematic/page'));
 export const StatusPage         = lazy(() => import('@/app/status/page'));
 export const SessionPage        = lazy(() => import('@/app/session/page'));
 export const VideoPage          = lazy(() => import('@/app/video/page'));
