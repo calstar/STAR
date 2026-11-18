@@ -203,8 +203,18 @@ def _fin_groups(faces: list[FaceGeometry], axis: Axis) -> tuple[list[list[FaceGe
             groups[-1].append(fg)
         else:
             groups.append([fg])
+    # Close the circle, as count_fins does: a fin on the 0/360 seam has its two sides
+    # at ~2 deg and ~358 deg, which the sweep above leaves as two "fins" -- a 4-fin set
+    # read as 5 uneven ones, and flagged asymmetric.
+    if len(groups) > 1 and azimuth(groups[0][0]) + 360.0 - azimuth(groups[-1][-1]) < 25.0:
+        groups[0] = groups.pop() + groups[0]
 
-    azimuths = [float(np.mean([azimuth(fg) for fg in g])) for g in groups]
+    def circular_mean(g: list[FaceGeometry]) -> float:
+        # Not the arithmetic mean: 2 and 358 average to 180, the opposite side.
+        a = np.radians([azimuth(fg) for fg in g])
+        return float(np.degrees(np.arctan2(np.sin(a).sum(), np.cos(a).sum())) % 360.0)
+
+    azimuths = [circular_mean(g) for g in groups]
     return groups, azimuths
 
 
