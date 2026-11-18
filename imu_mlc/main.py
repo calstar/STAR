@@ -1,159 +1,72 @@
 #!/usr/bin/env python3
 """
-Avionics IMU Machine Learning Core (MLC) Flight Classification Pipeline.
+STAR imu_mlc — pad/idle ISM330DHCX MLC pipeline (v1 retarget).
 
-Unified Command-Line Interface to:
-  --generate-data : Simulates 100 Hz 6-DOF IMU + Magnetometer rocket flight logs.
-  --train         : Extracts rolling MLC features, trains 8 trees, exports Unico-GUI rules.
-  --evaluate      : Evaluates test set accuracy, F1, leaf counts, and hardware node budget.
-  (default: runs full end-to-end pipeline if no specific flag is provided)
+Default: generate pad/idle synthetic data → train ONE tree
+(still / handled / vibration) → export review rules + fixture .ucf / C header.
+
+Silicon MLC program: author in MEMS Studio / Unico MLC tool, export .ucf,
+then replay with firmware ism330_mlc_load (see docs/firmware-mlc-loader-sketch.md).
+AN5392 Rev 5: .ucf → .h via Unico "C code generation"; MLC ODR 12.5/26/52/104.
 """
 
-import sys
-import os
-
-# Auto-bootstrap .venv if launched outside the virtual environment
-if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
-    venv_py = os.path.abspath(os.path.join(os.path.dirname(__file__), ".venv", "bin", "python"))
-    if os.path.exists(venv_py) and os.path.realpath(sys.executable) != os.path.realpath(venv_py):
-        os.execv(venv_py, [venv_py] + sys.argv)
+from __future__ import annotations
 
 import argparse
-from typing import Dict, Any
+import os
+import sys
 
-from scripts.generate_synthetic_data import generate_flight_dataset
-from src.train_mlc_trees import train_and_evaluate_mlc_trees, TOTAL_NODE_BUDGET
+if sys.prefix == getattr(sys, "base_prefix", sys.prefix):
+    venv_py = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), ".venv", "bin", "python")
+    )
+    if os.path.exists(venv_py) and os.path.realpath(sys.executable) != os.path.realpath(
+        venv_py
+    ):
+        os.execv(venv_py, [venv_py] + sys.argv)
 
+from scripts.generate_pad_idle_data import generate_pad_idle_dataset
+from src.features import DEFAULT_MLC_ODR_HZ, MLC_ODR_HZ_CHOICES
+from src.train_pad_mlc import format_summary, train_and_evaluate_pad_mlc
 
-
-DATA_PATH = "data/simulated_flight.csv"
+DATA_PATH = "data/pad_idle_bench.csv"
 EXPORTS_DIR = "exports"
 
 
-def print_banner():
-    banner = """
-========================================================================================
-       🚀 STAR-IMU-MLC: AVIONICS MACHINE LEARNING CORE CLASSIFIER PIPELINE 🚀          
-            Embedded Decision Tree Architecture for Ultra-Low-Power IMUs                 
-========================================================================================
-"""
-    print(banner)
-
-
-def format_summary_table(pipeline_summary: Dict[str, Any]):
-    """Renders a formatted terminal table showing tree metrics and hardware node budget."""
-    results = pipeline_summary["results"]
-    total_nodes = pipeline_summary["total_nodes"]
-    budget = pipeline_summary["budget"]
-    budget_passed = pipeline_summary["budget_passed"]
-
-    header = (
-        f"+-----+-----------------------------+------------+-----------+-------+-------+----------+---------+\n"
-        f"| ID  | Target / Task Name          | Type       | Leaf Budg | Leaves| Nodes | Accuracy | F1-Score|\n"
-        f"+-----+-----------------------------+------------+-----------+-------+-------+----------+---------+"
-    )
-    print("\n" + "=" * 90)
-    print("                     8-TREE MLC CLASSIFICATION PIPELINE SUMMARY                     ")
-    print("=" * 90)
-    print(header)
-
-    for r in results:
-        tree_id = f"T{r['tree_id']}"
-        name = r['name'][:27]
-        ttype = r['type'][:10]
-        leaf_b = r['leaf_budget']
-        leaves = r['leaves_used']
-        nodes = r['nodes_used']
-        acc = f"{r['accuracy'] * 100:.2f}%"
-        f1 = f"{r['f1_score'] * 100:.2f}%"
-
-        row = (
-            f"| {tree_id:<3} | {name:<27} | {ttype:<10} | {leaf_b:<9} | "
-            f"{leaves:<5} | {nodes:<5} | {acc:<8} | {f1:<7} |"
-        )
-        print(row)
-
-    print(f"+-----+-----------------------------+------------+-----------+-------+-------+----------+---------+")
-
-    # Node Budget Meter
-    pct_used = (total_nodes / budget) * 100.0
-    bar_width = 30
-    filled = int(bar_width * (total_nodes / budget))
-    bar = "█" * filled + "░" * (bar_width - filled)
-
-    status_str = "PASSED (Compliant with ST MLC Hardware)" if budget_passed else "FAILED (Exceeds Budget!)"
-
-    print("\n" + "-" * 90)
-    print(" HARDWARE NODE BUDGET VERIFICATION:")
-    print(f"  • Total Decision Tree Nodes Used : {total_nodes} / {budget} nodes ({pct_used:.1f}%)")
-    print(f"  • MLC Memory Budget Meter        : [{bar}]")
-    print(f"  • Hardware Feasibility Status    : {status_str}")
-    print(f"  • Total Rolling Features Extracted: {pipeline_summary['feature_count']} channels")
-    print(f"  • Target Platform Compatibility  : STMicroelectronics LSM6DSOX / LSM6DSRX / ISM330DHCX")
-    print("-" * 90)
-
-    print("\n EXPORTED UNICO-GUI RULES (ready for import):")
-    for r in results:
-        print(f"  [✓] {os.path.join(EXPORTS_DIR, r['export_file'])} ({r['nodes_used']} nodes)")
-    print("=" * 90 + "\n")
-
-
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Avionics IMU Machine Learning Core (MLC) Flight Classification Pipeline."
+        description="Pad/idle ISM330DHCX MLC trainer (1 tree: still/handled/vibration)."
     )
+    parser.add_argument("--generate-data", action="store_true")
+    parser.add_argument("--train", action="store_true")
+    parser.add_argument("--evaluate", action="store_true")
+    parser.add_argument("--data-file", default=DATA_PATH)
+    parser.add_argument("--export-dir", default=EXPORTS_DIR)
     parser.add_argument(
-        "--generate-data",
-        action="store_true",
-        help="Generate synthetic 6-DOF IMU + Magnetometer flight data (100 Hz).",
+        "--odr",
+        type=float,
+        default=DEFAULT_MLC_ODR_HZ,
+        choices=list(MLC_ODR_HZ_CHOICES),
+        help="MLC ODR Hz (AN5392 Table 1). Default 26.",
     )
-    parser.add_argument(
-        "--train",
-        action="store_true",
-        help="Train 8 MLC Decision Trees and export Unico-GUI rule files.",
-    )
-    parser.add_argument(
-        "--evaluate",
-        action="store_true",
-        help="Evaluate model performance on test set and verify node budget.",
-    )
-    parser.add_argument(
-        "--data-file",
-        type=str,
-        default=DATA_PATH,
-        help=f"Path to flight data CSV (default: {DATA_PATH})",
-    )
-    parser.add_argument(
-        "--export-dir",
-        type=str,
-        default=EXPORTS_DIR,
-        help=f"Directory for exported tree rules (default: {EXPORTS_DIR})",
-    )
-
     args = parser.parse_args()
-
-    # If no flags are given, execute the complete pipeline end-to-end
     run_all = not (args.generate_data or args.train or args.evaluate)
 
-    print_banner()
+    print("STAR imu_mlc — pad/idle MLC (hint only; no pyro/launch authority)")
+    print(f"MLC ODR = {args.odr} Hz | target classes = still / handled / vibration")
 
-    # Step 1: Generate Data
     if args.generate_data or run_all or not os.path.exists(args.data_file):
-        print(f"[*] Step 1: Generating synthetic flight dataset at '{args.data_file}'...")
-        generate_flight_dataset(output_path=args.data_file)
-        print("[✓] Flight dataset generated successfully.\n")
+        print(f"[*] Generating pad/idle dataset -> {args.data_file}")
+        generate_pad_idle_dataset(output_path=args.data_file, odr_hz=args.odr)
 
-    # Step 2 & 3: Train & Evaluate
     if args.train or args.evaluate or run_all:
-        print(f"[*] Step 2: Training 8 MLC Decision Trees & Enforcing <= {TOTAL_NODE_BUDGET} Node Budget...")
-        summary = train_and_evaluate_mlc_trees(
+        print("[*] Training single pad/idle tree + exporting .ucf-oriented artifacts")
+        summary = train_and_evaluate_pad_mlc(
             csv_path=args.data_file,
             export_dir=args.export_dir,
+            odr_hz=args.odr,
         )
-        print("[✓] Training, verification, and rule export complete.\n")
-
-        print("[*] Step 3: Presenting Model Performance & Hardware Budget Evaluation...")
-        format_summary_table(summary)
+        print(format_summary(summary))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,44 @@
+// ==============================================================================
+// STAR pad/idle MLC decision tree (review copy — prefer MEMS Studio .ucf for silicon)
+// Tree 1: Pad Idle
+// Classes: ['still', 'handled', 'vibration']
+// Features: ['accel_norm_var', 'accel_z_zcr']
+// MLC ODR Hz: 26.0
+// Exported: 2026-11-16 23:44:58
+// Leaves: 16 | Nodes: 31
+// Target: ISM330DHCX MLC — hint only, no pyro/launch authority
+// ==============================================================================
+
+accel_norm_var <= 0.003295
+|   accel_norm_var <= 0.000088
+|   |   accel_norm_var <= 0.000074
+|   |   |   accel_norm_var <= 0.000061
+|   |   |   |   accel_norm_var <= 0.000047 : handled (2130.0)
+|   |   |   |   accel_norm_var > 0.000047
+|   |   |   |   |   accel_norm_var <= 0.000048
+|   |   |   |   |   |   accel_z_zcr <= 0.580000 : handled (14.0)
+|   |   |   |   |   |   accel_z_zcr > 0.580000 : handled (5.0)
+|   |   |   |   |   accel_norm_var > 0.000048
+|   |   |   |   |   |   accel_z_zcr <= 0.460000
+|   |   |   |   |   |   |   accel_z_zcr <= 0.420000 : handled (58.0)
+|   |   |   |   |   |   |   accel_z_zcr > 0.420000
+|   |   |   |   |   |   |   |   accel_norm_var <= 0.000056 : handled (19.0)
+|   |   |   |   |   |   |   |   accel_norm_var > 0.000056 : handled (6.0)
+|   |   |   |   |   |   accel_z_zcr > 0.460000 : handled (204.0)
+|   |   |   accel_norm_var > 0.000061
+|   |   |   |   accel_z_zcr <= 0.420000
+|   |   |   |   |   accel_z_zcr <= 0.300000 : handled (5.0)
+|   |   |   |   |   accel_z_zcr > 0.300000
+|   |   |   |   |   |   accel_z_zcr <= 0.380000 : handled (7.0)
+|   |   |   |   |   |   accel_z_zcr > 0.380000 : handled (5.0)
+|   |   |   |   accel_z_zcr > 0.420000 : handled (43.0)
+|   |   accel_norm_var > 0.000074 : handled (5.0)
+|   accel_norm_var > 0.000088
+|   |   accel_norm_var <= 0.003090
+|   |   |   accel_norm_var <= 0.001194 : still (1120.0)
+|   |   |   accel_norm_var > 0.001194 : still (1369.0)
+|   |   accel_norm_var > 0.003090 : still (5.0)
+accel_norm_var > 0.003295 : vibration (2493.0)
+
+Number of Leaves  : 16
+Size of the tree : 31

@@ -1,0 +1,405 @@
+{
+  "features": [
+    "accel_norm_var",
+    "accel_z_zcr"
+  ],
+  "classes": [
+    "still",
+    "handled",
+    "vibration"
+  ],
+  "class_result_codes": {
+    "still": 0,
+    "handled": 1,
+    "vibration": 2
+  },
+  "nodes": [
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 0.0032954425550997257,
+      "path": []
+    },
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 8.828495629131794e-05,
+      "path": [
+        "accel_norm_var<=0.00329544"
+      ]
+    },
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 7.406123040709645e-05,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05"
+      ]
+    },
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 6.0856951677124016e-05,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05"
+      ]
+    },
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 4.749114850710612e-05,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05"
+      ]
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var<=4.74911e-05"
+      ],
+      "n_samples": 2130
+    },
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 4.817087028641254e-05,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05"
+      ]
+    },
+    {
+      "kind": "split",
+      "feature": "accel_z_zcr",
+      "threshold": 0.5800000131130219,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var<=4.81709e-05"
+      ]
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var<=4.81709e-05",
+        "accel_z_zcr<=0.58"
+      ],
+      "n_samples": 14
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var<=4.81709e-05",
+        "accel_z_zcr>0.58"
+      ],
+      "n_samples": 5
+    },
+    {
+      "kind": "split",
+      "feature": "accel_z_zcr",
+      "threshold": 0.4599999934434891,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var>4.81709e-05"
+      ]
+    },
+    {
+      "kind": "split",
+      "feature": "accel_z_zcr",
+      "threshold": 0.42000000178813934,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var>4.81709e-05",
+        "accel_z_zcr<=0.46"
+      ]
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var>4.81709e-05",
+        "accel_z_zcr<=0.46",
+        "accel_z_zcr<=0.42"
+      ],
+      "n_samples": 58
+    },
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 5.568065898842178e-05,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var>4.81709e-05",
+        "accel_z_zcr<=0.46",
+        "accel_z_zcr>0.42"
+      ]
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var>4.81709e-05",
+        "accel_z_zcr<=0.46",
+        "accel_z_zcr>0.42",
+        "accel_norm_var<=5.56807e-05"
+      ],
+      "n_samples": 19
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var>4.81709e-05",
+        "accel_z_zcr<=0.46",
+        "accel_z_zcr>0.42",
+        "accel_norm_var>5.56807e-05"
+      ],
+      "n_samples": 6
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var<=6.0857e-05",
+        "accel_norm_var>4.74911e-05",
+        "accel_norm_var>4.81709e-05",
+        "accel_z_zcr>0.46"
+      ],
+      "n_samples": 204
+    },
+    {
+      "kind": "split",
+      "feature": "accel_z_zcr",
+      "threshold": 0.42000000178813934,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var>6.0857e-05"
+      ]
+    },
+    {
+      "kind": "split",
+      "feature": "accel_z_zcr",
+      "threshold": 0.29999999701976776,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var>6.0857e-05",
+        "accel_z_zcr<=0.42"
+      ]
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var>6.0857e-05",
+        "accel_z_zcr<=0.42",
+        "accel_z_zcr<=0.3"
+      ],
+      "n_samples": 5
+    },
+    {
+      "kind": "split",
+      "feature": "accel_z_zcr",
+      "threshold": 0.3800000101327896,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var>6.0857e-05",
+        "accel_z_zcr<=0.42",
+        "accel_z_zcr>0.3"
+      ]
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var>6.0857e-05",
+        "accel_z_zcr<=0.42",
+        "accel_z_zcr>0.3",
+        "accel_z_zcr<=0.38"
+      ],
+      "n_samples": 7
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var>6.0857e-05",
+        "accel_z_zcr<=0.42",
+        "accel_z_zcr>0.3",
+        "accel_z_zcr>0.38"
+      ],
+      "n_samples": 5
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var<=7.40612e-05",
+        "accel_norm_var>6.0857e-05",
+        "accel_z_zcr>0.42"
+      ],
+      "n_samples": 43
+    },
+    {
+      "kind": "leaf",
+      "class": "handled",
+      "result_code": 1,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var<=8.8285e-05",
+        "accel_norm_var>7.40612e-05"
+      ],
+      "n_samples": 5
+    },
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 0.0030904620653018355,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var>8.8285e-05"
+      ]
+    },
+    {
+      "kind": "split",
+      "feature": "accel_norm_var",
+      "threshold": 0.0011944621219299734,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var>8.8285e-05",
+        "accel_norm_var<=0.00309046"
+      ]
+    },
+    {
+      "kind": "leaf",
+      "class": "still",
+      "result_code": 0,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var>8.8285e-05",
+        "accel_norm_var<=0.00309046",
+        "accel_norm_var<=0.00119446"
+      ],
+      "n_samples": 1120
+    },
+    {
+      "kind": "leaf",
+      "class": "still",
+      "result_code": 0,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var>8.8285e-05",
+        "accel_norm_var<=0.00309046",
+        "accel_norm_var>0.00119446"
+      ],
+      "n_samples": 1369
+    },
+    {
+      "kind": "leaf",
+      "class": "still",
+      "result_code": 0,
+      "path": [
+        "accel_norm_var<=0.00329544",
+        "accel_norm_var>8.8285e-05",
+        "accel_norm_var>0.00309046"
+      ],
+      "n_samples": 5
+    },
+    {
+      "kind": "leaf",
+      "class": "vibration",
+      "result_code": 2,
+      "path": [
+        "accel_norm_var>0.00329544"
+      ],
+      "n_samples": 2493
+    }
+  ],
+  "note": "Thresholds are sklearn-derived for MEMS Studio feature/tree setup. They are NOT encoded as ISM330 filter/tree program bytes in the bring-up .ucf."
+}

@@ -1,0 +1,58 @@
+// ==============================================================================
+// LABEL: DETERMINISTIC FEATURE-THRESHOLD BRING-UP — NOT A FULL MLC TREE PROGRAM
+// ==============================================================================
+// This .ucf only enables MLC + INT2 routing with corrected bit masks.
+// It does NOT contain ISM330 filter-bank / decision-tree program bytes.
+// Silicon class results require a MEMS Studio / Unico MLC export that embeds
+// the trained still/handled/vibration tree (see mems-studio-import/STEPS.md).
+// MLC ODR = 26.0 Hz → EMB_FUNC_ODR_CFG_C bits5:4 encoding 0x10
+// Bit masks (board brief):
+//   MD2_CFG INT2_EMB_FUNC     = 0x02 (bit1)
+//   EMB_FUNC_ODR_CFG_C 26 Hz  = 0x10 (bits5:4)
+//   EMB_FUNC_INIT_B MLC_INIT  = 0x10 (bit4)
+//   EMB_FUNC_EN_B MLC_EN      = 0x10 (bit4)
+// CTRL1_XL/CTRL2_G omitted — firmware ism330_init already sets 0x74/0x71.
+// Safety: MLC is hint-only — never pyro/launch/apogee authority.
+// --- sklearn feature thresholds (for MEMS Studio handoff) ---
+// features: ['accel_norm_var', 'accel_z_zcr']
+// classes:  ['still', 'handled', 'vibration']
+// SPLIT accel_norm_var threshold=0.00329544
+// SPLIT accel_norm_var threshold=8.8285e-05
+// SPLIT accel_norm_var threshold=7.40612e-05
+// SPLIT accel_norm_var threshold=6.0857e-05
+// SPLIT accel_norm_var threshold=4.74911e-05
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var<=6.0857e-05 && accel_norm_var<=4.74911e-05
+// SPLIT accel_norm_var threshold=4.81709e-05
+// SPLIT accel_z_zcr threshold=0.58
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var<=6.0857e-05 && accel_norm_var>4.74911e-05 && accel_norm_var<=4.81709e-05 && accel_z_zcr<=0.58
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var<=6.0857e-05 && accel_norm_var>4.74911e-05 && accel_norm_var<=4.81709e-05 && accel_z_zcr>0.58
+// SPLIT accel_z_zcr threshold=0.46
+// SPLIT accel_z_zcr threshold=0.42
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var<=6.0857e-05 && accel_norm_var>4.74911e-05 && accel_norm_var>4.81709e-05 && accel_z_zcr<=0.46 && accel_z_zcr<=0.42
+// SPLIT accel_norm_var threshold=5.56807e-05
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var<=6.0857e-05 && accel_norm_var>4.74911e-05 && accel_norm_var>4.81709e-05 && accel_z_zcr<=0.46 && accel_z_zcr>0.42 && accel_norm_var<=5.56807e-05
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var<=6.0857e-05 && accel_norm_var>4.74911e-05 && accel_norm_var>4.81709e-05 && accel_z_zcr<=0.46 && accel_z_zcr>0.42 && accel_norm_var>5.56807e-05
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var<=6.0857e-05 && accel_norm_var>4.74911e-05 && accel_norm_var>4.81709e-05 && accel_z_zcr>0.46
+// SPLIT accel_z_zcr threshold=0.42
+// SPLIT accel_z_zcr threshold=0.3
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var>6.0857e-05 && accel_z_zcr<=0.42 && accel_z_zcr<=0.3
+// SPLIT accel_z_zcr threshold=0.38
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var>6.0857e-05 && accel_z_zcr<=0.42 && accel_z_zcr>0.3 && accel_z_zcr<=0.38
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var>6.0857e-05 && accel_z_zcr<=0.42 && accel_z_zcr>0.3 && accel_z_zcr>0.38
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var<=7.40612e-05 && accel_norm_var>6.0857e-05 && accel_z_zcr>0.42
+// LEAF  class=handled code=0x01 path=accel_norm_var<=0.00329544 && accel_norm_var<=8.8285e-05 && accel_norm_var>7.40612e-05
+// SPLIT accel_norm_var threshold=0.00309046
+// SPLIT accel_norm_var threshold=0.00119446
+// LEAF  class=still code=0x00 path=accel_norm_var<=0.00329544 && accel_norm_var>8.8285e-05 && accel_norm_var<=0.00309046 && accel_norm_var<=0.00119446
+// LEAF  class=still code=0x00 path=accel_norm_var<=0.00329544 && accel_norm_var>8.8285e-05 && accel_norm_var<=0.00309046 && accel_norm_var>0.00119446
+// LEAF  class=still code=0x00 path=accel_norm_var<=0.00329544 && accel_norm_var>8.8285e-05 && accel_norm_var>0.00309046
+// LEAF  class=vibration code=0x02 path=accel_norm_var>0.00329544
+// --- end threshold comments ---
+Ac 01 80
+Ac 05 10
+Ac 60 10
+Ac 67 10
+WAIT 10
+Ac 11 01
+Ac 01 00
+Ac 5F 02
