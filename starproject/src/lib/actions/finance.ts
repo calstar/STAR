@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { canRequestLogin } from "@/lib/finance/login";
+import { isPvp } from "@/lib/pvp";
 import { canTag, getFinanceDetail, getViewer, type FinanceDetail } from "@/lib/finance/queries";
 import { canTransition, type Actor } from "@/lib/finance/status";
 import { getCurrentDbUser } from "@/lib/user";
@@ -37,6 +38,7 @@ async function move(
 
   const actors: Actor[] = [];
   if (await isAdmin(user.email)) actors.push("admin");
+  if (await isPvp(user.email)) actors.push("pvp");
   if (r.createdById === user.id) actors.push("owner");
   const blocked = guard ? guard(r) : canTransition(r.status, to, actors) ? null : "You can't do that to this reimbursement.";
   if (blocked) return { error: blocked };
@@ -53,9 +55,15 @@ async function move(
   return { ok: true };
 }
 
+/** An admin (or PVP) approves it. It stays on our server until a PVP sends it. */
 export async function approveReimbursement(id: string): Promise<Result> {
   const user = await getCurrentDbUser();
-  return move(id, "approved", { kind: "approved" }, { approvedById: user.id, approvedAt: new Date(), reviewNote: null });
+  return move(id, "awaiting_send", { kind: "approved" }, { approvedById: user.id, approvedAt: new Date(), reviewNote: null });
+}
+
+/** PVPs only: release an approved reimbursement to the CalLink worker's queue. */
+export async function sendReimbursement(id: string): Promise<Result> {
+  return move(id, "approved", { kind: "sent" });
 }
 
 export async function rejectReimbursement(id: string, note: string): Promise<Result> {
@@ -65,7 +73,7 @@ export async function rejectReimbursement(id: string, note: string): Promise<Res
   return move(id, "rejected", { kind: "rejected", note: reason }, { reviewNote: reason });
 }
 
-/** A failed filing goes back in the queue. */
+/** PVPs only: a failed filing goes back in the queue. */
 export async function retryReimbursement(id: string): Promise<Result> {
   return move(id, "approved", { kind: "retried" }, { lastError: null });
 }
@@ -77,15 +85,16 @@ export async function cancelReimbursement(id: string): Promise<Result> {
 /**
  * The worker may have filed this but couldn't confirm it. An admin looks on
  * CalLink (search for its [STAR R-n] tag) and records what they found: filed (the
- * next scrape links it) or not filed (back in the queue). Never guessed.
+ * next scrape links it) or not filed (back to awaiting_send for a PVP). Never guessed.
  */
 export async function resolveNeedsCheck(id: string, filed: boolean): Promise<Result> {
   const user = await getCurrentDbUser();
   const admin = await isAdmin(user.email);
   return move(
     id,
-    filed ? "submitted" : "approved",
-    { kind: filed ? "submitted" : "retried", note: filed ? "Found on CalLink by an admin" : "Not on CalLink; queued again" },
+    // Not filed goes back to waiting for a PVP, not straight into the queue: only a PVP sends.
+    filed ? "submitted" : "awaiting_send",
+    { kind: filed ? "submitted" : "retried", note: filed ? "Found on CalLink by an admin" : "Not on CalLink; waiting for a PVP to send it again" },
     { needsCheck: false, leaseUntil: null, lastError: null },
     (r) => (!admin ? "Admins only." : r.status !== "submitting" || !r.needsCheck ? "This doesn't need checking." : null),
   );

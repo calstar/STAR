@@ -381,11 +381,12 @@ Subteams → Budget is.
 | `list_reimbursement_drafts` / `get_reimbursement_draft` | Your drafts with their fields, receipts and `problems` | read |
 | `file_reimbursement_draft` | File a ready draft exactly as `file_reimbursement` does, then delete it | write; refused while it has problems |
 | `delete_reimbursement_draft` | Throw a draft away | destructive |
-| `approve_reimbursement` | Queue a pending reimbursement for the CalLink worker | admins only; write |
-| `reject_reimbursement` | Reject a pending reimbursement with a reason (≤1000 chars) | admins only; destructive (final) |
-| `retry_reimbursement` | Put a failed filing back in the queue | admins only; write |
-| `cancel_reimbursement` | Cancel before it reaches CalLink: the filer while pending, an admin also when approved or failed | destructive (final) |
-| `resolve_needs_check` | Record whether a filing the worker could not confirm is on CalLink (`filed`) | admins only; write |
+| `approve_reimbursement` | Approve a pending reimbursement; it waits (`awaiting_send`) on STARProject until a PVP sends it | admins or PVPs; write |
+| `send_reimbursement` | Send an approved (`awaiting_send`) reimbursement to CalLink: queue it for the worker | PVPs only; write |
+| `reject_reimbursement` | Reject a pending or awaiting-send reimbursement with a reason (≤1000 chars) | admins or PVPs; destructive (final) |
+| `retry_reimbursement` | Put a failed filing back in the CalLink queue | PVPs only; write |
+| `cancel_reimbursement` | Cancel before it reaches CalLink: the filer while pending, an admin or PVP also when awaiting send, approved or failed | destructive (final) |
+| `resolve_needs_check` | Record whether a filing the worker could not confirm is on CalLink (`filed`); not filed goes back to awaiting send | admins only; write |
 | `request_callink_login` | Ask callink-worker to sign in to CalLink (sends the Duo push) | admins only; write |
 | `get_worker_status` | The CalLink worker's last report and the sign-in banner state | admins only; read |
 | `tag_reimbursement` | Set the project and subteam a reimbursement counts under in the Finance tab's spending breakdown (left out stays, null clears) | write; admins or its filer |

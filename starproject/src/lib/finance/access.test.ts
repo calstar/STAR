@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { canSeePii, isMine, redact, type DetailDto } from "@/lib/finance/access";
 
 const r = { createdById: "u-filer", payeeEmail: "payee@berkeley.edu", submitterEmail: "sub@berkeley.edu" };
-const member = (id: string, email: string, isAdmin = false) => ({ id, email, isAdmin });
+const member = (id: string, email: string, isAdmin = false) => ({ id, email, isAdmin, isPvp: false });
 
 describe("canSeePii", () => {
   it("shows PII to the payee, the submitter, the filer and admins", () => {

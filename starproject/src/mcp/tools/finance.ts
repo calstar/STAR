@@ -7,6 +7,7 @@ import {
   requestCallinkLogin,
   resolveNeedsCheck,
   retryReimbursement,
+  sendReimbursement,
   tagReimbursement,
 } from "@/lib/actions/finance";
 import { requireAdmin } from "@/lib/admins";
@@ -351,7 +352,7 @@ export const financeTools: ToolModule = (server) => {
         "PVPs only (MCP). Every reimbursement, STAR's own and those imported from CalLink, with the display " +
         "status a member sees, payee, submitter, vendors, amount in cents, date, source, and whether it is yours " +
         "(mine) or waiting on an admin (needsAdmin). Filters, all optional and combined with AND: status (a " +
-        "display-status key: pending_approval, approved, submitting, failed, rejected, cancelled, needs_check, " +
+        "display-status key: pending_approval, awaiting_send, approved, submitting, failed, rejected, cancelled, needs_check, " +
         "submitted, callink:<Status> such as callink:Approved), mine, review (needs an admin), search (number, " +
         "subject, payee, submitter, vendors, CalLink #), person (payee or submitter name), vendor, minAmount / " +
         "maxAmount in dollars, from / to (YYYY-MM-DD, Berkeley days), schoolYear (2026 = 2026-27), source " +
@@ -554,8 +555,8 @@ export const financeTools: ToolModule = (server) => {
     "approve_reimbursement",
     {
       description:
-        "PVPs only (MCP). Admins only. Approve a pending_approval reimbursement: it is queued for the CalLink worker to file. " +
-        "Returns the refreshed reimbursement.",
+        "PVPs only (MCP). Admins or PVPs. Approve a pending_approval reimbursement: it moves to awaiting_send and stays on " +
+        "STARProject; nothing goes to CalLink until a PVP sends it (send_reimbursement). Returns the refreshed reimbursement.",
       inputSchema: { number: numberSchema },
       annotations: WRITE,
     },
@@ -563,10 +564,22 @@ export const financeTools: ToolModule = (server) => {
   );
 
   define(
+    "send_reimbursement",
+    {
+      description:
+        "PVPs only. Send an approved reimbursement (awaiting_send) to CalLink: it is queued (approved) for the CalLink worker " +
+        "to file under MISC-STAR. Returns the refreshed reimbursement.",
+      inputSchema: { number: numberSchema },
+      annotations: WRITE,
+    },
+    async ({ number }) => act(number, (id) => sendReimbursement(id)),
+  );
+
+  define(
     "reject_reimbursement",
     {
       description:
-        "PVPs only (MCP). Admins only. Reject a pending_approval reimbursement with a reason the member sees (required, under 1000 " +
+        "PVPs only (MCP). Admins or PVPs. Reject a pending_approval or awaiting_send reimbursement with a reason the member sees (required, under 1000 " +
         "characters). Final: a rejected reimbursement cannot be reopened.",
       inputSchema: {
         number: numberSchema,
@@ -580,7 +593,7 @@ export const financeTools: ToolModule = (server) => {
   define(
     "retry_reimbursement",
     {
-      description: "PVPs only (MCP). Admins only. Put a failed filing back in the queue (failed -> approved) and clear its last error.",
+      description: "PVPs only. Put a failed filing back in the CalLink queue (failed -> approved) and clear its last error.",
       inputSchema: { number: numberSchema },
       annotations: WRITE,
     },
@@ -592,7 +605,7 @@ export const financeTools: ToolModule = (server) => {
     {
       description:
         "PVPs only (MCP). Cancel a reimbursement before it reaches CalLink. The member who filed it may cancel while it is " +
-        "pending_approval; an admin may also cancel one that is approved (queued) or failed. Final.",
+        "pending_approval; an admin or PVP may also cancel one that is awaiting_send, approved (queued) or failed. Final.",
       inputSchema: { number: numberSchema },
       annotations: DESTRUCTIVE,
     },
@@ -605,7 +618,7 @@ export const financeTools: ToolModule = (server) => {
       description:
         "PVPs only (MCP). Admins only. A filing the worker could not confirm (status submitting, needsCheck): record what you found " +
         "on CalLink by searching its [STAR R-n] tag. filed: true marks it submitted (the next scrape links it); " +
-        "filed: false queues it again.",
+        "filed: false puts it back to awaiting_send for a PVP to send again.",
       inputSchema: {
         number: numberSchema,
         filed: z.boolean().describe("true if the request is on CalLink, false if it is not"),

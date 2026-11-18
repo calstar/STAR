@@ -1,16 +1,28 @@
 import { describe, expect, it } from "vitest";
 
-import { canTransition, displayStatus, needsAdmin } from "@/lib/finance/status";
+import { canTransition, displayStatus, needsAdmin, needsPvp } from "@/lib/finance/status";
 
 describe("canTransition", () => {
-  it("lets only admins approve or reject", () => {
-    expect(canTransition("pending_approval", "approved", ["admin"])).toBe(true);
-    expect(canTransition("pending_approval", "approved", ["owner"])).toBe(false);
+  it("lets only admins and PVPs approve or reject", () => {
+    expect(canTransition("pending_approval", "awaiting_send", ["admin"])).toBe(true);
+    expect(canTransition("pending_approval", "awaiting_send", ["pvp"])).toBe(true);
+    expect(canTransition("pending_approval", "awaiting_send", ["owner"])).toBe(false);
     expect(canTransition("pending_approval", "rejected", ["owner"])).toBe(false);
   });
 
   it("lets an admin approve their own request", () => {
-    expect(canTransition("pending_approval", "approved", ["admin", "owner"])).toBe(true);
+    expect(canTransition("pending_approval", "awaiting_send", ["admin", "owner"])).toBe(true);
+  });
+
+  it("never lets an approval reach the worker's queue on its own", () => {
+    expect(canTransition("pending_approval", "approved", ["admin", "pvp", "owner"])).toBe(false);
+  });
+
+  it("lets only a PVP send to CalLink or retry a failed filing", () => {
+    expect(canTransition("awaiting_send", "approved", ["pvp"])).toBe(true);
+    expect(canTransition("awaiting_send", "approved", ["admin", "owner"])).toBe(false);
+    expect(canTransition("failed", "approved", ["pvp"])).toBe(true);
+    expect(canTransition("failed", "approved", ["admin"])).toBe(false);
   });
 
   it("lets the owner cancel only while it is pending", () => {
@@ -55,5 +67,12 @@ describe("displayStatus", () => {
     expect(needsAdmin({ status: "failed", needsCheck: false })).toBe(true);
     expect(needsAdmin({ status: "submitting", needsCheck: true })).toBe(true);
     expect(needsAdmin({ status: "submitted", needsCheck: false })).toBe(false);
+    expect(needsAdmin({ status: "awaiting_send", needsCheck: false })).toBe(false);
+  });
+
+  it("flags what only a PVP can move on", () => {
+    expect(needsPvp({ status: "awaiting_send" })).toBe(true);
+    expect(needsPvp({ status: "failed" })).toBe(true);
+    expect(needsPvp({ status: "pending_approval" })).toBe(false);
   });
 });

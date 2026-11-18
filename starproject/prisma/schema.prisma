@@ -392,7 +392,8 @@ enum ReimbursementSource {
 
 enum ReimbursementStatus {
   pending_approval // waiting for an admin
-  approved // queued for the worker
+  awaiting_send // an admin approved it; it sits here until a PVP sends it to CalLink
+  approved // a PVP sent it: queued for the worker
   submitting // claimed by the worker (leaseUntil), or outcome unknown (needsCheck)
   submitted // on CalLink; its CalLink status is in callinkStatus
   failed // the worker could not file it; an admin can retry
