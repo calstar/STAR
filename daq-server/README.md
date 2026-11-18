@@ -156,8 +156,8 @@ build   # runs scripts/build.sh from repo root
 ### Install Frontend/Backend Dependencies
 
 ```bash
-cd diablo_server/backend && npm install
-cd diablo_server/frontend && npm install
+cd diablo_server/backend && npm ci
+cd diablo_server/frontend && npm ci
 ```
 
 ---
@@ -200,13 +200,13 @@ Runs a full pipeline smoke test: board simulator → DAQ bridge → Elodin → b
 int         # runs test/test_integration.sh
 ```
 
-The test builds any missing binaries, starts all services on offset ports, runs ~39 checks, and cleans up. See `CLAUDE.md` for the canonical path.
+The test builds any missing binaries, starts all services on offset ports, runs 167 checks, and cleans up. See `CLAUDE.md` for the canonical path.
 
 ---
 
 ## Configuration
 
-All runtime config lives in `config/config.toml`. Key sections:
+Runtime config is `config/config.toml`, generated from the active profile in `config/profiles/<profile>/` (the profile directory also holds the state-machine CSVs). Key sections:
 
 - `[database]` — Elodin DB host/port
 - `[network]` — UDP sensor_port, actuator_cmd_port, broadcast settings
