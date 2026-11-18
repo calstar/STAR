@@ -16,6 +16,7 @@ export default async function ReimbursementsPage() {
   const worker = viewer.isAdmin ? await prisma.workerStatus.findUnique({ where: { id: "callink" } }) : null;
   const now = Date.now();
   const queued = rows.filter((r) => r.status.key === "approved").length;
+  const toSend = viewer.isPvp ? rows.filter((r) => r.status.key === "awaiting_send").length : 0;
 
   return (
     <main className={PAGE_CONTAINER}>
@@ -29,9 +30,14 @@ export default async function ReimbursementsPage() {
         <NewReimbursementButton />
       </div>
       {viewer.isAdmin && <WorkerBanner worker={worker} queued={queued} now={now} />}
+      {toSend > 0 && (
+        <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          {toSend} approved {toSend === 1 ? "reimbursement is" : "reimbursements are"} waiting for a PVP to send to CalLink.
+        </p>
+      )}
       <FinanceWorkspace
         rows={rows}
-        admin={viewer.isAdmin}
+        admin={viewer.isAdmin || viewer.isPvp}
         tagOptions={{ projects, subteams: subteams.map((s) => ({ id: s.id, name: s.name })) }}
       />
     </main>

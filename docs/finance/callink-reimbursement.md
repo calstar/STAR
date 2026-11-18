@@ -180,7 +180,7 @@ specialInstructions?, items[{date, vendor, total, comment?, file}]`.
 ## The system (built 2026-10-02)
 
 ```
-member ──form──▶ STARProject /reimbursements ──approve──▶ queue
+member ──form──▶ STARProject /reimbursements ──approve──▶ awaiting send ──PVP sends──▶ queue
                      ▲   (Postgres: requests, PII, receipts)    │
                      │                                          ▼
    nightly scrape ───┴──── callink-worker ◀──claim/report── /api/worker/* (bearer token)
@@ -192,7 +192,10 @@ member ──form──▶ STARProject /reimbursements ──approve──▶ qu
 - **STARProject** (`starproject/src/lib/finance/`, `src/app/reimbursements`, `src/app/api/finance`,
   `src/app/api/worker`): the Reimbursements tab lists every request (CalLink's history plus ours),
   the detail card hides address/phone/UID/receipts from everyone but the payee, the filer
-  and admins, the form files to `pending_approval`, admins approve/reject/retry.
+  and admins, the form files to `pending_approval`, and any admin approves or rejects. An
+  approved request sits on STARProject as `awaiting_send` until a **PVP** (`src/lib/pvp.ts`)
+  presses "Send to CalLink", which queues it (`approved`) for the worker. Only a PVP sends or
+  retries a failed filing: every way into the worker's queue is a PVP's.
   The admin-only Finance tab (`src/app/finance`) shows CalLink's account balances (the
   worker reads them hourly off the `financeAccount` on the newest request on each
   account), accounts admins keep by hand, the school year's spending by project and
@@ -208,7 +211,8 @@ How a request is never filed twice:
    CalLink and reports "filed" if it is already there.
 2. A journal entry is written before the final POST. A crash leaves it at `posting`;
    the next start reports "maybe filed", which parks the request as **Needs check** for
-   an admin (who looks on CalLink and picks "It's on CalLink" or "queue again").
+   an admin (who looks on CalLink and picks "It's on CalLink" or "Not on CalLink", which puts
+   it back to awaiting send for a PVP).
 3. A claim's lease that runs out comes back as a *reconcile* job (look for the tag), never
    as a fresh filing.
 4. The scrape links any CalLink request carrying our tag to its STARProject row and marks

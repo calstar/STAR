@@ -2,14 +2,19 @@ import type { ReimbursementStatus } from "@prisma/client";
 
 // Who may move a reimbursement between statuses. "owner" is the member who filed
 // it in STARProject; "worker" is callink-worker through the worker API.
-export type Actor = "admin" | "owner" | "worker";
+//
+// Any admin approves; only a PVP sends to CalLink. An approved request waits in
+// awaiting_send, on our server only, until a PVP moves it to approved (the
+// worker's queue). Every way into the queue (send, retry) is a PVP's.
+export type Actor = "admin" | "pvp" | "owner" | "worker";
 
 const TRANSITIONS: Record<ReimbursementStatus, Partial<Record<ReimbursementStatus, Actor[]>>> = {
-  pending_approval: { approved: ["admin"], rejected: ["admin"], cancelled: ["admin", "owner"] },
-  approved: { submitting: ["worker"], cancelled: ["admin"] },
+  pending_approval: { awaiting_send: ["admin", "pvp"], rejected: ["admin", "pvp"], cancelled: ["admin", "pvp", "owner"] },
+  awaiting_send: { approved: ["pvp"], rejected: ["admin", "pvp"], cancelled: ["admin", "pvp"] },
+  approved: { submitting: ["worker"], cancelled: ["admin", "pvp"] },
   // submitting -> approved is the worker releasing a dry run.
   submitting: { submitted: ["worker"], failed: ["worker"], approved: ["worker"] },
-  failed: { approved: ["admin"], cancelled: ["admin"] },
+  failed: { approved: ["pvp"], cancelled: ["admin", "pvp"] },
   submitted: {},
   rejected: {},
   cancelled: {},
@@ -22,7 +27,8 @@ export function canTransition(from: ReimbursementStatus, to: ReimbursementStatus
 
 export const STATUS_LABEL: Record<ReimbursementStatus, string> = {
   pending_approval: "Pending approval",
-  approved: "Approved, queued",
+  awaiting_send: "Approved, waiting for a PVP to send",
+  approved: "Sent, queued for CalLink",
   submitting: "Filing on CalLink",
   submitted: "On CalLink",
   failed: "Filing failed",
@@ -69,6 +75,7 @@ export function displayStatus(r: {
   }
   const tone: Record<ReimbursementStatus, Tone> = {
     pending_approval: "amber",
+    awaiting_send: "amber",
     approved: "violet",
     submitting: "violet",
     submitted: "blue",
@@ -82,4 +89,9 @@ export function displayStatus(r: {
 /** Statuses an admin has to act on. */
 export function needsAdmin(r: { status: ReimbursementStatus; needsCheck: boolean }): boolean {
   return r.status === "pending_approval" || r.status === "failed" || r.needsCheck;
+}
+
+/** Statuses only a PVP can move on: send it to CalLink, or send a failed filing again. */
+export function needsPvp(r: { status: ReimbursementStatus }): boolean {
+  return r.status === "awaiting_send" || r.status === "failed";
 }

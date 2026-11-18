@@ -227,7 +227,7 @@ async function applyRecord(rec: ScrapedRecord, counts: ScrapeCounts) {
       // Ours: CalLink's numbers and status only; what the member filed stays as filed.
       // On CalLink means filed, whatever we thought: a "failed" or re-queued request
       // found there must never be filed again.
-      const nowFiled = row.status === "submitting" || row.status === "failed" || row.status === "approved";
+      const nowFiled = ["submitting", "failed", "approved", "awaiting_send"].includes(row.status);
       await tx.reimbursement.update({
         where: { id: row.id },
         data: {
