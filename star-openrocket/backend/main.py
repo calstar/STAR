@@ -152,6 +152,15 @@ for _recovery_router in (
 ):
     app.include_router(_recovery_router.router)
 
+# The OpenRocket tab: openrocket-web's API (a pure-Python port of OpenRocket 24.12's
+# design view -- model, .ork I/O, mass, Barrowman), mounted whole under /api/ork. It
+# is the same router openrocket-web serves at /api on its own; installed from
+# ../openrocket-web as the `orweb` package (setup.sh, dev.sh, CI, Dockerfile.api).
+# GPLv3, like OpenRocket itself -- see openrocket-web/LICENSE.
+from orweb.api import router as _openrocket_router  # noqa: E402
+
+app.include_router(_openrocket_router, prefix="/api/ork")
+
 
 def _model_dirs() -> list[Path]:
     if not CACHE_ROOT.exists():

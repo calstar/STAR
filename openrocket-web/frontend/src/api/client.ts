@@ -87,6 +87,32 @@ export function mockRequested(): boolean {
   }
 }
 
+/**
+ * The live API or an error: no mock. What a host app uses (star-openrocket's
+ * OpenRocket tab), where approximate numbers dressed as OpenRocket's are worse
+ * than none. Rejects with what went wrong when /health does not answer ok.
+ */
+export async function connectLive(base = '/api', timeoutMs = 2500): Promise<Api> {
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), timeoutMs)
+  try {
+    const r = await fetch(`${base}/health`, { signal: ctl.signal })
+    let body: Health | null = null
+    try {
+      body = (await r.json()) as Health
+    } catch {
+      /* not JSON: a proxy error page, say */
+    }
+    if (r.ok && body?.ok) return httpApi(base)
+    throw new ApiError(r.status, `${r.status} ${r.statusText || 'not ok'}`)
+  } catch (e) {
+    if ((e as { name?: string })?.name === 'AbortError') throw new Error(`no answer in ${timeoutMs} ms`)
+    throw e
+  } finally {
+    clearTimeout(t)
+  }
+}
+
 export async function connect(base = '/api', timeoutMs = 2500): Promise<Api> {
   if (mockRequested()) return (await import('./mock')).mockApi
   const live = httpApi(base)

@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './openrocket.css'
-import { connect, type Api } from '../api/client'
+import { connect, connectLive, type Api } from '../api/client'
 import type { Analysis, Component, ComponentType, Conditions, MaterialDb, Params, RocketDocument } from '../types'
 import { UnitsProvider, useUnits } from './units'
 import { useAnalysis, useDocumentHistory } from './hooks'
@@ -24,16 +24,49 @@ import { MotorsTab } from '../components/MotorsTab'
 import { toggleStage } from '../lib/flightconfig'
 import { ComponentConfigDialog } from '../components/edit/ComponentConfigDialog'
 import { LENGTH_UNITS, MASS_UNITS, IMPERIAL, METRIC } from '../lib/units'
+import { pix } from './icons'
 
 export const PROVENANCE = 'OpenRocket 24.12 Barrowman, ported'
 const AUTOSAVE_KEY = 'document'
 const DEFAULT_EXAMPLE = 'A simple model rocket'
 
+/** What the workbench is showing, for a host that wants to read it (star-openrocket's ORK vs CAD tab). */
+export interface WorkbenchState {
+  document: RocketDocument
+  /** The analysis at the workbench's own conditions (the figure's Mach/AoA); null until the first one lands. */
+  analysis: Analysis | null
+  conditions: Conditions
+  /** The last analysis error, if the current document could not be analysed. */
+  error: string | null
+}
+
+/** A document for the host to put in the workbench; a new `key` loads it again (a fresh undo history). */
+export interface WorkbenchLoad {
+  key: string | number
+  document: RocketDocument
+}
+
 export interface OpenRocketWorkbenchProps {
-  /** API prefix; '/api' by default (Vite proxies it to :8004). */
+  /** API prefix; '/api' by default (Vite proxies it to :8004). star-openrocket mounts it at '/api/ork'. */
   apiBase?: string
   /** Inject an Api (tests, or a host app with its own client). */
   api?: Api
+  /**
+   * Fall back to the in-browser mock when the API does not answer. True standalone;
+   * a host passes false, so a dead backend shows as an error rather than as
+   * approximate numbers that look like OpenRocket's.
+   */
+  allowMock?: boolean
+  /**
+   * Whether the workbench is the visible tab. Keyboard shortcuts (Ctrl+Z, Ctrl+S, ...)
+   * act only while it is; a host keeps it mounted but hidden on other tabs so the
+   * design and its undo history survive the switch. Default true.
+   */
+  active?: boolean
+  /** Called with the document and its analysis whenever either changes. */
+  onState?: (s: WorkbenchState) => void
+  /** Replace the open document (e.g. the CAD's own .ork, imported by the host). */
+  load?: WorkbenchLoad | null
 }
 
 export function OpenRocketWorkbench(props: OpenRocketWorkbenchProps) {
@@ -45,14 +78,27 @@ export function OpenRocketWorkbench(props: OpenRocketWorkbenchProps) {
 }
 
 /** Connects, then finds the first document: the autosave, else the example, else a new rocket. */
-function Boot({ apiBase = '/api', api: injected }: OpenRocketWorkbenchProps) {
+function Boot({ apiBase = '/api', api: injected, allowMock = true, active = true, onState, load: toLoad }: OpenRocketWorkbenchProps) {
   const [api, setApi] = useState<Api | null>(injected ?? null)
   const [initial, setInitial] = useState<RocketDocument | null>(null)
   const [fatal, setFatal] = useState<string | null>(null)
+  const [down, setDown] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let live = true
+    setDown(null)
     ;(async () => {
-      const a = injected ?? (await connect(apiBase))
+      let a: Api
+      if (injected) a = injected
+      else if (allowMock) a = await connect(apiBase)
+      else {
+        try {
+          a = await connectLive(apiBase)
+        } catch (e) {
+          if (live) setDown(String((e as Error)?.message ?? e))
+          return
+        }
+      }
       if (!live) return
       setApi(a)
       const saved = load<RocketDocument | null>(AUTOSAVE_KEY, null)
@@ -73,10 +119,25 @@ function Boot({ apiBase = '/api', api: injected }: OpenRocketWorkbenchProps) {
     return () => {
       live = false
     }
-  }, [apiBase, injected])
+  }, [apiBase, injected, allowMock, attempt])
+  if (down)
+    return (
+      <div className="orw" style={{ padding: 20, gap: 10 }} data-testid="openrocket-workbench-down">
+        <b>The OpenRocket API is not answering.</b>
+        <span>
+          {apiBase}/health: {down}
+        </span>
+        <span style={{ color: '#555' }}>Nothing here is computed in the browser, so there is nothing to show until it is back.</span>
+        <span>
+          <Btn isDefault onClick={() => setAttempt((n) => n + 1)}>
+            Retry
+          </Btn>
+        </span>
+      </div>
+    )
   if (fatal) return <div className="orw" style={{ padding: 20 }}>Could not start: {fatal}</div>
   if (!api || !initial) return <div className="orw" style={{ padding: 20 }}>Loading…</div>
-  return <Workbench api={api} initial={initial} />
+  return <Workbench api={api} initial={initial} active={active} onState={onState} load={toLoad ?? null} />
 }
 
 export async function newDocument(api: Api): Promise<RocketDocument> {
@@ -101,7 +162,15 @@ interface EditState {
   isNew: boolean
 }
 
-function Workbench({ api, initial }: { api: Api; initial: RocketDocument }) {
+interface WorkbenchInnerProps {
+  api: Api
+  initial: RocketDocument
+  active: boolean
+  onState?: (s: WorkbenchState) => void
+  load: WorkbenchLoad | null
+}
+
+function Workbench({ api, initial, active, onState, load: toLoad }: WorkbenchInnerProps) {
   const units = useUnits()
   const d = useDocumentHistory(initial)
   const doc = d.doc
@@ -119,6 +188,25 @@ function Workbench({ api, initial }: { api: Api; initial: RocketDocument }) {
 
   const conditions = useMemo<Conditions>(() => ({ ...cond, configId: doc.selectedConfig }), [cond, doc.selectedConfig])
   const { analysis, error } = useAnalysis(api, doc, conditions)
+
+  // Tell the host what is on screen. Through a ref, so a host that passes a new
+  // callback every render does not make this fire every render.
+  const onStateRef = useRef(onState)
+  onStateRef.current = onState
+  useEffect(() => {
+    onStateRef.current?.({ document: doc, analysis, conditions, error })
+  }, [doc, analysis, conditions, error])
+
+  // The host hands over a document (star-openrocket's "Load CAD into OpenRocket").
+  // Keyed, so the same load is applied once and a new one always is.
+  const loadedKey = useRef<string | number | null>(null)
+  useEffect(() => {
+    if (!toLoad || toLoad.key === loadedKey.current) return
+    loadedKey.current = toLoad.key
+    d.replace(toLoad.document)
+    setSelectedId(toLoad.document.rocket.children[0]?.id ?? null)
+    setEdit(null)
+  }, [toLoad, d.replace])
   const resolved = (analysis as (Analysis & { resolved?: Record<string, Record<string, number>> }) | null)?.resolved
 
   useEffect(() => {
@@ -269,8 +357,9 @@ function Workbench({ api, initial }: { api: Api; initial: RocketDocument }) {
     }
   }
 
-  // Shortcuts (not while typing).
+  // Shortcuts (not while typing, and only while this is the visible tab).
   useEffect(() => {
+    if (!active) return
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       const typing = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')
@@ -544,7 +633,7 @@ function Workbench({ api, initial }: { api: Api; initial: RocketDocument }) {
       {dialog === 'about' && (
         <Window title="About" onClose={() => setDialog(null)} initial={{ x: 480, y: 160 }} width={460} modal zIndex={70}>
           <div style={{ padding: 16, display: 'flex', gap: 14 }}>
-            <img src={`${import.meta.env.BASE_URL}pix/icon-064.png`} width={64} height={64} alt="" />
+            <img src={pix('icon-064.png')} width={64} height={64} alt="" />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <b>openrocket-web</b>
               <span>OpenRocket 24.12's design view in the browser, on a Python port of its physics.</span>

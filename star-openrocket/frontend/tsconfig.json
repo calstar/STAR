@@ -21,6 +21,11 @@
     "paths": {
       "@stardesign-ui": ["../../lib/stardesign-ui/src/index.ts"],
       "@stardesign-ui/*": ["../../lib/stardesign-ui/src/*"],
+      /* The OpenRocket tab (openrocket-web's workbench), by the same route. Not in
+         "include": tsc reaches it through the import, which keeps its own tests
+         (and their node-only imports) out of this app's type-check. */
+      "@openrocket-web": ["../../openrocket-web/frontend/src/index.ts"],
+      "@openrocket-web/*": ["../../openrocket-web/frontend/src/*"],
       /* The shared source is outside this project, so neither tsc nor Vite can
          resolve React by walking up from it. Both are pointed at our copy --
          which also guarantees one React instance rather than two. */

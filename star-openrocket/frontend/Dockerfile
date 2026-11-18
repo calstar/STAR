@@ -31,6 +31,10 @@ RUN --mount=type=cache,target=/root/.npm \
 # The shared design-tool UI, compiled from source by this app's Vite. Copied
 # before the app so a change to the app alone reuses the install layer above.
 COPY lib/stardesign-ui/ /build/lib/stardesign-ui/
+# The OpenRocket tab: openrocket-web's workbench, compiled from source by this app's
+# Vite as @openrocket-web -> ../../openrocket-web/frontend/src. Its icons and font
+# are under src/assets and are bundled from there, so src/ is all it needs.
+COPY openrocket-web/frontend/src/ /build/openrocket-web/frontend/src/
 COPY star-openrocket/frontend/ .
 RUN npm run build
 

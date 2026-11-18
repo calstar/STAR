@@ -87,6 +87,12 @@ How `orweb` fills in the details (`orweb/ork.py`, `orweb/build.py`):
 
 ## The API (FastAPI, `:8004`, prefix `/api`)
 
+The routes are `orweb.api`'s router. Standalone (`backend/main.py`, `:8004`) it is
+mounted at `/api`; inside star-openrocket (`:8002`) at `/api/ork`, so there
+`/api/ork/import` below is `/api/ork/ork/import`. `/examples` lists
+`tests/rockets/` standalone and the five rockets packaged in `orweb/data/examples/`
+everywhere else.
+
 | method | path | body | returns |
 |---|---|---|---|
 | GET | `/api/health` | | `{"ok": true, "openrocket": "24.12"}` |

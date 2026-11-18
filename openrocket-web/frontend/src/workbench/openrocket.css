@@ -8,7 +8,8 @@
 
 @font-face {
   font-family: 'OR Inter';
-  src: url('/fonts/Inter-Variable.ttf') format('truetype');
+  /* Relative, so the host app's Vite bundles it too (see src/assets/pix/README.md). */
+  src: url('../assets/fonts/Inter-Variable.ttf') format('truetype');
   font-weight: 100 900;
   font-display: swap;
 }
@@ -701,4 +702,24 @@ input.orw-field {
   align-items: center;
   gap: 6px;
   color: #6b4e00;
+}
+
+/* Inside a host app (star-openrocket's dark shell) its global rules reach in:
+   take back the two that would show -- dark scrollbars and tabular digits. */
+.orw table {
+  font-variant-numeric: normal;
+  font-feature-settings: 'tnum' 0;
+}
+
+.orw ::-webkit-scrollbar-track {
+  background: #f2f2f2;
+}
+
+.orw ::-webkit-scrollbar-thumb {
+  background: #c2c2c2;
+  border-radius: 4px;
+}
+
+.orw ::-webkit-scrollbar-thumb:hover {
+  background: #a0a0a0;
 }

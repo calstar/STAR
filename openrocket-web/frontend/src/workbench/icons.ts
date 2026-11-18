@@ -1,14 +1,20 @@
 /**
- * OpenRocket's own icons (public/pix/, copied from
+ * OpenRocket's own icons (src/assets/pix/, copied from
  * swing/src/main/resources/pix/ at release-24.12; GPLv3 / Nuvola, see
- * public/pix/README.md). Paths resolve against Vite's base so the app still
- * finds them when mounted under another app's base URL.
+ * src/assets/pix/README.md). Imported through Vite rather than served from
+ * public/, so whichever app compiles the workbench -- this one, or
+ * star-openrocket hosting it as a tab -- bundles them and gets working URLs.
  */
 import type { ComponentType, Params } from '../types'
 
+const PIX = import.meta.glob('../assets/pix/**/*.png', { eager: true, query: '?url', import: 'default' }) as Record<
+  string,
+  string
+>
+
+/** The bundled URL of `pix/<path>`, e.g. `icons/edit-undo.png`; '' when there is no such icon. */
 export function pix(path: string): string {
-  const base = (import.meta.env?.BASE_URL as string | undefined) ?? '/'
-  return `${base}pix/${path}`
+  return PIX[`../assets/pix/${path}`] ?? ''
 }
 
 const COMPONENT_ICON: Partial<Record<ComponentType, string>> = {

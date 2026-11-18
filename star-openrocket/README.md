@@ -142,6 +142,40 @@ Credentials come from `ONSHAPE_ACCESS_KEY` / `ONSHAPE_SECRET_KEY` in the
 environment with no defaults — a build with neither set fails immediately
 rather than silently producing nothing. They never reach the browser.
 
+## The OpenRocket tab and ORK vs CAD
+
+The tab after **CAD & Stability** is **OpenRocket**: [`openrocket-web`](../openrocket-web/README.md)'s
+workbench -- OpenRocket 24.12's design view (component tree, edit dialogs, side view
+with CG/CP, Motors & Configuration, `.ork` open/save) on a pure-Python port of its
+physics, held to OpenRocket's own output by that project's tests. It keeps
+OpenRocket's light look inside this app's dark shell on purpose.
+
+| | |
+|---|---|
+| API | openrocket-web's router (`orweb.api`), mounted at **`/api/ork`** by `backend/main.py` -- `/api/ork/health`, `/api/ork/analyze`, `/api/ork/ork/import`, ... (openrocket-web's `docs/SCHEMA.md`, with `/api` read as `/api/ork`) |
+| package | `orweb`, installed from `../openrocket-web` (`pip install -e "../openrocket-web[api]"`; setup.sh, dev.sh, CI and `Dockerfile.api` do it) |
+| UI | `<OpenRocketWorkbench/>`, compiled from source through the `@openrocket-web` Vite alias (`../../openrocket-web/frontend/src`), like `@stardesign-ui` |
+| state | its own: the open rocket autosaves per browser (`openrocket-web:document`), it is **not** part of a design, and the checkout does not gate it |
+
+The tab stays mounted once opened, so its document and undo history survive tab
+switches; its shortcuts (Ctrl+Z, Ctrl+S, ...) act only while it is the visible tab.
+If `/api/ork` does not answer it says so -- there is no in-browser fallback here.
+
+**ORK vs CAD**, the tab after it, puts the two side by side: the CAD tab's last
+stability Compute against the OpenRocket tab's design analysed at the same Mach 0.3
+and AoA 0 -- length, diameters, mass, CG, CP, CNα, static margin and the fin
+planform, with Δ = ORK − CAD and Δ % highlighted past 2 % / 5 % (0.1 / 0.25 cal for
+the margin). Empty is compared with empty and with-motor with with-motor only. **Load
+CAD into OpenRocket tab** sends the CAD's own `.ork` export (the Export .ork file)
+through `/api/ork/ork/import` into the workbench, so a comparison can start from the
+CAD and show what was changed. The row logic is `frontend/src/lib/orkCompare.ts`.
+
+**Licence.** The OpenRocket tab is GPLv3 code: `orweb` and the workbench are a
+derivative of OpenRocket (see [`openrocket-web/LICENSE`](../openrocket-web/LICENSE)).
+Hosting the app for the team, as we do, is not distribution and is fine; anyone who
+*distributes* the app (the images, or a build of the frontend) does so under the
+GPLv3's terms, which then cover the combined work.
+
 ## Designs, sharing and checkouts
 
 A **design** is the whole unified config -- the CAD/stability/ascent slice and
@@ -212,13 +246,13 @@ reach the network fails at the call site instead of spending quota.
 ## CI
 
 [`.github/workflows/star-openrocket-ci.yml`](../.github/workflows/star-openrocket-ci.yml)
-runs on changes under `star-openrocket/`:
+runs on changes under `star-openrocket/` (and `lib/stardesign*`, and `openrocket-web/`, which the OpenRocket tab is built from):
 
 | Job | What it checks |
 |---|---|
 | Python tests | The pytest gate, offline |
 | Offline guarantee | That credentials are absent and required, and the socket block still bites |
 | Backend smoke | `backend.main` imports with no credentials |
-| Frontend | `tsc -b && vite build` |
+| Frontend | `tsc -b && vite build`, then `vitest` (design audits, the ORK vs CAD rows) |
 
 No Onshape credentials are configured for this workflow, deliberately.

@@ -94,6 +94,23 @@ export interface ComponentAnalysis {
   cd: number
 }
 
+/** One motor of the analysed configuration (SCHEMA.md's Analysis.motors). Masses kg, x m. */
+export interface AnalysisMotor {
+  mount: string
+  designation: string
+  manufacturer: string
+  digest?: string
+  diameter: number
+  length: number
+  /** Position relative to the mount; absoluteX has one entry per instance, from the nose tip. */
+  x: number
+  count: number
+  absoluteX: number[]
+  launchMass: number
+  burnoutMass: number
+  ejectionDelay?: number | null
+}
+
 export interface Analysis {
   conditions: Conditions
   reference: { length: number; area: number }
@@ -105,6 +122,8 @@ export interface Analysis {
   stability: { calibers: number; percent: number }
   cd: { total: number; friction: number; pressure: number; base: number }
   components: ComponentAnalysis[]
+  /** The configuration's motors; empty when it has none (cg is then cgEmpty). */
+  motors?: AnalysisMotor[]
   figure: Figure
   warnings: string[]
 }

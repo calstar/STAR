@@ -1,8 +1,9 @@
 # openrocket-web
 
 OpenRocket's design view, hosted: a browser UI on a Python port of OpenRocket
-24.12's physics. It is its own app for now and will become a tab of
-`star-openrocket`, where it is the OpenRocket column of the Cross-check.
+24.12's physics. It runs on its own, and it is the **OpenRocket** tab of
+`star-openrocket` (with the **ORK vs CAD** comparison next to it), which mounts the
+same API router at `/api/ork` and compiles the same `<OpenRocketWorkbench/>`.
 
 | | |
 |---|---|
@@ -66,8 +67,12 @@ Java-17-only check) and `Drive.java` clicks and screenshots it, e.g. under
 
 ```
 orweb/            the port (component model, .ork I/O, mass, aerodynamics, figure)
-backend/          FastAPI over orweb
-frontend/         the UI (one <OpenRocketWorkbench/> component, mountable as a tab)
+orweb/api.py      the API as a FastAPI router (needs the `api` extra); both hosts mount it
+orweb/data/       OpenRocket's motor curves and five example rockets the router serves
+backend/          the standalone app: orweb.api at /api, examples from tests/rockets
+frontend/         the UI (one <OpenRocketWorkbench/> component, mountable as a tab;
+                  icons and font under src/assets, bundled by whichever app builds it)
+pyproject.toml    makes `orweb` installable: `pip install -e "openrocket-web[api]"`
 tests/            golden comparisons against OpenRocket itself
 tools/oracle/     the Java oracle
 docs/SCHEMA.md    the document / API contract
@@ -82,5 +87,8 @@ docs/SCHEMA.md    the document / API contract
    real program (`docs/reference-ui/` vs `docs/screenshots/`).
 2. **Simulation** — RK4 6-DOF stepper, events, recovery, plots; checked
    against the flight data OpenRocket stored in the example files.
-3. **Merge** — a tab in `star-openrocket`, and the OpenRocket column of its
-   Cross-check panel.
+3. **Merge** — **done**: the OpenRocket tab of `star-openrocket` (router at
+   `/api/ork`, workbench via its `@openrocket-web` Vite alias) and its ORK vs CAD
+   comparison. Embedded, the workbench takes `apiBase`, `allowMock={false}` (an
+   error, never the mock), `active` (shortcuts only on the visible tab), `onState`
+   and `load` -- see `OpenRocketWorkbenchProps`.

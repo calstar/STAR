@@ -85,6 +85,13 @@ if ! ls cache/*/manifest.json >/dev/null 2>&1; then
   echo ""
 fi
 
+# The OpenRocket tab's API (openrocket-web's `orweb`, mounted at /api/ork). Same
+# reasoning as the design core above: a venv from before the merge lacks it.
+if ! "$PYTHON_CMD" -c 'import orweb.api' 2>/dev/null; then
+  echo "Installing the OpenRocket port (openrocket-web, package orweb)..."
+  "$PYTHON_CMD" -m pip install -e "../openrocket-web[api]"
+fi
+
 # Free port 8002 if a previous run left something behind.
 if command -v lsof >/dev/null 2>&1; then
   PIDS=$(lsof -ti:8002 2>/dev/null || true)
@@ -104,6 +111,7 @@ echo "Starting backend on http://localhost:8002"
   --reload-dir backend --reload-dir physics \
   --reload-dir site-climatology --reload-dir tools \
   --reload-dir ../lib/stardesign \
+  --reload-dir ../openrocket-web/orweb \
   --port 8002 &
 BACKEND_PID=$!
 

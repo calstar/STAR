@@ -12,12 +12,16 @@ name: STAR OpenRocket CI
       # run these tests.
       - 'lib/stardesign/**'
       - 'lib/stardesign-ui/**'
+      # The OpenRocket tab: openrocket-web's port (orweb, mounted at /api/ork) and
+      # its <OpenRocketWorkbench/>, compiled from source by this app's Vite.
+      - 'openrocket-web/**'
       - '.github/workflows/star-openrocket-ci.yml'
   pull_request:
     paths:
       - 'star-openrocket/**'
       - 'lib/stardesign/**'
       - 'lib/stardesign-ui/**'
+      - 'openrocket-web/**'
       - '.github/workflows/star-openrocket-ci.yml'
   workflow_dispatch:
 
@@ -71,6 +75,8 @@ jobs:
         # The design core shared across the design tools. Installed from a
         # path, not published -- it is versioned with the repo.
         pip install -e ../lib/stardesign
+        # The OpenRocket tab's API (openrocket-web's orweb, mounted at /api/ork).
+        pip install -e '../openrocket-web[api]'
 
     # --timeout guards against a test that somehow gets past the socket block
     # and then hangs on a real connection. thread method so a stuck C-level
@@ -105,6 +111,8 @@ jobs:
         # The design core shared across the design tools. Installed from a
         # path, not published -- it is versioned with the repo.
         pip install -e ../lib/stardesign
+        # The OpenRocket tab's API (openrocket-web's orweb, mounted at /api/ork).
+        pip install -e '../openrocket-web[api]'
 
     # A request with no credentials must fail loudly. If this ever passes, the
     # keys have acquired a default somewhere and CI could start billing us.
@@ -165,6 +173,8 @@ jobs:
         # The design core shared across the design tools. Installed from a
         # path, not published -- it is versioned with the repo.
         pip install -e ../lib/stardesign
+        # The OpenRocket tab's API (openrocket-web's orweb, mounted at /api/ork).
+        pip install -e '../openrocket-web[api]'
 
     - name: Import backend app
       run: python -c "from backend.main import app; print('backend.main imports OK')"
@@ -286,6 +296,8 @@ jobs:
       run: |
         pip install -r requirements-ci.txt
         pip install -e ../lib/stardesign
+        # The OpenRocket tab's API (openrocket-web's orweb, mounted at /api/ork).
+        pip install -e '../openrocket-web[api]'
 
     - name: Set up Java
       uses: actions/setup-java@v4
