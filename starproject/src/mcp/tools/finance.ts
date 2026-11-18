@@ -10,10 +10,10 @@ import {
   sendReimbursement,
   tagReimbursement,
 } from "@/lib/actions/finance";
-import { requireAdmin } from "@/lib/admins";
+import { isAdmin, requireAdmin } from "@/lib/admins";
 import { canSeePii } from "@/lib/finance/access";
 import { FETCH_WAIT_MS, isInlineMime } from "@/lib/finance/receipt-fetch";
-import { requirePvp } from "@/lib/pvp";
+import { isPvp } from "@/lib/pvp";
 import { prisma } from "@/lib/db";
 import { createDraft, deleteDraft, fileDraft, getDraft, listDrafts, updateDraft } from "@/lib/finance/draft-data";
 import { draftPatchShape } from "@/lib/finance/drafts";
@@ -35,8 +35,8 @@ import { DESTRUCTIVE, READ, WRITE, guardedDefine, rawContent, type ToolModule } 
 // POST /api/finance/requests. The pure helpers at the top are tested without a
 // database (finance.test.ts).
 //
-// Over MCP the whole module is for PVPs only, for now: every tool refuses
-// anyone else before it runs, whatever the page would let them do.
+// Over MCP the whole module is for admins and PVPs: every tool refuses anyone
+// else before it runs, whatever the page would let them do (requireAdminOrPvp).
 
 export type FinanceFilter = {
   /** A displayStatus key: pending_approval, approved, needs_check, "callink:Approved", ... */
@@ -343,13 +343,21 @@ async function act(number: number, run: (id: string) => Promise<{ ok: true } | {
   return readDetail(number);
 }
 
+// Over MCP the reimbursement tools are for admins and PVPs. The actions decide the
+// rest: any admin approves, only a PVP sends to CalLink (src/lib/finance/status.ts).
+async function requireAdminOrPvp() {
+  const user = await getCurrentDbUser();
+  if (!(await isAdmin(user.email)) && !(await isPvp(user.email))) throw new Error("Only an admin or a PVP can do that.");
+  return user;
+}
+
 export const financeTools: ToolModule = (server) => {
-  const define = guardedDefine(server, requirePvp);
+  const define = guardedDefine(server, requireAdminOrPvp);
   define(
     "list_reimbursements",
     {
       description:
-        "PVPs only (MCP). Every reimbursement, STAR's own and those imported from CalLink, with the display " +
+        "Admins or PVPs (MCP). Every reimbursement, STAR's own and those imported from CalLink, with the display " +
         "status a member sees, payee, submitter, vendors, amount in cents, date, source, and whether it is yours " +
         "(mine) or waiting on an admin (needsAdmin). Filters, all optional and combined with AND: status (a " +
         "display-status key: pending_approval, awaiting_send, approved, submitting, failed, rejected, cancelled, needs_check, " +
@@ -397,7 +405,7 @@ export const financeTools: ToolModule = (server) => {
     "get_reimbursement",
     {
       description:
-        "PVPs only (MCP). One reimbursement by its R-number, as its card on Reimbursements shows it: fields, items with receipts, the event " +
+        "Admins or PVPs (MCP). One reimbursement by its R-number, as its card on Reimbursements shows it: fields, items with receipts, the event " +
         "timeline, and `can` (what you may do to it). The payee's address, phone, UID and the receipt links are " +
         "included only for the payee, the filer and admins; everyone else gets them redacted.",
       inputSchema: { number: numberSchema },
@@ -410,7 +418,7 @@ export const financeTools: ToolModule = (server) => {
     "get_reimbursement_receipts",
     {
       description:
-        "PVPs only (MCP). A reimbursement's line items (date, vendor, amount, CalLink's type, location, invoice, " +
+        "Admins or PVPs (MCP). A reimbursement's line items (date, vendor, amount, CalLink's type, location, invoice, " +
         "comment) and the receipt files themselves: a PDF comes back as an embedded resource, an image as an " +
         "image. item (1-6) narrows it to one item. A CalLink receipt not yet held is downloaded from CalLink " +
         "for this call (it can take up to 30 s) and kept; nothing is downloaded unless asked for. Each receipt " +
@@ -429,7 +437,7 @@ export const financeTools: ToolModule = (server) => {
     "get_payee_defaults",
     {
       description:
-        "PVPs only (MCP). What the New reimbursement form pre-fills for you: your saved payee profile, else the payee details on " +
+        "Admins or PVPs (MCP). What the New reimbursement form pre-fills for you: your saved payee profile, else the payee details on " +
         "your newest CalLink request, else your account email and name. `saved` says whether a profile exists; " +
         "`seededFrom` names the CalLink request the values came from.",
       inputSchema: {},
@@ -442,7 +450,7 @@ export const financeTools: ToolModule = (server) => {
     "file_reimbursement",
     {
       description:
-        "PVPs only (MCP). File a reimbursement, exactly as the New reimbursement form does. It lands as pending_approval; nothing " +
+        "Admins or PVPs (MCP). File a reimbursement, exactly as the New reimbursement form does. It lands as pending_approval; nothing " +
         `goes to CalLink until an admin approves it. 1 to ${MAX_ITEMS} items, each with its receipt in \`receipts\` at the ` +
         "same index (PDF, PNG or JPEG under 4 MB, checked by its bytes). Amounts are text like \"12.34\"; the " +
         "total is their sum. saveProfile (default true) remembers the payee details as your profile. Returns the " +
@@ -471,7 +479,7 @@ export const financeTools: ToolModule = (server) => {
     "list_reimbursement_drafts",
     {
       description:
-        "PVPs only (MCP). Your reimbursement drafts (only yours), last changed first: the fields so far, the receipts attached by " +
+        "Admins or PVPs (MCP). Your reimbursement drafts (only yours), last changed first: the fields so far, the receipts attached by " +
         "item index, and `problems`, everything still missing before it can be filed (empty when `ready`).",
       inputSchema: {},
       annotations: READ,
@@ -482,7 +490,7 @@ export const financeTools: ToolModule = (server) => {
   define(
     "get_reimbursement_draft",
     {
-      description: "PVPs only (MCP). One of your drafts by its D-number, with its fields, receipts and what is still missing (`problems`).",
+      description: "Admins or PVPs (MCP). One of your drafts by its D-number, with its fields, receipts and what is still missing (`problems`).",
       inputSchema: { number: draftNumberSchema },
       annotations: READ,
     },
@@ -493,7 +501,7 @@ export const financeTools: ToolModule = (server) => {
     "draft_reimbursement",
     {
       description:
-        "PVPs only (MCP). Start a reimbursement draft: any of file_reimbursement's fields, as many as are known, plus receipts by " +
+        "Admins or PVPs (MCP). Start a reimbursement draft: any of file_reimbursement's fields, as many as are known, plus receipts by " +
         "item index. Nothing is filed and nobody else sees it. Values are checked as the form would check them " +
         "(an email must look like one) but nothing is required yet; `problems` in the result lists what filing " +
         "still needs. get_payee_defaults has the payee details the form would pre-fill. Returns the draft (D-number).",
@@ -507,7 +515,7 @@ export const financeTools: ToolModule = (server) => {
     "update_reimbursement_draft",
     {
       description:
-        "PVPs only (MCP). Change one of your drafts. Fields given replace the draft's (payee merges field by field; items replaces " +
+        "Admins or PVPs (MCP). Change one of your drafts. Fields given replace the draft's (payee merges field by field; items replaces " +
         "the whole list), fields left out stay. receipts sets the receipt for those item indexes; removeReceipts " +
         "drops the ones at those indexes. Returns the draft with what is still missing.",
       inputSchema: {
@@ -526,7 +534,7 @@ export const financeTools: ToolModule = (server) => {
     "file_reimbursement_draft",
     {
       description:
-        "PVPs only (MCP). File one of your drafts, exactly as file_reimbursement does (it lands as pending_approval; nothing goes " +
+        "Admins or PVPs (MCP). File one of your drafts, exactly as file_reimbursement does (it lands as pending_approval; nothing goes " +
         "to CalLink until an admin approves it), then delete the draft. Refused, with the list, while the draft " +
         "has problems. Returns the new R-number and the reimbursement.",
       inputSchema: { number: draftNumberSchema },
@@ -541,7 +549,7 @@ export const financeTools: ToolModule = (server) => {
   define(
     "delete_reimbursement_draft",
     {
-      description: "PVPs only (MCP). Throw away one of your drafts and its receipts.",
+      description: "Admins or PVPs (MCP). Throw away one of your drafts and its receipts.",
       inputSchema: { number: draftNumberSchema },
       annotations: DESTRUCTIVE,
     },
@@ -555,7 +563,7 @@ export const financeTools: ToolModule = (server) => {
     "approve_reimbursement",
     {
       description:
-        "PVPs only (MCP). Admins or PVPs. Approve a pending_approval reimbursement: it moves to awaiting_send and stays on " +
+        "Admins or PVPs. Approve a pending_approval reimbursement: it moves to awaiting_send and stays on " +
         "STARProject; nothing goes to CalLink until a PVP sends it (send_reimbursement). Returns the refreshed reimbursement.",
       inputSchema: { number: numberSchema },
       annotations: WRITE,
@@ -579,7 +587,7 @@ export const financeTools: ToolModule = (server) => {
     "reject_reimbursement",
     {
       description:
-        "PVPs only (MCP). Admins or PVPs. Reject a pending_approval or awaiting_send reimbursement with a reason the member sees (required, under 1000 " +
+        "Admins or PVPs. Reject a pending_approval or awaiting_send reimbursement with a reason the member sees (required, under 1000 " +
         "characters). Final: a rejected reimbursement cannot be reopened.",
       inputSchema: {
         number: numberSchema,
@@ -604,7 +612,7 @@ export const financeTools: ToolModule = (server) => {
     "cancel_reimbursement",
     {
       description:
-        "PVPs only (MCP). Cancel a reimbursement before it reaches CalLink. The member who filed it may cancel while it is " +
+        "Admins or PVPs (MCP). Cancel a reimbursement before it reaches CalLink. The member who filed it may cancel while it is " +
         "pending_approval; an admin or PVP may also cancel one that is awaiting_send, approved (queued) or failed. Final.",
       inputSchema: { number: numberSchema },
       annotations: DESTRUCTIVE,
@@ -616,7 +624,7 @@ export const financeTools: ToolModule = (server) => {
     "resolve_needs_check",
     {
       description:
-        "PVPs only (MCP). Admins only. A filing the worker could not confirm (status submitting, needsCheck): record what you found " +
+        "Admins only. A filing the worker could not confirm (status submitting, needsCheck): record what you found " +
         "on CalLink by searching its [STAR R-n] tag. filed: true marks it submitted (the next scrape links it); " +
         "filed: false puts it back to awaiting_send for a PVP to send again.",
       inputSchema: {
@@ -632,7 +640,7 @@ export const financeTools: ToolModule = (server) => {
     "tag_reimbursement",
     {
       description:
-        "PVPs only (MCP). Say what a reimbursement was for, the project and subteam the Finance tab's spending " +
+        "Admins or PVPs (MCP). Say what a reimbursement was for, the project and subteam the Finance tab's spending " +
         "breakdown files it under. Admins or whoever filed it. A field left out stays; null or empty clears it.",
       inputSchema: {
         number: numberSchema,
@@ -648,7 +656,7 @@ export const financeTools: ToolModule = (server) => {
     "request_callink_login",
     {
       description:
-        "PVPs only (MCP). Admins only. Ask callink-worker to sign in to CalLink (the Reimbursements banner's button). The worker picks it " +
+        "Admins only. Ask callink-worker to sign in to CalLink (the Reimbursements banner's button). The worker picks it " +
         "up within seconds and Duo pushes to the CalNet account owner's phone. Refused while a sign-in is under way " +
         "or if the worker has never reported in.",
       inputSchema: {},
@@ -665,7 +673,7 @@ export const financeTools: ToolModule = (server) => {
     "get_worker_status",
     {
       description:
-        "PVPs only (MCP). Admins only. The CalLink worker's last report (the Reimbursements banner): session state and expiry, last seen, " +
+        "Admins only. The CalLink worker's last report (the Reimbursements banner): session state and expiry, last seen, " +
         "last scrape, and the sign-in request's state, plus `login` as the banner words it. `worker` is null when " +
         "the worker has never reported in.",
       inputSchema: {},
