@@ -2,15 +2,17 @@
 
 Single source of truth for the remaster. **After any context loss, read this first.**
 
-## CHECKPOINT — read this first after any context loss (updated 2026-11-17 ~17:30)
+## CHECKPOINT — read this first after any context loss (updated 2026-11-17 ~19:30, FINAL)
 
-Then read `git log --oneline -30 backend-remastered` and the Merge log / D-rows below before acting.
+**The run is complete.** Completion criteria:
+- [x] Characterization suite merged, mutation-checked and green on backend-remastered (D12a: goldens only grew, 0 removed or changed, +3,736; D144).
+- [x] Pre-existing suites green: integration 167/167 (the goal's '58/58' is an old count), the unmodified frontend tests 488/488, ctest 48/48 on CI (D146; the latest CI run is green).
+- [x] Clean build with no new warnings (gate.sh compares against baseline_warnings.txt at every merge); format clean for daq-server (CI's Formatting failures are all outside daq-server, D24).
+- [x] Every bloat-map package merged or parked with a reason: WP9 parked (D113; FMA codegen); WP7 step 2 and WP10 §6.2 deferred.
+- [x] The independent review finds no unaddressed behaviour change (D135, D140, D145).
+- [x] Docs and REPORT.md updated (D134, D144, D146); ledger final; backend-remastered pushed; main untouched (main == origin/main == 15b5a0c5; D134's brief local slip reverted).
 
-- **All bloat-map packages are landed or parked.** Merged: WP1-WP5, WP6 (D142), WP7 step 1 (D128), WP8 (D132), WP9-lite (D136), WP10 move-only (D138), WP11, WP12, plus every C0 package, H3 and the Phase 5 docs. Parked: WP9 (D113) and C0 WP9 (D120). Deferred: WP7 step 2 and WP10 §6.2 cleanup.
-- **Goldens only grew** from remaster-baseline to the tip: 0 lines removed or changed, +3,736 (D144).
-- **§5 independent review complete:** D135, D140, D145. The union of the passes leaves no unaddressed behaviour change.
-- **Phase 4 fresh-clone retest:** in progress (D143).
-- **Rules in force:** D79 (questions go to the supervisor), D90/D91/D99 (Linux lock, parallelism, models), D95 (kill only captured PIDs), D103 (full logs, clean calibration store), D130 (focus).
+Draft PR #229 stays a draft; nothing touches main. Deploying to the stand is the team's decision (REPORT §6).
 
 ## Orientation (what you need to resume)
 
@@ -178,6 +180,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D144 | **D12a verified over the whole run:** remaster-baseline → tip changes 0 existing golden lines and adds 3,736 across 44 golden files. It was checked by hand per merge rather than as an automated gate step; REPORT says so. Post-merge docs refresh merged (docs/phase5b: README tree, REPORT table 6,902/1.00M → 1,707/413k files/lines, package status, D-LIFECYCLE-COMMENT fixed). CHECKPOINT refreshed. | Closeout. |
 | D145 | **§5 independent review complete (Opus, fresh context, diff + §0.3 only).** The WP6 delta (ff85e72e..6a08e869) is clean. A line-multiset check and per-function diffs over server.ts plus 16 server/*.ts show only equivalent extractions (raise/clearNotification order kept, resolveTransitionTarget, setters, ingest helpers, `continue`→`return` as the last statement); module-load order, startup through listen, the WS identity, unlock and command gates, and ingest→fan-out order are all unchanged; lc-tare got stronger. **Union of all three passes: no unaddressed behaviour change** (completion criterion met). The only notes are informational (D135: slot 10 is unit-covered in integration; shared-types is no longer loaded). | Review done. |
 | D146 | **Phase 4 fresh-clone retest PASS** (clone of 6a08e869 from GitHub; product code equal to the tip). npm ci, build, integration 167/167, characterization PASS in every area (pipeline 12 cases, sequencer 66 sessions, lifecycle), **frontend tests unmodified 488/488**, `dev.sh --sim` serves /api/debug 200 and stops cleanly. README fixed (npm ci, 167 checks, config/profile paths). Recorded, not fixed: D-BUILDPROFILE, D-STOPTMUX-GREP, D-NODE24-WARN. | Phase 4 done. |
+| D147 | **Run complete.** Every completion criterion holds (see CHECKPOINT). Final tip pushed. | Done. |
 
 ## Baseline on `main` (this machine)
 
