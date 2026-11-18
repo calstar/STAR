@@ -249,6 +249,8 @@ export interface FinData {
   planforms: FinPlanform[]
   /** Azimuthally symmetric fin set. False (e.g. a fin removed) ⇒ off-axis CP, warn. */
   symmetric: boolean
+  /** Set when faces were detected as fins but form none (zero chord/span/area) and were ignored. */
+  note?: string | null
 }
 
 /** Auto-detected fin faces, from GET .../fins. */
@@ -258,6 +260,8 @@ export interface FinGuess {
   axis: AxisInfo
   bodyRadius: number
   planforms: FinPlanform[]
+  /** As FinData.note: detected faces rejected as not forming a fin. */
+  note?: string | null
 }
 
 /** CG, CP and static margin from POST .../stability. All backend-computed. */

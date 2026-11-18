@@ -25,6 +25,8 @@ from .axis import Axis
 from .barrowman_body import body_aero
 from .barrowman_fins import fin_set_aero
 from .fins import (
+    degenerate_fin_note,
+    degenerate_fin_reason,
     detect_fin_faces,
     fin_set_aero_from_faces,
     fins_symmetric,
@@ -210,6 +212,8 @@ class StabilityResult:
     #: Whether the detected fins are azimuthally symmetric. False (e.g. a fin removed) means
     #: the true CP sits off-axis and this axial model under-states the instability -- warn.
     fin_symmetric: bool = True
+    #: Why detected fin faces were ignored, when they were (``AeroCore.fin_note``).
+    fin_note: str | None = None
 
     @property
     def cp_from_nose(self) -> float:
@@ -236,6 +240,9 @@ class AeroCore:
     #: at any Mach and re-merged without re-tessellating -- see ``cp_axial_at_mach``.
     body_cna: float = 0.0
     body_cp_axial: float = 0.0
+    #: Set when fin faces were found but rejected as not forming a fin (see
+    #: ``fins.degenerate_fin_reason``); the result then has no fins, and says why.
+    fin_note: str | None = None
 
 
 def aero_core(
@@ -272,6 +279,7 @@ def aero_core(
     fin_count = 0
     fin_cna = 0.0
     fin_pf = None
+    fin_note = None
     if include_fins:
         if fin_faces is None:
             fin_faces = detect_fin_faces(store.iter_faces(), axis, profile.r_max)
@@ -284,14 +292,19 @@ def aero_core(
             fin_aero, fin_pf = fin_set_aero_from_faces(
                 fin_geo, axis, body_radius=profile.r_max, r_ref=profile.r_max, n_fins=n_fins, mach=mach
             )
-            fin_count = fin_pf.n_fins
-            fin_cna = fin_aero.cna
-            contributions.append(CPContribution(cna=fin_aero.cna, cp_axial=fin_aero.cp))
+            reason = degenerate_fin_reason(fin_pf)
+            if reason is not None:
+                fin_pf = None
+                fin_note = degenerate_fin_note(reason)
+            else:
+                fin_count = fin_pf.n_fins
+                fin_cna = fin_aero.cna
+                contributions.append(CPContribution(cna=fin_aero.cna, cp_axial=fin_aero.cp))
 
     cp_axial, cna_total = merge_cp(contributions)
     return AeroCore(
         profile, axis, cp_axial, cna_total, fin_count, fin_cna, fin_pf,
-        body_cna=aero.cna, body_cp_axial=aero.cp,
+        body_cna=aero.cna, body_cp_axial=aero.cp, fin_note=fin_note,
     )
 
 
@@ -452,4 +465,5 @@ def compute_stability(
         motor_cg_world=motor_cg_world_out,
         axis_direction=axis.direction.tolist(),
         fin_symmetric=fins_symmetric(fin_pf.azimuths) if fin_pf is not None else True,
+        fin_note=core.fin_note,
     )

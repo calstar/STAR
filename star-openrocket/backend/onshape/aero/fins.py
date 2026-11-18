@@ -294,6 +294,35 @@ def planform_outline_3d(pf: FinPlanform, axis: Axis, azimuth_deg: float) -> dict
     return {"lead": lead_pts, "trail": trail_pts}
 
 
+#: Below this a "fin" has no planform to speak of. A millimetre of chord or span (and a
+#: square millimetre of area) is far under any fin that flies, and far over rounding.
+DEGENERATE_FIN_LENGTH = 1e-3
+
+
+def degenerate_fin_reason(pf: FinPlanform) -> str | None:
+    """Why this planform is not a fin, or None if it is one.
+
+    Fin detection keeps any flat face whose plane passes through the axis, and on a
+    model with trimmed or stray geometry that can be a sliver with no chord and no
+    area. Accepting it does not move the CP (zero area, zero CNa) but it is not
+    harmless: the .ork export writes it as a fin set metres from the body, and the
+    fin count, chords and the exported length are all wrong.
+    """
+    tiny = DEGENERATE_FIN_LENGTH
+    if pf.root_chord < tiny:
+        return f"root chord {pf.root_chord * 1000:.2f} mm"
+    if pf.span < tiny:
+        return f"span {pf.span * 1000:.2f} mm"
+    if pf.area < tiny * tiny:
+        return f"area {pf.area * 1e6:.3f} mm²"
+    return None
+
+
+def degenerate_fin_note(reason: str) -> str:
+    return (f"Faces were detected as fins, but they do not form one ({reason}): ignored. "
+            "Pick the fin faces by hand if this rocket has fins.")
+
+
 def fin_set_aero_from_faces(
     faces: list[FaceGeometry],
     axis: Axis,

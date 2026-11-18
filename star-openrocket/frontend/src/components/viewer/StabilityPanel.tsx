@@ -500,6 +500,9 @@ export function StabilityPanel({
                 axial model under-states the instability. Expected {result.fins.count === 1 ? 'a single fin' : `${result.fins.count} uneven fins`}; check the fin selection.
               </p>
             )}
+            {result.fins.note && (
+              <p className="mt-2 border-t border-[var(--color-border)] pt-2 text-xs text-amber-300">⚠ {result.fins.note}</p>
+            )}
             {(() => {
               // Total loaded mass at each end of the burn: the CAD mass plus the motor's wet or
               // dry mass. `result.mass` already includes the motor at the selected state, so back
