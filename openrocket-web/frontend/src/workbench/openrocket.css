@@ -310,6 +310,21 @@ input.orw-field {
   color: var(--or-disabled-text);
 }
 
+.orw-radio input {
+  border-radius: 50%;
+}
+.orw-radio input:checked {
+  border-color: var(--or-slider);
+}
+.orw-radio input:checked::after {
+  width: 8px;
+  height: 8px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--or-slider);
+  transform: none;
+}
+
 /* Spinner: number + up/down chevrons, then a grey unit box. */
 .orw-spin {
   display: inline-flex;

@@ -9,6 +9,7 @@ import {
 } from './fields'
 import { bool, isAuto, motorMount, num, str } from '../../lib/params'
 import { useUnits } from '../../workbench/units'
+import { DEPLOY_EVENTS, IGNITION_EVENTS, SEPARATION_EVENTS, normEvent } from '../../lib/flightconfig'
 import { FreeformShape } from './FreeformShape'
 
 const DEG = Math.PI / 180
@@ -228,7 +229,7 @@ export function MotorTab() {
         <Row label="Ignition at:">
           <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Combo
-              value={mm?.ignitionevent ?? 'automatic'}
+              value={normEvent(mm?.ignitionevent, 'automatic')}
               disabled={!mm}
               style={{ width: 300 }}
               onChange={(v) => set({ ignitionevent: v })}
@@ -245,13 +246,8 @@ export function MotorTab() {
   )
 }
 
-export const IGNITION = [
-  { value: 'automatic', label: 'Automatic (launch or ejection charge)' },
-  { value: 'launch', label: 'Launch' },
-  { value: 'ejection', label: 'First ejection charge of previous stage' },
-  { value: 'burnout', label: 'First burnout of previous stage' },
-  { value: 'never', label: 'Never' },
-]
+// .ork names (OpenRocketSaver.enumToXMLName): `ejectioncharge`, not `ejection`.
+export const IGNITION = IGNITION_EVENTS.map(({ value, label }) => ({ value, label }))
 
 export function ThicknessRingGeneral({ autoOuter, motor }: { autoOuter?: boolean; motor?: boolean }) {
   return (
@@ -657,19 +653,11 @@ export function ShockCordGeneral() {
   )
 }
 
-const DEPLOY = [
-  { value: 'launch', label: 'Launch (plus NN seconds)' },
-  { value: 'ejection', label: 'First ejection charge of this stage' },
-  { value: 'apogee', label: 'Apogee' },
-  { value: 'altitude', label: 'Specific altitude during descent' },
-  { value: 'current_stage_separation', label: 'Current stage separation' },
-  { value: 'lower_stage_separation', label: 'Lower stage separation' },
-  { value: 'never', label: 'Never' },
-]
+const DEPLOY = DEPLOY_EVENTS.map(({ value, label }) => ({ value, label }))
 
 function Deployment() {
   const e = useEdit()
-  const ev = str(e.c.params, 'deployevent', 'ejection')
+  const ev = normEvent(str(e.c.params, 'deployevent', 'ejection'), 'ejection')
   return (
     <Group title="Deployment" style={{ padding: '6px 8px 12px' }}>
       <Rows style={{ marginTop: 4 }}>
@@ -792,17 +780,7 @@ export function StreamerGeneral() {
 
 // ── Assemblies and the rocket ────────────────────────────────────────────
 
-const SEPARATION = [
-  { value: 'launch', label: 'Launch' },
-  { value: 'ignition', label: 'Current stage motor ignition' },
-  { value: 'burnout', label: 'Current stage motor burnout' },
-  { value: 'ejection', label: 'Current stage ejection charge' },
-  { value: 'upper_ignition', label: 'Upper stage motor ignition' },
-  { value: 'altitude_ascending', label: 'Specific altitude during ascent' },
-  { value: 'apogee', label: 'Apogee' },
-  { value: 'altitude_descending', label: 'Specific altitude during descent' },
-  { value: 'never', label: 'Never' },
-]
+const SEPARATION = SEPARATION_EVENTS.map(({ value, label }) => ({ value, label }))
 
 export function SeparationTab() {
   return (

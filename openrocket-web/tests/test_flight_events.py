@@ -56,13 +56,13 @@ def test_an_edited_override_is_what_gets_saved():
     cfg = doc["motorConfigs"][0]["id"]
     for o in booster["params"]["separationconfiguration"]:
         if o["configid"] == cfg:
-            o["separationevent"], o["separationdelay"] = "altitude", 1.5
+            o["separationevent"], o["separationdelay"] = "altitudeascending", 1.5
             o["separationaltitude"] = 321.0
     back = read_ork(write_ork(doc))
     ev = {e["id"]: e for e in flight_events(back, cfg)}[booster["id"]]
-    assert (ev["event"], ev["altitude"], ev["delay"]) == ("altitude", 321.0, 1.5)
+    assert (ev["event"], ev["altitude"], ev["delay"]) == ("altitudeascending", 321.0, 1.5)
     other = doc["motorConfigs"][1]["id"]
-    assert {e["id"]: e for e in flight_events(back, other)}[booster["id"]]["event"] != "altitude"
+    assert {e["id"]: e for e in flight_events(back, other)}[booster["id"]]["event"] != "altitudeascending"
 
 
 @pytest.mark.oracle

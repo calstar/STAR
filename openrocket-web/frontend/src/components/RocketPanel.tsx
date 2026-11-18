@@ -12,11 +12,12 @@ import { AnalysisTable } from './AnalysisTable'
 import { useSize } from '../workbench/hooks'
 import { pix } from '../workbench/icons'
 import { configLabel } from '../workbench/configs'
+import { isStageActive, stageButtonEnabled, stageList } from '../lib/flightconfig'
 
 const ZOOMS = [0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5]
 
 export function RocketPanel({
-  doc, analysis, selectedId, onSelect, onEdit, conditions, setConditions, onSelectConfig, provenance, mockMode, error,
+  doc, analysis, selectedId, onSelect, onEdit, conditions, setConditions, onSelectConfig, onToggleStage, provenance, mockMode, error,
 }: {
   doc: RocketDocument
   analysis: Analysis | null
@@ -26,6 +27,8 @@ export function RocketPanel({
   conditions: Conditions
   setConditions: (c: Conditions) => void
   onSelectConfig: (id: string) => void
+  /** Flip a stage's activeness in the selected configuration (FlightConfiguration.toggleStage). */
+  onToggleStage?: (stageNumber: number) => void
   provenance: string
   mockMode: boolean
   error: string | null
@@ -37,7 +40,8 @@ export function RocketPanel({
   const [figRef, figSize] = useSize<HTMLDivElement>()
   const fit = fitPercent(analysis, figSize.w, figSize.h)
   const zoomPct = view.zoom == null ? fit : view.zoom * 100
-  const stages = doc.rocket.children.filter((c) => c.type === 'stage')
+  // StageSelector: one toggle per stage, bound to the selected configuration's stage flags.
+  const stages = stageList(doc)
   const cfg = doc.motorConfigs.find((c) => c.id === doc.selectedConfig) ?? null
   const rotDeg = Math.round((conditions.theta * 180) / Math.PI)
 
@@ -87,18 +91,37 @@ export function RocketPanel({
           <Check label="Show CG/CP" checked={showCgCp} onChange={setShowCgCp} title="Disabling this checkbox hides the CG and CP markings in the rocket view." />
         </Labeled>
         <div style={{ width: 1, alignSelf: 'stretch', margin: '12px 24px 2px 0', background: '#d0d0d0' }} />
-        <Labeled label="Stages:" width={120}>
+        <Labeled label="Stages:" width={Math.max(120, stages.length * 92)}>
           <span style={{ display: 'inline-flex', gap: 4 }}>
-            {stages.map((s) => (
-              <span
-                key={s.id}
-                className="orw-btn"
-                style={{ background: '#dedede', borderColor: '#cecece', color: '#959595', fontStyle: 'italic', padding: '0 14px' }}
-                title={stages.length === 1 ? 'Cannot deactivate the only active stage.' : 'Toggle this button to activate/deactivate the stage.'}
-              >
-                {s.name}
-              </span>
-            ))}
+            {stages.map(({ stage: s, number }) => {
+              const active = isStageActive(cfg ?? undefined, number)
+              const enabled = !!cfg && stageButtonEnabled(doc, cfg, number)
+              return (
+                <button
+                  type="button"
+                  key={s.id}
+                  className="orw-btn"
+                  aria-pressed={active}
+                  disabled={!enabled}
+                  data-testid={`stage-toggle-${number}`}
+                  onClick={() => onToggleStage?.(number)}
+                  style={{
+                    padding: '0 14px',
+                    ...(active ? { background: '#dedede', borderColor: '#cecece' } : {}),
+                    ...(!enabled ? { color: '#959595', fontStyle: 'italic' } : {}),
+                  }}
+                  title={
+                    s.children.length === 0
+                      ? 'This stage does not have child components and is therefore marked as inactive. Add components to the stage to activate it.'
+                      : enabled
+                        ? 'Toggle this button to activate/deactivate the stage.'
+                        : 'Cannot deactivate the only active stage.'
+                  }
+                >
+                  {s.name}
+                </button>
+              )
+            })}
           </span>
         </Labeled>
         <Labeled label="Mach:" width={170}>

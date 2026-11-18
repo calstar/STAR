@@ -54,6 +54,24 @@ export function Check({
   )
 }
 
+/** A JRadioButton; group them by giving the same `name`. */
+export function Radio({
+  label, checked, onChange, disabled, name,
+}: {
+  label: ReactNode
+  checked: boolean
+  onChange: () => void
+  disabled?: boolean
+  name: string
+}) {
+  return (
+    <label className={`orw-check orw-radio ${disabled ? 'dis' : ''}`}>
+      <input type="radio" name={name} checked={checked} disabled={disabled} onChange={() => onChange()} />
+      {label}
+    </label>
+  )
+}
+
 export function Combo<T extends string>({
   value, options, onChange, disabled, style, className = '', title,
 }: {

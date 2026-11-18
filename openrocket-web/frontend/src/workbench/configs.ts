@@ -9,8 +9,8 @@ import { fmtNumber } from '../lib/units'
 
 export function motorLabel(m: MotorChoice): string {
   const d = m.delay
-  if (d == null) return m.designation
-  if (!Number.isFinite(d) || d >= 1000) return `${m.designation}-P`
+  // SCHEMA.md: `"delay": null` is a plugged motor (Motor.PLUGGED_DELAY), "I59WN-P".
+  if (d == null || !Number.isFinite(d) || d >= 1000) return `${m.designation}-P`
   return `${m.designation}-${fmtNumber(d, 1)}`
 }
 

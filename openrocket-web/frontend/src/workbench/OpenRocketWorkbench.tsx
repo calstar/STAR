@@ -21,6 +21,7 @@ import { ComponentTree } from '../components/ComponentTree'
 import { AddComponentPanel } from '../components/AddComponentPanel'
 import { RocketPanel } from '../components/RocketPanel'
 import { MotorsTab } from '../components/MotorsTab'
+import { toggleStage } from '../lib/flightconfig'
 import { ComponentConfigDialog } from '../components/edit/ComponentConfigDialog'
 import { LENGTH_UNITS, MASS_UNITS, IMPERIAL, METRIC } from '../lib/units'
 
@@ -455,6 +456,7 @@ function Workbench({ api, initial }: { api: Api; initial: RocketDocument }) {
         conditions={conditions}
         setConditions={(c) => setCond({ mach: c.mach, aoaDeg: c.aoaDeg, rollRate: c.rollRate, theta: c.theta })}
         onSelectConfig={(id) => d.apply((x) => ({ ...x, selectedConfig: id }), { label: 'Select configuration' })}
+        onToggleStage={(n) => doc.selectedConfig && d.apply((x) => (x.selectedConfig ? toggleStage(x, x.selectedConfig, n) : x), { label: 'Toggle stage' })}
         provenance={api.mode === 'mock' ? `${PROVENANCE} — currently the in-browser mock, approximate` : PROVENANCE}
         mockMode={api.mode === 'mock'}
         error={error}
