@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { FinanceRow } from "@/lib/finance/queries";
 import { checkReceipt } from "@/lib/finance/receipts";
 
-import { buildFilingForm, filterFinanceRows, receiptToFile, sortFinanceRows, stripBase64 } from "./finance";
+import { buildFilingForm, filterFinanceRows, receiptSchema, receiptToFile, sortFinanceRows, stripBase64 } from "./finance";
 
 // The pure half of the finance tools: the FinanceWorkspace filters and the
 // base64 -> File mapping the filing tool feeds to fileReimbursement.
@@ -117,13 +117,32 @@ describe("buildFilingForm", () => {
   it("lays the body out as ReimbursementForm.tsx does: payload JSON plus receipt-<i>", () => {
     const payload = { subject: "Fittings", items: [{ vendor: "A" }, { vendor: "B" }] };
     const form = buildFilingForm(payload, [
-      { fileName: "a.png", mimeType: "image/png", base64: PNG_B64 },
-      { fileName: "b.png", mimeType: "image/png", base64: PNG_B64 },
+      receiptToFile({ fileName: "a.png", mimeType: "image/png", base64: PNG_B64 }),
+      receiptToFile({ fileName: "b.png", mimeType: "image/png", base64: PNG_B64 }),
     ]);
     expect(JSON.parse(String(form.get("payload")))).toEqual(payload);
     expect((form.get("receipt-0") as File).name).toBe("a.png");
     expect((form.get("receipt-1") as File).name).toBe("b.png");
     expect(form.get("receipt-2")).toBeNull();
+  });
+});
+
+describe("receiptSchema: an upload or inline base64, exactly one", () => {
+  const ok = (r: unknown) => receiptSchema.safeParse(r).success;
+
+  it("takes an uploadId alone", () => {
+    expect(ok({ uploadId: "cm123" })).toBe(true);
+  });
+
+  it("takes base64 with its name and type", () => {
+    expect(ok({ fileName: "r.png", mimeType: "image/png", base64: PNG_B64 })).toBe(true);
+  });
+
+  it("refuses both, neither, or base64 without its name and type", () => {
+    expect(ok({ uploadId: "cm123", fileName: "r.png", mimeType: "image/png", base64: PNG_B64 })).toBe(false);
+    expect(ok({})).toBe(false);
+    expect(ok({ fileName: "r.png", mimeType: "image/png" })).toBe(false);
+    expect(ok({ base64: PNG_B64 })).toBe(false);
   });
 });
 
