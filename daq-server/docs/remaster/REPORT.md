@@ -14,8 +14,6 @@ it sits on the `docs/security-review` branch's working tree only — so SEC-1…
 from the ledger's summary of it. File:line references are the ledger's, against `main` @
 `15b5a0c5` (product code on the tag is identical).
 
-Sections marked `<!-- update at merge -->` describe packages still landing and will change.
-
 **The rule the refactor worked under.** `main`'s behaviour is preserved bit for bit, defects
 included (D17; AGENT-RULES 6). A change in what the stand does is a team decision made in its own
 package, never a side effect of moving code. The one exception is H-1, a *test-harness* bug fixed
@@ -156,7 +154,8 @@ line says so.
 
 ## 2. What the refactor did
 
-Status as of the ledger (D91, 2026-11-17). <!-- update at merge -->
+Status as of the ledger at `backend-remastered` @ `6a08e869` (D142, 2026-11-17): every bloat-map
+package is merged or parked.
 
 The order is the DAG (BLOAT-MAP:345, D91): `C0 → WP1 → {WP2, WP4, WP5}`; `WP2 → WP3 → WP8 →
 WP9 → WP10`; `WP5 → {WP6, WP7}`; `WP4 → WP11`; `{WP2, WP4, WP5, WP11} → WP12`. Product-code
@@ -189,7 +188,7 @@ under D24.
 
 ### 2.2 Phase 3 — work packages
 
-**Merged** <!-- update at merge -->
+**Merged**
 
 - **WP1 — tracked junk** (D81). 6,103 files untracked (D81; WP1-EVIDENCE's groups sum to 6,101, the CHECKPOINT's figure); only `.gitignore` and `WP1-EVIDENCE.md`
   added or modified; 0 goldens. Root `node_modules/` 5,886 files / 775,203 lines, clangd
@@ -209,53 +208,42 @@ under D24.
   for a viewer, with witness GETs showing nothing was written, so all 14 are now pinned (D63); the two OTA routes' viewer 200 is
   frozen (SEC-2). +201/−7, golden additions only; mutations M1–M3 red. CI 44057282047 green.
 
-**Implemented, not yet queued** <!-- update at merge -->
+- **WP3 — C++ library hygiene** (D83, D117): 5 commits plus queue-time edits, 13 files +287/−1233,
+  0 goldens. PressureStateMachine deleted (−1017; compiled, zero callers); `db.hpp` moved byte for
+  byte from `archive/legacy/utl/` to `lib/third_party/elodin/` as a `SYSTEM PRIVATE` include; one
+  `send_msg` (`lib/src/elodin/SendMsg.hpp`); the Parser's canonical printer in its own TU
+  (`lib/src/script/Printer.cpp`; D45, D62, D71). CI 44120121401 green.
+- **WP5 — backend dead TS, sequencer line client, slot helper** (D78, D122): deletes
+  `calibration-sidecar.ts`, `ota-flash.ts`, `server-types.ts` and the uncalled `:9999` client
+  (D39); `boardSlot()` replaces six copies of the `board_id % 10` rule; new `sequencer-client.ts`;
+  `legacy/` → `state-csv/`. CI 44145497033 green. Security review D93.
+- **WP11 — `tools/` path fixes** (D92, D123): 10 files, ±24, nothing deleted.
+- **WP12 — docs** (D124): 12 doc files, one `setup.sh` echo message (D-SETUPCAL); no executable
+  logic. CI 44161813655 green (also covers WP11).
+- **WP7 step 1 — split `api-server.ts`** (D128): 1269 → 81 lines plus ten route groups under
+  `src/api/`; every viewer 403 and the ota-flash 200 unchanged; Linux full PASS; CI 44179934430
+  green apart from Formatting. Step 2 (cleanup) is a separate later item, not done.
+- **WP8 — shared C++ service plumbing** (D132): `lib/include/service/StopSignals.hpp` for the
+  services, `lib/include/net/TcpCommandServer.hpp` for the sequencer and controller accept loops;
+  each service's SIGPIPE disposition kept as an explicit per-service setting (D17, Parked).
+  macOS and Linux full PASS; CI 44190415220 green.
+- **WP9-lite** (D136): one commit, 6 lines deleted; per-symbol FMA census equal on macOS and
+  Linux (D116). CI 44194860517: Run Tests 48/48 green.
+- **WP10 — split the sequencer, controller, actuator and bridge files, move-only** (D138):
+  `SequencerService_*.cpp`, `ControllerService_*.cpp`, `ActuatorCommander_load.cpp`, and
+  `BoardMap.{hpp,cpp}` / `BackendLogForwarder.hpp` in `daq_bridge/`. Linux PASS except
+  `script_runtime` (D34); CI 44199861379 green. The §6.2 cleanup is deferred, not done.
+- **WP6 — split `server.ts`** (D142): steps 1 and 2, `server.ts` to 332 lines plus 16
+  `src/server/*.ts` modules. macOS PASS except the D34 `script_positions` ctest (WP6 is
+  TypeScript only); Linux PASS except `script_runtime`; all 11 pipeline modes, lifecycle and
+  integration PASS on both.
+- **C0 test-only packages, all merged:** H8b (D103), G-W5 + G4 (D108), WP8-gaps (D109), G12 (D119),
+  C0 WP7 (D126), C0 WP6 G1-G3/G8/G10 (D139). **H3 harness** (D121).
 
-- **WP5 — backend dead TS, sequencer line client, slot helper** (D78): `wp/WP5` 01634e5e,
-  6 commits, +122/−505. Deletes `calibration-sidecar.ts`, `ota-flash.ts`, `server-types.ts` and
-  the uncalled `:9999` client (D39); `boardSlot()` replaces six copies of the `board_id % 10` rule
-  (DESIGN-WP5 §1); new `sequencer-client.ts`; `legacy/` → `state-csv/`. Queues after the C0
-  packages that guard its files, G-W5 and G4 (D79).
-- **WP3 — C++ library hygiene** (D83): `wp/WP3` f4bc5c86, 5 commits, 13 files +287/−1233,
-  0 goldens. PressureStateMachine deleted (−1017; compiled, zero callers); `db.hpp` moved byte
-  for byte from `archive/legacy/utl/` to `lib/third_party/elodin/` as a `SYSTEM PRIVATE` include;
-  one `send_msg`; the Parser's canonical printer in its own TU (D45, D62, D71). Needs the
-  orchestrator's path-only edits outside `daq-server/` (`format.sh:28`,
-  `daq-server-ci.yml:227/303/325/383/397`) and a CI run (D34).
-- **C0 test-only packages, ready:** H8b (D87; the WS operator path: an operator header gets
-  `operator:true` and unlock `ok`), G-W5 + G4 (D85; a slot test for boards 10/20/21 and pipeline
-  mode `holds`: accepted hold, SIGSTOP → timeout ≤ 2.8 s, SIGTERM → ECONNREFUSED), WP8-gaps
-  (D89; per-service SIGPIPE, SIGTERM/SIGINT exit and latency with an idle client held, handler
-  lines, the 65th client on `:9998`/`:9999`).
-
-**In flight** (D91) <!-- update at merge -->
-
-- **WP6 — split `server.ts`** (1885 lines → 16 modules under `src/server/`, module singletons,
-  a layered import DAG; step 1 move-only, step 2 cleanup, separate queue items; D48, D49, D52).
-  Stacked on `wp/WP5`. Gated by C0 WP6 gaps G1–G3 (D91).
-- **WP7 — split `api-server.ts`** (1269 lines → ten route groups under `src/api/` plus a ~90-line
-  router; D63, D72). Stacked on `wp/WP5`. Gated by H8/H8b and the H9 dispatch vitest (D72, D91).
-- **WP8 — shared C++ service plumbing**, stacked on `wp/WP3`: pass 1 `StopSignals` for seven
-  services plus the `// Kept:` tags; pass 2 `serveTcpClients` for the sequencer and controller
-  accept loops (D54, D57, D66). The debate removed every socket helper, `parseArgs` and
-  `follow_sequencer_state`: what remains is what nine services genuinely share, with each
-  service's SIGPIPE disposition kept as an explicit per-service setting (D17, Parked).
-- **WP11 — `tools/` path fixes**: 10 files, 24 line edits, nothing deleted (D67, D68).
-- **H3 — harness**: portable `timeout` for the two macOS-vacuous integration checks, archived
-  gate/leg logs with the load at each step, `--no-tests=error`, a Linux-leg warning comparison,
-  `CLANG_FORMAT_19_DIR` default (D61, D71, D80, D81).
-- C0 WP6/WP7 gates and a WP6 performance baseline (evidence, not a gate) (D91).
-
-**Not started** <!-- update at merge -->
-
-- **WP9 — split `calibration_main.cpp`** (2139 lines; one move-only item with two checkpoints;
-  float path proven by a pre/pre run of the unchanged binary, then `cmp`, an FMA census and
-  symbol censuses; D56, D73). Waits for WP8 (D91). Three C0 items gate it: the `cal.log` golden,
-  stale-uid, G1 Blend reseed (D73).
-- **WP10 — split the sequencer, controller, actuator and bridge files** (one move-only item,
-  three commits, then cleanup; no collaborator object; the abort path is never cut; D47, D49,
-  D52). Waits for WP9. Its timing tests are judged on CI only (D34).
-- **WP12 — docs** after WP2, WP4, WP5, WP11.
+**Parked: WP9 — split `calibration_main.cpp`** (D113; star-f9 ruling). It stays unsplit (S33
+waiver); WP10's DAG edge was relaxed to WP8 only. C0 WP9 is parked with it (D120, branch
+`char/c0-wp9` kept; D-CALLOG-RESIDUE). D-WP9-FMA stays a lead: abort-threshold numerics depend on
+gcc's inlining, and a fused-vs-unfused value golden is the recommendation (D113).
 
 **Parked — the team's decisions, not a refactor's** (Parked section): SIGPIPE disposition (4 of 9
 services ignore it); untracking the live calibration stores; `calibration/*.json`;
@@ -278,11 +266,10 @@ control paths) directs new structure and team fixes only, never the refactor (D4
 
 ---
 
-### 2.4 Lines and files before and after, per component <!-- refresh after last merge -->
+### 2.4 Lines and files before and after, per component
 
 Counted with `git ls-tree -r` and `wc -l`-equivalent newline counts over text blobs, at `main` @
-`15b5a0c5` and `backend-remastered` @ `8d7db131` (2026-11-17; WP3, WP5-WP11 not all landed, so
-the backend and C++ rows will move). Everything under `daq-server/`, plus the repo-root
+`15b5a0c5` and `backend-remastered` @ `6a08e869` (2026-11-17, after the last merge). Everything under `daq-server/`, plus the repo-root
 `node_modules/` that `main` tracked. Binary blobs count as files, not lines. Grouping rules:
 *tests* = `test/` (except the harness), `__tests__/`, `lib/test/`; *characterization harness* =
 `test/characterization/` (mostly goldens, so its lines are not code); *vendored/junk* =
@@ -292,22 +279,22 @@ vendored `nlohmann`/`toml++` headers; *tools* = `tools/`, `sim/`, `scripts/`, `d
 
 | Component | main files | main lines | remastered files | remastered lines |
 |---|---:|---:|---:|---:|
-| backend TS | 100 | 25,515 | 80 | 18,992 |
+| backend TS | 100 | 25,515 | 96 | 19,624 |
 | frontend | 130 | 30,747 | 130 | 30,747 |
-| C++ services | 22 | 10,356 | 22 | 10,199 |
-| C++ lib | 94 | 20,507 | 94 | 18,922 |
+| C++ services | 22 | 10,356 | 29 | 10,369 |
+| C++ lib | 94 | 20,507 | 96 | 18,949 |
 | transport | 32 | 2,834 | 28 | 2,352 |
-| tests | 147 | 29,089 | 131 | 27,719 |
-| characterization harness | 0 | 0 | 785 | 179,167 |
-| tools | 176 | 40,047 | 167 | 39,158 |
-| docs | 51 | 7,494 | 164 | 28,526 |
+| tests | 147 | 29,089 | 135 | 27,969 |
+| characterization harness | 0 | 0 | 810 | 181,042 |
+| tools | 176 | 40,047 | 167 | 39,182 |
+| docs | 51 | 7,494 | 164 | 28,643 |
 | vendored/junk | 6,100 | 828,046 | 7 | 48,019 |
-| other (config, calibration data, flash, video, build files) | 50 | 7,806 | 45 | 6,477 |
-| **Total** | 6,902 | 1,002,441 | 1,653 | 410,278 |
+| other (config, calibration data, flash, video, build files) | 50 | 7,806 | 45 | 6,493 |
+| **Total** | 6,902 | 1,002,441 | 1,707 | 413,389 |
 
 Almost all of the drop in totals is junk leaving the tree (tracked root `node_modules/`,
 `build-ci/` binaries, `.cache/clangd/` index: BLOAT-MAP §1; WP1 D81). The product rows are flat
-or smaller (backend TS -6.5k lines, C++ lib -1.6k, services -0.2k); this table does not
+or smaller (backend TS -5.9k lines, C++ lib -1.6k, services flat); this table does not
 attribute those, see the ledger's merge log per package. The harness and docs are the additions.
 
 ## 3. How behaviour was proven unchanged
@@ -387,7 +374,9 @@ reading only — never merged or marked ready without the user (D59). Runs recor
 (first push, green under D24), 44011896743 (tag candidate; Run Tests 48/48, Integration,
 ASan+UBSan, TSan, Playwright E2E, Session Control E2E green; D77), 44032367993 (WP2), 44057282047
 (H8). The Code Formatting job is judged by "no offender under `daq-server/`": it is red on `main`
-itself from `firmware/` (D11, D24). <!-- update at merge -->
+itself from `firmware/` (D11, D24). Later runs: 44120121401 (WP3), 44145497033 (WP5), 44161813655
+(WP12), 44179934430 (WP7), 44190415220 (WP8), 44194860517 (WP9-lite), 44199861379 (WP10) (D117,
+D122, D124, D128, D132, D136, D138).
 
 ### What the proof does not cover
 
@@ -562,7 +551,7 @@ does not say. Long form, with operator consequence and proposal per item: `REPOR
 - Which of §1 the team takes up, and in what order. Every fix changes observable behaviour, so
   each is its own package: golden first, then code and unit file (STYLE S8; Team proposals).
 - The `remaster-baseline` tag: cut on CI run 44011896743 (D77). D77 records it as local only,
-  pending the user; D79 records the push as already done on the user's answer. <!-- update at merge -->
+  pending the user; D79 records the push as already done on the user's answer (D79 is the later entry).
 - Draft PR #229 stays a draft: never merged or marked ready without the user (D59).
 - The two tracked-but-gitignored live stores need a stand-side procedure (copy aside, pull,
   restore) before anyone untracks them (Parked; BLOAT-MAP §1).
@@ -584,14 +573,14 @@ REPORT-DEFECTS-DRAFT.md §5)
 - D-ECHO, D-PF, OI-1, and D35's two Linux signatures (board 22 partial self-test; PT2.CH1 stream
   missing once idle — likely D-SLOT/D-SUB via the fixture's board 60) (D35, D41, D49).
 
-**Packages still to land** <!-- update at merge -->
-- Queue: C0 batch (G-W5/G4, H8b, WP8-gaps) → WP5 → WP3 → WP8 → WP6/WP7 → WP11 → WP9 → WP10 →
-  WP12 (D25, D79, D91). Then Phase 4 (fresh-clone gate, `dev.sh --sim`, e2e Playwright, an
-  independent review of `main...backend-remastered`) and Phase 5 (README, CLAUDE.md, this
-  report final) (CHECKPOINT).
-- H3 harness fixes (D61, D71, D80, D81) and the D12a golden-diff gate step against the tag.
-- WP3's six path-only lines outside `daq-server/` and WP4's no-op CI step
-  (`daq-server-ci.yml:569-576`) are the orchestrator's, listed for Phase 5 (D83, D86).
+**Packages still to land**
+- None: every package is merged or parked (D142). WP9 is parked (D113). WP7 step 2 and WP10's §6.2
+  cleanup are deferred items, not queued. The final §5 delta review of WP6, WP9-lite and WP10
+  and Phase 4 (fresh-clone gate, `dev.sh --sim`, e2e Playwright) are tracked in D133.
+- H3 harness fixes merged (D121); the D12a golden-diff gate step against the tag is not recorded
+  as done.
+- WP3's six path-only lines outside `daq-server/` were applied at queue time (D115, D117); WP4's
+  no-op CI step (`daq-server-ci.yml:569-576`) is still the orchestrator's (D86).
 
 **Ledger housekeeping noticed while writing** (for the orchestrator, not the team)
 - The CHECKPOINT block is dated 2026-11-16 ~13:00 and still shows C1 in flight, the tag not
