@@ -177,6 +177,7 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 | D143 | **Phase 4/5 closeout started:** the final §5 delta (WP6) goes to the same Opus reviewer; the post-merge docs refresh to the Phase 5 agent (README tree, the REPORT table and package status, D-LIFECYCLE-COMMENT); a fresh-clone retest (Sonnet: clone, follow the README, integration, characterization, the unmodified frontend tests, dev.sh --sim) under the shared stack lock. | Closeout. |
 | D144 | **D12a verified over the whole run:** remaster-baseline → tip changes 0 existing golden lines and adds 3,736 across 44 golden files. It was checked by hand per merge rather than as an automated gate step; REPORT says so. Post-merge docs refresh merged (docs/phase5b: README tree, REPORT table 6,902/1.00M → 1,707/413k files/lines, package status, D-LIFECYCLE-COMMENT fixed). CHECKPOINT refreshed. | Closeout. |
 | D145 | **§5 independent review complete (Opus, fresh context, diff + §0.3 only).** The WP6 delta (ff85e72e..6a08e869) is clean. A line-multiset check and per-function diffs over server.ts plus 16 server/*.ts show only equivalent extractions (raise/clearNotification order kept, resolveTransitionTarget, setters, ingest helpers, `continue`→`return` as the last statement); module-load order, startup through listen, the WS identity, unlock and command gates, and ingest→fan-out order are all unchanged; lc-tare got stronger. **Union of all three passes: no unaddressed behaviour change** (completion criterion met). The only notes are informational (D135: slot 10 is unit-covered in integration; shared-types is no longer loaded). | Review done. |
+| D146 | **Phase 4 fresh-clone retest PASS** (clone of 6a08e869 from GitHub; product code equal to the tip). npm ci, build, integration 167/167, characterization PASS in every area (pipeline 12 cases, sequencer 66 sessions, lifecycle), **frontend tests unmodified 488/488**, `dev.sh --sim` serves /api/debug 200 and stops cleanly. README fixed (npm ci, 167 checks, config/profile paths). Recorded, not fixed: D-BUILDPROFILE, D-STOPTMUX-GREP, D-NODE24-WARN. | Phase 4 done. |
 
 ## Baseline on `main` (this machine)
 
@@ -256,6 +257,9 @@ Host checked 2026-11-15: `wifi-10-43-41-87.wifi.berkeley.edu`, no `192.168.2.x` 
 - Deleting `tools/` operator GUIs (`tools/gui/**`, the orphaned calibration GUIs): operator-facing, the team's decision, not a refactor's.
 
 ## Defects found in the original (kept as-is, for the team)
+- **D-BUILDPROFILE (S4):** `scripts/build.sh:31-32` looks for `config/profiles/<profile>.toml`, but profiles are directories, so a fresh checkout never gets config/config.toml from the build. The backend self-heals.
+- **D-STOPTMUX-GREP (S4):** `deploy/startup/stop_tmux.sh:53` uses `grep -oP`, which BSD grep rejects on macOS. `dev.sh --stop` prints errors but still stops the stack.
+- **D-NODE24-WARN (S4):** dev.sh warns that Node v24 may crash the backend while the README says 'Node 20+'; no crash was seen in the fresh-clone runs.
 - **D-SESSION-HDR (S4, harness):** test/characterization/pipeline/session.ts's header comment repeats the line 'what PT board 22 delivers…'.
 - **D-GAP5-SELECT (S4, harness):** `test/characterization/sequencer/char_sequencer.py:991-1043` (the clients sessions) cannot see the command servers' select period; doubling it, or setting it to 1 s, stays green. DESIGN-WP8 §7.2 gap 5 expected it to.
 - **D-UNRECIP (S3):** `server.ts:540-546` creates an unlisted board at an invented `192.168.2.<id>`, so `unrecognized_<id>` names the wrong host for boards off that subnet.
