@@ -21,7 +21,7 @@ import {
   undeployedChanges,
 } from './routes/config-profiles.js';
 import { checkStateScript } from './routes/script-check.js';
-import { readStandPid, standPidDir } from './routes/stand-pid.js';
+import { checkoutConfigDir, readStandPid, standPidDir } from './routes/stand-pid.js';
 import {
   listCalibrationProfiles,
   saveCalibrationProfile,
@@ -405,7 +405,7 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
         res.end(JSON.stringify({ config: readDeployedConfig(), path: getRunningConfigPath() }));
       } else if (url.pathname === '/api/stand-pid' && req.method === 'GET') {
         // The Schematic page's drawing (routes/stand-pid.ts), beside config.toml.
-        const answer = readStandPid(standPidDir(getConfigPath()));
+        const answer = readStandPid(standPidDir(getConfigPath()), checkoutConfigDir(path.join(__dirname, 'routes')));
         res.writeHead(answer.status, { 'Content-Type': 'application/json' });
         res.end(answer.body);
       } else if (url.pathname === '/api/config' && req.method === 'POST') {
