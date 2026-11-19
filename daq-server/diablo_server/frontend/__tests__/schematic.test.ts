@@ -166,17 +166,17 @@ describe('readings (ticket 02, 06)', () => {
     expect(overlayOf(PID, frame(), NAMES).dim).toEqual([PID.boxes.tank]);
   });
 
-  it('puts a transducer reading above its symbol, in psig', () => {
+  it('puts a transducer reading above its symbol, as the bare number', () => {
     const r = reading(overlayOf(PID, frame(), NAMES), 'Ox Upstream');
-    expect(r).toMatchObject({ symbol: 'pt', x: 120, y: 200, text: '512 psig', state: 'live' });
+    expect(r).toMatchObject({ symbol: 'pt', x: 120, y: 200, text: '512', state: 'live' });
   });
 
   it('puts a temperature on an RTD in °C', () => {
     expect(reading(overlayOf(PID, frame(), NAMES), 'LOX Upper').text).toBe('-183.2 °C');
   });
 
-  it('never writes a bare psi', () => {
-    for (const v of [0, 14.7, 4500, null]) expect(psigText(v)).toMatch(/psig$/);
+  it('writes a pressure as the bare rounded number, a dash when unknown', () => {
+    expect([0, 14.7, 4500, null].map(psigText)).toEqual(['0', '15', '4500', '—']);
     expect(celsiusText(null)).toBe('— °C');
   });
 });
@@ -185,12 +185,12 @@ describe('stale data and health (ticket 04)', () => {
   it('greys a stale value and says how old it is, instead of blanking it', () => {
     const r = reading(overlayOf(PID, frame({ samples: { 'Ox Upstream': { value: 480, ageMs: 4200, staleAfterMs: 1500 } } }), NAMES), 'Ox Upstream');
     expect(r.state).toBe('stale');
-    expect(r.text).toBe('480 psig · 4 s');
+    expect(r.text).toBe('480 · 4 s');
   });
 
   it('shows a dash when there has never been a value', () => {
     const r = reading(overlayOf(PID, frame({ samples: {} }), NAMES), 'Ox Upstream');
-    expect(r).toMatchObject({ state: 'none', text: '— psig' });
+    expect(r).toMatchObject({ state: 'none', text: '—' });
   });
 
   it('greys every symbol on a board that has gone offline, values included', () => {
@@ -202,7 +202,7 @@ describe('stale data and health (ticket 04)', () => {
 
   it('flags a name the DAQ config does not have, and lists DAQ names never placed', () => {
     const o = overlayOf(PID, frame(), daqNamesOf({ ...CONFIG, sensor_roles_pt_board: { 'Chamber Mid PT 1': 4, 'Ox Downstream': 7 } }));
-    expect(reading(o, 'Ox Upstream')).toMatchObject({ state: 'unknown', text: '— psig' });
+    expect(reading(o, 'Ox Upstream')).toMatchObject({ state: 'unknown', text: '—' });
     expect(o.health.unknown).toEqual(['Ox Upstream']);
     expect(o.health.unplaced).toEqual(['Chamber Mid PT 1', 'GSE High']);
   });
@@ -320,7 +320,7 @@ describe('pressure shading by section (ticket 05)', () => {
 });
 
 describe('legibility (ticket 07)', () => {
-  const r = (name: string, x: number, y: number, text = '512 psig'): Reading =>
+  const r = (name: string, x: number, y: number, text = '512'): Reading =>
     ({ symbol: name, name, kind: 'pressure', x, y, text, state: 'live' });
 
   it('moves a reading up until it overlaps no other', () => {

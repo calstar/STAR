@@ -14,7 +14,8 @@
  * The overlay is a function of a *frame* -- connector name to value -- not of
  * the store, so a recording can drive it as well as the live stream.
  *
- * Pressures are gauge, as the DAQ logs them, and always say so: "psig".
+ * Pressures are gauge, as the DAQ logs them; readings show the number alone
+ * and the page footer says "psig".
  * Where the drawing and the DAQ config disagree (NO/NC, names), the DAQ is
  * believed -- it is what the boards are told -- and the page says so.
  *
@@ -320,9 +321,9 @@ export const BALL_VALVE_END_PCT = 10;
 /** Two transducers on one section disagree past the larger of this and 5 % of its limit. */
 export const SPLIT_PSI = 25;
 
-/** "512 psig", or a dash when there is no value. Never bare "psi". */
+/** "512" (psig, as the page footer says), or a dash when there is no value. */
 export function psigText(v: number | null): string {
-  return v === null || !Number.isFinite(v) ? '— psig' : `${Math.round(v)} psig`;
+  return v === null || !Number.isFinite(v) ? '—' : `${Math.round(v)}`;
 }
 
 export function celsiusText(v: number | null): string {
