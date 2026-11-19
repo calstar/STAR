@@ -28,7 +28,8 @@
       "react/*": ["./node_modules/@types/react/*"],
       "react-dom": ["./node_modules/@types/react-dom"],
       "react-dom/*": ["./node_modules/@types/react-dom/*"],
-      "@xyflow/react": ["./node_modules/@xyflow/react"]
+      "@xyflow/react": ["./node_modules/@xyflow/react"],
+      "html-to-image": ["./node_modules/html-to-image"]
     },
 
     /* Linting */
