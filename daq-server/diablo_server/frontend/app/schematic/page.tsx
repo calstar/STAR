@@ -21,6 +21,7 @@ import {
   daqNamesOf,
   frameOf,
   lineStyles,
+  valveStyles,
   overlayOf,
   parseStandPid,
   shade,
@@ -113,7 +114,6 @@ function LiveSchematic({ pid, names }: { pid: StandPid; names: Map<string, DaqNa
 /** Screen pixels: reading text, and the badge/ring stroke. */
 const READING_PX = 17;
 const SMALL_PX = 12;
-const RING_PX = 3;
 /** Drawn line width on screen, so a section's shade can be seen at a whole-stand fit. */
 const LINE_PX = 3;
 /** The export draws the canvas at 2 stand pixels per flow unit (pid-designer exportImage SCALE),
@@ -147,7 +147,7 @@ export function SchematicView({ pid, names, frame }: { pid: StandPid; names: Map
 
   const overlay = overlayOf(pid, frame, names, { lineHeight: px(READING_PX * 1.25) });
   const drawing = useMemo(() => ({ __html: pid.svg }), [pid.svg]);
-  const css = lineStyles(overlay.lines, px(LINE_PX) / STAND_PX_PER_LINE_UNIT);
+  const css = `${lineStyles(overlay.lines, px(LINE_PX) / STAND_PX_PER_LINE_UNIT)}\n${valveStyles(overlay.rings)}`;
   const problems = [
     ...overlay.health.unknown.map((n) => `"${n}" is on the drawing's DAQ box but not in the DAQ config`),
     ...overlay.health.disagree.map((n) => `NO/NC: ${n}; the DAQ's is shown`),
@@ -180,15 +180,9 @@ export function SchematicView({ pid, names, frame }: { pid: StandPid; names: Map
         ))}
         {overlay.rings.map((r) => (
           <g key={r.symbol} data-ring={r.name}>
-            <circle
-              cx={r.cx}
-              cy={r.cy}
-              r={r.r}
-              fill="none"
-              stroke={r.stale || r.open === null ? '#6b7280' : r.open ? '#22c55e' : '#ef4444'}
-              strokeWidth={px(RING_PX)}
-              strokeDasharray={r.stale ? `${px(6)} ${px(4)}` : undefined}
-            >
+            {/* The valve's own shape carries its state (valveStyles); this
+                transparent hit area keeps the tooltip. */}
+            <circle cx={r.cx} cy={r.cy} r={r.r} fill="transparent" stroke="none" style={{ pointerEvents: 'all' }}>
               <title>{`${r.name}: ${r.open === null ? 'no state' : r.open ? 'open' : 'shut'}${r.mismatch ? ` — ${r.mismatch}` : ''}`}</title>
             </circle>
             {r.mismatch && (

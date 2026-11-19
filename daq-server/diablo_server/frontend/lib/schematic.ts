@@ -591,3 +591,32 @@ export function lineStyles(lines: Record<string, LineStyle>, width?: number): st
   }
   return rules.join('\n');
 }
+
+/** The valve colours: open, shut, and a state too old to trust. */
+export const VALVE_COLOURS = { open: '#22c55e', shut: '#ef4444', stale: '#6b7280' } as const;
+
+/** A valve's colour, or null to leave the symbol as drawn (no state yet). */
+export function valveColour(r: Pick<Ring, 'open' | 'stale'>): string | null {
+  if (r.open === null) return null;
+  if (r.stale) return VALVE_COLOURS.stale;
+  return r.open ? VALVE_COLOURS.open : VALVE_COLOURS.shut;
+}
+
+/**
+ * CSS that paints each valve's own drawn shape (not its tag text) in its
+ * state's colour. The symbol is `[data-pid-symbol]`, a plain <g> in a synthetic
+ * drawing and a react-flow node (HTML around an inline <svg>) in a real
+ * export, so the rule reaches the SVG shapes at any depth beneath it.
+ */
+export function valveStyles(rings: Ring[]): string {
+  const shapes = 'path,line,polyline,polygon,rect,circle,ellipse';
+  const rules: string[] = [];
+  for (const r of rings) {
+    const c = valveColour(r);
+    if (!c) continue;
+    const id = r.symbol.replace(/["\\]/g, '\\$&');
+    const sel = shapes.split(',').map((s) => `[data-pid-symbol="${id}"] ${s}`).join(',');
+    rules.push(`${sel}{stroke:${c} !important;}`);
+  }
+  return rules.join('\n');
+}

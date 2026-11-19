@@ -18,6 +18,10 @@ import {
   shade,
   temperatureEntity,
   valveMismatch,
+  valveColour,
+  valveStyles,
+  VALVE_COLOURS,
+  type Ring,
   type Frame,
   type FrameSource,
   type Reading,
@@ -341,5 +345,33 @@ describe('legibility (ticket 07)', () => {
   it('leaves readings that are apart where they are', () => {
     const out = placeLabels([r('a', 100, 500), r('b', 900, 500)], 30);
     expect(out.map((o) => o.y)).toEqual([500, 500]);
+  });
+});
+
+describe('valve symbol colours', () => {
+  const ring = (over: Partial<Ring>): Ring => ({
+    symbol: 'main', name: 'Fuel Main', cx: 0, cy: 0, r: 10, open: true, stale: false,
+    mismatch: null, position: null, disagree: null, labelY: 0, ...over,
+  });
+
+  it('is green open, red shut, grey stale, and drawn as-is with no state', () => {
+    expect(valveColour(ring({ open: true }))).toBe(VALVE_COLOURS.open);
+    expect(valveColour(ring({ open: false }))).toBe(VALVE_COLOURS.shut);
+    expect(valveColour(ring({ open: true, stale: true }))).toBe(VALVE_COLOURS.stale);
+    expect(valveColour(ring({ open: null }))).toBeNull();
+  });
+
+  it('strokes the shapes inside the valve symbol, never its text, and skips unknown valves', () => {
+    const css = valveStyles([ring({ symbol: 'a', open: false }), ring({ symbol: 'b', open: null })]);
+    expect(css).toContain(`[data-pid-symbol="a"] path`);
+    expect(css).toContain(`stroke:${VALVE_COLOURS.shut} !important;`);
+    expect(css).not.toContain('"b"');
+    expect(css).not.toMatch(/ text[,{]/);
+  });
+
+  it('colours the valves the overlay finds on the stand', () => {
+    const o = overlayOf(PID, frame(), NAMES, { lineHeight: 20 });
+    const css = valveStyles(o.rings);
+    for (const r of o.rings) if (r.open !== null) expect(css).toContain(`[data-pid-symbol="${r.symbol}"]`);
   });
 });
