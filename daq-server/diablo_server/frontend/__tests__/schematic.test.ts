@@ -354,24 +354,35 @@ describe('valve symbol colours', () => {
     mismatch: null, position: null, disagree: null, labelY: 0, ...over,
   });
 
-  it('is green open, red shut, grey stale, and drawn as-is with no state', () => {
-    expect(valveColour(ring({ open: true }))).toBe(VALVE_COLOURS.open);
-    expect(valveColour(ring({ open: false }))).toBe(VALVE_COLOURS.shut);
-    expect(valveColour(ring({ open: true, stale: true }))).toBe(VALVE_COLOURS.stale);
-    expect(valveColour(ring({ open: null }))).toBeNull();
+  it('is green open, red shut, and dashed grey when stale or with no state', () => {
+    expect(valveColour(ring({ open: true }))).toEqual({ color: VALVE_COLOURS.open, dashed: false });
+    expect(valveColour(ring({ open: false }))).toEqual({ color: VALVE_COLOURS.shut, dashed: false });
+    expect(valveColour(ring({ open: true, stale: true }))).toEqual({ color: VALVE_COLOURS.stale, dashed: true });
+    expect(valveColour(ring({ open: null }))).toEqual({ color: VALVE_COLOURS.stale, dashed: true });
   });
 
-  it('strokes the shapes inside the valve symbol, never its text, and skips unknown valves', () => {
+  it('strokes the shapes inside the valve symbol, never its text, dashing only an unknown state', () => {
     const css = valveStyles([ring({ symbol: 'a', open: false }), ring({ symbol: 'b', open: null })]);
-    expect(css).toContain(`[data-pid-symbol="a"] path`);
-    expect(css).toContain(`stroke:${VALVE_COLOURS.shut} !important;`);
-    expect(css).not.toContain('"b"');
+    const rule = (id: string) => css.split('\n').find((l) => l.includes(`[data-pid-symbol="${id}"] path`)) ?? '';
+    expect(rule('a')).toContain(`stroke:${VALVE_COLOURS.shut} !important;`);
+    expect(rule('a')).not.toContain('stroke-dasharray');
+    expect(rule('b')).toContain(`stroke:${VALVE_COLOURS.stale} !important;`);
+    expect(rule('b')).toContain('stroke-dasharray');
     expect(css).not.toMatch(/ text[,{]/);
+  });
+
+  it('draws the stroke at the width it is given, with the dash scaled to it', () => {
+    // 3 screen px at a 27 % fit is 3 / 0.27 stand px, half that in flow units.
+    const w = 3 / 0.27 / 2;
+    const css = valveStyles([ring({ symbol: 'a', open: true, stale: true })], w);
+    expect(css).toContain(`stroke-width:${w.toFixed(2)}px !important;`);
+    expect(css).toContain(`stroke-dasharray:${(w * 2).toFixed(2)} ${(w * 1.3).toFixed(2)} !important;`);
+    expect(valveStyles([ring({ symbol: 'a' })])).not.toContain('stroke-width');
   });
 
   it('colours the valves the overlay finds on the stand', () => {
     const o = overlayOf(PID, frame(), NAMES, { lineHeight: 20 });
     const css = valveStyles(o.rings);
-    for (const r of o.rings) if (r.open !== null) expect(css).toContain(`[data-pid-symbol="${r.symbol}"]`);
+    for (const r of o.rings) expect(css).toContain(`[data-pid-symbol="${r.symbol}"]`);
   });
 });

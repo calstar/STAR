@@ -592,31 +592,36 @@ export function lineStyles(lines: Record<string, LineStyle>, width?: number): st
   return rules.join('\n');
 }
 
-/** The valve colours: open, shut, and a state too old to trust. */
+/** The valve colours: open, shut, and a state too old to trust or not yet known. */
 export const VALVE_COLOURS = { open: '#22c55e', shut: '#ef4444', stale: '#6b7280' } as const;
 
-/** A valve's colour, or null to leave the symbol as drawn (no state yet). */
-export function valveColour(r: Pick<Ring, 'open' | 'stale'>): string | null {
-  if (r.open === null) return null;
-  if (r.stale) return VALVE_COLOURS.stale;
-  return r.open ? VALVE_COLOURS.open : VALVE_COLOURS.shut;
+/** A valve's colour, and whether its stroke is dashed (stale or no state yet). */
+export function valveColour(r: Pick<Ring, 'open' | 'stale'>): { color: string; dashed: boolean } {
+  if (r.open === null || r.stale) return { color: VALVE_COLOURS.stale, dashed: true };
+  return { color: r.open ? VALVE_COLOURS.open : VALVE_COLOURS.shut, dashed: false };
 }
 
 /**
  * CSS that paints each valve's own drawn shape (not its tag text) in its
  * state's colour. The symbol is `[data-pid-symbol]`, a plain <g> in a synthetic
  * drawing and a react-flow node (HTML around an inline <svg>) in a real
- * export, so the rule reaches the SVG shapes at any depth beneath it.
+ * export, so the rule reaches the SVG shapes at any depth beneath it. `width`
+ * is in the symbol's own units, as for lineStyles: the drawn stroke is too thin
+ * at a whole-stand fit for its colour to be seen.
  */
-export function valveStyles(rings: Ring[]): string {
+export function valveStyles(rings: Ring[], width?: number): string {
   const shapes = 'path,line,polyline,polygon,rect,circle,ellipse';
+  const w = width && Number.isFinite(width) && width > 0 ? width : null;
+  const dash = w ? `${(w * 2).toFixed(2)} ${(w * 1.3).toFixed(2)}` : '4 3';
   const rules: string[] = [];
   for (const r of rings) {
-    const c = valveColour(r);
-    if (!c) continue;
+    const { color, dashed } = valveColour(r);
     const id = r.symbol.replace(/["\\]/g, '\\$&');
     const sel = shapes.split(',').map((s) => `[data-pid-symbol="${id}"] ${s}`).join(',');
-    rules.push(`${sel}{stroke:${c} !important;}`);
+    rules.push(
+      `${sel}{stroke:${color} !important;${w ? `stroke-width:${w.toFixed(2)}px !important;` : ''}` +
+        `${dashed ? `stroke-dasharray:${dash} !important;` : ''}}`,
+    );
   }
   return rules.join('\n');
 }

@@ -116,6 +116,8 @@ const READING_PX = 17;
 const SMALL_PX = 12;
 /** Drawn line width on screen, so a section's shade can be seen at a whole-stand fit. */
 const LINE_PX = 3;
+/** A valve symbol's coloured stroke on screen, as wide as the ring it replaced. */
+const RING_PX = 3;
 /** The export draws the canvas at 2 stand pixels per flow unit (pid-designer exportImage SCALE),
  *  and a line's own units are flow units. */
 const STAND_PX_PER_LINE_UNIT = 2;
@@ -147,7 +149,7 @@ export function SchematicView({ pid, names, frame }: { pid: StandPid; names: Map
 
   const overlay = overlayOf(pid, frame, names, { lineHeight: px(READING_PX * 1.25) });
   const drawing = useMemo(() => ({ __html: pid.svg }), [pid.svg]);
-  const css = `${lineStyles(overlay.lines, px(LINE_PX) / STAND_PX_PER_LINE_UNIT)}\n${valveStyles(overlay.rings)}`;
+  const css = `${lineStyles(overlay.lines, px(LINE_PX) / STAND_PX_PER_LINE_UNIT)}\n${valveStyles(overlay.rings, px(RING_PX) / STAND_PX_PER_LINE_UNIT)}`;
   const problems = [
     ...overlay.health.unknown.map((n) => `"${n}" is on the drawing's DAQ box but not in the DAQ config`),
     ...overlay.health.disagree.map((n) => `NO/NC: ${n}; the DAQ's is shown`),

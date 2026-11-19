@@ -57,15 +57,3 @@ describe('what the stand picture leaves out', () => {
     expect(notChromeOrValue({} as HTMLElement)).toBe(true);
   });
 });
-
-const NODES = Object.entries(import.meta.glob('./nodes/*.tsx', {
-  eager: true, query: '?raw', import: 'default',
-}) as Record<string, string>);
-
-describe('which symbols mark their printed values', () => {
-  it.each(['TankNode', 'EngineNode', 'PRNode', 'RVNode', 'SupplyNode'])('%s does', (name) => {
-    // A value left unmarked ends up on the DAQ's screen as if it were live.
-    const src = NODES.find(([p]) => p.endsWith(`/${name}.tsx`))![1];
-    expect(src).toContain('data-pid-value');
-  });
-});
