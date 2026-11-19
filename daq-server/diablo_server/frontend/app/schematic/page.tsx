@@ -10,7 +10,7 @@
  *
  * Small symbols, large readings: the whole of LE4 on a 1080p monitor is ~27 %
  * scale, where the drawing's own tags are a few pixels high. The drawing is
- * context; every reading, ring and badge is sized in *screen* pixels.
+ * context; every reading, valve stroke and badge is sized in *screen* pixels.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -111,7 +111,7 @@ function LiveSchematic({ pid, names }: { pid: StandPid; names: Map<string, DaqNa
   return <SchematicView pid={pid} names={names} frame={frameOf(pid, names, src)} />;
 }
 
-/** Screen pixels: reading text, and the badge/ring stroke. */
+/** Screen pixels: reading text, and the badge stroke. */
 const READING_PX = 17;
 const SMALL_PX = 12;
 /** Drawn line width on screen, so a section's shade can be seen at a whole-stand fit. */

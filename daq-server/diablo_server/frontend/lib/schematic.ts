@@ -265,11 +265,11 @@ export interface Ring {
   stale: boolean;
   /** Commanded and sensed disagree past the grace period. */
   mismatch: string | null;
-  /** Ball valve: "% open" beside the ring. */
+  /** Ball valve: "% open" beside the valve. */
   position: string | null;
   /** Drawing and DAQ config disagree on NO/NC: the DAQ's, said. */
   disagree: string | null;
-  /** Where the position/disagree line goes (below the ring, nudged clear of other labels). */
+  /** Where the position/disagree line goes (below the valve, nudged clear of other labels). */
   labelY: number;
 }
 
