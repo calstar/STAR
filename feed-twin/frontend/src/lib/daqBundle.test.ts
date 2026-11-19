@@ -144,6 +144,16 @@ describe('sections: what one pressure holds', () => {
     expect(l!.psig).toBeCloseTo(500, 2);
   });
 
+  it('reads a limit drawn in metric units, gauge unless it says absolute', () => {
+    // 1 bar = 100 kPa = 14.5038 psi; an absolute value gives up 1 atm = 14.696 psi.
+    expect(vesselLimit({ label: 'T', params: { MAWP: { value: 34.5, unit: 'bar' } } })!.psig).toBeCloseTo(500.38, 1);
+    expect(vesselLimit({ label: 'T', params: { MAWP: { value: 3450, unit: 'kPa' } } })!.psig).toBeCloseTo(500.38, 1);
+    expect(vesselLimit({ label: 'T', params: { MAWP: { value: 35.513, unit: 'bara' } } })!.psig).toBeCloseTo(500.38, 1);
+    expect(vesselLimit({ label: 'T', params: { burst_pressure: { value: 6.9, unit: 'MPa' } } }))
+      .toMatchObject({ basis: 'burst', psig: expect.closeTo(500.38, 1) });
+    expect(vesselLimit({ label: 'T', params: { MAWP: { value: 34.5, unit: 'furlongs' } } })).toBeNull();
+  });
+
   it('joins the two halves of a mated disconnect', () => {
     const M = {
       nodes: [n('pt1', 'PT'), n('qa', 'QD'), n('qb', 'QD'), n('pt2', 'PT')],

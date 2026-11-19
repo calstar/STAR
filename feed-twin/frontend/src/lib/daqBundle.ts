@@ -20,7 +20,7 @@
 
 import type { StandSheet } from '@pid/standSheet';
 import type { ChannelDef, Drawing } from '../api';
-import { ATMOSPHERE_PSI, PRESSURE_UNIT, isGaugeUnit } from './pressure';
+import { PSI_PA, toGaugePa, type ParamValue } from '@pid/params';
 
 export const FORMAT = 'star.stand-pid/1';
 
@@ -107,13 +107,14 @@ const VESSELS = new Set(['TANK', 'KBOTTLE', 'DEWAR']);
  */
 export const BURST_SAFETY_FACTOR = 2.0;
 
-/** A drawn pressure as gauge psi: bare psi is gauge on the drawing (ADR 0004). */
+/**
+ * A drawn pressure as gauge psi, in any unit the drawing offers: bare units
+ * are gauge on a vessel, absolute ones give up an atmosphere (ADR 0004).
+ */
 function drawnPsig(p: Param | undefined): number | null {
   if (!p || !Number.isFinite(p.value)) return null;
-  const u = p.unit.trim().toLowerCase();
-  if (u === 'psi' || isGaugeUnit(u)) return p.value;
-  if (u === PRESSURE_UNIT) return p.value - ATMOSPHERE_PSI;
-  return null;
+  const pa = toGaugePa(p as ParamValue);
+  return pa === undefined ? null : pa / PSI_PA;
 }
 
 /** A vessel's limit, gauge: its MAWP, else its burst over the factor of safety. */
