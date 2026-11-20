@@ -160,6 +160,17 @@ try {
   await call("update_pcb_stage", { taskId: pcbTask.data.id, stage: "layout", status: "open" });
   for (const stage of ["components", "schematic"])
     await call("update_pcb_stage", { taskId: pcbTask.data.id, stage, status: "done" });
+  if (isAdmin && other) {
+    // Layout became current: its person (not us, the actor) is queued a
+    // "your stage is up" email; finishing a later stage early queues nothing.
+    const queue = await call("list_email_queue");
+    const ready = (queue.ok ? queue.data : []).filter(
+      (q) => q.taskTitle === pcbTask.data.title && String(q.kind).startsWith("stage_ready:"),
+    );
+    check("marking the current stage done queues 'your stage is up' for the next stage's people",
+      ready.length === 1 && ready[0].kind === "stage_ready:layout" && ready[0].userEmail === other.email,
+      JSON.stringify(ready));
+  }
   const cur = await call("get_task", { taskId: pcbTask.data.id });
   check("get_task shows the current stage (first one open)", cur.ok && cur.data.pcb?.currentStage === "layout", cur.data?.pcb?.currentStage);
 

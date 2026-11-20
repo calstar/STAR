@@ -6,7 +6,7 @@ import { after } from "next/server";
 
 import { dateLabel, recordActivity, userLabel, usersLabel } from "@/lib/activity";
 import { prisma } from "@/lib/db";
-import { notifyAssignment } from "@/lib/notifications";
+import { notifyAssignment, notifyStageReady } from "@/lib/notifications";
 import {
   PCB_STAGES,
   PCB_STATE_LABEL,
@@ -17,6 +17,7 @@ import {
   parseAltiumUrl,
   stageAssignees,
   stageField,
+  stageHandedOff,
 } from "@/lib/pcb";
 import { getCurrentDbUser } from "@/lib/user";
 import { isValidDateInput } from "@/lib/validation";
@@ -154,6 +155,10 @@ export async function updatePcbStage(
     include: { assignees: person },
   });
   if (!old) return { error: "This task is not a PCB board." };
+  const statesBefore = await prisma.taskPcbStage.findMany({
+    where: { taskId },
+    select: { stage: true, status: true },
+  });
 
   const updated = await prisma.taskPcbStage.update({
     where: { id: old.id },
@@ -177,6 +182,23 @@ export async function updatePcbStage(
 
   if (ids !== undefined) await syncAssignees(user, task);
   if (due !== undefined || patch.status !== undefined) await syncDueDate(user, task);
+
+  // Finishing (or skipping) a stage hands the board to the next one: its
+  // people get a "your stage is up" email, batched like assignment emails.
+  if (patch.status !== undefined && old.status !== updated.status) {
+    const statesAfter = statesBefore.map((s) => (s.stage === stage ? { ...s, status: updated.status } : s));
+    const next = stageHandedOff(statesBefore, statesAfter);
+    if (next) {
+      const people = await prisma.taskPcbStage.findUniqueOrThrow({
+        where: { taskId_stage: { taskId, stage: next.stage } },
+        select: { assignees: { select: { id: true } } },
+      });
+      for (const a of people.assignees)
+        after(() =>
+          notifyStageReady({ taskId: task.id, stage: next.stage, recipientId: a.id, actorId: user.id }),
+        );
+    }
+  }
   revalidate(task.projectId);
   return {};
 }

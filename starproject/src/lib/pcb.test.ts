@@ -14,6 +14,7 @@ import {
   dueFollowsStages,
   parseAltiumUrl,
   stageAssignees,
+  stageHandedOff,
   stageMarks,
   stageSummary,
 } from "@/lib/pcb";
@@ -142,6 +143,37 @@ describe("overdue", () => {
     const st2 = stages({ components: { status: "done" }, schematic: { status: "done" }, layout: st[2] });
     const row2 = toRowData({ ...board({}, st2), projectName: "", subteamName: "", assigneeName: "" } as WorkspaceTask);
     expect(row2.pcbStage).toEqual({ label: "Layout", due: "2026-11-25" });
+  });
+});
+
+describe("stageHandedOff", () => {
+  const mark = (st: PcbStageLite[], stage: PcbStageKey, status: PcbStageState) =>
+    st.map((s) => (s.stage === stage ? { ...s, status } : s));
+
+  it("is the next stage when the current one is marked done", () => {
+    const before = stages({ components: { status: "done" } });
+    expect(stageHandedOff(before, mark(before, "schematic", "done"))?.stage).toBe("layout");
+  });
+
+  it("skips past a skipped stage to the next open one", () => {
+    const before = stages({ components: { status: "done" }, review: { status: "skipped" } });
+    const mid = mark(before, "schematic", "done");
+    expect(stageHandedOff(mid, mark(mid, "layout", "done"))?.stage).toBe("solder");
+  });
+
+  it("is the next stage when the current one is skipped", () => {
+    expect(stageHandedOff(stages(), mark(stages(), "components", "skipped"))?.stage).toBe("schematic");
+  });
+
+  it("is null when a later stage finishes early: the current stage stays", () => {
+    expect(stageHandedOff(stages(), mark(stages(), "solder", "done"))).toBeNull();
+  });
+
+  it("is null when a stage is reopened, or the last one finishes", () => {
+    const done2 = stages({ components: { status: "done" }, schematic: { status: "done" } });
+    expect(stageHandedOff(done2, mark(done2, "components", "open"))).toBeNull();
+    const last = stages(Object.fromEntries(PCB_STAGES.slice(0, 5).map((k) => [k, { status: "done" }])));
+    expect(stageHandedOff(last, mark(last, "bringup", "done"))).toBeNull();
   });
 });
 

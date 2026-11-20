@@ -68,6 +68,54 @@ export async function notifyAssignment({
 }
 
 /**
+ * Queue a "your stage is up" email: a PCB board's previous stage was marked
+ * done (or skipped) and `stage` is now current. Skipped for the person who
+ * made the change and for anyone who turned assignment emails off; batched with
+ * assignment emails by runEmailBatch(). The kind carries the stage
+ * ("stage_ready:layout").
+ */
+export async function notifyStageReady({
+  taskId,
+  stage,
+  recipientId,
+  actorId,
+}: {
+  taskId: string;
+  stage: PcbStageKey;
+  recipientId: string;
+  actorId: string;
+}): Promise<void> {
+  if (recipientId === actorId) return;
+  const task = await prisma.task.findUnique({
+    where: { id: taskId },
+    select: { id: true, title: true, projectId: true },
+  });
+  if (!task) return;
+  const settings = await getSettings(recipientId);
+  if (!settings.emailAssignments) return;
+  const actor = await prisma.user.findUnique({
+    where: { id: actorId },
+    select: { name: true, email: true, displayName: true },
+  });
+  await prisma.emailQueueItem.create({
+    data: {
+      userId: recipientId,
+      kind: `stage_ready:${stage}`,
+      taskId: task.id,
+      taskTitle: task.title,
+      projectId: task.projectId,
+      actorName: actor ? displayNameOf(actor) : null,
+    },
+  });
+}
+
+/** A queued item's stage when it is a "your stage is up" email, else null. */
+function readyStage(kind: string): PcbStageKey | null {
+  const m = /^stage_ready:(.+)$/.exec(kind);
+  return m && m[1] in PCB_STAGE_LABEL ? (m[1] as PcbStageKey) : null;
+}
+
+/**
  * Flush the assignment queue: one email per recipient covering everything queued
  * since the last run. Run every 15 minutes to conserve SES sends (100 tasks
  * assigned to someone in a window → one email).
@@ -93,35 +141,52 @@ export async function runEmailBatch(): Promise<{
   let emails = 0;
   for (const group of byUser.values()) {
     const to = group[0].user.email;
-    const rows = group.map((g) => ({
-      title: escapeHtml(g.taskTitle),
-      plain: g.taskTitle,
-      link: g.taskId && g.projectId ? taskLink(g.projectId, g.taskId) : "",
-      actor: g.actorName,
-    }));
+    // Two kinds share the batch: "assigned" and a PCB stage coming up
+    // ("stage_ready:layout"), each listed under its own heading.
+    const rows = group.map((g) => {
+      const stage = readyStage(g.kind);
+      const label = stage ? `${PCB_STAGE_LABEL[stage]} on ${g.taskTitle}` : g.taskTitle;
+      return {
+        stage,
+        title: escapeHtml(label),
+        plain: label,
+        link: g.taskId && g.projectId ? taskLink(g.projectId, g.taskId) : "",
+        actor: g.actorName,
+      };
+    });
+    const assigned = rows.filter((r) => !r.stage);
+    const ready = rows.filter((r) => r.stage);
     const subject =
-      group.length === 1
-        ? `Assigned: ${group[0].taskTitle}`
-        : `${group.length} tasks assigned to you`;
-    const html =
-      `<p>You were assigned:</p><ul>` +
-      rows
-        .map(
-          (r) =>
-            `<li><a href="${r.link}">${r.title}</a>${
-              r.actor ? ` — by ${escapeHtml(r.actor)}` : ""
-            }</li>`,
-        )
-        .join("") +
-      `</ul>`;
-    const text =
-      `You were assigned:\n` +
-      rows
-        .map(
-          (r) =>
-            `- ${r.plain}${r.actor ? ` (by ${r.actor})` : ""}\n  ${r.link}`,
-        )
-        .join("\n");
+      group.length > 1
+        ? ready.length === 0
+          ? `${group.length} tasks assigned to you`
+          : `${group.length} updates on your tasks`
+        : ready.length
+          ? `Your stage is up: ${ready[0].plain}`
+          : `Assigned: ${group[0].taskTitle}`;
+    const section = (heading: string, rs: typeof rows, by: string) =>
+      rs.length === 0
+        ? { html: "", text: "" }
+        : {
+            html:
+              `<p>${heading}</p><ul>` +
+              rs
+                .map(
+                  (r) =>
+                    `<li><a href="${r.link}">${r.title}</a>${
+                      r.actor ? ` — ${by} ${escapeHtml(r.actor)}` : ""
+                    }</li>`,
+                )
+                .join("") +
+              `</ul>`,
+            text:
+              `${heading}\n` +
+              rs.map((r) => `- ${r.plain}${r.actor ? ` (${by} ${r.actor})` : ""}\n  ${r.link}`).join("\n"),
+          };
+    const a = section("You were assigned:", assigned, "by");
+    const b = section("Your stage is up (the one before it is done):", ready, "handed on by");
+    const html = a.html + b.html;
+    const text = [a.text, b.text].filter(Boolean).join("\n\n");
 
     const ok = await sendEmail({ to, subject, html, text });
     if (ok) {

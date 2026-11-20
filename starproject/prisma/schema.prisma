@@ -229,7 +229,7 @@ model EmailQueueItem {
   id        String    @id @default(cuid())
   userId    String
   user      User      @relation(fields: [userId], references: [id])
-  kind      String // "assigned"
+  kind      String // "assigned", or "stage_ready:<stage>" when a PCB stage comes up
   taskId    String?
   taskTitle String
   projectId String?

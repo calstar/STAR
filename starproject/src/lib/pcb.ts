@@ -166,6 +166,22 @@ export function stageMarks(
   return marks;
 }
 
+/**
+ * The stage that became current because an earlier one was marked done or
+ * skipped: its people are told it is their turn. Null when the current stage
+ * didn't move forward (no change, a stage reopened, or the last one finished).
+ */
+export function stageHandedOff<S extends { stage: PcbStageKey; status: PcbStageState }>(
+  before: readonly S[],
+  after: readonly S[],
+): S | null {
+  const was = currentStage(before);
+  const now = currentStage(after);
+  if (!now) return null;
+  if (was && PCB_STAGES.indexOf(now.stage) <= PCB_STAGES.indexOf(was.stage)) return null;
+  return now;
+}
+
 /** "Layout" or "Done" (every stage done or skipped): what the card leads with. */
 export function stageSummary(pcb: { stages: readonly PcbStageLite[] }): string {
   const cur = currentStage(pcb.stages);
