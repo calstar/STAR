@@ -540,7 +540,6 @@ void setUp() {
 void tearDown() {
 }
 
-
 // ---------------------------------------------------------------------------
 // Bluetooth switch relay: SWITCH_CONFIG / SWITCH_STATUS
 // ---------------------------------------------------------------------------
@@ -573,15 +572,19 @@ void test_switch_config_roundtrip() {
 void test_switch_config_hash_follows_the_list() {
     daq::SwitchConfig a = two_switches();
     daq::SwitchConfig b = two_switches();
-    TEST_ASSERT_EQUAL_UINT32(daq::switch_config_hash(a), daq::switch_config_hash(b));
+    TEST_ASSERT_EQUAL_UINT32(daq::switch_config_hash(a),
+                             daq::switch_config_hash(b));
     b.entries[1].mac[5] ^= 1;
-    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a), daq::switch_config_hash(b));
+    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a),
+                          daq::switch_config_hash(b));
     b = two_switches();
     b.entries[1].role = 4;
-    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a), daq::switch_config_hash(b));
+    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a),
+                          daq::switch_config_hash(b));
     b = two_switches();
     b.count = 1;
-    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a), daq::switch_config_hash(b));
+    TEST_ASSERT_NOT_EQUAL(daq::switch_config_hash(a),
+                          daq::switch_config_hash(b));
 }
 
 void test_switch_config_empty_list() {
@@ -603,7 +606,8 @@ void test_switch_config_rejects_bad_packets() {
     daq::PacketHeader hdr;
     daq::SwitchConfig out;
     uint32_t hash;
-    TEST_ASSERT_FALSE(daq::parse_switch_config_packet(buf, n - 1, hdr, out, hash));  // short
+    TEST_ASSERT_FALSE(
+        daq::parse_switch_config_packet(buf, n - 1, hdr, out, hash));  // short
     uint8_t bad[128];
     memcpy(bad, buf, n);
     bad[n - 1] ^= 0xFF;  // a MAC byte changed in flight: hash no longer matches
@@ -613,12 +617,14 @@ void test_switch_config_rejects_bad_packets() {
     TEST_ASSERT_FALSE(daq::parse_switch_config_packet(bad, n, hdr, out, hash));
 
     in.count = daq::MAX_SWITCHES + 1;
-    TEST_ASSERT_EQUAL(0, daq::create_switch_config_packet(in, 0, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(
+        0, daq::create_switch_config_packet(in, 0, buf, sizeof(buf)));
     in = two_switches();
     in.entries[0].role = daq::MAX_SWITCHES;  // role out of range
     n = daq::create_switch_config_packet(in, 0, buf, sizeof(buf));
     TEST_ASSERT_FALSE(daq::parse_switch_config_packet(buf, n, hdr, out, hash));
-    TEST_ASSERT_EQUAL(0, daq::create_switch_config_packet(two_switches(), 0, buf, 10));
+    TEST_ASSERT_EQUAL(
+        0, daq::create_switch_config_packet(two_switches(), 0, buf, 10));
 }
 
 void test_switch_status_roundtrip() {
@@ -629,7 +635,8 @@ void test_switch_status_roundtrip() {
     in.age_ms = 1234;
     in.config_hash = 0xDEADBEEF;
     in.status_len = 17;
-    for (uint8_t i = 0; i < 17; ++i) in.status[i] = static_cast<uint8_t>(i * 13 + 1);
+    for (uint8_t i = 0; i < 17; ++i)
+        in.status[i] = static_cast<uint8_t>(i * 13 + 1);
 
     uint8_t buf[128];
     size_t n = daq::create_switch_status_packet(in, 55, buf, sizeof(buf));
@@ -656,7 +663,8 @@ void test_switch_status_rejects_bad_packets() {
     daq::PacketHeader hdr;
     daq::SwitchStatusReport out;
     TEST_ASSERT_TRUE(daq::parse_switch_status_packet(buf, n, hdr, out));
-    TEST_ASSERT_FALSE(daq::parse_switch_status_packet(buf, n - 1, hdr, out));  // status cut short
+    TEST_ASSERT_FALSE(daq::parse_switch_status_packet(
+        buf, n - 1, hdr, out));  // status cut short
     uint8_t bad[128];
     memcpy(bad, buf, n);
     bad[sizeof(daq::PacketHeader) + 1] = 7;  // unknown link state
@@ -665,9 +673,9 @@ void test_switch_status_rejects_bad_packets() {
     bad[sizeof(daq::PacketHeader)] = daq::MAX_SWITCHES;  // role out of range
     TEST_ASSERT_FALSE(daq::parse_switch_status_packet(bad, n, hdr, out));
     in.status_len = daq::MAX_SWITCH_STATUS_BYTES + 1;
-    TEST_ASSERT_EQUAL(0, daq::create_switch_status_packet(in, 0, buf, sizeof(buf)));
+    TEST_ASSERT_EQUAL(
+        0, daq::create_switch_status_packet(in, 0, buf, sizeof(buf)));
 }
-
 
 void test_switch_command_roundtrip() {
     daq::SwitchCommandPacket in{0xBEEF, 3, 1};
@@ -683,7 +691,8 @@ void test_switch_command_roundtrip() {
     TEST_ASSERT_EQUAL(1, out.output);
 
     TEST_ASSERT_FALSE(daq::parse_switch_command_packet(buf, n - 1, hdr, out));
-    daq::SwitchCommandPacket toggle{1, 0, 2};  // only 0 and 1: there is no "toggle"
+    daq::SwitchCommandPacket toggle{1, 0,
+                                    2};  // only 0 and 1: there is no "toggle"
     n = daq::create_switch_command_packet(toggle, 0, buf, sizeof(buf));
     TEST_ASSERT_FALSE(daq::parse_switch_command_packet(buf, n, hdr, out));
     daq::SwitchCommandPacket badRole{1, daq::MAX_SWITCHES, 0};
@@ -692,9 +701,11 @@ void test_switch_command_roundtrip() {
 }
 
 void test_switch_command_result_roundtrip() {
-    daq::SwitchCommandResultPacket in{42, 1, 0, daq::SwitchCommandResult::NO_LINK};
+    daq::SwitchCommandResultPacket in{42, 1, 0,
+                                      daq::SwitchCommandResult::NO_LINK};
     uint8_t buf[64];
-    size_t n = daq::create_switch_command_result_packet(in, 9, buf, sizeof(buf));
+    size_t n =
+        daq::create_switch_command_result_packet(in, 9, buf, sizeof(buf));
     TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 5, n);
     daq::PacketHeader hdr;
     daq::SwitchCommandResultPacket out;
@@ -703,9 +714,9 @@ void test_switch_command_result_roundtrip() {
     TEST_ASSERT_EQUAL(1, out.role);
     TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_LINK, (int)out.result);
     buf[n - 1] = 99;  // unknown result code
-    TEST_ASSERT_FALSE(daq::parse_switch_command_result_packet(buf, n, hdr, out));
+    TEST_ASSERT_FALSE(
+        daq::parse_switch_command_result_packet(buf, n, hdr, out));
 }
-
 
 void test_switch_discover_and_seen_roundtrip() {
     uint8_t buf[64];
@@ -718,7 +729,8 @@ void test_switch_discover_and_seen_roundtrip() {
     n = daq::create_switch_discover_packet(forever, 1, buf, sizeof(buf));
     TEST_ASSERT_FALSE(daq::parse_switch_discover_packet(buf, n, hdr, dout));
 
-    daq::SwitchSeenPacket s{7, {0x58, 0xCF, 0x79, 0x01, 0xAB, 0xCD}, -80}, sout{};
+    daq::SwitchSeenPacket s{7, {0x58, 0xCF, 0x79, 0x01, 0xAB, 0xCD}, -80},
+        sout{};
     n = daq::create_switch_seen_packet(s, 1, buf, sizeof(buf));
     TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 8, n);
     TEST_ASSERT_TRUE(daq::parse_switch_seen_packet(buf, n, hdr, sout));

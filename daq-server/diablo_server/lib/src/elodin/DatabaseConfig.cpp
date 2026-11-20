@@ -53,7 +53,7 @@ bool DatabaseConfig::register_environmental_tables(ElodinClient& client,
 }
 
 bool DatabaseConfig::register_switch_tables(ElodinClient& client,
-                                           const std::vector<uint8_t>& roles) {
+                                            const std::vector<uint8_t>& roles) {
     struct F {
         uint16_t off, len;
         PrimType (*type)();
@@ -94,7 +94,8 @@ bool DatabaseConfig::register_switch_tables(ElodinClient& client,
         };
         VTableBuilder rb;
         for (const auto& f : results)
-            rb.push_field(raw_field(f.off, f.len, schema(f.type(), {}, component(prefix + f.name))));
+            rb.push_field(
+                raw_field(f.off, f.len, schema(f.type(), {}, component(prefix + f.name))));
         if (!send_msg(client, VTableMsg{.id = {0x28, role}, .vtable = rb.build()})) {
             ok = false;
             continue;

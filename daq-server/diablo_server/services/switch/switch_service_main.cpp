@@ -18,8 +18,8 @@
  */
 
 #include <arpa/inet.h>
-#include <poll.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -36,7 +36,9 @@
 
 namespace {
 std::atomic<bool> g_running{true};
-void on_signal(int) { g_running = false; }
+void on_signal(int) {
+    g_running = false;
+}
 
 uint32_t now_ms() {
     using namespace std::chrono;
@@ -76,9 +78,8 @@ int main(int argc, char* argv[]) {
     const daq::SwitchConfig wire = fsw::config::switch_config_for(relay);
     char hash[9];
     std::snprintf(hash, sizeof hash, "%08x", daq::switch_config_hash(wire));
-    std::cout << "[SwitchService] " << relay.roles.size() << " switch(es), list " << hash
-              << ", to " << env->ip << ":" << env->send_port << " every " << relay.interval_ms
-              << " ms\n";
+    std::cout << "[SwitchService] " << relay.roles.size() << " switch(es), list " << hash << ", to "
+              << env->ip << ":" << env->send_port << " every " << relay.interval_ms << " ms\n";
     for (const auto& r : relay.roles) {
         char mac[18];
         std::snprintf(mac, sizeof mac, "%02x:%02x:%02x:%02x:%02x:%02x", r.mac[0], r.mac[1],
@@ -117,8 +118,7 @@ int main(int argc, char* argv[]) {
         if (now_ms() - last_config >= relay.interval_ms) {
             last_config = now_ms();
             size_t n = daq::create_switch_config_packet(wire, last_config, buf, sizeof buf);
-            if (n > 0 &&
-                sendto(sock, buf, n, 0, reinterpret_cast<sockaddr*>(&dst), sizeof dst) < 0)
+            if (n > 0 && sendto(sock, buf, n, 0, reinterpret_cast<sockaddr*>(&dst), sizeof dst) < 0)
                 perror("[SwitchService] sendto");
         }
 
@@ -145,8 +145,8 @@ int main(int argc, char* argv[]) {
             continue;
         }
         size_t n = daq::create_switch_command_packet(cmd, now_ms(), buf, sizeof buf);
-        bool sent = n > 0 &&
-                    sendto(sock, buf, n, 0, reinterpret_cast<sockaddr*>(&dst), sizeof dst) >= 0;
+        bool sent =
+            n > 0 && sendto(sock, buf, n, 0, reinterpret_cast<sockaddr*>(&dst), sizeof dst) >= 0;
         std::cout << "[SwitchService] command " << cmd.command_id << ": role " << int(cmd.role)
                   << (cmd.output ? " ARM" : " DISARM") << (sent ? "" : " (send failed)") << "\n";
     }

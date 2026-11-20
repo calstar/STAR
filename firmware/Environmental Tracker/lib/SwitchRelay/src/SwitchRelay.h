@@ -22,9 +22,15 @@ public:
     // how many MACs were dropped from the list; their links must be closed
     // (dropped(i) lists them until the next applyConfig).
     size_t applyConfig(const daq::SwitchConfig &config, uint32_t hash);
-    bool hasConfig() const { return hasConfig_; }
-    uint32_t configHash() const { return hash_; }
-    const uint8_t *dropped(size_t i) const { return dropped_[i]; }
+    bool hasConfig() const {
+        return hasConfig_;
+    }
+    uint32_t configHash() const {
+        return hash_;
+    }
+    const uint8_t *dropped(size_t i) const {
+        return dropped_[i];
+    }
 
     // Role a MAC is listed under, or -1.
     int roleFor(const uint8_t mac[6]) const;
@@ -32,28 +38,31 @@ public:
     bool shouldConnect(const uint8_t mac[6]) const;
     // Scan only while some listed switch is not connected.
     bool wantsScan() const;
-    const uint8_t *macFor(uint8_t role) const;  // nullptr if the role is unlisted
+    const uint8_t *macFor(
+        uint8_t role) const;  // nullptr if the role is unlisted
 
     void onConnected(const uint8_t mac[6]);
     void onDisconnected(const uint8_t mac[6]);
     void onRssi(const uint8_t mac[6], int8_t rssi);
     // A status notification (or read). Kept untouched; too long is cut to fit.
-    void onStatus(const uint8_t mac[6], const uint8_t *bytes, size_t len, uint32_t nowMs);
+    void onStatus(const uint8_t mac[6], const uint8_t *bytes, size_t len,
+                  uint32_t nowMs);
     bool connected(uint8_t role) const;
 
     // Reports due now: each listed role whose switch sent something new since
     // its last report, or whose last report is REPORT_PERIOD_MS old. Writes at
     // most `max` and marks them sent.
     static constexpr uint32_t REPORT_PERIOD_MS = 1000;
-    size_t collectReports(uint32_t nowMs, daq::SwitchStatusReport *out, size_t max);
+    size_t collectReports(uint32_t nowMs, daq::SwitchStatusReport *out,
+                          size_t max);
 
     // Commands. The only way anything is ever written to a switch: the BLE task
     // writes exactly what takeCommand() hands it, and nothing else in the board
     // produces a write.
     //
     // A command from the DAQ: rejected at once (no config, unknown role, link
-    // down, relay busy) or queued for the BLE task. Either way exactly one result
-    // follows. Nothing waits for a link to come back.
+    // down, relay busy) or queued for the BLE task. Either way exactly one
+    // result follows. Nothing waits for a link to come back.
     void submitCommand(const daq::SwitchCommandPacket &cmd);
     // Next command to write, with its switch's MAC. A command whose link went
     // down since it was queued is answered NO_LINK here and skipped.
@@ -91,7 +100,8 @@ private:
     Slot *find(const uint8_t mac[6]);
     const Slot *find(const uint8_t mac[6]) const;
 
-    void result(const daq::SwitchCommandPacket &cmd, daq::SwitchCommandResult r);
+    void result(const daq::SwitchCommandPacket &cmd,
+                daq::SwitchCommandResult r);
 
     Slot slots_[daq::MAX_SWITCHES];  // indexed by role
     bool discovering_ = false;
@@ -101,7 +111,8 @@ private:
     uint8_t nSeen_ = 0;
     struct Queued {
         daq::SwitchCommandPacket cmd;
-        uint8_t mac[6];  // the switch it was accepted for; a new list can't redirect it
+        uint8_t mac[6];  // the switch it was accepted for; a new list can't
+                         // redirect it
     };
     Queued queue_[MAX_QUEUED];
     size_t queued_ = 0;

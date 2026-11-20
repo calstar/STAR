@@ -12,7 +12,8 @@ static const uint8_t A[6] = {0x58, 0xCF, 0x79, 0x01, 0x3F, 0x2A};
 static const uint8_t B[6] = {0x58, 0xCF, 0x79, 0x01, 0x11, 0x22};
 static const uint8_t STRANGER[6] = {0x58, 0xCF, 0x79, 0x09, 0x09, 0x09};
 
-static daq::SwitchConfig list(std::initializer_list<std::pair<uint8_t, const uint8_t *>> items) {
+static daq::SwitchConfig list(
+    std::initializer_list<std::pair<uint8_t, const uint8_t *>> items) {
     daq::SwitchConfig c;
     for (auto &it : items) {
         c.entries[c.count].role = it.first;
@@ -22,10 +23,14 @@ static daq::SwitchConfig list(std::initializer_list<std::pair<uint8_t, const uin
     return c;
 }
 
-static void apply(SwitchRelay &r, const daq::SwitchConfig &c) { r.applyConfig(c, daq::switch_config_hash(c)); }
+static void apply(SwitchRelay &r, const daq::SwitchConfig &c) {
+    r.applyConfig(c, daq::switch_config_hash(c));
+}
 
-void setUp() {}
-void tearDown() {}
+void setUp() {
+}
+void tearDown() {
+}
 
 void test_no_config_connects_to_nothing() {
     SwitchRelay r;
@@ -61,7 +66,9 @@ void test_connect_stops_scanning_and_reports_at_once() {
     r.onConnected(A);
     TEST_ASSERT_FALSE(r.wantsScan());
     TEST_ASSERT_FALSE(r.shouldConnect(A));
-    TEST_ASSERT_EQUAL(1, r.collectReports(5, out, 5));  // link change: no waiting for the 1 s tick
+    TEST_ASSERT_EQUAL(
+        1, r.collectReports(5, out,
+                            5));  // link change: no waiting for the 1 s tick
     TEST_ASSERT_EQUAL((int)daq::SwitchLink::UP, (int)out[0].link);
 }
 
@@ -73,7 +80,8 @@ void test_status_passes_through_and_repeats_once_a_second() {
     r.collectReports(0, out, 5);
 
     uint8_t st[17];
-    for (int i = 0; i < 17; ++i) st[i] = static_cast<uint8_t>(0xA0 + i);
+    for (int i = 0; i < 17; ++i)
+        st[i] = static_cast<uint8_t>(0xA0 + i);
     r.onStatus(A, st, 17, 100);
     r.onRssi(A, -64);
     TEST_ASSERT_EQUAL(1, r.collectReports(100, out, 5));
@@ -82,7 +90,8 @@ void test_status_passes_through_and_repeats_once_a_second() {
     TEST_ASSERT_EQUAL(0, out[0].age_ms);
     TEST_ASSERT_EQUAL(-64, out[0].rssi);
 
-    TEST_ASSERT_EQUAL(0, r.collectReports(600, out, 5));  // nothing new, not yet a second
+    TEST_ASSERT_EQUAL(
+        0, r.collectReports(600, out, 5));  // nothing new, not yet a second
     TEST_ASSERT_EQUAL(1, r.collectReports(1100, out, 5));
     TEST_ASSERT_EQUAL(1000, out[0].age_ms);
 }
@@ -94,9 +103,11 @@ void test_same_config_again_changes_nothing() {
     r.onConnected(A);
     daq::SwitchStatusReport out[5];
     r.collectReports(0, out, 5);
-    TEST_ASSERT_EQUAL(0, r.applyConfig(c, daq::switch_config_hash(c)));  // the 1 Hz resend
+    TEST_ASSERT_EQUAL(
+        0, r.applyConfig(c, daq::switch_config_hash(c)));  // the 1 Hz resend
     TEST_ASSERT_TRUE(r.connected(0));
-    TEST_ASSERT_EQUAL(0, r.collectReports(10, out, 5));  // and no burst of reports
+    TEST_ASSERT_EQUAL(0,
+                      r.collectReports(10, out, 5));  // and no burst of reports
 }
 
 void test_new_list_keeps_links_moves_roles_and_drops_the_unlisted() {
@@ -107,7 +118,8 @@ void test_new_list_keeps_links_moves_roles_and_drops_the_unlisted() {
     uint8_t st[17] = {1, 1, 3};
     r.onStatus(A, st, 17, 50);
 
-    size_t dropped = r.applyConfig(list({{4, A}}), daq::switch_config_hash(list({{4, A}})));
+    size_t dropped =
+        r.applyConfig(list({{4, A}}), daq::switch_config_hash(list({{4, A}})));
     TEST_ASSERT_EQUAL(1, dropped);
     TEST_ASSERT_EQUAL_MEMORY(B, r.dropped(0), 6);
     TEST_ASSERT_EQUAL(4, r.roleFor(A));
@@ -161,10 +173,10 @@ void test_oversized_status_is_cut_and_max_is_honoured() {
     daq::SwitchStatusReport out[1];
     TEST_ASSERT_EQUAL(1, r.collectReports(0, out, 1));
     TEST_ASSERT_EQUAL(daq::MAX_SWITCH_STATUS_BYTES, out[0].status_len);
-    TEST_ASSERT_EQUAL(1, r.collectReports(0, out, 1));  // the other role next time
+    TEST_ASSERT_EQUAL(1,
+                      r.collectReports(0, out, 1));  // the other role next time
     TEST_ASSERT_EQUAL(1, out[0].role);
 }
-
 
 // ---- commands --------------------------------------------------------------
 
@@ -179,21 +191,24 @@ static daq::SwitchCommandResult only_result(SwitchRelay &r, uint16_t id) {
 void test_command_without_config_is_refused() {
     SwitchRelay r;
     r.submitCommand({1, 0, 1});
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_CONFIG, (int)only_result(r, 1));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_CONFIG,
+                      (int)only_result(r, 1));
 }
 
 void test_command_to_unlisted_role_is_refused() {
     SwitchRelay r;
     apply(r, list({{0, A}}));
     r.submitCommand({2, 3, 1});
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::UNKNOWN_ROLE, (int)only_result(r, 2));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::UNKNOWN_ROLE,
+                      (int)only_result(r, 2));
 }
 
 void test_command_with_link_down_is_refused_not_queued() {
     SwitchRelay r;
     apply(r, list({{0, A}}));
     r.submitCommand({3, 0, 1});
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_LINK, (int)only_result(r, 3));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_LINK,
+                      (int)only_result(r, 3));
     r.onConnected(A);  // the link coming back must not deliver it late
     daq::SwitchCommandPacket c;
     uint8_t mac[6];
@@ -206,7 +221,8 @@ void test_connected_command_is_written_once_and_answered() {
     r.onConnected(A);
     r.submitCommand({4, 0, 1});
     daq::SwitchCommandResultPacket res[4];
-    TEST_ASSERT_EQUAL(0, r.collectResults(res, 4));  // no answer until it's written
+    TEST_ASSERT_EQUAL(
+        0, r.collectResults(res, 4));  // no answer until it's written
 
     daq::SwitchCommandPacket c;
     uint8_t mac[6];
@@ -216,12 +232,14 @@ void test_connected_command_is_written_once_and_answered() {
     TEST_ASSERT_FALSE(r.takeCommand(c, mac));  // once
     r.finishCommand(c, true);
     TEST_ASSERT_EQUAL(1, r.collectResults(res, 4));
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::WRITTEN, (int)res[0].result);
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::WRITTEN,
+                      (int)res[0].result);
     TEST_ASSERT_EQUAL(1, res[0].output);
     r.submitCommand({5, 0, 0});
     TEST_ASSERT_TRUE(r.takeCommand(c, mac));
     r.finishCommand(c, false);
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::WRITE_FAILED, (int)only_result(r, 5));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::WRITE_FAILED,
+                      (int)only_result(r, 5));
 }
 
 void test_link_lost_before_the_write_answers_no_link() {
@@ -233,7 +251,8 @@ void test_link_lost_before_the_write_answers_no_link() {
     daq::SwitchCommandPacket c;
     uint8_t mac[6];
     TEST_ASSERT_FALSE(r.takeCommand(c, mac));
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_LINK, (int)only_result(r, 6));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::NO_LINK,
+                      (int)only_result(r, 6));
 }
 
 void test_new_list_cannot_redirect_a_queued_command() {
@@ -246,25 +265,29 @@ void test_new_list_cannot_redirect_a_queued_command() {
     daq::SwitchCommandPacket c;
     uint8_t mac[6];
     TEST_ASSERT_FALSE(r.takeCommand(c, mac));
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::UNKNOWN_ROLE, (int)only_result(r, 7));
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::UNKNOWN_ROLE,
+                      (int)only_result(r, 7));
 }
 
 void test_full_queue_and_bad_output_are_refused() {
     SwitchRelay r;
     apply(r, list({{0, A}}));
     r.onConnected(A);
-    for (uint16_t i = 0; i < SwitchRelay::MAX_QUEUED; ++i) r.submitCommand({i, 0, 1});
+    for (uint16_t i = 0; i < SwitchRelay::MAX_QUEUED; ++i)
+        r.submitCommand({i, 0, 1});
     r.submitCommand({99, 0, 1});
     r.submitCommand({100, 0, 2});
     daq::SwitchCommandResultPacket res[4];
     TEST_ASSERT_EQUAL(2, r.collectResults(res, 4));
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::BAD_COMMAND, (int)res[0].result);
-    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::BAD_COMMAND, (int)res[1].result);
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::BAD_COMMAND,
+                      (int)res[0].result);
+    TEST_ASSERT_EQUAL((int)daq::SwitchCommandResult::BAD_COMMAND,
+                      (int)res[1].result);
 }
 
-// The board never writes on its own: through config, connects, statuses, lost links,
-// reconnects (an env board reboot looks like this), new lists and reports, nothing is
-// ever handed to the BLE task to write.
+// The board never writes on its own: through config, connects, statuses, lost
+// links, reconnects (an env board reboot looks like this), new lists and
+// reports, nothing is ever handed to the BLE task to write.
 void test_nothing_is_written_without_a_command() {
     SwitchRelay r;
     daq::SwitchCommandPacket c;
@@ -286,13 +309,14 @@ void test_nothing_is_written_without_a_command() {
     TEST_ASSERT_EQUAL(0, r.collectResults(res, 4));
 }
 
+// ---- five switches
+// -----------------------------------------------------------
 
-// ---- five switches -----------------------------------------------------------
-
-static const uint8_t M[5][6] = {
-    {0x58, 0xCF, 0x79, 0x01, 0x00, 0x01}, {0x58, 0xCF, 0x79, 0x01, 0x00, 0x02},
-    {0x58, 0xCF, 0x79, 0x01, 0x00, 0x03}, {0x58, 0xCF, 0x79, 0x01, 0x00, 0x04},
-    {0x58, 0xCF, 0x79, 0x01, 0x00, 0x05}};
+static const uint8_t M[5][6] = {{0x58, 0xCF, 0x79, 0x01, 0x00, 0x01},
+                                {0x58, 0xCF, 0x79, 0x01, 0x00, 0x02},
+                                {0x58, 0xCF, 0x79, 0x01, 0x00, 0x03},
+                                {0x58, 0xCF, 0x79, 0x01, 0x00, 0x04},
+                                {0x58, 0xCF, 0x79, 0x01, 0x00, 0x05}};
 
 static daq::SwitchConfig five() {
     daq::SwitchConfig c;
@@ -323,22 +347,28 @@ void test_five_switches_scan_until_the_last_one_is_up() {
 void test_one_lost_link_is_reported_at_once_and_alone() {
     SwitchRelay r;
     apply(r, five());
-    for (int i = 0; i < 5; ++i) r.onConnected(M[i]);
+    for (int i = 0; i < 5; ++i)
+        r.onConnected(M[i]);
     daq::SwitchStatusReport out[5];
     TEST_ASSERT_EQUAL(5, r.collectReports(0, out, 5));
     r.onDisconnected(M[3]);
-    TEST_ASSERT_EQUAL(1, r.collectReports(10, out, 5));  // not waiting for the 1 s tick
+    TEST_ASSERT_EQUAL(
+        1, r.collectReports(10, out, 5));  // not waiting for the 1 s tick
     TEST_ASSERT_EQUAL(3, out[0].role);
     TEST_ASSERT_EQUAL((int)daq::SwitchLink::DOWN, (int)out[0].link);
-    TEST_ASSERT_EQUAL(5, r.collectReports(1010, out, 5));  // then every role, every second
+    TEST_ASSERT_EQUAL(
+        5, r.collectReports(1010, out, 5));  // then every role, every second
     for (int i = 0; i < 5; ++i)
-        TEST_ASSERT_EQUAL(i == 3 ? (int)daq::SwitchLink::DOWN : (int)daq::SwitchLink::UP, (int)out[i].link);
+        TEST_ASSERT_EQUAL(i == 3 ? (int)daq::SwitchLink::DOWN
+                                 : (int)daq::SwitchLink::UP,
+                          (int)out[i].link);
 }
 
 void test_commands_reach_only_their_own_switch() {
     SwitchRelay r;
     apply(r, five());
-    for (int i = 0; i < 5; ++i) r.onConnected(M[i]);
+    for (int i = 0; i < 5; ++i)
+        r.onConnected(M[i]);
     r.submitCommand({1, 4, 1});
     r.submitCommand({2, 0, 0});
     daq::SwitchCommandPacket c;
@@ -350,8 +380,8 @@ void test_commands_reach_only_their_own_switch() {
     TEST_ASSERT_EQUAL_MEMORY(M[0], mac, 6);
 }
 
-
-// ---- find switches -----------------------------------------------------------
+// ---- find switches
+// -----------------------------------------------------------
 
 void test_discovery_lists_only_unlisted_switches_and_ends() {
     SwitchRelay r;
@@ -362,18 +392,20 @@ void test_discovery_lists_only_unlisted_switches_and_ends() {
 
     r.startDiscovery(1000, 10000);
     TEST_ASSERT_TRUE(r.discovering(1000));
-    r.onSeen(A, -50, 1100);         // listed: not "found"
+    r.onSeen(A, -50, 1100);  // listed: not "found"
     r.onSeen(STRANGER, -70, 1200);
     r.onSeen(STRANGER, -65, 1300);  // again: same slot, newer RSSI
     TEST_ASSERT_EQUAL(1, r.collectSeen(1300, out, 8));
     TEST_ASSERT_EQUAL(0, out[0].slot);
     TEST_ASSERT_EQUAL_MEMORY(STRANGER, out[0].mac, 6);
     TEST_ASSERT_EQUAL(-65, out[0].rssi);
-    TEST_ASSERT_EQUAL(0, r.collectSeen(1500, out, 8));   // nothing new, not a second yet
-    TEST_ASSERT_EQUAL(1, r.collectSeen(2300, out, 8));   // repeated every second
-    TEST_ASSERT_FALSE(r.shouldConnect(STRANGER));        // never connected to
+    TEST_ASSERT_EQUAL(
+        0, r.collectSeen(1500, out, 8));  // nothing new, not a second yet
+    TEST_ASSERT_EQUAL(1, r.collectSeen(2300, out, 8));  // repeated every second
+    TEST_ASSERT_FALSE(r.shouldConnect(STRANGER));       // never connected to
     TEST_ASSERT_FALSE(r.discovering(11000));
-    TEST_ASSERT_EQUAL(1, r.collectSeen(11000, out, 8));  // last report as it ends
+    TEST_ASSERT_EQUAL(1,
+                      r.collectSeen(11000, out, 8));  // last report as it ends
     TEST_ASSERT_EQUAL(0, r.collectSeen(12500, out, 8));
     r.onSeen(B, -60, 11500);
     TEST_ASSERT_EQUAL(0, r.collectSeen(13000, out, 8));

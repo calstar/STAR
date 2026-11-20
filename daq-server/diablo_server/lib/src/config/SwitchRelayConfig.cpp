@@ -134,8 +134,9 @@ SwitchRelayConfig parse_switch_relay(const toml::table& root) {
             c.roles.push_back(sr);
         }
     }
-    std::sort(c.roles.begin(), c.roles.end(),
-              [](const SwitchRole& a, const SwitchRole& b) { return a.role < b.role; });
+    std::sort(c.roles.begin(), c.roles.end(), [](const SwitchRole& a, const SwitchRole& b) {
+        return a.role < b.role;
+    });
     return c;
 }
 

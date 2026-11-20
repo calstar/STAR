@@ -39,8 +39,16 @@ int main() {
     auto m = fsw::streams::make_switch_status_message(r, 123456789ULL);
     uint8_t row[fsw::streams::SwitchStatusMessage::nbytes()];
     m.serialize(row);
-    auto u16 = [&](int o) { uint16_t v; std::memcpy(&v, row + o, 2); return v; };
-    auto u32 = [&](int o) { uint32_t v; std::memcpy(&v, row + o, 4); return v; };
+    auto u16 = [&](int o) {
+        uint16_t v;
+        std::memcpy(&v, row + o, 2);
+        return v;
+    };
+    auto u32 = [&](int o) {
+        uint32_t v;
+        std::memcpy(&v, row + o, 4);
+        return v;
+    };
     int16_t cur;
     std::memcpy(&cur, row + 22, 2);
     uint64_t ts;

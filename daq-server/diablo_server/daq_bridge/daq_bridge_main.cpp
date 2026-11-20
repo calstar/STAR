@@ -23,10 +23,10 @@
 #include "comms/messages/board/BoardHeartbeatMessage.hpp"
 #include "comms/messages/sensor/CalibratedSensorMessages.hpp"
 #include "comms/messages/sensor/EnvironmentalMessage.hpp"
-#include "streams/SwitchStatusMessage.hpp"
 #include "comms/messages/sensor/SensorMessages.hpp"
 #include "daq-protocol.h"
 #include "fsw/BoardTypeWire.hpp"
+#include "streams/SwitchStatusMessage.hpp"
 
 namespace {
 constexpr uint8_t SERVER_HEARTBEAT_PACKET_TYPE = 2;
@@ -695,8 +695,8 @@ int main(int argc, char* argv[]) {
                         std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::system_clock::now().time_since_epoch())
                             .count();
-                    const auto msg = fsw::streams::make_switch_status_message(sw->report,
-                                                                              timestamp_ns);
+                    const auto msg =
+                        fsw::streams::make_switch_status_message(sw->report, timestamp_ns);
                     if (elodin_connected && elodin_client.is_connected() &&
                         elodin_client.publish({0x27, sw->report.role}, msg))
                         ++elodin_publish_count;
@@ -731,7 +731,8 @@ int main(int argc, char* argv[]) {
                         std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::system_clock::now().time_since_epoch())
                             .count();
-                    const auto msg = fsw::streams::make_switch_seen_message(seen->seen, timestamp_ns);
+                    const auto msg =
+                        fsw::streams::make_switch_seen_message(seen->seen, timestamp_ns);
                     if (elodin_connected && elodin_client.is_connected() &&
                         elodin_client.publish({0x29, seen->seen.slot}, msg))
                         ++elodin_publish_count;

@@ -28,8 +28,8 @@ inline SwitchStatusMessage make_switch_status_message(const daq::SwitchStatusRep
                                                       uint64_t timestamp_ns) {
     using daq::bt_switch::StatusPacket;
     StatusPacket st{};
-    const bool valid = r.status_len >= sizeof(StatusPacket) &&
-                       r.status[0] == daq::bt_switch::STATUS_VERSION;
+    const bool valid =
+        r.status_len >= sizeof(StatusPacket) && r.status[0] == daq::bt_switch::STATUS_VERSION;
     if (valid)
         std::memcpy(&st, r.status, sizeof st);
     return SwitchStatusMessage(timestamp_ns, static_cast<uint8_t>(r.link), r.rssi, r.age_ms,

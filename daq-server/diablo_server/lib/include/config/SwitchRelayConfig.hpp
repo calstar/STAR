@@ -16,19 +16,19 @@ struct BoardConfig;
 /** One Bluetooth switch, from [switch_roles.<key>]. The role index is what goes on the wire;
  *  the name never leaves the server. */
 struct SwitchRole {
-    std::string key;                 // the TOML key, e.g. "main_altimeter"
-    uint8_t role = 0;                // 0..daq::MAX_SWITCHES-1
-    std::string name;                // "Main altimeter"
-    std::array<uint8_t, 6> mac{};    // most significant byte first, as printed
+    std::string key;               // the TOML key, e.g. "main_altimeter"
+    uint8_t role = 0;              // 0..daq::MAX_SWITCHES-1
+    std::string name;              // "Main altimeter"
+    std::array<uint8_t, 6> mac{};  // most significant byte first, as printed
 };
 
 /** [switch_service] + [switch_roles.*]: the switches the environmental board relays.
  *  Problems land in `errors`; switch_service refuses to send a list with any. */
 struct SwitchRelayConfig {
     bool enabled = false;
-    uint32_t interval_ms = 1000;  // SWITCH_CONFIG resend period
-    std::string env_board;        // key of the [boards.<key>] that relays them
-    uint16_t command_port = 8094; // loopback UDP the backend sends operator commands to
+    uint32_t interval_ms = 1000;    // SWITCH_CONFIG resend period
+    std::string env_board;          // key of the [boards.<key>] that relays them
+    uint16_t command_port = 8094;   // loopback UDP the backend sends operator commands to
     std::vector<SwitchRole> roles;  // sorted by role
     std::vector<std::string> errors;
 };

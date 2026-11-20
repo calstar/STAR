@@ -9,15 +9,15 @@
 //
 // NOTE: distinct from the unrelated legacy global `class Config` in lib/include/Config.h.
 
-#include "config/SwitchRelayConfig.hpp"
 #include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "config/LoadActiveBoards.hpp"  // ActiveBoardKind, PtInterface, PtBoardConfig, BoardChannels
-#include "config/T7Config.hpp"          // T7Board
-#include "time/BoardClockSync.hpp"      // fsw::time::TimeSyncConfig
+#include "config/SwitchRelayConfig.hpp"
+#include "config/T7Config.hpp"      // T7Board
+#include "time/BoardClockSync.hpp"  // fsw::time::TimeSyncConfig
 
 namespace fsw {
 namespace config {

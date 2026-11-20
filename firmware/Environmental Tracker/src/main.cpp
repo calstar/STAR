@@ -34,7 +34,8 @@ static bool bme_ok = false;
 static uint8_t pkt_buf[96];
 
 static void send_to_server(const uint8_t *buf, size_t n) {
-    if (n == 0) return;
+    if (n == 0)
+        return;
     udp.beginPacket(server_ip, ENV_SERVER_PORT);
     udp.write(buf, n);
     udp.endPacket();
@@ -44,8 +45,9 @@ static void send_to_server(const uint8_t *buf, size_t n) {
 static void report(const char *msg) {
     Serial.print(msg);
     uint8_t buf[96];
-    send_to_server(buf, daq::create_log_packet(0, reinterpret_cast<const uint8_t *>(msg),
-                                               strlen(msg), millis(), buf, sizeof(buf)));
+    send_to_server(
+        buf, daq::create_log_packet(0, reinterpret_cast<const uint8_t *>(msg),
+                                    strlen(msg), millis(), buf, sizeof(buf)));
 }
 
 void setup() {
@@ -113,8 +115,8 @@ void loop() {
     ota_server.poll();
     StarOTA::printTestMessage();
 
-    // Receive UDP: SWITCH_CONFIG / SWITCH_COMMAND for the relay, SERVER_HEARTBEAT logged,
-    // everything else discarded
+    // Receive UDP: SWITCH_CONFIG / SWITCH_COMMAND for the relay,
+    // SERVER_HEARTBEAT logged, everything else discarded
     int pkt_size = udp.parsePacket();
     if (pkt_size > 0) {
         int bytes_read = udp.read(pkt_buf, sizeof(pkt_buf));
@@ -123,20 +125,26 @@ void loop() {
             daq::PacketHeader hdr;
             daq::SwitchConfig cfg;
             uint32_t hash;
-            if (daq::parse_switch_config_packet(pkt_buf, bytes_read, hdr, cfg, hash))
-                switch_link::applyConfig(cfg, hash);  // no-op when the hash is the one held
+            if (daq::parse_switch_config_packet(pkt_buf, bytes_read, hdr, cfg,
+                                                hash))
+                switch_link::applyConfig(
+                    cfg, hash);  // no-op when the hash is the one held
         } else if (bytes_read > 0 && static_cast<daq::PacketType>(pkt_buf[0]) ==
                                          daq::PacketType::SWITCH_COMMAND) {
             daq::PacketHeader hdr;
             daq::SwitchCommandPacket cmd;
-            if (daq::parse_switch_command_packet(pkt_buf, bytes_read, hdr, cmd)) {
+            if (daq::parse_switch_command_packet(pkt_buf, bytes_read, hdr,
+                                                 cmd)) {
                 if (switch_link::running()) {
                     switch_link::submitCommand(cmd);
-                } else {  // still answer: no Bluetooth means no link to anything
-                    daq::SwitchCommandResultPacket res{cmd.command_id, cmd.role, cmd.output,
-                                                       daq::SwitchCommandResult::NO_LINK};
-                    send_to_server(pkt_buf, daq::create_switch_command_result_packet(
-                                                res, millis(), pkt_buf, sizeof(pkt_buf)));
+                } else {  // still answer: no Bluetooth means no link to
+                          // anything
+                    daq::SwitchCommandResultPacket res{
+                        cmd.command_id, cmd.role, cmd.output,
+                        daq::SwitchCommandResult::NO_LINK};
+                    send_to_server(
+                        pkt_buf, daq::create_switch_command_result_packet(
+                                     res, millis(), pkt_buf, sizeof(pkt_buf)));
                 }
             }
         } else if (bytes_read > 0 && static_cast<daq::PacketType>(pkt_buf[0]) ==
@@ -146,7 +154,7 @@ void loop() {
             if (daq::parse_switch_discover_packet(pkt_buf, bytes_read, hdr, d))
                 switch_link::startDiscovery(d.duration_s * 1000u);
         } else if (bytes_read > 0 && static_cast<daq::PacketType>(pkt_buf[0]) ==
-                                  daq::PacketType::SERVER_HEARTBEAT) {
+                                         daq::PacketType::SERVER_HEARTBEAT) {
             daq::PacketHeader hdr;
             daq::ServerHeartbeatPacket data;
             if (daq::parse_server_heartbeat_packet(pkt_buf, bytes_read, hdr,
@@ -189,24 +197,26 @@ void loop() {
         Serial.printf("ENV: %.2f C  %lu Pa  %.2f %%RH\n", temp, press, hum);
     }
 
-    // Switch status: on every notification, and at least once a second per switch
+    // Switch status: on every notification, and at least once a second per
+    // switch
     daq::SwitchStatusReport reports[daq::MAX_SWITCHES];
     size_t nrep = switch_link::collectReports(now, reports, daq::MAX_SWITCHES);
     for (size_t i = 0; i < nrep; ++i)
-        send_to_server(pkt_buf, daq::create_switch_status_packet(reports[i], now, pkt_buf,
-                                                                 sizeof(pkt_buf)));
+        send_to_server(pkt_buf, daq::create_switch_status_packet(
+                                    reports[i], now, pkt_buf, sizeof(pkt_buf)));
     daq::SwitchCommandResultPacket results[daq::MAX_SWITCHES];
     size_t nres = switch_link::collectResults(results, daq::MAX_SWITCHES);
     for (size_t i = 0; i < nres; ++i)
-        send_to_server(pkt_buf, daq::create_switch_command_result_packet(results[i], now, pkt_buf,
-                                                                         sizeof(pkt_buf)));
+        send_to_server(pkt_buf, daq::create_switch_command_result_packet(
+                                    results[i], now, pkt_buf, sizeof(pkt_buf)));
     daq::SwitchSeenPacket seen[daq::MAX_SEEN_SWITCHES];
     size_t nseen = switch_link::collectSeen(now, seen, daq::MAX_SEEN_SWITCHES);
     for (size_t i = 0; i < nseen; ++i)
-        send_to_server(pkt_buf, daq::create_switch_seen_packet(seen[i], now, pkt_buf,
-                                                               sizeof(pkt_buf)));
+        send_to_server(pkt_buf, daq::create_switch_seen_packet(
+                                    seen[i], now, pkt_buf, sizeof(pkt_buf)));
     static unsigned long last_ble_report = 0;
-    if (!switch_link::running() && now - last_ble_report >= ENV_BME_RETRY_INTERVAL_MS) {
+    if (!switch_link::running() &&
+        now - last_ble_report >= ENV_BME_RETRY_INTERVAL_MS) {
         last_ble_report = now;
         report("Bluetooth not running; no switch relay\n");
     }
