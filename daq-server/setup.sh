@@ -221,10 +221,9 @@ if [ "$DO_HOOK" = "1" ]; then
   cat <<'EOF'
   The pre-push hook at daq-server/githooks/pre-push runs ./format.sh before
   every push. If formatting changes anything the push is blocked so you can
-  stage + commit the fixes — catching format failures locally instead of CI.
+  stage + commit the fixes — catching format failures before they are pushed.
 
-  Note: local convenience only. Real enforcement is GitHub branch protection
-  requiring the CI format-check job to pass before merge.
+  Note: local convenience only. CI does not check formatting.
 
   Enable:            git config core.hooksPath daq-server/githooks
   Disable later:     git config --unset core.hooksPath

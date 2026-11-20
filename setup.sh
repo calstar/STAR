@@ -203,7 +203,7 @@ fi
 
 # ─── Shared prep ─────────────────────────────────────────────────────────────
 # Global black install: format.sh and the pre-push hook run outside any venv,
-# so black needs to be on the global $PATH. Every project's format-check ends
+# so black needs to be on the global $PATH. Every project's formatting ends
 # up calling the same top-level format.sh, so we install it once here rather
 # than per-project.
 step "Shared: pinned global black (for format.sh + pre-push hook)"

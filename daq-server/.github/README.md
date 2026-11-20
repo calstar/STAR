@@ -9,23 +9,21 @@ directory. The relevant workflow is
 
 Runs on push / PR / manual dispatch. Jobs include:
 
-1. **Code Formatting Check** — runs `./format.sh --check` from the repo root
-   (clang-format 19 for C++; `black --check` for Python).
-2. **Web GUI** — `npm run test` (Vitest) and `npm run test:build` (Next.js
+1. **Web GUI** — `npm run test` (Vitest) and `npm run test:build` (Next.js
    build) in `daq-server/diablo_server/frontend`.
-3. **Build** — GCC 12 and Clang 18, **Release** only; Clang is pinned to GCC
+2. **Build** — GCC 12 and Clang 18, **Release** only; Clang is pinned to GCC
    12's libstdc++ (`--gcc-install-dir`) to avoid libstdc++ 14 + C++20
    `<format>`/`<chrono>` breakage.
-4. **Code Quality** — TODOs, large files, etc.
-5. **Security Scan** — semgrep, secret patterns, unsafe C APIs.
-6. **Tests** — CTest, sequencer test, Python tests.
-7. **ThreadSanitizer (sequencer)** — the concurrency tests under `-fsanitize=thread`.
-8. **ASan + UBSan (full stack)** — `-DSANITIZE=ON`, then `test_integration.sh`.
-9. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.).
-10. **Build Summary** — table of all job results.
+3. **Code Quality** — TODOs, large files, etc.
+4. **Security Scan** — semgrep, secret patterns, unsafe C APIs.
+5. **Tests** — CTest, sequencer test, Python tests.
+6. **ThreadSanitizer (sequencer)** — the concurrency tests under `-fsanitize=thread`.
+7. **ASan + UBSan (full stack)** — `-DSANITIZE=ON`, then `test_integration.sh`.
+8. **Integration Test** — scripted integration (Rust elodin-db, backend, etc.).
+9. **Build Summary** — table of all job results.
 
 The sanitizer jobs run the *tests*, not the analyser — they only report on code that
-actually executes, which is why job 8 drives the full stack rather than CTest (CTest
+actually executes, which is why job 7 drives the full stack rather than CTest (CTest
 under ASan/UBSan is clean; one integration run was not). Its real gate is a grep over
 `.tmp/integration_*.log`, since UBSan writes to each service's own stderr.
 
@@ -83,7 +81,6 @@ Build artifacts are uploaded for Release builds with GCC 12, retained for 7 days
 
 ### Timeouts
 
-- Format check: 10 minutes
 - Build: 30 minutes
 - Static analysis: 20 minutes
 - Code quality: 15 minutes
@@ -97,10 +94,6 @@ Build artifacts are uploaded for Release builds with GCC 12, retained for 7 days
 1. Check the build logs for compiler errors
 2. Ensure all dependencies are listed in the workflow
 3. Verify CMake configuration is correct
-
-### Format Check Failures
-
-Run `./format.sh` to auto-format code, then commit the changes.
 
 ### Test Failures
 
