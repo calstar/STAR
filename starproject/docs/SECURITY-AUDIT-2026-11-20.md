@@ -94,11 +94,14 @@ takeover of the tracker.
 
 Fix: `identityFromHeaders` in `src/lib/auth.ts`. When `AUTH_GATE_SECRET` is set, the
 headers count only on a request that also carries `X-Auth-Gate` equal to it; the EC2
-Caddyfile strips a client-sent `X-Auth-Gate` before `forward_auth` and sets it after
-(`request_header X-Auth-Gate {$AUTH_GATE_SECRET}`), and compose passes
+Caddyfile strips a client-sent `X-Auth-Gate` on every gated site and sets it, after
+`forward_auth`, in the `project.*` site block only (`request_header X-Auth-Gate
+{$AUTH_GATE_SECRET}` right before `reverse_proxy starproject:3000`), so the analytics
+hub never sees the value it would need to forge. Compose passes
 `STARPROJECT_AUTH_GATE_SECRET` to both containers. Unset, nothing changes. The adapted
 Caddy config was checked (`caddy validate`, `check_gate_order.py`, and the handler
-order: strip, forward_auth, set, proxy). `src/lib/auth.test.ts` covers the seam.
+order per site: project strips, forward_auth, sets, proxies; analytics strips,
+forward_auth, proxies with no set). `src/lib/auth.test.ts` covers the seam.
 **Deploy note:** set the variable in `.env` to turn it on; set it on both services or
 neither.
 

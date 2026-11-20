@@ -32,8 +32,9 @@ services:
       SCHEME: ${SCHEME:-http}
       BASE_DOMAIN: ${BASE_DOMAIN:-starberkeley.org}
       AUTH_UPSTREAM: auth:5000
-      # Stamped on every request that passes forward_auth (X-Auth-Gate); the same
-      # value goes to starproject below. Optional; see the Caddyfile.
+      # Stamped as X-Auth-Gate on STARProject requests that passed forward_auth
+      # (only that upstream sees it); the same value goes to starproject below.
+      # Optional; see the Caddyfile.
       AUTH_GATE_SECRET: ${STARPROJECT_AUTH_GATE_SECRET:-}
     volumes:
       - ./caddy:/etc/caddy:ro
