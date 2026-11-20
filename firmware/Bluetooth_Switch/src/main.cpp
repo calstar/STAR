@@ -13,9 +13,9 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <driver/gpio.h>
-#include <esp_rom_gpio.h>
 #include <esp_mac.h>
 #include <esp_pm.h>
+#include <esp_rom_gpio.h>
 #include <esp_system.h>
 
 #include "../../Hotfire_Code/common/firmware_hash.h"
@@ -43,7 +43,8 @@ constexpr uint32_t STATUS_PERIOD_IDLE_MS = 3000;
 constexpr uint32_t SENSE_SETTLE_MS = 500;  // 1M into C5 + C23, tau ~100 ms
 
 constexpr uint32_t LOOP_PERIOD_MS = 20;
-constexpr uint32_t LED_SENSE_PERIOD_MS = 250;  // how often the LED re-reads the sense line
+constexpr uint32_t LED_SENSE_PERIOD_MS =
+    250;  // how often the LED re-reads the sense line
 
 // USB has to be gone this long before the chip may light-sleep (it stops the
 // USB console, so it only sleeps on battery).
@@ -76,7 +77,8 @@ uint32_t lastConnectMs = 0;
 uint32_t seenConnects = 0;
 uint32_t lastLedSenseMs = 0;
 Sense ledSense = Sense::Unknown;
-led::Rgb ledShown{1, 1, 1};  // not a real colour, so the first write always lands
+led::Rgb ledShown{1, 1,
+                  1};  // not a real colour, so the first write always lands
 
 // GPIO4 comes out of reset as MTMS (JTAG), not GPIO, so the pad has to be
 // switched to its GPIO function or the output never reaches the pin. Level and
@@ -109,9 +111,11 @@ void setOutput(bool on) {
 // Runs first thing in setup(), before anything else can stall.
 void restoreOutput() {
     resetReason = esp_reset_reason();
-    bool fromPowerOn = resetReason == ESP_RST_POWERON || resetReason == ESP_RST_UNKNOWN;
+    bool fromPowerOn =
+        resetReason == ESP_RST_POWERON || resetReason == ESP_RST_UNKNOWN;
     bool on = !fromPowerOn && rtcOutputState == RTC_MAGIC_ON;
-    if (fromPowerOn) rtcOutputState = RTC_MAGIC_OFF;
+    if (fromPowerOn)
+        rtcOutputState = RTC_MAGIC_OFF;
     restoredAfterReset = on;
     outputOn = on;
     driveOutputPad(on);
@@ -120,15 +124,20 @@ void restoreOutput() {
 // Armed and not live reads as load/open, not Unknown: that is the fault the web
 // client and the LED flag. Unknown means only "still settling".
 Sense classifySense(uint32_t mv) {
-    if (mv >= SENSE_LIVE_MIN_MV) return Sense::Live;
+    if (mv >= SENSE_LIVE_MIN_MV)
+        return Sense::Live;
     return mv <= SENSE_LOAD_MAX_MV ? Sense::LoadPresent : Sense::Open;
 }
 
 Sense readSense(uint32_t mv) {
-    return static_cast<int32_t>(millis() - senseValidAtMs) >= 0 ? classifySense(mv) : Sense::Unknown;
+    return static_cast<int32_t>(millis() - senseValidAtMs) >= 0
+               ? classifySense(mv)
+               : Sense::Unknown;
 }
 
-uint32_t since(uint32_t thenMs, uint32_t nowMs) { return thenMs ? nowMs - thenMs : UINT32_MAX; }
+uint32_t since(uint32_t thenMs, uint32_t nowMs) {
+    return thenMs ? nowMs - thenMs : UINT32_MAX;
+}
 
 void updateLed(uint32_t now) {
     uint32_t connects = ble_link::connectCount();
@@ -140,11 +149,17 @@ void updateLed(uint32_t now) {
         lastLedSenseMs = now;
         ledSense = readSense(analogReadMilliVolts(PIN_CONT_ADC));
     }
-    led::Inputs in{outputOn,          ledSense, restoredAfterReset, inaOk,
-                   since(lastCommandMs, now), since(lastConnectMs, now), noBattery};
+    led::Inputs in{outputOn,
+                   ledSense,
+                   restoredAfterReset,
+                   inaOk,
+                   since(lastCommandMs, now),
+                   since(lastConnectMs, now),
+                   noBattery};
     led::Rgb c = led::color(in, now);
     if (!(c == ledShown)) {
-        neopixelWrite(PIN_LED, c.r, c.g, c.b);  // SK6805 is GRB; neopixelWrite reorders
+        neopixelWrite(PIN_LED, c.r, c.g,
+                      c.b);  // SK6805 is GRB; neopixelWrite reorders
         ledShown = c;
     }
 }
@@ -155,20 +170,26 @@ StatusPacket buildStatus() {
     pkt.output = outputOn ? 1 : 0;
     pkt.uptime_s = millis() / 1000;
     pkt.reset_reason = static_cast<uint8_t>(resetReason);
-    if (inaOk) pkt.flags |= FLAG_INA_OK;
-    if (restoredAfterReset) pkt.flags |= FLAG_RESTORED;
+    if (inaOk)
+        pkt.flags |= FLAG_INA_OK;
+    if (restoredAfterReset)
+        pkt.flags |= FLAG_RESTORED;
 
     INA260::Reading r;
     if (inaOk && ina.read(r)) {
         pkt.flags |= FLAG_READING_VALID;
         pkt.supply_mV = r.bus_mV;
-        pkt.current_mA = static_cast<int16_t>(constrain(r.current_mA, INT16_MIN, INT16_MAX));
-        pkt.power_mW = static_cast<uint16_t>(min<uint32_t>(r.power_mW, UINT16_MAX));
+        pkt.current_mA =
+            static_cast<int16_t>(constrain(r.current_mA, INT16_MIN, INT16_MAX));
+        pkt.power_mW =
+            static_cast<uint16_t>(min<uint32_t>(r.power_mW, UINT16_MAX));
         noBattery = r.bus_mV < BATTERY_PRESENT_MIN_MV;
     } else if (!inaOk) {
-        noBattery = false;  // can't tell; the LED shows the INA260 fault instead
+        noBattery =
+            false;  // can't tell; the LED shows the INA260 fault instead
     }
-    if (noBattery) pkt.flags |= FLAG_NO_BATTERY;
+    if (noBattery)
+        pkt.flags |= FLAG_NO_BATTERY;
 
     uint32_t mv = analogReadMilliVolts(PIN_CONT_ADC);
     pkt.sense_mV = static_cast<uint16_t>(mv);
@@ -178,13 +199,17 @@ StatusPacket buildStatus() {
 
 void printStatus(const StatusPacket &p) {
     static const char *SENSE_NAMES[] = {"unknown", "load", "open", "live"};
-    const char *power = !usbAwakeLock ? "no light sleep" : usbAwakeHeld ? "awake for USB" : "light sleep";
-    Serial.printf("[status] out=%s sense=%s (%u mV) supply=%u mV I=%d mA P=%u mW power=%s%s%s%s\n",
-                  p.output ? "ARMED" : "DISARMED", SENSE_NAMES[p.sense < 4 ? p.sense : 0], p.sense_mV,
-                  p.supply_mV, p.current_mA, p.power_mW, power,
-                  (p.flags & FLAG_INA_OK) ? "" : " [INA260 missing]",
-                  (p.flags & FLAG_RESTORED) ? " [restored after reset]" : "",
-                  (p.flags & FLAG_NO_BATTERY) ? " [no battery]" : "");
+    const char *power = !usbAwakeLock  ? "no light sleep"
+                        : usbAwakeHeld ? "awake for USB"
+                                       : "light sleep";
+    Serial.printf(
+        "[status] out=%s sense=%s (%u mV) supply=%u mV I=%d mA P=%u mW "
+        "power=%s%s%s%s\n",
+        p.output ? "ARMED" : "DISARMED", SENSE_NAMES[p.sense < 4 ? p.sense : 0],
+        p.sense_mV, p.supply_mV, p.current_mA, p.power_mW, power,
+        (p.flags & FLAG_INA_OK) ? "" : " [INA260 missing]",
+        (p.flags & FLAG_RESTORED) ? " [restored after reset]" : "",
+        (p.flags & FLAG_NO_BATTERY) ? " [no battery]" : "");
 }
 
 // Light sleep between BLE events cuts idle draw from ~80 mA to a few mA (see
@@ -192,33 +217,44 @@ void printStatus(const StatusPacket &p) {
 void beginPowerSave() {
     // IDF puts every pin in its sleep config (not driving) during light sleep;
     // keep these on their normal config so they hold their level through sleep.
-    for (int pin : {PIN_OUT_EN, PIN_CONT_EN, PIN_LED}) gpio_sleep_sel_dis(static_cast<gpio_num_t>(pin));
+    for (int pin : {PIN_OUT_EN, PIN_CONT_EN, PIN_LED})
+        gpio_sleep_sel_dis(static_cast<gpio_num_t>(pin));
     esp_pm_config_esp32c3_t cfg = {};
     cfg.max_freq_mhz = 80;
-    // No scaling while awake: the RMT that drives the LED times bits off APB and
-    // IDF 4.4 doesn't hold it at 80 MHz, so a write at 40 MHz garbles the colour.
+    // No scaling while awake: the RMT that drives the LED times bits off APB
+    // and IDF 4.4 doesn't hold it at 80 MHz, so a write at 40 MHz garbles the
+    // colour.
     cfg.min_freq_mhz = 80;
     cfg.light_sleep_enable = true;
     esp_err_t err = esp_pm_configure(&cfg);
-    if (err == ESP_OK) err = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "usb", &usbAwakeLock);
-    if (err == ESP_OK) err = esp_pm_lock_acquire(usbAwakeLock);
+    if (err == ESP_OK)
+        err =
+            esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "usb", &usbAwakeLock);
+    if (err == ESP_OK)
+        err = esp_pm_lock_acquire(usbAwakeLock);
     usbAwakeHeld = err == ESP_OK;
     usbLastSeenMs = millis();
-    if (err != ESP_OK) Serial.printf("[power] light sleep unavailable: %s\n", esp_err_to_name(err));
+    if (err != ESP_OK)
+        Serial.printf("[power] light sleep unavailable: %s\n",
+                      esp_err_to_name(err));
 }
 
 // Stay awake while USB is plugged in; sleep once it has been gone a while.
 void updatePowerSave(uint32_t now) {
-    if (!usbAwakeLock) return;
+    if (!usbAwakeLock)
+        return;
     if (HWCDC::isPlugged()) {
         usbLastSeenMs = now;
-        if (!usbAwakeHeld) usbAwakeHeld = esp_pm_lock_acquire(usbAwakeLock) == ESP_OK;
+        if (!usbAwakeHeld)
+            usbAwakeHeld = esp_pm_lock_acquire(usbAwakeLock) == ESP_OK;
     } else if (usbAwakeHeld && now - usbLastSeenMs >= USB_GONE_MS) {
         usbAwakeHeld = esp_pm_lock_release(usbAwakeLock) != ESP_OK;
     }
 }
 
-void onOutputRequest(bool on) { pendingOutput = on ? 1 : 0; }
+void onOutputRequest(bool on) {
+    pendingOutput = on ? 1 : 0;
+}
 
 // Bench console over USB CDC: arm | disarm | status (on/off still accepted)
 void handleSerial() {
@@ -226,7 +262,8 @@ void handleSerial() {
     while (Serial.available()) {
         char c = static_cast<char>(Serial.read());
         if (c != '\n' && c != '\r') {
-            if (line.length() < 32) line += c;
+            if (line.length() < 32)
+                line += c;
             continue;
         }
         line.trim();
@@ -265,11 +302,13 @@ void setup() {
     snprintf(name, sizeof(name), "STAR-Switch-%02X%02X", mac[4], mac[5]);
     ble_link::begin(name, onOutputRequest);
     ble_link::publishOutput(outputOn);
-    // SHA-256 ESP-IDF appended to this image: what CI's firmware-registry is keyed on.
+    // SHA-256 ESP-IDF appended to this image: what CI's firmware-registry is
+    // keyed on.
     ble_link::publishFirmwareHash(FirmwareHash::get());
 
     Serial.printf("[boot] %s reset=%d output=%s ina260=%s\n", name,
-                  static_cast<int>(resetReason), outputOn ? "ARMED (restored)" : "DISARMED",
+                  static_cast<int>(resetReason),
+                  outputOn ? "ARMED (restored)" : "DISARMED",
                   inaOk ? "ok" : "MISSING");
     FirmwareHash::print();
 }
@@ -278,22 +317,27 @@ void loop() {
     int8_t req = pendingOutput;
     if (req >= 0) {
         pendingOutput = -1;
-        if ((req == 1) != outputOn) setOutput(req == 1);
-        else ble_link::publishOutput(outputOn);
+        if ((req == 1) != outputOn)
+            setOutput(req == 1);
+        else
+            ble_link::publishOutput(outputOn);
     }
 
     handleSerial();
     updateLed(millis());
     updatePowerSave(millis());
 
-    uint32_t period = ble_link::connected() ? STATUS_PERIOD_CONNECTED_MS : STATUS_PERIOD_IDLE_MS;
+    uint32_t period = ble_link::connected() ? STATUS_PERIOD_CONNECTED_MS
+                                            : STATUS_PERIOD_IDLE_MS;
     uint32_t now = millis();
-    bool settledUpdateDue = lastStatusMs == 0 && static_cast<int32_t>(now - senseValidAtMs) >= 0;
+    bool settledUpdateDue =
+        lastStatusMs == 0 && static_cast<int32_t>(now - senseValidAtMs) >= 0;
     if (settledUpdateDue || now - lastStatusMs >= period) {
         lastStatusMs = now ? now : 1;
         StatusPacket pkt = buildStatus();
         ble_link::publishStatus(pkt);
-        if (ble_link::connected()) printStatus(pkt);
+        if (ble_link::connected())
+            printStatus(pkt);
     }
 
     delay(LOOP_PERIOD_MS);

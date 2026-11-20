@@ -1,30 +1,34 @@
 // Host test for include/led_pattern.h. Plain C++, no framework:
-//   c++ -std=c++17 -Iinclude test/host/led_pattern_test.cpp -o /tmp/led && /tmp/led
+//   c++ -std=c++17 -Iinclude test/host/led_pattern_test.cpp -o /tmp/led &&
+//   /tmp/led
+#include "led_pattern.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 
-#include "led_pattern.h"
-
 using namespace led;
 
 static int failures = 0;
-#define CHECK(cond)                                                    \
-    do {                                                               \
-        if (!(cond)) {                                                 \
+#define CHECK(cond)                                                     \
+    do {                                                                \
+        if (!(cond)) {                                                  \
             std::printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #cond); \
-            failures++;                                                \
-        }                                                              \
+            failures++;                                                 \
+        }                                                               \
     } while (0)
 
 constexpr uint32_t LONG_AGO = 0xFFFFFFFF;
 
-static Inputs base(bool armed, Sense s) { return {armed, s, false, true, LONG_AGO, LONG_AGO}; }
+static Inputs base(bool armed, Sense s) {
+    return {armed, s, false, true, LONG_AGO, LONG_AGO};
+}
 
 // How many ms in [from, to) the LED shows `c`.
 static int msOf(const Inputs &in, Rgb c, uint32_t from, uint32_t to) {
     int n = 0;
-    for (uint32_t t = from; t < to; t++) n += color(in, t) == c;
+    for (uint32_t t = from; t < to; t++)
+        n += color(in, t) == c;
     return n;
 }
 
@@ -36,7 +40,8 @@ int main() {
     CHECK(mode(base(false, Sense::Live)) == Mode::Fault);
     CHECK(mode(base(false, Sense::LoadPresent)) == Mode::Disarmed);
     CHECK(mode(base(false, Sense::Open)) == Mode::Disarmed);
-    CHECK(mode(base(true, Sense::Unknown)) == Mode::Armed);  // settling: no false fault
+    CHECK(mode(base(true, Sense::Unknown)) ==
+          Mode::Armed);  // settling: no false fault
 
     // Armed: red half of every second, nothing else.
     auto armed = base(true, Sense::Live);
@@ -57,8 +62,8 @@ int main() {
     }
     CHECK(msOf(base(false, Sense::Unknown), OFF, 0, 3000) == 3000);
 
-    // No battery, disarmed: one 400 ms dim blue pulse per 3 s, whatever the sense
-    // line says, and no green (green means ready to arm).
+    // No battery, disarmed: one 400 ms dim blue pulse per 3 s, whatever the
+    // sense line says, and no green (green means ready to arm).
     for (Sense s : {Sense::Open, Sense::LoadPresent, Sense::Unknown}) {
         auto nb = base(false, s);
         nb.noBattery = true;
@@ -81,10 +86,11 @@ int main() {
     auto fault = base(true, Sense::Open);
     CHECK(msOf(fault, RED, 0, 1000) == 500);
     CHECK(msOf(fault, OFF, 0, 1000) == 500);
-    CHECK(color(fault, 50) == RED && color(fault, 150) == OFF && color(fault, 250) == RED);
+    CHECK(color(fault, 50) == RED && color(fault, 150) == OFF &&
+          color(fault, 250) == RED);
 
-    // INA260 missing: two 60 ms blue blips per 3 s, and they don't cut into the red
-    // or the disarmed green.
+    // INA260 missing: two 60 ms blue blips per 3 s, and they don't cut into the
+    // red or the disarmed green.
     auto noIna = armed;
     noIna.inaOk = false;
     CHECK(msOf(noIna, BLUE, 0, 3000) == 120);
@@ -95,8 +101,13 @@ int main() {
     CHECK(msOf(noInaDisarmed, DIM_GREEN, 0, 3000) == 60);
 
     // Only pure primaries, anywhere.
-    const Inputs all[] = {armed, restored, fault, noIna, noInaDisarmed,
-                          base(false, Sense::LoadPresent), base(false, Sense::Open)};
+    const Inputs all[] = {armed,
+                          restored,
+                          fault,
+                          noIna,
+                          noInaDisarmed,
+                          base(false, Sense::LoadPresent),
+                          base(false, Sense::Open)};
     for (const auto &in : all)
         for (uint32_t t = 0; t < 3000; t++) {
             Rgb c = color(in, t);

@@ -16,7 +16,8 @@ public:
     void beginPinsSafe();
     void begin(uint32_t baud);
 
-    // Blocks until the last bit is on the wire (~1.4 ms for 16 bytes at 115200).
+    // Blocks until the last bit is on the wire (~1.4 ms for 16 bytes at
+    // 115200).
     void send(const uint8_t* data, size_t len);
 
     // True when a CRC-checked frame is ready in frame().

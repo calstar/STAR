@@ -24,7 +24,8 @@ struct Layout {
     int RS485_TX;    // -> DI
     int RS485_RX;    // <- RO
     int RS485_DE;    // active high: HIGH = transmit
-    int RS485_RE_N;  // active low, despite the net name RECEIVER_EN: HIGH = receiver off
+    int RS485_RE_N;  // active low, despite the net name RECEIVER_EN: HIGH =
+                     // receiver off
 
     // AS5600 (U6), I2C 0x36, 4.7k pull-ups R12/R13
     int ENC_SDA;
@@ -33,7 +34,6 @@ struct Layout {
     int BOOT_BUTTON;  // SW1, strapping pin, fine to read after boot
     int LED;          // rev A LED is hard-wired to 3.3 V, so none
 };
-
 
 constexpr Layout Valve_Encoder_RevA{
     // RS485_TX, RS485_RX, RS485_DE, RS485_RE_N
