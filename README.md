@@ -18,7 +18,7 @@ top-level directory with its own README. Start with the one you're working on.
 
 | Directory | What it is | Stack |
 |---|---|---|
-| [`daq-server/`](daq-server/README.md) | Ground support **DAQ server / flight software** — receives sensor data over the network, logs it, drives the state machine and actuators, and serves the live web GUI used during hotfires. | C++, TypeScript/Node, Next.js, Elodin DB |
+| [`daq-server/`](daq-server/README.md) | Ground support **DAQ server / flight software** — receives sensor data over the network, logs it, drives the state machine and actuators, and serves the live web GUI used during hotfires. | C++, TypeScript/Node, React/Vite, Elodin DB |
 | [`firmware/`](firmware/README.md) | **Board firmware** for every avionics board (PT, TC, RTD, LC, Encoder, Actuator). Reads sensors, talks to the DAQ server over Ethernet, runs the on-board abort logic. Subtree of [`calstar/DiabloAvionics`](https://github.com/calstar/DiabloAvionics). | Arduino / PlatformIO, ESP32-S3, C++ |
 | [`lib/DAQv2-Comms/`](lib/DAQv2-Comms/README.md) | The **wire protocol** shared by the firmware and the DAQ server — packet definitions, enums, and (de)serialization. The single source of truth for what goes over the wire. | C++ (Arduino library) |
 | [`lib/stardesign/`](lib/stardesign/README.md) | The **design core** shared by the design tools — per-user storage, cross-user sharing (who may edit whose design), and version history. Extracted once they all needed the same permission check. | Python |

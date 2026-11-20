@@ -1,0 +1,174 @@
+# create_* outputs (timestamp_ms = 0x12345678 throughout)
+## create_board_heartbeat_packet len=41
+  header.packet_type @0    +1  : 01
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  firmware_hash @6    +32 : a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf
+  board_id @38   +1  : 15
+  engine_state @39   +1  : 03
+  board_state @40   +1  : 02
+## create_sensor_data_packet (2 chunks x 3 sensors) len=46
+  header.packet_type @0    +1  : 03
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  num_chunks @6    +1  : 02
+  num_sensors @7    +1  : 03
+  chunk[0].timestamp @8    +4  : 04 03 02 01
+  chunk[0].dp[0].sensor_id @12   +1  : 01
+  chunk[0].dp[0].data @13   +4  : 01 c0 b0 a0
+  chunk[0].dp[1].sensor_id @17   +1  : 02
+  chunk[0].dp[1].data @18   +4  : 02 c0 b0 a0
+  chunk[0].dp[2].sensor_id @22   +1  : 03
+  chunk[0].dp[2].data @23   +4  : 03 c0 b0 a0
+  chunk[1].timestamp @27   +4  : 14 03 02 01
+  chunk[1].dp[0].sensor_id @31   +1  : 05
+  chunk[1].dp[0].data @32   +4  : 01 c1 b0 a0
+  chunk[1].dp[1].sensor_id @36   +1  : 06
+  chunk[1].dp[1].data @37   +4  : 02 c1 b0 a0
+  chunk[1].dp[2].sensor_id @41   +1  : 07
+  chunk[1].dp[2].data @42   +4  : 03 c1 b0 a0
+## create_abort_done_packet len=6
+  header.packet_type @0    +1  : 08
+  header.version @1    +1  : 01
+  header.timestamp @2    +4  : 78 56 34 12
+## create_actuator_command_packet (3 commands) len=13
+  header.packet_type @0    +1  : 04
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  num_commands @6    +1  : 03
+  cmd[0].actuator_id @7    +1  : 01
+  cmd[0].actuator_state @8    +1  : 01
+  cmd[1].actuator_id @9    +1  : 05
+  cmd[1].actuator_state @10   +1  : 00
+  cmd[2].actuator_id @11   +1  : 0a
+  cmd[2].actuator_state @12   +1  : 01
+## create_self_test_packet (adc_good=1, 3 results) len=14
+  header.packet_type @0    +1  : 0c
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  adc_good @6    +1  : 01
+  num_sensors @7    +1  : 03
+  result[0].sensor_id @8    +1  : 01
+  result[0].result @9    +1  : 01
+  result[1].sensor_id @10   +1  : 02
+  result[1].result @11   +1  : 00
+  result[2].sensor_id @12   +1  : 07
+  result[2].result @13   +1  : 01
+## create_environmental_data_packet (21.5 C, 101325 Pa, 45.25 %RH) len=18
+  header.packet_type @0    +1  : 0d
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  temperature_c @6    +4  : 00 00 ac 41
+  pressure_pa @10   +4  : cd 8b 01 00
+  humidity_rh @14   +4  : 00 00 35 42
+## create_stacklight_command_packet (r=1 y=0 g=1 b=0) len=10
+  header.packet_type @0    +1  : 0e
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  red @6    +1  : 01
+  yellow @7    +1  : 00
+  green @8    +1  : 01
+  buzzer @9    +1  : 00
+## create_log_packet (flags=1, 18 text bytes) len=27
+  header.packet_type @0    +1  : 0f
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  flags @6    +1  : 01
+  text_len @7    +2  : 12 00
+  text @9    +18 : 6c 69 6e 65 20 6f 6e 65 0a 6c 69 6e 65 20 74 77 6f 0a
+## create_sensor_config_packet (5 ids, ref=1, abort=false, serial=3) len=15
+  header.packet_type @0    +1  : 05
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  num_sensors @6    +1  : 05
+  sensor_id[0] @7    +1  : 01
+  sensor_id[1] @8    +1  : 02
+  sensor_id[2] @9    +1  : 03
+  sensor_id[3] @10   +1  : 07
+  sensor_id[4] @11   +1  : 0a
+  reference_voltage @12   +1  : 01
+  necessary_for_abort @13   +1  : 00
+  enable_serial_printing @14   +1  : 03
+## create_sensor_config_packet (5 ids, ref=1, abort=true, ip=0xC0A8020B, serial=3) len=19
+  header.packet_type @0    +1  : 05
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  num_sensors @6    +1  : 05
+  sensor_id[0] @7    +1  : 01
+  sensor_id[1] @8    +1  : 02
+  sensor_id[2] @9    +1  : 03
+  sensor_id[3] @10   +1  : 07
+  sensor_id[4] @11   +1  : 0a
+  reference_voltage @12   +1  : 01
+  necessary_for_abort @13   +1  : 01
+  controller_ip @14   +4  : 0b 02 a8 c0
+  enable_serial_printing @18   +1  : 03
+## create_pwm_actuator_packet (2 commands) len=33
+  header.packet_type @0    +1  : 0a
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  num_commands @6    +1  : 02
+  cmd[0].actuator_id @7    +1  : 03
+  cmd[0].duration @8    +4  : f4 01 00 00
+  cmd[0].duty_cycle @12   +4  : 00 00 80 3e
+  cmd[0].frequency @16   +4  : 00 00 20 41
+  cmd[1].actuator_id @20   +1  : 08
+  cmd[1].duration @21   +4  : e8 03 00 00
+  cmd[1].duty_cycle @25   +4  : 00 00 40 3f
+  cmd[1].frequency @29   +4  : 00 00 a0 41
+## create_actuator_config_packet (abort ctrl, 2 actuators, 2 PTs, serial=2) len=42
+  header.packet_type @0    +1  : 06
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 78 56 34 12
+  is_abort_controller @6    +1  : 01
+  num_abort_actuators @7    +1  : 02
+  abort_actuator[0].ip_address @8    +4  : 0b 02 a8 c0
+  abort_actuator[0].actuator_id @12   +1  : 03
+  abort_actuator[0].vent_state @13   +1  : 01
+  abort_actuator[0].abort_state @14   +1  : 00
+  abort_actuator[1].ip_address @15   +4  : c0 a8 02 0c
+  abort_actuator[1].actuator_id @19   +1  : 08
+  abort_actuator[1].vent_state @20   +1  : 00
+  abort_actuator[1].abort_state @21   +1  : 01
+  num_abort_pts @22   +1  : 02
+  abort_pt[0].ip_address @23   +4  : 15 02 a8 c0
+  abort_pt[0].sensor_id @27   +1  : 02
+  abort_pt[0].pressure_threshold_adc @28   +4  : cd cc cc 4c
+  abort_pt[1].ip_address @32   +4  : c0 a8 02 15
+  abort_pt[1].sensor_id @36   +1  : 09
+  abort_pt[1].pressure_threshold_adc @37   +4  : 00 00 00 10
+  enable_serial_printing @41   +1  : 02
+
+# encoder edge cases: buffer pre-filled with 0xEE
+  board_heartbeat buffer=40 (one short): ret=0 bytes_changed=0
+  board_heartbeat buffer=41 (exact): ret=41 bytes_changed=41
+  sensor_data buffer=37 (one short): ret=0 bytes_changed=0
+  sensor_data 0 chunks: ret=8 bytes_changed=8
+  sensor_data num_sensors=0 with 2 chunks: ret=16 bytes_changed=16
+  abort_done buffer=5: ret=0 bytes_changed=0
+  actuator_command 0 commands: ret=0 bytes_changed=0
+  actuator_command 256 commands: ret=0 bytes_changed=0
+  actuator_command 255 commands: ret=517 bytes_changed=517
+  actuator_command buffer=12 (one short): ret=0 bytes_changed=0
+  self_test 0 results: ret=8 bytes_changed=8
+  self_test 256 results: ret=0 bytes_changed=0
+  self_test buffer=13 (one short): ret=0 bytes_changed=0
+  environmental null buffer: ret=0 bytes_changed=0
+  environmental buffer=17 (one short): ret=0 bytes_changed=0
+  stacklight null buffer: ret=0 bytes_changed=0
+  stacklight buffer=9 (one short): ret=0 bytes_changed=0
+  log text_len=0: ret=9 bytes_changed=9
+  log text=nullptr text_len=5: ret=14 bytes=0f 00 78 56 34 12 02 05 00 ee ee ee ee ee
+  log text_len=65535 buffer=64: ret=0 bytes_changed=0
+  log buffer=26 (one short): ret=0 bytes_changed=0
+  sensor_config 0 ids: ret=10 bytes_changed=10
+  sensor_config 256 ids: ret=0 bytes_changed=0
+  sensor_config abort=true buffer=18 (one short): ret=0 bytes_changed=0
+  sensor_config abort=false buffer=14 (one short): ret=0 bytes_changed=0
+  pwm 0 commands: ret=0 bytes_changed=0
+  pwm 256 commands: ret=0 bytes_changed=0
+  pwm buffer=32 (one short): ret=0 bytes_changed=0
+  actuator_config 0 actuators 0 pts: ret=10 bytes_changed=10
+  actuator_config 256 actuators: ret=0 bytes_changed=0
+  actuator_config 256 pts: ret=0 bytes_changed=0
+  actuator_config buffer=41 (one short): ret=0 bytes_changed=0

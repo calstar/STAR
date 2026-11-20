@@ -1,0 +1,4 @@
+[StacklightService] Started — interval=100ms target=127.0.0.1:5
+[StacklightService] State from Elodin at 127.0.0.1:2 [0x5000]
+[StacklightService] --force-state 1: skipping Elodin
+=== stopped

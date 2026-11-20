@@ -1,0 +1,34 @@
+## readiness
+
+## connect
+
+## unlock
+> A {"type":"control_unlock","payload":{}}
+< A {"payload": {"ok": true, "reason": "ok"}, "timestamp": "<ts>", "type": "control_unlock_result"}
+
+## park_on_hub
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":20}}}
+< A {"payload": {"allowedBitmask": 1441822, "currentState": 2, "debugMode": false, "stateName": "Armed", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+< A {"payload": {"allowedBitmask": 3612640, "currentState": 20, "debugMode": false, "stateName": "Press Standby", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## hold_accepted
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":21,"holdMs":800}}}
+< A {"payload": {"allowedBitmask": 3145728, "currentState": 21, "debugMode": false, "stateName": "Flow Test", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+< A {"payload": {"allowedBitmask": 3612640, "currentState": 20, "debugMode": false, "stateName": "Press Standby", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## sequencer_stalled
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":20}}}
+< A {"payload": {"message": "State transition failed: timeout"}, "timestamp": "<ts>", "type": "error"}
+< A {"payload": {"allowedBitmask": 3612640, "currentState": 20, "debugMode": false, "stateName": "Press Standby", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+= timeout_reply_within_2800ms: yes
+
+## sequencer_down
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":20}}}
+> A {"type":"send_command","payload":{"commandType":"debug_mode","data":{"debugMode":true}}}
+< A {"payload": {"message": "State transition failed: connect ECONNREFUSED 127.0.0.1:<port:sequencer>"}, "timestamp": "<ts>", "type": "error"}
+
+## disconnect
+
+## board-health notifications seen (any step, any client; P1, reset flaps P1b)
+{"category": "info", "message": "Board 21 (PT) connected", "timestampMs": "<ts>"}

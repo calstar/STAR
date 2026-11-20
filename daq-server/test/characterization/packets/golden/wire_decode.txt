@@ -1,0 +1,27 @@
+# parse_* on the bytes create_* produced (see wire_encode.txt)
+## board_heartbeat len=41
+  ret=1 hdr{type=1 ver=0 ts=0x12345678} hash=a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af b0 b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf board_id=21 engine_state=3 board_state=2
+## server_heartbeat len=7
+  ret=1 hdr{type=2 ver=0 ts=0x12345678} engine_state=3
+## sensor_data len=46
+  ret=1 hdr{type=3 ver=0 ts=0x12345678} chunks=2 [ {ts=0x01020304 num_sensors=3 dps=1:0xa0b0c001,2:0xa0b0c002,3:0xa0b0c003,} {ts=0x01020314 num_sensors=3 dps=5:0xa0b0c101,6:0xa0b0c102,7:0xa0b0c103,} ]
+## abort_done len=6
+  ret=1 hdr{type=8 ver=1 ts=0x12345678}
+## actuator_command len=13
+  ret=1 hdr{type=4 ver=0 ts=0x12345678} cmds=3 [ 1:1 5:0 10:1 ]
+## self_test len=14
+  ret=1 hdr{type=12 ver=0 ts=0x12345678} adc_good=1 results=3 [ 1:1 2:0 7:1 ]
+## environmental len=18
+  ret=1 hdr{type=13 ver=0 ts=0x12345678} temperature_c=21.5 (bits 41ac0000) pressure_pa=101325 humidity_rh=45.25 (bits 42350000)
+## stacklight len=10
+  ret=1 hdr{type=14 ver=0 ts=0x12345678} red=1 yellow=0 green=1 buzzer=0
+## sensor_config(abort=false) len=15
+  ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=0 controller_ip=0x00000000 enable_serial_printing=3
+## sensor_config(abort=true) len=19
+  ret=1 hdr{type=5 ver=0 ts=0x12345678} ids=[01 02 03 07 0a] reference_voltage=1 necessary_for_abort=1 controller_ip=0xc0a8020b enable_serial_printing=3
+## pwm_actuator len=33
+  ret=1 hdr{type=10 ver=0 ts=0x12345678} cmds=2 [ {id=3 duration=500 duty=0.25 (bits 3e800000) freq=10 (bits 41200000)} {id=8 duration=1000 duty=0.75 (bits 3f400000) freq=20 (bits 41a00000)} ]
+## actuator_config len=42
+  ret=1 hdr{type=6 ver=0 ts=0x12345678} is_abort_controller=1 actuators=2 [ {ip=0xc0a8020b id=3 vent=1 abort=0} {ip=0x0c02a8c0 id=8 vent=0 abort=1} ] pts=2 [ {ip=0xc0a80215 id=2 adc=0x4ccccccd} {ip=0x1502a8c0 id=9 adc=0x10000000} ] enable_serial_printing=2
+## log len=27
+  ret=1 hdr{type=15 ver=0 ts=0x12345678} flags=1 text_len=18 text_ptr=buf+9 text=6c 69 6e 65 20 6f 6e 65 0a 6c 69 6e 65 20 74 77 6f 0a

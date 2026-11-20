@@ -1,0 +1,11 @@
+## readiness
+
+## connect
+
+## history
+> A {"type":"query_historical","payload":{}}
+
+## disconnect
+
+## board-health notifications seen (any step, any client; P1, reset flaps P1b)
+{"category": "info", "message": "Board 21 (PT) connected", "timestampMs": "<ts>"}

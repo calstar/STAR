@@ -13,7 +13,7 @@ Environment=USE_CALIBRATION_SERVICE_CALIBRATED=false
 # This is the always-on server: enable run-session control + auto-stop. Laptops
 # (start_tmux_dev.sh) leave this unset → the feature stays fully inert.
 Environment=SESSION_SERVICE_MODE=systemd
-# State transitions → C++ actuator_service (TCP :9998) → UDP to boards
+# State transitions → C++ sequencer_service (the sensor-actuator unit, TCP :9998) → UDP to boards
 Environment=ACTUATOR_SERVICE_PORT=9998
 # Serve the built frontend SPA (frontend/dist) on :3000
 Environment=GUI_PORT=3000

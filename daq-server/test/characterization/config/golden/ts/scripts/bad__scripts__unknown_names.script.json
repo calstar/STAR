@@ -1,0 +1,158 @@
+{
+  "carets": [
+    "0: command \"\" 0-0 => 0-0 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "1: command \"o\" 0-1 => 0-1 open_valve(+ | close_valve(+ | transition_to(+",
+    "2: command \"op\" 0-2 => 0-2 open_valve(+",
+    "3: command \"ope\" 0-3 => 0-3 open_valve(+",
+    "4: command \"open\" 0-4 => 0-4 open_valve(+",
+    "5: command \"open_\" 0-5 => 0-5 open_valve(+",
+    "6: command \"open_v\" 0-6 => 0-6 open_valve(+",
+    "7: command \"open_va\" 0-7 => 0-7 open_valve(+",
+    "8: command \"open_val\" 0-8 => 0-8 open_valve(+",
+    "9: command \"open_valv\" 0-9 => 0-9 open_valve(+",
+    "10: command \"open_valve\" 0-10 => 0-10 open_valve(+",
+    "11: valve \"\" 11-11 => 11-11 DOME_CTRL)[DOME_CTRL] | DOME_CTRL_VENT)[DOME_CTRL_VENT] | FUEL_FILL_PRESS)[FUEL_FILL_PRESS] | FUEL_FILL_VENT)[FUEL_FILL_VENT] | FUEL_MAIN)[FUEL_MAIN] | FUEL_UPSTREAM)[FUEL_UPSTREAM] | FUEL_VENT)[FUEL_VENT] | HIGH_PRESS_CTRL)[HIGH_PRESS_CTRL] | HIGH_PRESS_VENT)[HIGH_PRESS_VENT] | LOW_PRESS_VENT)[LOW_PRESS_VENT] | LOX_VENT)[LOX_VENT] | OX_MAIN)[OX_MAIN] | OX_UPSTREAM)[OX_UPSTREAM]",
+    "12: valve \"W\" 11-12 => 11-12 LOW_PRESS_VENT)[LOW_PRESS_VENT]",
+    "13: valve \"WA\" 11-13 => null",
+    "14: valve \"WAR\" 11-14 => null",
+    "15: valve \"WARP\" 11-15 => null",
+    "16: valve \"WARP_\" 11-16 => null",
+    "17: valve \"WARP_C\" 11-17 => null",
+    "18: valve \"WARP_CO\" 11-18 => null",
+    "19: valve \"WARP_COI\" 11-19 => null",
+    "20: valve \"WARP_COIL\" 11-20 => null",
+    "21: null => null",
+    "22: command \"\" 22-22 => 22-22 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "23: command \"x\" 22-23 => null",
+    "24: null => null",
+    "25: expr \"\" 25-25 => 25-25 x | pressure(+ | elapsed() | not ",
+    "26: expr \"\" 26-26 => 26-26 x | pressure(+ | elapsed() | not ",
+    "27: expr \"p\" 26-27 => 26-27 pressure(+ | elapsed()",
+    "28: expr \"pr\" 26-28 => 26-28 pressure(+",
+    "29: expr \"pre\" 26-29 => 26-29 pressure(+",
+    "30: expr \"pres\" 26-30 => 26-30 pressure(+",
+    "31: expr \"press\" 26-31 => 26-31 pressure(+",
+    "32: expr \"pressu\" 26-32 => 26-32 pressure(+",
+    "33: expr \"pressur\" 26-33 => 26-33 pressure(+",
+    "34: expr \"pressure\" 26-34 => 26-34 pressure(+",
+    "35: sensor \"\" 35-35 => 35-35 DOME_CTRL)[DOME_CTRL] | DOME_MID)[DOME_MID] | EXCITATION_V)[EXCITATION_V] | FUEL_FILL_VENT)[FUEL_FILL_VENT] | FUEL_UPSTREAM)[FUEL_UPSTREAM] | GN2_HIGH)[GN2_HIGH] | HIGH_PRESS)[HIGH_PRESS] | LOW_PRESS)[LOW_PRESS] | LOX_UPSTREAM)[LOX_UPSTREAM]",
+    "36: sensor \"N\" 35-36 => 35-36 EXCITATION_V)[EXCITATION_V] | FUEL_FILL_VENT)[FUEL_FILL_VENT] | GN2_HIGH)[GN2_HIGH]",
+    "37: sensor \"NO\" 35-37 => null",
+    "38: sensor \"NO_\" 35-38 => null",
+    "39: sensor \"NO_S\" 35-39 => null",
+    "40: sensor \"NO_SU\" 35-40 => null",
+    "41: sensor \"NO_SUC\" 35-41 => null",
+    "42: sensor \"NO_SUCH\" 35-42 => null",
+    "43: sensor \"NO_SUCH_\" 35-43 => null",
+    "44: sensor \"NO_SUCH_S\" 35-44 => null",
+    "45: sensor \"NO_SUCH_SE\" 35-45 => null",
+    "46: sensor \"NO_SUCH_SEN\" 35-46 => null",
+    "47: sensor \"NO_SUCH_SENS\" 35-47 => null",
+    "48: sensor \"NO_SUCH_SENSO\" 35-48 => null",
+    "49: sensor \"NO_SUCH_SENSOR\" 35-49 => null",
+    "50: null => null",
+    "51: command \"\" 51-51 => 51-51 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "52: command \"t\" 51-52 => 51-52 transition_to(+",
+    "53: command \"tr\" 51-53 => 51-53 transition_to(+",
+    "54: command \"tra\" 51-54 => 51-54 transition_to(+",
+    "55: command \"tran\" 51-55 => 51-55 transition_to(+",
+    "56: command \"trans\" 51-56 => 51-56 transition_to(+",
+    "57: command \"transi\" 51-57 => 51-57 transition_to(+",
+    "58: command \"transit\" 51-58 => 51-58 transition_to(+",
+    "59: command \"transiti\" 51-59 => 51-59 transition_to(+",
+    "60: command \"transitio\" 51-60 => 51-60 transition_to(+",
+    "61: command \"transition\" 51-61 => 51-61 transition_to(+",
+    "62: command \"transition_\" 51-62 => 51-62 transition_to(+",
+    "63: command \"transition_t\" 51-63 => 51-63 transition_to(+",
+    "64: command \"transition_to\" 51-64 => 51-64 transition_to(+",
+    "65: state \"\" 65-65 => 65-65 DYNAMIC_TEST)[DYNAMIC_TEST] | PRESS_STANDBY)[PRESS_STANDBY]",
+    "66: state \"N\" 65-66 => 65-66 DYNAMIC_TEST)[DYNAMIC_TEST] | PRESS_STANDBY)[PRESS_STANDBY]",
+    "67: state \"NO\" 65-67 => null",
+    "68: state \"NOW\" 65-68 => null",
+    "69: state \"NOWH\" 65-69 => null",
+    "70: state \"NOWHE\" 65-70 => null",
+    "71: state \"NOWHER\" 65-71 => null",
+    "72: state \"NOWHERE\" 65-72 => null",
+    "73: null => null",
+    "74: command \"\" 74-74 => 74-74 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while "
+  ],
+  "checkScriptNames_DynamicTest": [
+    {
+      "line": 1,
+      "message": "no actuator named WARP_COIL"
+    },
+    {
+      "line": 2,
+      "message": "no sensor named NO_SUCH_SENSOR"
+    },
+    {
+      "line": 3,
+      "message": "no state named NOWHERE"
+    }
+  ],
+  "checkScriptNames_Idle": [
+    {
+      "line": 1,
+      "message": "no actuator named WARP_COIL"
+    },
+    {
+      "line": 2,
+      "message": "no sensor named NO_SUCH_SENSOR"
+    },
+    {
+      "line": 3,
+      "message": "no state named NOWHERE"
+    }
+  ],
+  "renameActuator": "open_valve(WARP_COIL)\nx = pressure(NO_SUCH_SENSOR)\ntransition_to(NOWHERE)\n",
+  "renameState": "open_valve(WARP_COIL)\nx = pressure(NO_SUCH_SENSOR)\ntransition_to(NOWHERE)\n",
+  "scanScriptNames": [
+    {
+      "line": 1,
+      "ns": "actuator",
+      "slug": "WARP_COIL"
+    },
+    {
+      "line": 2,
+      "ns": "sensor",
+      "slug": "NO_SUCH_SENSOR"
+    },
+    {
+      "line": 3,
+      "ns": "state",
+      "slug": "NOWHERE"
+    }
+  ],
+  "tokenize": [
+    "0-10 command \"open_valve\"",
+    "10-11 op \"(\"",
+    "11-20 valve UNKNOWN \"WARP_COIL\"",
+    "20-21 op \")\"",
+    "22-23 variable \"x\"",
+    "24-25 op \"=\"",
+    "26-34 command \"pressure\"",
+    "34-35 op \"(\"",
+    "35-49 sensor UNKNOWN \"NO_SUCH_SENSOR\"",
+    "49-50 op \")\"",
+    "51-64 command \"transition_to\"",
+    "64-65 op \"(\"",
+    "65-72 state UNKNOWN \"NOWHERE\"",
+    "72-73 op \")\""
+  ],
+  "tokenizeNoTables": [
+    "0-10 command \"open_valve\"",
+    "10-11 op \"(\"",
+    "11-20 valve \"WARP_COIL\"",
+    "20-21 op \")\"",
+    "22-23 variable \"x\"",
+    "24-25 op \"=\"",
+    "26-34 command \"pressure\"",
+    "34-35 op \"(\"",
+    "35-49 sensor \"NO_SUCH_SENSOR\"",
+    "49-50 op \")\"",
+    "51-64 command \"transition_to\"",
+    "64-65 op \"(\"",
+    "65-72 state \"NOWHERE\"",
+    "72-73 op \")\""
+  ]
+}

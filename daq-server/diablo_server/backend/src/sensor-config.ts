@@ -28,6 +28,19 @@ export function isCurrentLoopBoard(board: any): boolean {
 }
 
 /**
+ * The Elodin board slot ("board number") of a board id: `board_id % 10`, with 0 → 10.
+ *
+ * One home for the rule every per-board map used to compute inline (the packet-ID scheme, the
+ * sensor role maps, the registry's subscription list, the state-CSV actuator resolution). No
+ * validation: callers keep their own guards (`-21 → -1`, `21.5 → 1.5`, `NaN → NaN`, exactly as
+ * each copy computed). The registry's `% 8` fold stays where it is, in `elodin-vtable-registry.ts`.
+ */
+export function boardSlot(boardId: number): number {
+    const m = boardId % 10;
+    return m === 0 ? 10 : m;
+}
+
+/**
  * Board-numbers (board_id % 10, with 0→10) of the PT boards that are high-pressure
  * 4-20 mA current-loop boards. Used by the Elodin decoder to pick unsigned-vs-signed raw-ADC
  * interpretation and by the GUI to label HP boards. `config` is optional so callers on the hot
@@ -56,8 +69,7 @@ export function hpBoardNumbers(config?: any): Set<number> {
         const boards = (cfg.boards || {}) as Record<string, any>;
         for (const board of Object.values(boards)) {
             if (!isCurrentLoopBoard(board) || typeof board?.board_id !== 'number') continue;
-            const mod = board.board_id % 10;
-            out.add(mod === 0 ? 10 : mod);
+            out.add(boardSlot(board.board_id));
         }
     } catch { /* empty set on config error */ }
     return out;
@@ -113,8 +125,7 @@ export function loadSensorRoleMap(): {
         for (const [boardKey, boardRaw] of Object.entries(boards)) {
             const board = boardRaw as any;
             if (board.type !== 'PT' || typeof board.board_id !== 'number') continue;
-            const mod = board.board_id % 10;
-            const boardNumber = mod === 0 ? 10 : mod;
+            const boardNumber = boardSlot(board.board_id);
             const roles = (config as any)[`sensor_roles_${boardKey}`] || {};
             for (const [roleName, channelId] of Object.entries(roles)) {
                 if (typeof channelId === 'number' && channelId >= 1 && channelId <= 10) {
@@ -307,3 +318,261 @@ export function rawRtdToTemperatureC(rawValue: number, scaleToOhms: number = 0.0
 }
 
 
+
+// ── Sensor config helpers ──────────────────────────────────────────────────
+
+export interface SensorConfigEntry {
+  /** Sensor kind — the field buildSensorConfig() previously left the caller to infer (or not). */
+  type: 'PT' | 'TC' | 'RTD' | 'LC';
+  /** 1-based channel / connector ID local to the board */
+  id: number;
+  /** Human-readable role name from config.toml, e.g. "Fuel Upstream" */
+  role: string;
+  /** board_id from config.toml boards section */
+  boardId: number;
+  /** Board IP address */
+  boardIp: string;
+  /** true if this sensor is on a high-pressure 4-20 mA PT board (config hp_pt_* fields) */
+  isHpPt: boolean;
+  /** true → eligible for calibration capture */
+  inCalibrationSequence: boolean;
+  /** Raw ADC entity string, e.g. "PT1.CH1" */
+  entity: string;
+  /** Calibrated entity string, e.g. "PT1_Cal.CH1" */
+  calEntity: string;
+  /** 'T7' for a LabJack T7 channel (t7_bridge): `id` is then its AIN number and the entities are
+   *  T7<slot>.AIN<n> / T7<slot>_Cal.AIN<n>. Absent for the ESP32 boards. */
+  source?: 'T7';
+}
+
+/**
+ * How many enabled boards of this type the rig has.
+ *
+ * A generated role name ("LC Ch1") says nothing about which board it came from, and two
+ * boards of one type routinely declare the same connector — two LC boards each reporting
+ * on channel 1. The calibration page and the GUI list these names, so with a twin present
+ * the name has to carry the board_id or the operator is picking blind.
+ */
+function enabledBoardCount(boards: Record<string, any>, type: string): number {
+  return Object.values(boards).filter((b: any) => b?.type === type && b?.enabled !== false).length;
+}
+
+/** Generated role for a board with no [sensor_roles_<board>] section. */
+function generatedRole(type: string, boardId: number, ch: number, multiBoard: boolean): string {
+  return multiBoard ? `${type}${boardId} Ch${ch}` : `${type} Ch${ch}`;
+}
+
+function asBoardId(raw: unknown, fallback: number): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Match FSW/Elodin: (board_id % 10) with 0 → 10 for PTn / TCn / RTDn / LCn. */
+function elodinSlotFromBoardId(boardId: number): number {
+  const m = boardId % 10;
+  return m === 0 ? 10 : m;
+}
+
+/** `/api/sensor-config`. Exported, with an injectable config, for the tests. */
+export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry[] {
+  const boards = (config.boards || {}) as Record<string, any>;
+  const sensors: SensorConfigEntry[] = [];
+
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as Record<string, any>;
+    if (board.type !== 'PT') continue;
+    if (board.enabled === false) continue;
+
+    const boardIp: string = board.ip || '';
+    const boardId = asBoardId(board.board_id, 1);
+    // The ADC reference is set once per board, so the interface is a property of the whole
+    // board — every one of its sensor channels converts through the same path.
+    const isHpBoard = isCurrentLoopBoard(board);
+
+    // Determine which sensor_roles section to use for this board
+    const boardRolesKey = `sensor_roles_${boardKey}`;
+    let rolesSection: Record<string, any> = {};
+    if ((config as any)[boardRolesKey]) {
+      rolesSection = (config as any)[boardRolesKey] as Record<string, any>;
+    } else if (config.sensor_roles) {
+      rolesSection = config.sensor_roles as Record<string, any>;
+    }
+
+    // Every PT board uses its own [sensor_roles_<boardKey>] section — HP boards included
+    // (no separate sensor_roles_pt2 section).
+    for (const [roleName, channelIdRaw] of Object.entries(rolesSection)) {
+      const channelId = typeof channelIdRaw === 'number' ? channelIdRaw : Number(channelIdRaw);
+      if (!isFinite(channelId)) continue;
+
+      const isHpPt = isHpBoard;
+      const boardNumber = elodinSlotFromBoardId(boardId);
+
+      sensors.push({
+        type: 'PT',
+        id: channelId,
+        role: roleName,
+        boardId,
+        boardIp,
+        isHpPt,
+        inCalibrationSequence: true,
+        entity: `PT${boardNumber}.CH${channelId}`,
+        calEntity: `PT${boardNumber}_Cal.CH${channelId}`,
+      });
+    }
+  }
+
+  // TC boards with sensor_roles_tc_board (e.g. chamber TCs)
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as Record<string, any>;
+    if (board.type !== 'TC') continue;
+    if (board.enabled === false) continue;
+
+    const boardRolesKey = `sensor_roles_${boardKey}`;
+    const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
+    if (!rolesSection || typeof rolesSection !== 'object') continue;
+
+    const boardId = asBoardId(board.board_id, 51);
+    const boardIp: string = board.ip || '';
+
+    const boardNumber = elodinSlotFromBoardId(boardId);
+    for (const [roleName, channelId] of Object.entries(rolesSection)) {
+      const ch = typeof channelId === 'number' ? channelId : Number(channelId);
+      if (!isFinite(ch)) continue;
+
+      sensors.push({
+        type: 'TC',
+        id: ch,
+        role: roleName,
+        boardId,
+        boardIp,
+        isHpPt: false,
+        inCalibrationSequence: false,
+        entity: `TC${boardNumber}.CH${ch}`,
+        calEntity: `TC${boardNumber}_Cal.CH${ch}`,
+      });
+    }
+  }
+
+  const manyRtdBoards = enabledBoardCount(boards, 'RTD') > 1;
+  // RTD boards: sensor_roles_<boardKey> or active_connectors with role "RTD ChN"
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as Record<string, any>;
+    if (board.type !== 'RTD') continue;
+    if (board.enabled === false) continue;
+
+    const boardId = asBoardId(board.board_id, 31);
+    const boardIp: string = board.ip || '';
+    const boardRolesKey = `sensor_roles_${boardKey}`;
+    const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
+    const active: number[] = Array.isArray(board.active_connectors) ? (board.active_connectors as number[]) : [];
+
+    const boardNumber = elodinSlotFromBoardId(boardId);
+    if (rolesSection && typeof rolesSection === 'object') {
+      for (const [roleName, channelId] of Object.entries(rolesSection)) {
+        const ch = typeof channelId === 'number' ? channelId : Number(channelId);
+        if (!isFinite(ch)) continue;
+        sensors.push({
+          type: 'RTD',
+          id: ch,
+          role: roleName,
+          boardId,
+          boardIp,
+          isHpPt: false,
+          inCalibrationSequence: false,
+          entity: `RTD${boardNumber}.CH${ch}`,
+          calEntity: `RTD${boardNumber}_Cal.CH${ch}`,
+        });
+      }
+    } else {
+      for (const ch of active) {
+        sensors.push({
+          type: 'RTD',
+          id: ch,
+          role: generatedRole('RTD', boardId, ch, manyRtdBoards),
+          boardId,
+          boardIp,
+          isHpPt: false,
+          inCalibrationSequence: false,
+          entity: `RTD${boardNumber}.CH${ch}`,
+          calEntity: `RTD${boardNumber}_Cal.CH${ch}`,
+        });
+      }
+    }
+  }
+
+  const manyLcBoards = enabledBoardCount(boards, 'LC') > 1;
+  // LC boards: from active_connectors when no sensor_roles_<boardKey>; role "LC ChN"
+  for (const [boardKey, boardRaw] of Object.entries(boards)) {
+    const board = boardRaw as Record<string, any>;
+    if (board.type !== 'LC') continue;
+    if (board.enabled === false) continue;
+
+    const boardId = asBoardId(board.board_id, 41);
+    const boardIp: string = board.ip || '';
+    const boardRolesKey = `sensor_roles_${boardKey}`;
+    const rolesSection = (config as any)[boardRolesKey] as Record<string, number> | undefined;
+
+    const boardNumber = elodinSlotFromBoardId(boardId);
+    if (rolesSection && typeof rolesSection === 'object') {
+      for (const [roleName, channelId] of Object.entries(rolesSection)) {
+        const ch = typeof channelId === 'number' ? channelId : Number(channelId);
+        if (!isFinite(ch)) continue;
+        sensors.push({
+          type: 'LC',
+          id: ch,
+          role: roleName,
+          boardId,
+          boardIp,
+          isHpPt: false,
+          inCalibrationSequence: true,
+          entity: `LC${boardNumber}.CH${ch}`,
+          calEntity: `LC${boardNumber}_Cal.CH${ch}`,
+        });
+      }
+    } else {
+      const active: number[] = Array.isArray(board.active_connectors) ? (board.active_connectors as number[]) : [];
+      for (const ch of active) {
+        sensors.push({
+          type: 'LC',
+          id: ch,
+          role: generatedRole('LC', boardId, ch, manyLcBoards),
+          boardId,
+          boardIp,
+          isHpPt: false,
+          inCalibrationSequence: true,
+          entity: `LC${boardNumber}.CH${ch}`,
+          calEntity: `LC${boardNumber}_Cal.CH${ch}`,
+        });
+      }
+    }
+  }
+
+  // LabJack T7 channels: one more PT / TC / LC / RTD each, named by their role, in the same units, and
+  // calibrated by calibration_service exactly like an ESP32 PT / LC (uid board_id*100 + AIN), so
+  // PT and LC inputs take part in the calibration sequence as the ESP32 ones do.
+  for (const ch of t7Channels(boards)) {
+    if (!ch.enabled || ch.calEntity === null) continue;
+    if (ch.kind !== 'PT' && ch.kind !== 'TC' && ch.kind !== 'LC' && ch.kind !== 'RTD') continue;
+    sensors.push({
+      type: ch.kind,
+      id: ch.ain,
+      role: ch.role,
+      boardId: ch.boardId,
+      boardIp: ch.boardIp,
+      isHpPt: false,
+      inCalibrationSequence: ch.kind === 'PT' || ch.kind === 'LC',
+      entity: ch.entity,
+      calEntity: ch.calEntity,
+      source: 'T7',
+    });
+  }
+
+  // Sort: board order first, then channel id within board
+  sensors.sort((a, b) => {
+    if (a.boardId !== b.boardId) return a.boardId - b.boardId;
+    return a.id - b.id;
+  });
+
+  return sensors;
+}

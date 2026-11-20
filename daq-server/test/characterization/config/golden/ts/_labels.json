@@ -1,0 +1,9 @@
+{
+  "boards": "Boards",
+  "calibration": "Calibration",
+  "controller": "Controller",
+  "gui": "Top Bar & Limits",
+  "profile": "Config profile",
+  "roles": "Roles",
+  "state": "State Machine"
+}

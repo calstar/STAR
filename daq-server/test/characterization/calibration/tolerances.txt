@@ -1,0 +1,86 @@
+# Families of values that may differ by more than 4 ULP between builds and platforms
+# (golden_compare.py; the first rule that matches a value wins; everything not named here is
+# 4 ULP, integers and text exact). Each limit is the smallest round number that passes on macOS
+# arm64 clang -O0 and Release, Linux arm64 gcc-12 Release, gcc-12 -O0 and clang-18 Release, and
+# Linux amd64 gcc-12 Release,
+# against goldens generated from macOS Release; the measured worst case is in each comment and in
+# README.md, with the mutation that proves the limit still bites.
+
+# ── not portable by construction ─────────────────────────────────────────────────────────────
+# LcTareStore::fingerprint hashes the curve's float outputs bit for bit, so any last-bit
+# difference changes the integer. Its behaviour (stale / not stale) is frozen by the
+# `stale=` counts beside it, which stay exact.
+family=curve-fp-hash section="LcTareStore" line=" fp=" fields=3 ignore=1
+family=curve-fp-hash section="LcTareStore::fingerprint" ignore=1
+family=curve-fp-hash section="LcTareStore" line='"curve_fp":' ignore=1
+family=curve-fp-hash block=scripts/calibration/calibrations/lc_tare.json line='"curve_fp":' ignore=1
+
+# ── least-squares fits ───────────────────────────────────────────────────────────────────────
+# CubicCalibrationStore::compute_fit (colPivHouseholderQr) differs between compilers. Measured
+# across macOS clang -O0/Release and Linux gcc-12 Release/-O0 and clang-18 Release, against the
+# macOS Release golden:
+#   - a genuine coefficient (A/B/C/D, rmse, normalised poly) moves by at most 1040 ULP (B =
+#     5.87e-18 on Linux gcc; then 665, 510, 242, 201): limit 2048 ULP, the next power of two;
+#   - a coefficient that should be zero is solver residue and has no meaningful ULP; it is
+#     recognised by its size and given a power-of-two absolute floor just above the largest
+#     residue difference measured:
+#       psi-valued (D, rmse, the normalised poly, and the bare numbers of the JSON arrays): abs
+#         2^-35 (2.9e-11; measured 1.6e-11 on Linux amd64 gcc, 2.2e-12 on arm64: a near-linear
+#         4-20 mA fit's quadratic/cubic terms, 4e-6 psi, move 3.9e-6 rel)
+#       B (psi/adc^2): |v| < 1e-24, abs 2^-83 (1.0e-25; measured 5.4e-26)
+#       A (psi/adc^3): |v| < 1e-30, abs 2^-127 (5.9e-39; measured 3.5e-39 on amd64, 5.0e-40 arm64)
+#       B of a fit whose data is nearly linear (a 4-20 mA fit's B, ~1e-23): abs 2^-96 (1.3e-29)
+#         at any size (measured 1.1e-29 on amd64 gcc, 1.6e-30 on arm64; ~1e-11 psi at its codes)
+#   - what the fit DOES, psi at five codes across its span (`eval:`), is cancellation-limited
+#     (|terms| ~ 1e3 psi): abs 2^-39 (1.8e-12; measured 1.1e-12, 20 ULP at 480 psi).
+# The bare numbers in the JSON's calibration_polynomials arrays include the raw A/B/C, which fall
+# under the psi floor there; the same values are checked keyed ("A": ...), in `eval:`, and in the
+# stack golden through every published PT / LC value.
+family=cubic-fit-eval section="CubicCalibrationStore.*" line="eval:" abs=1.8189894035458565e-12
+family=cubic-fit-residue-A section="CubicCalibrationStore.*" key='(^| |")A(=|": )$' below=1e-30 abs=5.877471754111438e-39
+family=cubic-fit-residue-A block=scripts/calibration/calibrations/cubic_calibration.json key='"A": $' below=1e-30 abs=5.877471754111438e-39
+family=cubic-fit-residue-B section="CubicCalibrationStore.*" key='(^| |")B(=|": )$' below=1e-24 abs=1.0339757656912846e-25
+family=cubic-fit-residue-B block=scripts/calibration/calibrations/cubic_calibration.json key='"B": $' below=1e-24 abs=1.0339757656912846e-25
+family=cubic-fit-B section="CubicCalibrationStore.*" key='(^| |")B(=|": )$' ulps=2048 abs=1.262177448353619e-29
+family=cubic-fit-B block=scripts/calibration/calibrations/cubic_calibration.json key='"B": $' ulps=2048 abs=1.262177448353619e-29
+family=cubic-fit-psi section="CubicCalibrationStore.*" line='valid=|"(D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' key='(^| |")(D|rmse)(=|": )$|poly=$|^ $|^\s*$' ulps=2048 abs=2.9103830456733704e-11
+family=cubic-fit-psi block=scripts/calibration/calibrations/cubic_calibration.json key='"(D|rmse)": $|^\s*$' ulps=2048 abs=2.9103830456733704e-11
+family=cubic-fit section="CubicCalibrationStore.*" line='valid=|"(A|B|C|D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' ulps=2048
+family=cubic-fit block=scripts/calibration/calibrations/cubic_calibration.json line='"(A|B|C|D|rmse)": |^[ +-]*-?[0-9][0-9.eE+-]*,?$' ulps=2048
+
+# Robust learner: seed_from_factory_cubic is a ridge solve on a 9-term basis whose parameters are
+# barely identifiable (theta_1 moves 1.4e-5 rel between compilers; 2e-3 rel in the service's
+# adj.json after learning). Its predictions are what is frozen tightly: abs 1e-9 psi (measured
+# 2.3e-11). The parameters only have to stay the same order of magnitude.
+family=robust-prediction section="RobustCalibrationFramework" line="pred" abs=1e-9
+family=robust-prediction section="RobustCalibrationManager" line="pred" abs=1e-9
+family=robust-parameters section="RobustCalibrationFramework" rel=1e-2
+family=robust-parameters section="RobustCalibrationManager" rel=1e-2
+family=robust-parameters block=adj.json rel=1e-2
+
+# Allan-variance noise fit (a 4-column least-squares solve) and the variance it is fitted to,
+# whose sums gcc -O0 accumulates differently: up to 25 ULP.
+family=allan section="AllanVariance" line="^fit Q=|^tau=" ulps=32
+
+# ── cancellation in a closed form ────────────────────────────────────────────────────────────
+# Callendar-Van Dusen inverse (rtd::resistance_to_temp_cvd[_full], rtd_board_adc_to_temp_c,
+# t7::rtd_c): (-A + sqrt(A^2 - 4B(1 - R/R0))) / 2B leaves ~4e-13..8e-13 C absolute error anywhere
+# on the curve: up to 2.2e5 ULP near R0 (|T| < 1 C), up to 106 ULP (rel 2e-14) elsewhere.
+family=rtd-cvd-near-R0 line="^(T\(|board(?: edge)?\(|rtd(?: pt100)?[( ])" below=1 abs=1e-11
+family=rtd-cvd line="^(T\(|board(?: edge)?\(|rtd(?: pt100)?[( ])" rel=1e-13
+# The forward CVD R(T): 5 ULP on gcc -O0.
+family=rtd-cvd-forward section="rtd CVD" line="^R\(" ulps=8
+
+# Polynomial evaluations whose terms cancel near the result's zero (gcc -O0 rounds each term
+# separately): type K both ways (abs 7.4e-13), the PT cubics read from the factory CSV (abs
+# 2.8e-14 psi), the sensor polynomials (abs 1.4e-16), the T7 cold-junction offset (abs 5.7e-14 K).
+family=poly-eval section="TypeK" abs=1e-12
+family=poly-eval section="PTCalibrationManager" line="p\(" abs=1e-12
+family=poly-eval section="SensorCalibrationManager" line="calc\(" abs=1e-12
+family=poly-eval section="T7Convert" line="^cjc " abs=1e-12
+
+# ── calibration_service (stack golden) ───────────────────────────────────────────────────────
+# Published float32 values that sit at zero are the residue of a fit evaluated at its own zero
+# point (|v| ~ 1e-13); they differ by up to 1.7e-13. A tare offset at zero, likewise (2.4e-14).
+family=published-near-zero line="^  \[[0-9a-f]{2},[0-9a-f]{2}\] ts=" abs=1e-12
+family=tare-near-zero block=scripts/calibration/calibrations/lc_tare.json line='"offset_kg":' abs=1e-12

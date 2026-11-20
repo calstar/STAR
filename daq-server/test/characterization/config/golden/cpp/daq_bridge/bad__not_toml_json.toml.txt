@@ -1,0 +1,15 @@
+db_host = "127.0.0.1"
+db_port = 2240
+sensor_port = 5006
+bind_ip = "0.0.0.0"
+log_port = 8092
+hb = {interval_ms=1000 broadcast_port=5005 broadcast_ip="255.255.255.255" send_from_daq_bridge=true}
+time_sync = {mode=BoardClock window_seconds=10 max_plausible_gap_s=60 max_batch_age_s=5 resync_threshold_ms=1000 log_interval_s=10}
+resolve("10.9.8.7") = null
+
+=== captured stdout
+
+=== captured stderr
+[Config] TOML parse error in fixtures/bad/not_toml_json.toml: Error while parsing root table: expected keys, tables, whitespace or comments, saw '{'
+
+=== exit 0

@@ -1,4 +1,20 @@
 add_subdirectory(transport)
+set(SEQ_SRC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/services/sequencer)
+set(ACTUATOR_COMMANDER_SOURCES
+    ${SEQ_SRC_DIR}/ActuatorCommander.cpp
+    ${SEQ_SRC_DIR}/ActuatorCommander_load.cpp)
+set(SEQUENCER_SOURCES
+    ${SEQ_SRC_DIR}/SequencerService.cpp
+    ${SEQ_SRC_DIR}/SequencerService_config.cpp
+    ${SEQ_SRC_DIR}/SequencerService_controller_notify.cpp
+    ${SEQ_SRC_DIR}/SequencerService_elodin.cpp
+    ${SEQ_SRC_DIR}/StateMachine.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
+    ${SEQ_SRC_DIR}/AbortBroadcaster.cpp
+    ${SEQ_SRC_DIR}/HoldTimer.cpp
+    ${SEQ_SRC_DIR}/ScriptStates.cpp
+    ${SEQ_SRC_DIR}/ScriptRunner.cpp
+    ${SEQ_SRC_DIR}/PressureFeed.cpp)
 add_subdirectory(lib)
 add_subdirectory(daq_bridge)
 add_subdirectory(services)

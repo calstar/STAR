@@ -1,0 +1,1210 @@
+{
+  "parseElodinPacket": [
+    {
+      "name": "ENV ok",
+      "packetId": "0x25/0x19",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 ac 41 cd 8b 01 00 00 00 35 42 78 56 34 12",
+      "result": [
+        {
+          "entity": "ENV25",
+          "component": "temperature_c",
+          "value": 21.5,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "ENV25",
+          "component": "pressure_pa",
+          "value": 101325,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "ENV25",
+          "component": "humidity_rh",
+          "value": 45.25,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "ENV low=0",
+      "packetId": "0x25/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 ac 41 cd 8b 01 00 00 00 35 42 78 56 34 12",
+      "result": []
+    },
+    {
+      "name": "ENV len 23",
+      "packetId": "0x25/0x19",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 ac 41 cd 8b 01 00 00 00 35 42 78 56 34",
+      "result": []
+    },
+    {
+      "name": "ENV humidity 101",
+      "packetId": "0x25/0x19",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 ac 41 cd 8b 01 00 00 00 ca 42 78 56 34 12",
+      "result": []
+    },
+    {
+      "name": "ENV pressure 0",
+      "packetId": "0x25/0x19",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 ac 41 00 00 00 00 00 00 48 42 78 56 34 12",
+      "result": []
+    },
+    {
+      "name": "ENV temp NaN",
+      "packetId": "0x25/0x19",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 c0 7f 01 00 00 00 00 00 48 42 78 56 34 12",
+      "result": []
+    },
+    {
+      "name": "PT1 raw CH3 signed",
+      "packetId": "0x20/0x03",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 00 00 00 05 00 00 80 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "PT1.CH3",
+          "component": "raw_adc_counts",
+          "value": -2147483643,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "PT1 raw CH3 hp slot unsigned",
+      "packetId": "0x20/0x03",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 00 00 00 05 00 00 80 04 03 02 01 01",
+      "hpBoardNumbers": [
+        1
+      ],
+      "result": [
+        {
+          "entity": "PT1.CH3",
+          "component": "raw_adc_counts",
+          "value": 2147483653,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "PT2 raw CH1",
+      "packetId": "0x20/0x21",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 d2 04 00 00 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "PT2.CH1",
+          "component": "raw_adc_counts",
+          "value": 1234,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "PT1 cal CH3",
+      "packetId": "0x20/0x13",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 00 00 00 00 40 ce 43 05 00 00 80 01",
+      "result": [
+        {
+          "entity": "PT1_Cal.CH3",
+          "component": "pressure_psi",
+          "value": 412.5,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "PT1_Cal.CH3",
+          "component": "raw_adc_counts",
+          "value": -2147483643,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "PT1_Cal.CH3",
+          "component": "raw_adc",
+          "value": -2147483643,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "PT1 cal CH3 hp slot",
+      "packetId": "0x20/0x13",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 00 00 00 00 40 ce 43 05 00 00 80 01",
+      "hpBoardNumbers": [
+        1
+      ],
+      "result": [
+        {
+          "entity": "PT1_Cal.CH3",
+          "component": "pressure_psi",
+          "value": 412.5,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "PT1_Cal.CH3",
+          "component": "raw_adc_counts",
+          "value": 2147483653,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "PT1_Cal.CH3",
+          "component": "raw_adc",
+          "value": 2147483653,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "PT1 cal psi -60 (rejected)",
+      "packetId": "0x20/0x13",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 00 00 00 00 00 70 c2 01 00 00 00 01",
+      "result": []
+    },
+    {
+      "name": "PT1 cal psi 10001 (rejected)",
+      "packetId": "0x20/0x13",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 00 00 00 00 44 1c 46 01 00 00 00 01",
+      "result": []
+    },
+    {
+      "name": "PT1 cal NaN",
+      "packetId": "0x20/0x13",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 00 00 00 00 00 c0 7f 01 00 00 00 01",
+      "result": []
+    },
+    {
+      "name": "PT1 raw short 20",
+      "packetId": "0x20/0x03",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 00 00 00 01 00 00 00 04 03 02 01",
+      "result": []
+    },
+    {
+      "name": "PT channel 0 (low 0x00)",
+      "packetId": "0x20/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 00 00 01 00 00 00 04 03 02 01 01",
+      "result": []
+    },
+    {
+      "name": "PT channel 11 (low 0x0b)",
+      "packetId": "0x20/0x0b",
+      "payload": "15 cd 85 3d fe 9c 97 17 0b 00 00 00 01 00 00 00 04 03 02 01 01",
+      "result": []
+    },
+    {
+      "name": "PT board 8 CH10 (low 0xea)",
+      "packetId": "0x20/0xea",
+      "payload": "15 cd 85 3d fe 9c 97 17 0a 00 00 00 07 00 00 00 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "PT8.CH10",
+          "component": "raw_adc_counts",
+          "value": 7,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "TC1 raw CH2",
+      "packetId": "0x21/0x02",
+      "payload": "15 cd 85 3d fe 9c 97 17 02 00 00 00 05 00 00 80 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "TC1.CH2",
+          "component": "raw_adc_counts",
+          "value": -2147483643,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "TC1 cal CH2",
+      "packetId": "0x21/0x12",
+      "payload": "15 cd 85 3d fe 9c 97 17 02 00 00 00 00 00 cc 41 63 00 00 00 01",
+      "result": [
+        {
+          "entity": "TC1_Cal.CH2",
+          "component": "temperature_c",
+          "value": 25.5,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "TC1_Cal.CH2",
+          "component": "raw_adc_counts",
+          "value": 99,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "TC1_Cal.CH2",
+          "component": "raw_adc",
+          "value": 99,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "TC1 cal -501 (rejected)",
+      "packetId": "0x21/0x12",
+      "payload": "15 cd 85 3d fe 9c 97 17 02 00 00 00 00 80 fa c3 63 00 00 00 01",
+      "result": []
+    },
+    {
+      "name": "RTD1 raw CH1",
+      "packetId": "0x22/0x01",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 05 00 00 80 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "RTD1.CH1",
+          "component": "raw_resistance_counts",
+          "value": 2147483653,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "RTD1 cal CH1",
+      "packetId": "0x22/0x11",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 00 00 37 c3 e1 10 00 00 01",
+      "result": [
+        {
+          "entity": "RTD1_Cal.CH1",
+          "component": "temperature_c",
+          "value": -183,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "RTD1_Cal.CH1",
+          "component": "raw_resistance_counts",
+          "value": 4321,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "RTD1_Cal.CH1",
+          "component": "raw_adc_counts",
+          "value": 4321,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "RTD1_Cal.CH1",
+          "component": "raw_adc",
+          "value": 4321,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "LC2 raw CH6",
+      "packetId": "0x23/0x26",
+      "payload": "15 cd 85 3d fe 9c 97 17 06 00 00 00 05 00 00 80 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "LC2.CH6",
+          "component": "raw_adc_counts",
+          "value": -2147483643,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "LC2 cal CH6",
+      "packetId": "0x23/0x36",
+      "payload": "15 cd 85 3d fe 9c 97 17 06 00 00 00 00 00 44 41 4d 00 00 00 01",
+      "result": [
+        {
+          "entity": "LC2_Cal.CH6",
+          "component": "force_kg",
+          "value": 12.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "LC2_Cal.CH6",
+          "component": "raw_adc_counts",
+          "value": 77,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "LC2_Cal.CH6",
+          "component": "raw_adc",
+          "value": 77,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "LC cal force 50001 (rejected)",
+      "packetId": "0x23/0x36",
+      "payload": "15 cd 85 3d fe 9c 97 17 06 00 00 00 00 51 43 47 4d 00 00 00 01",
+      "result": []
+    },
+    {
+      "name": "ENC1 raw CH1",
+      "packetId": "0x24/0x01",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 00 08 00 00 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "ENC1.CH1",
+          "component": "raw_angle",
+          "value": 2048,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "ENC1 cal slot (low 0x11)",
+      "packetId": "0x24/0x11",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 00 08 00 00 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "ENC1.CH1",
+          "component": "raw_angle",
+          "value": 2048,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "T7 slot1 raw AIN0",
+      "packetId": "0x26/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 00 00 00 00 a0 3f 00 00 00 00 01",
+      "result": [
+        {
+          "entity": "T71.AIN0",
+          "component": "volts",
+          "value": 1.25,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "T7 slot1 raw AIN14",
+      "packetId": "0x26/0x0e",
+      "payload": "15 cd 85 3d fe 9c 97 17 0e 00 00 00 00 00 00 bf 00 00 00 00 01",
+      "result": [
+        {
+          "entity": "T71.AIN14",
+          "component": "volts",
+          "value": -0.5,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "T7 slot1 cal AIN1 without map",
+      "packetId": "0x26/0x11",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 00 00 96 43 dc 05 00 00 01",
+      "result": []
+    },
+    {
+      "name": "T7 slot1 cal AIN1 pressure_psi",
+      "packetId": "0x26/0x11",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 00 00 96 43 dc 05 00 00 01",
+      "t7CalFields": {
+        "0x11": "pressure_psi"
+      },
+      "result": [
+        {
+          "entity": "T71_Cal.AIN1",
+          "component": "pressure_psi",
+          "value": 300,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "T71_Cal.AIN1",
+          "component": "raw_adc_counts",
+          "value": 1500,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "T71_Cal.AIN1",
+          "component": "raw_adc",
+          "value": 1500,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "T7 slot2 cal AIN2 temperature_c",
+      "packetId": "0x26/0x32",
+      "payload": "15 cd 85 3d fe 9c 97 17 02 00 00 00 00 00 f0 41 c4 09 00 00 01",
+      "t7CalFields": {
+        "0x32": "temperature_c"
+      },
+      "result": [
+        {
+          "entity": "T72_Cal.AIN2",
+          "component": "temperature_c",
+          "value": 30,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "T72_Cal.AIN2",
+          "component": "raw_adc_counts",
+          "value": 2500,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "T72_Cal.AIN2",
+          "component": "raw_adc",
+          "value": 2500,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "T7 raw NaN",
+      "packetId": "0x26/0x01",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 00 00 c0 7f 00 00 00 00 01",
+      "result": []
+    },
+    {
+      "name": "ACT2 raw CH5",
+      "packetId": "0x30/0x25",
+      "payload": "15 cd 85 3d fe 9c 97 17 05 00 00 00 b8 0b 00 00 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "ACT2.CH5",
+          "component": "raw_adc_counts",
+          "value": 3000,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "ACT2 cal CH5 (0x30 cal slot)",
+      "packetId": "0x30/0x35",
+      "payload": "15 cd 85 3d fe 9c 97 17 05 00 00 00 00 00 c0 3f b8 0b 00 00 01",
+      "result": [
+        {
+          "entity": "ACT2_Cal.CH5",
+          "component": "current_a",
+          "value": 1.5,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "ACT2_Cal.CH5",
+          "component": "raw_adc_counts",
+          "value": 3000,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "ACT2_Cal.CH5",
+          "component": "raw_adc",
+          "value": 3000,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "ACT2 state CH5 (0x31 raw slot)",
+      "packetId": "0x31/0x25",
+      "payload": "15 cd 85 3d fe 9c 97 17 05 01",
+      "result": [
+        {
+          "entity": "ACT2.CH5",
+          "component": "actuator_state",
+          "value": 1,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "ACT2 cal current CH5 (0x31 cal slot)",
+      "packetId": "0x31/0x35",
+      "payload": "15 cd 85 3d fe 9c 97 17 05 00 00 00 00 00 40 3f b8 0b 00 00 01",
+      "result": [
+        {
+          "entity": "ACT2_Cal.CH5",
+          "component": "current_a",
+          "value": 0.75,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "ACT2_Cal.CH5",
+          "component": "raw_adc_counts",
+          "value": 3000,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "ACT2_Cal.CH5",
+          "component": "raw_adc",
+          "value": 3000,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "ACT cmd B2 CH5",
+      "packetId": "0x32/0x25",
+      "payload": "15 cd 85 3d fe 9c 97 17 05 01",
+      "result": [
+        {
+          "entity": "ACT_CMD.B2.CH5",
+          "component": "actuator_state_commanded",
+          "value": 1,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "ACT cmd short 9",
+      "packetId": "0x32/0x25",
+      "payload": "15 cd 85 3d fe 9c 97 17 05",
+      "result": []
+    },
+    {
+      "name": "BV1 raw CH1",
+      "packetId": "0x33/0x01",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 d0 07 00 00 04 03 02 01 01",
+      "result": [
+        {
+          "entity": "BV1.CH1",
+          "component": "raw_adc_counts",
+          "value": 2000,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "BV1 cal CH1",
+      "packetId": "0x34/0x11",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 00 00 5e 42 d0 07 00 00 01",
+      "result": [
+        {
+          "entity": "BV1_Cal.CH1",
+          "component": "position_pct",
+          "value": 55.5,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "BV1_Cal.CH1",
+          "component": "raw_adc",
+          "value": 2000,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "BV1_Cal.CH1",
+          "component": "cal_status",
+          "value": 1,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "BV1 cal NaN",
+      "packetId": "0x34/0x11",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 00 00 c0 7f d0 07 00 00 01",
+      "result": []
+    },
+    {
+      "name": "BV1 raw on cal low (ignored)",
+      "packetId": "0x33/0x11",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 d0 07 00 00 04 03 02 01 01",
+      "result": []
+    },
+    {
+      "name": "BV cmd B1 CH1",
+      "packetId": "0x35/0x01",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00",
+      "result": [
+        {
+          "entity": "BV_CMD.B1.CH1",
+          "component": "actuator_state_commanded",
+          "value": 0,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "CTRL actuation",
+      "packetId": "0x40/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 80 3e 00 00 40 3f 01 00 01",
+      "result": [
+        {
+          "entity": "CONTROLLER.actuation",
+          "component": "duty_F",
+          "value": 0.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.actuation",
+          "component": "duty_O",
+          "value": 0.75,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.actuation",
+          "component": "u_F_on",
+          "value": 1,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.actuation",
+          "component": "u_O_on",
+          "value": 0,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.actuation",
+          "component": "valid",
+          "value": 1,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "CTRL actuation short 18",
+      "packetId": "0x40/0x00",
+      "payload": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "result": []
+    },
+    {
+      "name": "CTRL diagnostics",
+      "packetId": "0x41/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 00 00 00 00 f4 3f 00 00 00 00 00 00 02 40 00 00 00 00 00 00 0a 40 00 00 00 00 00 00 11 40 00 00 00 00 00 00 15 40 00 00 00 00 00 00 19 40 f9 ff ff ff 01 00",
+      "result": [
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "F_ref",
+          "value": 1.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "MR_ref",
+          "value": 2.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "F_estimated",
+          "value": 3.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "MR_estimated",
+          "value": 4.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "P_ch",
+          "value": 5.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "cost",
+          "value": 6.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "solver_iters",
+          "value": -7,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "safety_filtered",
+          "value": 1,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.diagnostics",
+          "component": "cutoff_active",
+          "value": 0,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "CTRL measurement 56",
+      "packetId": "0x42/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 00 00 00 00 f4 3f 00 00 00 00 00 00 02 40 00 00 00 00 00 00 0a 40 00 00 00 00 00 00 11 40 00 00 00 00 00 00 15 40 00 00 00 00 00 00 19 40",
+      "result": [
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_copv",
+          "value": 1.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_reg",
+          "value": 2.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_u_fuel",
+          "value": 3.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_u_ox",
+          "value": 4.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_d_fuel",
+          "value": 5.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_d_ox",
+          "value": 6.25,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "CTRL measurement 72",
+      "packetId": "0x42/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 00 00 00 00 00 00 f4 3f 00 00 00 00 00 00 02 40 00 00 00 00 00 00 0a 40 00 00 00 00 00 00 11 40 00 00 00 00 00 00 15 40 00 00 00 00 00 00 19 40 00 00 00 00 00 00 1d 40 00 00 00 00 00 80 20 40",
+      "result": [
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_copv",
+          "value": 1.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_reg",
+          "value": 2.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_u_fuel",
+          "value": 3.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_u_ox",
+          "value": 4.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_d_fuel",
+          "value": 5.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_d_ox",
+          "value": 6.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_ch_mp1",
+          "value": 7.25,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.measurement",
+          "component": "P_ch_mp2",
+          "value": 8.25,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "PSM state",
+      "packetId": "0x43/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 04 02",
+      "result": [
+        {
+          "entity": "CONTROLLER.state",
+          "component": "from_state",
+          "value": 3,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.state",
+          "component": "to_state",
+          "value": 4,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.state",
+          "component": "reason",
+          "value": 2,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "FIRE state",
+      "packetId": "0x44/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 3f 9a 99 19 3f",
+      "result": [
+        {
+          "entity": "CONTROLLER.fire",
+          "component": "fire_active",
+          "value": 1,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.fire",
+          "component": "duty_F",
+          "value": 0.5,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "CONTROLLER.fire",
+          "component": "duty_O",
+          "value": 0.6000000238418579,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "SEQUENCER state",
+      "packetId": "0x50/0x00",
+      "payload": "15 cd 85 3d fe 9c 97 17 10 00 00 00 05 a0 01 00 01",
+      "result": [
+        {
+          "entity": "_SEQUENCER_STATE",
+          "component": "state",
+          "value": 16,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "_SEQUENCER_STATE",
+          "component": "allowedBitmask",
+          "value": 106501,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "_SEQUENCER_STATE",
+          "component": "debugMode",
+          "value": 1,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "SEQUENCER state short 16",
+      "packetId": "0x50/0x00",
+      "payload": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "result": []
+    },
+    {
+      "name": "PSM actuator cmd 0x63",
+      "packetId": "0x50/0x63",
+      "payload": "15 cd 85 3d fe 9c 97 17 04 02 00 00 00 3e 01",
+      "result": [
+        {
+          "entity": "PSM.actuator.4",
+          "component": "command_type",
+          "value": 2,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "PSM.actuator.4",
+          "component": "value",
+          "value": 0.125,
+          "timestamp": 1700000000123
+        },
+        {
+          "entity": "PSM.actuator.4",
+          "component": "status",
+          "value": 1,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "PSM actuator cmd 0x67 (out of range)",
+      "packetId": "0x50/0x67",
+      "payload": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "result": []
+    },
+    {
+      "name": "SELF_TEST sensor 3 board 21",
+      "packetId": "0x63/0x15",
+      "payload": "15 cd 85 3d fe 9c 97 17 03 01",
+      "result": [
+        {
+          "entity": "SELF_TEST.BOARD_21",
+          "component": "sensor_3",
+          "value": 1,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "SELF_TEST 0x6f board 255",
+      "packetId": "0x6f/0xff",
+      "payload": "15 cd 85 3d fe 9c 97 17 0f 00",
+      "result": [
+        {
+          "entity": "SELF_TEST.BOARD_255",
+          "component": "sensor_15",
+          "value": 0,
+          "timestamp": 1700000000123
+        }
+      ]
+    },
+    {
+      "name": "heartbeat table 0x10 (unmapped)",
+      "packetId": "0x10/0x15",
+      "payload": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "result": []
+    },
+    {
+      "name": "calibration cmd 0x46 (unmapped)",
+      "packetId": "0x46/0x00",
+      "payload": "00 00 00 00 00 00 00 00",
+      "result": []
+    },
+    {
+      "name": "unknown 0x99",
+      "packetId": "0x99/0x01",
+      "payload": "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "result": []
+    }
+  ],
+  "parseRawLCMessage": [
+    {
+      "name": "parseRawLCMessage ok",
+      "result": {
+        "entity": "LC.CH6",
+        "component": "raw_adc_counts",
+        "value": -2147483643,
+        "timestamp": 1700000000123
+      }
+    },
+    {
+      "name": "parseRawLCMessage short",
+      "result": null
+    }
+  ],
+  "clientWrites": [
+    {
+      "len": 6,
+      "ty": 0,
+      "packetId": [
+        "0x11",
+        "0x0d"
+      ],
+      "requestId": 7,
+      "payload": "50 00"
+    },
+    {
+      "len": 6,
+      "ty": 0,
+      "packetId": [
+        "0x11",
+        "0x0d"
+      ],
+      "requestId": 44,
+      "payload": "20 01"
+    },
+    {
+      "len": 25,
+      "ty": 1,
+      "packetId": [
+        "0x20",
+        "0x01"
+      ],
+      "requestId": 0,
+      "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 05 00 00 00 04 03 02 01 01"
+    },
+    {
+      "len": 78,
+      "ty": 2,
+      "packetId": [
+        "0x20",
+        "0x00"
+      ],
+      "requestId": 0,
+      "payload": "7b 22 74 79 70 65 22 3a 22 73 74 61 74 65 5f 74 72 61 6e 73 69 74 69 6f 6e 22 2c 22 64 61 74 61 22 3a 7b 22 74 6f 22 3a 22 49 44 4c 45 22 7d 2c 22 74 69 6d 65 73 74 61 6d 70 22 3a 31 37 30 30 30 30 30 30 30 30 30 30 30 7d"
+    },
+    {
+      "len": 77,
+      "ty": 2,
+      "packetId": [
+        "0xff",
+        "0x01"
+      ],
+      "requestId": 0,
+      "payload": "7b 22 74 79 70 65 22 3a 22 61 63 74 75 61 74 6f 72 22 2c 22 64 61 74 61 22 3a 7b 22 69 64 22 3a 33 2c 22 6f 70 65 6e 22 3a 74 72 75 65 7d 2c 22 74 69 6d 65 73 74 61 6d 70 22 3a 31 37 30 30 30 30 30 30 30 30 30 30 30 7d"
+    },
+    {
+      "len": 4,
+      "ty": 0,
+      "packetId": [
+        "0xe0",
+        "0x16"
+      ],
+      "requestId": 255,
+      "payload": ""
+    }
+  ],
+  "clientReceive": [
+    {
+      "name": "TABLE raw PT",
+      "input": "19 00 00 00 01 20 01 00 15 cd 85 3d fe 9c 97 17 01 00 00 00 2a 00 00 00 04 03 02 01 01",
+      "events": [
+        {
+          "event": "packet",
+          "header": {
+            "len": 25,
+            "ty": 1,
+            "packetId": [
+              "0x20",
+              "0x01"
+            ],
+            "requestId": 0
+          },
+          "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 2a 00 00 00 04 03 02 01 01"
+        }
+      ],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "MSG data family 0x32",
+      "input": "0e 00 00 00 00 32 21 00 15 cd 85 3d fe 9c 97 17 01 01",
+      "events": [
+        {
+          "event": "packet",
+          "header": {
+            "len": 14,
+            "ty": 0,
+            "packetId": [
+              "0x32",
+              "0x21"
+            ],
+            "requestId": 0
+          },
+          "payload": "15 cd 85 3d fe 9c 97 17 01 01"
+        }
+      ],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "MSG registration chatter 0x47b7",
+      "input": "07 00 00 00 00 47 b7 00 01 02 03",
+      "events": [],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "fence reply",
+      "input": "0c 00 00 00 00 e0 17 ff 00 00 00 00 00 00 00 00",
+      "events": [
+        {
+          "event": "subscriptionFence"
+        }
+      ],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "ErrorResponse",
+      "input": "13 00 00 00 00 e0 1d 09 0e 69 6e 76 61 6c 69 64 20 6d 73 67 20 69 64",
+      "events": [
+        {
+          "event": "dbError",
+          "requestId": 9,
+          "description": "invalid msg id"
+        }
+      ],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "len=2 (too short) then TABLE",
+      "input": "02 00 00 00 01 02 03 04 19 00 00 00 01 20 01 00 15 cd 85 3d fe 9c 97 17 01 00 00 00 2a 00 00 00 04 03 02 01 01",
+      "events": [
+        {
+          "event": "packet",
+          "header": {
+            "len": 25,
+            "ty": 1,
+            "packetId": [
+              "0x20",
+              "0x01"
+            ],
+            "requestId": 0
+          },
+          "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 2a 00 00 00 04 03 02 01 01"
+        }
+      ],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "len=0x7fffffff (waits for more) then TABLE",
+      "input": "ff ff ff 7f 01 02 03 04 19 00 00 00 01 20 01 00 15 cd 85 3d fe 9c 97 17 01 00 00 00 2a 00 00 00 04 03 02 01 01",
+      "events": [],
+      "bufferedAfter": 37
+    },
+    {
+      "name": "len=65537 complete then TABLE",
+      "input": "65570 bytes",
+      "events": [
+        {
+          "event": "packet",
+          "header": {
+            "len": 25,
+            "ty": 1,
+            "packetId": [
+              "0x20",
+              "0x01"
+            ],
+            "requestId": 0
+          },
+          "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 2a 00 00 00 04 03 02 01 01"
+        }
+      ],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "MSG fence id with request 7 (not the fence)",
+      "input": "04 00 00 00 00 e0 17 07",
+      "events": [],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "TABLE empty payload",
+      "input": "04 00 00 00 01 20 03 00",
+      "events": [
+        {
+          "event": "packet",
+          "header": {
+            "len": 4,
+            "ty": 1,
+            "packetId": [
+              "0x20",
+              "0x03"
+            ],
+            "requestId": 0
+          },
+          "payload": ""
+        }
+      ],
+      "bufferedAfter": 0
+    },
+    {
+      "name": "TABLE split across two chunks",
+      "input": "19 00 00 00 01 20 01 00 15 cd 85 3d fe 9c 97 17 01 00 00 00 2a 00 00 00 04 03 02 01 01",
+      "events": [
+        {
+          "event": "packet",
+          "header": {
+            "len": 25,
+            "ty": 1,
+            "packetId": [
+              "0x20",
+              "0x01"
+            ],
+            "requestId": 0
+          },
+          "payload": "15 cd 85 3d fe 9c 97 17 01 00 00 00 2a 00 00 00 04 03 02 01 01"
+        }
+      ],
+      "bufferedAfter": 0
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+## readiness
+
+## http_boards
+
+## connect
+
+## live
+
+## startup_board
+< A {"payload": {"category": "error", "key": "setup_stuck_60", "message": "Board 60 (PT) stuck in setup", "ongoing": true, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+< A {"payload": {"category": "error", "key": "setup_stuck_60", "message": "Board 60 (PT) stuck in setup", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+
+## http_after_startup
+
+## disconnect
+
+## board-health notifications seen (any step, any client; P1, reset flaps P1b)
+{"category": "error", "key": "board_lost_60", "message": "Board 60 (PT) connection lost", "ongoing": true, "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 12 (ACTUATOR) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 14 (ACTUATOR) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 21 (PT) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 22 (PT) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 25 (ENVIRONMENTAL) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 31 (RTD) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 42 (LC) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 51 (TC) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 60 (PT) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 61 (ENCODER) connected", "timestampMs": "<ts>"}
+{"category": "info", "message": "Board 71 (BALL_VALVE) connected", "timestampMs": "<ts>"}

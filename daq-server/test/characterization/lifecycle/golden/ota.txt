@@ -1,0 +1,78 @@
+== ota_service: flash, board answers OK
+  command: OTA_FLASH:127.0.0.1:<WORK>/fw.bin
+  reply: OK
+    board: size header [00 00 27 10] = 10000 (big-endian)
+    board: received 10000 bytes, identical to the file: True
+== ota_service: flash, board closes without answering
+  command: OTA_FLASH:127.0.0.1:<WORK>/fw.bin
+  reply: OK
+    board: size header [00 00 27 10] = 10000 (big-endian)
+    board: received 10000 bytes, identical to the file: True
+== ota_service: flash, board answers FAIL
+  command: OTA_FLASH:127.0.0.1:<WORK>/fw.bin
+  reply: ERR:unexpected response: FAIL
+    board: size header [00 00 27 10] = 10000 (big-endian)
+    board: received 10000 bytes, identical to the file: True
+== ota_service: flash, nothing listening on 3232
+  command: OTA_FLASH:127.0.0.1:<WORK>/fw.bin
+  reply: ERR:connect to 127.0.0.1:3232 failed
+== ota_service: flash, missing file
+  command: OTA_FLASH:127.0.0.1:<WORK>/missing.bin
+  reply: ERR:cannot open file: <WORK>/missing.bin
+== ota_service: flash, empty file
+  command: OTA_FLASH:127.0.0.1:<WORK>/empty.bin
+  reply: ERR:invalid firmware size: 0 bytes
+== ota_service: flash, malformed
+  command: OTA_FLASH:127.0.0.1
+  reply: ERR:bad OTA_FLASH format — use OTA_FLASH:<ip>:<path>
+== ota_service: unknown command
+  command: HELLO
+  reply: ERR:unknown command
+== ota_service: build+flash, board_id 21
+  command: OTA_BUILD_FLASH|127.0.0.1|<WORK>/proj_ok|21
+  reply: OK
+    board: size header [00 00 23 28] = 9000 (big-endian)
+    board: received 9000 bytes, identical to the file: True
+  pio saw: args=run
+  pio saw: PLATFORMIO_BUILD_FLAGS=-DTEMP_HARDCODE_BOARD_ID=21
+  pio saw: cwd=proj_ok
+== ota_service: build+flash, board_id 0
+  command: OTA_BUILD_FLASH|127.0.0.1|<WORK>/proj_ok|0
+  reply: OK
+    board: size header [00 00 23 28] = 9000 (big-endian)
+    board: received 9000 bytes, identical to the file: True
+  pio saw: args=run
+  pio saw: PLATFORMIO_BUILD_FLAGS=<unset>
+  pio saw: cwd=proj_ok
+== ota_service: build+flash, build fails
+  command: OTA_BUILD_FLASH|127.0.0.1|<WORK>/proj_fail|5
+  reply: ERR:pio run failed (exit 3): boom: build failed
+  pio saw: args=run
+  pio saw: PLATFORMIO_BUILD_FLAGS=-DTEMP_HARDCODE_BOARD_ID=5
+  pio saw: cwd=proj_fail
+== ota_service: build+flash, no platformio.ini
+  command: OTA_BUILD_FLASH|127.0.0.1|<WORK>/nowhere|5
+  reply: ERR:no platformio.ini in <WORK>/nowhere
+== ota_service: build+flash, malformed
+  command: OTA_BUILD_FLASH|127.0.0.1|<WORK>/proj_ok
+  reply: ERR:bad OTA_BUILD_FLASH — use OTA_BUILD_FLASH|ip|abs_project_dir|board_id
+== backend POST /api/ota-flash: firmwareBase64, board answers OK
+  -> 200 {"bytesSent":10000,"durationMs":"<dur>","success":true}
+    board: size header [00 00 27 10] = 10000 (big-endian)
+    board: received 10000 bytes, identical to the file: True
+== backend POST /api/ota-flash: firmwareBase64, nothing listening
+  -> 200 {"bytesSent":0,"durationMs":"<dur>","error":"ERR:connect to 127.0.0.1:3232 failed","success":false}
+== backend POST /api/ota-flash: projectPath + boardId 21
+  -> 200 {"bytesSent":0,"durationMs":"<dur>","success":true}
+    board: size header [00 00 23 28] = 9000 (big-endian)
+    board: received 9000 bytes, identical to the file: True
+== backend POST /api/ota-flash: port other than 3232
+  -> 400 {"error":"ota_service uses board OTA port 3232"}
+== backend POST /api/ota-flash: no ip
+  -> 400 {"error":"Missing or invalid ip"}
+== backend POST /api/ota-flash: neither firmware nor project
+  -> 400 {"error":"Provide firmwareBase64 or projectPath"}
+== backend POST /api/ota-flash: firmwareBase64, board answers OK, as viewer@example.com (not an operator; no gate)
+  -> 200 {"bytesSent":10000,"durationMs":"<dur>","success":true}
+    board: size header [00 00 27 10] = 10000 (big-endian)
+    board: received 10000 bytes, identical to the file: True

@@ -57,7 +57,7 @@ python3 tools/gui/combined_fsw_gui.py
 
 1. Start Elodin database:
    ```bash
-   ./deploy/startup/start_calibration_stack.sh
+   ./deploy/startup/start_tmux_dev.sh
    ```
 
 2. Start DAQ bridge (if using UDP fallback):
@@ -119,7 +119,7 @@ Configuration is stored in `tools/gui/fsw_gui_config.json` (next to `combined_fs
    - OR: GUI → UDP → Actuator Boards (direct)
 
 3. **State Machine**:
-   - GUI → Elodin (STATE_TRANSITION command) → FSW PressureStateMachine
+   - GUI → Elodin (STATE_TRANSITION command) → the sequencer service
 
 ### Elodin Integration
 
@@ -131,7 +131,7 @@ The GUI uses Elodin as the primary communication channel:
 
 ### State Machine States
 
-Matches FSW `PressureStateMachine::SystemState`:
+Matches the FSW system states (the `PressureStateMachine` class that defined them was deleted in WP3):
 
 - `Idle` - System idle
 - `Armed` - System armed
@@ -157,7 +157,7 @@ Matches FSW `PressureStateMachine::SystemState`:
 
 ### Elodin Connection Failed
 
-- Ensure Elodin database is running: `./deploy/startup/start_calibration_stack.sh`
+- Ensure Elodin database is running: `./deploy/startup/start_tmux_dev.sh`
 - Check Elodin is listening on `127.0.0.1:2240`
 - GUI will fall back to UDP receiver if Elodin unavailable
 

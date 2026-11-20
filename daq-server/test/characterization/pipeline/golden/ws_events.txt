@@ -1,0 +1,143 @@
+## readiness
+
+## http_before_session
+
+## connect
+
+## live
+
+## viewer_client
+> B {"type":"control_unlock","payload":{}}
+> B {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
+< B {"payload": {"ok": false, "reason": "not_operator"}, "timestamp": "<ts>", "type": "control_unlock_result"}
+< B {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
+
+## subscribe
+> A {"type":"subscribe","payload":{"keys":["PT1.CH1.raw_adc_counts"]}}
+> A not json
+> A {"type":"get_state_transitions"}
+> A {"type":"send_command"}
+< A {"payload": {"transitions": [{"from": 1, "to": 1}, {"from": 1, "to": 2}, {"from": 1, "to": 18}, {"from": 1, "to": 19}, {"from": 2, "to": 1}, {"from": 2, "to": 2}, {"from": 2, "to": 3}, {"from": 2, "to": 4}, {"from": 2, "to": 20}, {"from": 2, "to": 17}, {"from": 2, "to": 18}, {"from": 3, "to": 2}, {"from": 3, "to": 3}, {"from": 3, "to": 17}, {"from": 3, "to": 18}, {"from": 4, "to": 2}, {"from": 4, "to": 4}, {"from": 4, "to": 17}, {"from": 4, "to": 18}, {"from": 20, "to": 20}, {"from": 20, "to": 5}, {"from": 20, "to": 6}, {"from": 20, "to": 7}, {"from": 20, "to": 8}, {"from": 20, "to": 9}, {"from": 20, "to": 10}, {"from": 20, "to": 11}, {"from": 20, "to": 12}, {"from": 20, "to": 16}, {"from": 20, "to": 17}, {"from": 20, "to": 18}, {"from": 5, "to": 20}, {"from": 5, "to": 5}, {"from": 5, "to": 6}, {"from": 5, "to": 8}, {"from": 5, "to": 10}, {"from": 5, "to": 12}, {"from": 5, "to": 16}, {"from": 5, "to": 17}, {"from": 5, "to": 18}, {"from": 6, "to": 20}, {"from": 6, "to": 5}, {"from": 6, "to": 6}, {"from": 6, "to": 8}, {"from": 6, "to": 10}, {"from": 6, "to": 12}, {"from": 6, "to": 16}, {"from": 6, "to": 17}, {"from": 6, "to": 18}, {"from": 7, "to": 20}, {"from": 7, "to": 6}, {"from": 7, "to": 7}, {"from": 7, "to": 8}, {"from": 7, "to": 10}, {"from": 7, "to": 12}, {"from": 7, "to": 16}, {"from": 7, "to": 17}, {"from": 7, "to": 18}, {"from": 8, "to": 20}, {"from": 8, "to": 6}, {"from": 8, "to": 8}, {"from": 8, "to": 10}, {"from": 8, "to": 12}, {"from": 8, "to": 16}, {"from": 8, "to": 17}, {"from": 8, "to": 18}, {"from": 9, "to": 20}, {"from": 9, "to": 6}, {"from": 9, "to": 8}, {"from": 9, "to": 9}, {"from": 9, "to": 10}, {"from": 9, "to": 12}, {"from": 9, "to": 16}, {"from": 9, "to": 17}, {"from": 9, "to": 18}, {"from": 10, "to": 20}, {"from": 10, "to": 6}, {"from": 10, "to": 8}, {"from": 10, "to": 10}, {"from": 10, "to": 12}, {"from": 10, "to": 16}, {"from": 10, "to": 17}, {"from": 10, "to": 18}, {"from": 11, "to": 20}, {"from": 11, "to": 6}, {"from": 11, "to": 8}, {"from": 11, "to": 10}, {"from": 11, "to": 11}, {"from": 11, "to": 12}, {"from": 11, "to": 14}, {"from": 11, "to": 13}, {"from": 11, "to": 18}, {"from": 11, "to": 19}, {"from": 12, "to": 20}, {"from": 12, "to": 6}, {"from": 12, "to": 8}, {"from": 12, "to": 10}, {"from": 12, "to": 11}, {"from": 12, "to": 12}, {"from": 12, "to": 13}, {"from": 12, "to": 18}, {"from": 12, "to": 19}, {"from": 14, "to": 20}, {"from": 14, "to": 14}, {"from": 14, "to": 15}, {"from": 14, "to": 13}, {"from": 14, "to": 18}, {"from": 14, "to": 19}, {"from": 15, "to": 15}, {"from": 15, "to": 16}, {"from": 15, "to": 13}, {"from": 15, "to": 18}, {"from": 15, "to": 19}, {"from": 16, "to": 1}, {"from": 16, "to": 2}, {"from": 16, "to": 16}, {"from": 16, "to": 18}, {"from": 16, "to": 19}, {"from": 13, "to": 2}, {"from": 13, "to": 20}, {"from": 13, "to": 13}, {"from": 13, "to": 17}, {"from": 13, "to": 18}, {"from": 13, "to": 19}, {"from": 17, "to": 17}, {"from": 17, "to": 18}, {"from": 17, "to": 19}, {"from": 18, "to": 1}, {"from": 18, "to": 2}, {"from": 18, "to": 20}, {"from": 18, "to": 13}, {"from": 18, "to": 18}, {"from": 18, "to": 19}, {"from": 19, "to": 1}, {"from": 19, "to": 19}]}, "timestamp": "<ts>", "type": "state_transitions"}
+
+## history
+> A {"type":"query_historical","payload":{"keys":["PT1.CH1.raw_adc_counts"],"sinceMs":<ts>}}
+> A {"type":"query_historical","payload":{"keys":["NO_SUCH.KEY.value"]}}
+> A {"type":"query_historical","payload":{"sinceMs":<ts>}}
+> A {"type":"query_historical","payload":{}}
+
+## control_locked
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
+> A {"type":"send_command","payload":{"commandType":"actuator","data":{"actuatorName":"Fuel Vent","actuatorState":1}}}
+< A {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
+< A {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
+
+## unlock
+> A {"type":"control_unlock","payload":{}}
+< A {"payload": {"ok": true, "reason": "ok"}, "timestamp": "<ts>", "type": "control_unlock_result"}
+
+## transition_rejected_locally
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":99}}}
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2,"holdMs":-5}}}
+< A {"payload": {"message": "State transition rejected: id 99 is not a state in the active config"}, "timestamp": "<ts>", "type": "error"}
+< A {"payload": {"message": "Invalid hold duration: -5"}, "timestamp": "<ts>", "type": "error"}
+
+## transition_refused_by_sequencer
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":16}}}
+< A {"payload": {"message": "State transition failed: transition rejected"}, "timestamp": "<ts>", "type": "error"}
+< A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": false, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## transition_armed
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
+< A {"payload": {"allowedBitmask": 1441822, "currentState": 2, "debugMode": false, "stateName": "Armed", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## debug_on
+> A {"type":"send_command","payload":{"commandType":"debug_mode","data":{"debugMode":true}}}
+< A {"payload": {"allowedBitmask": 1441822, "currentState": 2, "debugMode": true, "stateName": "Armed", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+< A {"payload": {"allowedBitmask": 1441822, "currentState": 2, "debugMode": true, "stateName": "Armed", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## actuator_open_close
+> A {"type":"send_command","payload":{"commandType":"actuator","data":{"actuatorName":"Fuel Vent","actuatorState":1}}}
+> A {"type":"send_command","payload":{"commandType":"actuator","data":{"actuatorName":"Fuel Vent","actuatorState":0}}}
+> A {"type":"send_command","payload":{"commandType":"actuator","data":{"actuatorName":"No Such Valve","actuatorState":1}}}
+< A {"payload": {"message": "Actuator command failed: actuator command failed"}, "timestamp": "<ts>", "type": "error"}
+
+## debug_off
+> A {"type":"send_command","payload":{"commandType":"debug_mode","data":{"debugMode":false}}}
+< A {"payload": {"allowedBitmask": 1441822, "currentState": 2, "debugMode": false, "stateName": "Armed", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+< A {"payload": {"allowedBitmask": 1441822, "currentState": 2, "debugMode": false, "stateName": "Armed", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## extend_fire_not_firing
+> A {"type":"send_command","payload":{"commandType":"extend_fire","data":{}}}
+< A {"payload": {"message": "Extend fire failed: not in FIRE state"}, "timestamp": "<ts>", "type": "error"}
+
+## transition_idle
+> A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":1}}}
+< A {"payload": {"allowedBitmask": 786438, "currentState": 1, "debugMode": false, "stateName": "Idle", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
+
+## countdown
+> A {"type":"send_command","payload":{"commandType":"set_countdown_target","data":{"targetTimeMs":4102444000000}}}
+> A {"type":"send_command","payload":{"commandType":"set_countdown_target","data":{"targetTimeMs":null}}}
+< A {"payload": {"targetTimeMs": 4102444000000}, "timestamp": "<ts>", "type": "countdown_target_update"}
+< A {"payload": {"targetTimeMs": null}, "timestamp": "<ts>", "type": "countdown_target_update"}
+
+## calibration_command
+> A {"type":"calibration_command","payload":{"commandType":"char_probe"}}
+< A {"payload": {"calibrationFilePath": "<fx>/srv/calibration/calibration_2026-02-25T03-44-09.json", "channels": [], "message": "Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.", "phase2Enabled": true, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "calibration_status"}
+
+## unsupported_command
+> A {"type":"send_command","payload":{"commandType":"controller_frequency","data":{"frequency":10}}}
+< A {"payload": {"message": "Command not supported in thin backend: controller_frequency"}, "timestamp": "<ts>", "type": "error"}
+
+## session_start_blocked
+> A {"type":"send_command","payload":{"commandType":"session_start","data":{"keepData":true,"durationMs":600000}}}
+< A {"payload": {"errors": 1, "issues": [{"level": "error", "message": "PT Board #1 (pt_board): board_id 21 but ip 127.0.0.1. The board takes its ID from its address, so set board_id to 1 or change the ip.", "page": "boards"}], "profile": "default", "warnings": 0}, "timestamp": "<ts>", "type": "session_start_blocked"}
+
+## session_start_forced
+> A {"type":"send_command","payload":{"commandType":"session_start","data":{"keepData":true,"durationMs":600000,"force":true}}}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {"category": "error", "key": "session-timeout-300000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+< A {"payload": {"category": "error", "key": "session-timeout-60000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+< A {"payload": {"active": true, "dbDir": "<home>/.local/share/elodin/daq_<stamp>", "deadlineMs": "<ts>", "enabled": true, "freeDiskBytes": null, "keepData": true, "remainingMs": "<dur>", "simulated": false}, "timestamp": "<ts>", "type": "session_update"}
+
+## session_start_again
+> A {"type":"send_command","payload":{"commandType":"session_start","data":{"keepData":true,"durationMs":600000,"force":true}}}
+< A {"payload": {"message": "Session start failed: A run is already active."}, "timestamp": "<ts>", "type": "error"}
+
+## http_during_session
+
+## http_viewer_gates
+
+## session_extend
+> A {"type":"send_command","payload":{"commandType":"session_extend","data":{"addMs":60000}}}
+> A {"type":"send_command","payload":{"commandType":"session_extend","data":{"addMs":-1}}}
+< A {"payload": {"category": "error", "key": "session-timeout-300000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+< A {"payload": {"category": "error", "key": "session-timeout-60000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+< A {"payload": {"active": true, "dbDir": "<home>/.local/share/elodin/daq_<stamp>", "deadlineMs": "<ts>", "enabled": true, "freeDiskBytes": null, "keepData": true, "remainingMs": "<dur>", "simulated": false}, "timestamp": "<ts>", "type": "session_update"}
+< A {"payload": {"message": "Session extend failed: addMs must be a positive number."}, "timestamp": "<ts>", "type": "error"}
+
+## session_stop
+> A {"type":"send_command","payload":{"commandType":"session_stop","data":{}}}
+< A {"payload": {"category": "error", "key": "session-timeout-300000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+< A {"payload": {"category": "error", "key": "session-timeout-60000", "message": "", "ongoing": false, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
+< A {"payload": {"active": false, "dbDir": null, "deadlineMs": null, "enabled": true, "freeDiskBytes": null, "keepData": false, "remainingMs": null, "simulated": false}, "timestamp": "<ts>", "type": "session_update"}
+
+## session_stop_idle
+> A {"type":"send_command","payload":{"commandType":"session_stop","data":{}}}
+> A {"type":"send_command","payload":{"commandType":"session_extend","data":{"addMs":1000}}}
+< A {"payload": {"message": "Session extend failed: No active run to extend."}, "timestamp": "<ts>", "type": "error"}
+
+## late_client
+
+## http_errors
+
+## http_operator_writes
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+< A {"payload": {}, "timestamp": "<ts>", "type": "config_updated"}
+
+## disconnect
+
+## board-health notifications seen (any step, any client; P1, reset flaps P1b)
+{"category": "info", "message": "Board 21 (PT) connected", "timestampMs": "<ts>"}

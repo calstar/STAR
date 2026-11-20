@@ -1,0 +1,12 @@
+# session controller/clients
+(64 idle connections opened and held)
+> controller <- connection 65, nothing sent
+  < b'ERR:too many connections\n' then closed by the service
+(the 64 idle connections closed)
+> controller <- FIRE_STOP (connection 66)
+  < 'OK\n'
+-- controller log (N6: load-time lines, then message counts)
+   x1 'FIRE_STOP received — PWM gate closed'
+   x65 'control connection closed with no command (timeout or peer went away)'
+-- busy log line(s), exact bytes: x1
+   '[ControllerService] \u26a0\ufe0f  client limit (64) reached \u2014 refusing connection'

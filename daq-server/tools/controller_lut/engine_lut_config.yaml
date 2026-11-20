@@ -3,8 +3,8 @@
 # DDP uses this for fast engine lookups instead of calling physics each step.
 #
 # Usage:
-#   python -m scripts.controller_lut.generate_controller_lut \
-#     --lut-config scripts/controller_lut/engine_lut_config.yaml \
+#   python -m tools.controller_lut.generate_controller_lut \
+#     --lut-config tools/controller_lut/engine_lut_config.yaml \
 #     --output output/lut/engine_performance.npz
 
 engine_config_path: engine_sim/configs/default.yaml

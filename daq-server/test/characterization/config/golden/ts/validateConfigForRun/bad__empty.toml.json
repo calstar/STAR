@@ -1,0 +1,27 @@
+{
+  "counts": {
+    "errors": 0,
+    "warnings": 1
+  },
+  "grouped": [
+    {
+      "issues": [
+        {
+          "level": "warn",
+          "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Main, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+          "page": "state"
+        }
+      ],
+      "label": "State Machine",
+      "page": "state"
+    }
+  ],
+  "logs": [],
+  "value": [
+    {
+      "level": "warn",
+      "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Main, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+      "page": "state"
+    }
+  ]
+}

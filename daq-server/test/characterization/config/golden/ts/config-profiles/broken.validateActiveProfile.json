@@ -1,0 +1,18 @@
+{
+  "logs": [
+    "log: 🌱 Adopted 3 CSV(s) into profile \"broken\"",
+    "error: Failed to read config: \"Error: Invalid TOML document: incomplete key-value: cannot find end of key\\n\\n1:  # A section header that never closes, then a value with no quotes.\\n2:  [network\\n     ^\\n3:  bind_ip = 0.0.0.0\\n\""
+  ],
+  "value": {
+    "errors": 1,
+    "issues": [
+      {
+        "level": "error",
+        "message": "The active config profile \"broken\" could not be read: Invalid TOML document: incomplete key-value: cannot find end of key\n\n1:  # A section header that never closes, then a value with no quotes.\n2:  [network\n     ^\n3:  bind_ip = 0.0.0.0\n",
+        "page": "profile"
+      }
+    ],
+    "profile": "broken",
+    "warnings": 0
+  }
+}
