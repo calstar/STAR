@@ -175,6 +175,20 @@ try {
     check("delete_task as non-admin is refused", !del.ok && /admin/i.test(del.text), del.text);
     const ops = await call("run_email_batch");
     check("run_email_batch as non-admin is refused", !ops.ok && /admin/i.test(ops.text), ops.text);
+    // The rosters: a plain member must not be able to grant themselves (or
+    // anyone) admin or PVP, nor strip either from someone else.
+    const myEmail = me.data.email;
+    for (const [tool, re] of [
+      ["add_admin", /admin/i],
+      ["remove_admin", /admin/i],
+      ["add_pvp", /pvp/i],
+      ["remove_pvp", /pvp/i],
+    ]) {
+      const r = await call(tool, { email: myEmail });
+      check(`${tool} as non-admin is refused`, !r.ok && re.test(r.text), r.text);
+    }
+    const still = await call("whoami");
+    check("still not admin or PVP afterwards", still.ok && !still.data.isAdmin && !still.data.isPvp, still.text.slice(0, 120));
   }
 } catch (err) {
   failed++;

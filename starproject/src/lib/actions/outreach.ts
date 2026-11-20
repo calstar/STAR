@@ -7,6 +7,7 @@ import { z } from "zod";
 import { requireAdmin } from "@/lib/admins";
 import { createTask } from "@/lib/actions/tasks";
 import { prisma } from "@/lib/db";
+import { cleanLink } from "@/lib/program";
 import {
   AFFILIATIONS,
   CAMPAIGN_KINDS,
@@ -61,6 +62,18 @@ const optText = (max = 2000) =>
     .max(max)
     .nullish()
     .transform((v) => (v == null ? v : v.trim() || null));
+// A link the pages render as an <a href>: http(s) only (cleanLink), so a pasted
+// `javascript:` URL can never become clickable. A bare host gets https://.
+const optUrl = (max: number) =>
+  optText(max).transform((v, ctx) => {
+    if (!v) return v;
+    try {
+      return cleanLink(v);
+    } catch (e) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: (e as Error).message });
+      return z.NEVER;
+    }
+  });
 // undefined: leave the field alone; null or "": clear it; else a date.
 const optDate = z
   .union([z.string(), z.date()])
@@ -74,10 +87,10 @@ const orgInput = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(1).max(200),
   kind: z.enum(ORG_KINDS).optional(),
-  website: optText(500),
+  website: optUrl(500),
   industry: optText(200),
   channel: z.enum(CHANNELS).optional(),
-  formUrl: optText(1000),
+  formUrl: optUrl(1000),
   notes: optText(5000),
 });
 
@@ -279,7 +292,7 @@ const touchInput = z.object({
   templateId: z.string().nullish(),
   subject: optText(500),
   note: optText(5000),
-  threadUrl: optText(1000),
+  threadUrl: optUrl(1000),
   at: optDate,
   /** For an outbound touch on a deal: remind me in this many days (null: no reminder). */
   followUpDays: z.number().int().min(0).max(365).nullish(),
@@ -555,7 +568,7 @@ const campaignInput = z.object({
   id: z.string().optional(),
   name: z.string().trim().min(1).max(200),
   kind: z.enum(CAMPAIGN_KINDS).optional(),
-  url: optText(1000),
+  url: optUrl(1000),
   goalCents: z.number().int().min(0).max(100_000_000).nullish(),
   startsAt: optDate,
   endsAt: optDate,

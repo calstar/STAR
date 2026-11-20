@@ -25,7 +25,8 @@ cd ~/STAR && git pull && cd deploy/ec2
 #      SCHEME=http
 #      BASE_DOMAIN=starberkeley.org
 #      STARPROJECT_DB_PASSWORD=<strong password>
-#      STARPROJECT_CRON_SECRET=<random string>
+#      STARPROJECT_CRON_SECRET=<random string>   # required: the cron routes refuse everyone without it
+#      STARPROJECT_AUTH_GATE_SECRET=<random string>   # optional: only requests Caddy stamped can name a user
 #      STARPROJECT_APP_BASE_URL=https://project.starberkeley.org
 #      AWS_REGION=us-east-2            # (SES; instance role supplies creds)
 #      # STARPROJECT_SES_FROM=...      # optional, to enable outbound email
