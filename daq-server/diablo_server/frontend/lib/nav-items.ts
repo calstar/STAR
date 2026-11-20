@@ -43,6 +43,8 @@ export const NAV_ITEMS: NavItem[] = [
     description: 'PT / TC / LC measurements in one pane' },
   { id: 'copv', name: 'COPV / GN2', path: '/copv', accent: '#27AE60', common: true,
     description: 'High-pressure bottle & regulator' },
+  { id: 'schematic', name: 'Schematic', path: '/schematic', accent: '#60A5FA', common: true,
+    description: "The stand's P&ID, read-only, with live pressures on it" },
   { id: 'controller', name: 'Controller', path: '/controller', accent: '#F87171', common: true,
     description: 'PWM duty cycle & valve states' },
   { id: 'boards', name: 'Boards', path: '/boards', accent: '#10B981', common: true,

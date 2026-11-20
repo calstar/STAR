@@ -91,6 +91,7 @@ export default function App() {
               <Route path="/livestream" element={<LivestreamRoute />} />
               <Route path="/self-tests" element={<P.SelfTestsPage />} />
               <Route path="/sensor-info" element={<P.SensorInfoPage />} />
+              <Route path="/schematic" element={<P.SchematicPage />} />
               <Route path="/status" element={<P.StatusPage />} />
               <Route path="/session" element={<P.SessionPage />} />
               <Route path="/video" element={<P.VideoPage />} />

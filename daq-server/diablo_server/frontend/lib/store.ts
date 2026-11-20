@@ -34,7 +34,7 @@ import {
 } from './types';
 import type { VoltageRefNominals } from './voltageRef';
 import { ballValveBoardIds } from './config-validation';
-import { recordSensorUpdate, isSensorKeyFresh, setDeliveryLagAllowanceMs } from './sensor-rate';
+import { recordSensorUpdate, isSensorKeyFresh, setDeliveryLagAllowanceMs, sensorKeyAgeMs, staleWindowMsFor } from './sensor-rate';
 interface SensorData {
   [key: string]: number; // entity.component -> value
 }
@@ -795,6 +795,32 @@ export function useActuatorCommandedState(entity: string): ActuatorState | null 
     return commanded === 1 ? ActuatorState.OPEN : ActuatorState.CLOSED;
   }
   return null;
+}
+
+/** A stream's last value and its age, fresh or not, read at call time.
+ *
+ *  Every other reader blanks a stale value (`useSensorValue`); the Schematic shows it greyed with
+ *  its age instead, because "dropped a packet" and "dead board" look the same as a blank. The
+ *  freshest key in the alias chain wins. `staleAfterMs` is that key's own window (rate-aware). */
+export function peekSensor(entity: string, component: string): { value: number | null; ageMs: number | null; staleAfterMs: number } {
+  const state = useSensorStore.getState();
+  const key = `${entity}.${component}`;
+  let best: { value: number; ageMs: number | null; staleAfterMs: number } | null = null;
+  for (const k of [key, ...(ALIASES[key] ?? [])]) {
+    const v = state.sensorData[k];
+    if (v === undefined) continue;
+    const ageMs = sensorKeyAgeMs(k);
+    if (!best || (ageMs != null && (best.ageMs == null || ageMs < best.ageMs))) {
+      best = { value: v, ageMs, staleAfterMs: staleWindowMsFor(k) };
+    }
+  }
+  return best ?? { value: null, ageMs: null, staleAfterMs: staleWindowMsFor(key) };
+}
+
+/** The commanded-state stream an actuator role is published on (`ACT_CMD.B<n>.CH<m>`, or
+ *  `BV_CMD.*` for a ball valve), from the running config's [actuator_roles]. */
+export function commandEntityFor(roleEntity: string): string | undefined {
+  return ACT_ROLE_TO_CMD_ENTITY[roleEntity];
 }
 
 /** Global last-known actuator state (from backend or optimistic update). */

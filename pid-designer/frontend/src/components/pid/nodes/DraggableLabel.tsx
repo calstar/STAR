@@ -132,6 +132,7 @@ export function DraggableLabel({ nodeId, label, offset, defaultOffset }: Draggab
         />
       ) : (
         <span
+          data-pid-tag=""
           onDoubleClick={e => { if (readOnly) return; e.stopPropagation(); setEditing(true); }}
           className="text-xs px-1 rounded leading-tight"
           style={{

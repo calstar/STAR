@@ -192,6 +192,14 @@ export function resetSensorRateForTests(): void {
   _lastPrune = 0;
 }
 
+/** How long since this key's last sample (server timeline), or null if it never had one.
+ *  For a display that greys a stale value and says its age rather than blanking it. */
+export function sensorKeyAgeMs(key: string): number | null {
+  const t = _lastUpdate.get(key);
+  if (t == null || !Number.isFinite(t)) return null;
+  return Math.max(0, serverNowMs() - t);
+}
+
 /** True if this exact `entity.component` key's newest sample is younger than the current
  *  staleness window (base + this link's delivery-lag allowance) on the server timeline. */
 export function isSensorKeyFresh(key: string): boolean {

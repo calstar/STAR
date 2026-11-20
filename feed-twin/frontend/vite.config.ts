@@ -24,6 +24,7 @@ export default defineConfig({
       react: here('./node_modules/react'),
       'react-dom': here('./node_modules/react-dom'),
       '@xyflow/react': here('./node_modules/@xyflow/react'),
+      'html-to-image': here('./node_modules/html-to-image'),
     },
   },
   server: {
