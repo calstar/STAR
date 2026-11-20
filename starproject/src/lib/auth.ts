@@ -32,9 +32,13 @@ export async function getCurrentUser(): Promise<CurrentUser> {
   if (fromToken) return fromToken;
 
   const h = await headers();
-  const email = h.get("x-auth-email") ?? process.env.DEV_AUTH_EMAIL ?? null;
+  // The DEV_AUTH_* fallback is for a machine with no Caddy. A production build
+  // never honours it: a stray variable on the server must not become an
+  // identity for every request that arrives with no header.
+  const dev = process.env.NODE_ENV !== "production";
+  const email = h.get("x-auth-email") ?? (dev ? process.env.DEV_AUTH_EMAIL : undefined) ?? null;
   const name =
-    h.get("x-auth-user") ?? process.env.DEV_AUTH_NAME ?? "Dev User";
+    h.get("x-auth-user") ?? (dev ? process.env.DEV_AUTH_NAME : undefined) ?? "Dev User";
 
   if (email) return { email, name };
 
