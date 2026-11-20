@@ -163,8 +163,16 @@ export interface CommandPayload {
   | 'set_countdown_target'
   | 'session_start'
   | 'session_stop'
-  | 'session_extend';
+  | 'session_extend'
+  | 'switch'
+  | 'switch_discover';
   data: {
+    /** switch: [switch_roles.*] role index (0-4). */
+    switchRole?: number;
+    /** switch: 1 = arm (output on), 0 = disarm. Absolute; there is no toggle. */
+    switchOutput?: number;
+    /** switch: 0-65535, chosen by the page; the env board echoes it in SW<role>.cmd_id. */
+    switchCommandId?: number;
     state?: SystemState;
     /** Config-driven: actuator role name from config.toml actuator_roles (e.g. "LOX Main") */
     actuatorName?: string;

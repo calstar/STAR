@@ -32,4 +32,6 @@ env.Replace(  # noqa: F821
         '"$PYTHONEXE" "$OBJCOPY" $ELF2BINFLAGS -o $TARGET ${TARGET}.stripped.elf'
     )
 )
-print(f"[stripped_elf_image] image built from a stripped ELF ({os.path.basename(_objcopy)})")
+print(
+    f"[stripped_elf_image] image built from a stripped ELF ({os.path.basename(_objcopy)})"
+)

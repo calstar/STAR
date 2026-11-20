@@ -72,6 +72,7 @@ jobs:
           - { board: Actuator_Hotfire,  project: Hotfire_Code/Actuator_Hotfire,  pio_env: adafruit_feather_esp32s3 }
           - { board: BallValve_Hotfire, project: Hotfire_Code/BallValve_Hotfire, pio_env: esp32s3 }
           - { board: Bluetooth_Switch,  project: Bluetooth_Switch,               pio_env: bluetooth_switch }
+          - { board: Environmental,     project: Environmental Tracker,          pio_env: environmental }
 
     steps:
       - name: Checkout repository
@@ -154,7 +155,7 @@ jobs:
         run: |
           set -euo pipefail
           BIN="firmware/${{ matrix.project }}/.pio/build/${{ matrix.pio_env }}/firmware.bin"
-          PKGS="$(cd firmware/${{ matrix.project }} && pio pkg list -e ${{ matrix.pio_env }})"
+          PKGS="$(cd "firmware/${{ matrix.project }}" && pio pkg list -e ${{ matrix.pio_env }})"
           # A toolchain bump changes every digest with no source change. Recorded so
           # that looks like a toolchain bump rather than a corrupt registry.
           STAR_PIO_PLATFORM="$(sed -n 's/^Platform \(.*\)$/\1/p' <<<"$PKGS" | head -1)" \
@@ -232,6 +233,10 @@ jobs:
       - name: Run native tests
         run: pio test -e native
         working-directory: firmware/Hotfire_Code/Hotfire_Tests
+
+      - name: Environmental board switch relay tests
+        run: pio test -e native
+        working-directory: firmware/Environmental Tracker
 
   flight-computer-tests:
     name: Flight_Computer Tests

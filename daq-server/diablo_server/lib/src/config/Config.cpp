@@ -11,6 +11,7 @@ namespace config {
 namespace detail {
 // T7Config.cpp — kept out of T7Config.hpp so the header does not drag toml++ into every includer.
 std::vector<T7Board> parse_t7_boards(const toml::table& root, std::vector<std::string>& errors);
+SwitchRelayConfig parse_switch_relay(const toml::table& root);  // SwitchRelayConfig.cpp
 }  // namespace detail
 
 namespace {
@@ -387,6 +388,10 @@ Config from_table(const toml::table& t) {
 
     validate_environmental_boards(c);
     c.t7_boards = detail::parse_t7_boards(t, c.t7_errors);
+    c.switch_relay = detail::parse_switch_relay(t);
+    if (c.switch_relay.enabled && !switch_relay_board(c))
+        c.switch_relay.errors.push_back("[switch_service] env_board \"" + c.switch_relay.env_board +
+                                        "\" is not an enabled ENVIRONMENTAL board");
     return c;
 }
 

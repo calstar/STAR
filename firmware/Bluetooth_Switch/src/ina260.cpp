@@ -28,26 +28,32 @@ bool INA260::begin(TwoWire &wire, uint8_t addr) {
     wire_ = &wire;
     addr_ = addr;
     uint16_t mfr = 0, die = 0;
-    if (!read16(REG_MFR_ID, mfr) || !read16(REG_DIE_ID, die)) return false;
-    if (mfr != MFR_ID_TI || (die & DIE_ID_MASK) != DIE_ID_INA260) return false;
+    if (!read16(REG_MFR_ID, mfr) || !read16(REG_DIE_ID, die))
+        return false;
+    if (mfr != MFR_ID_TI || (die & DIE_ID_MASK) != DIE_ID_INA260)
+        return false;
     shutdown();
     return true;
 }
 
 bool INA260::read(Reading &out) {
-    if (!write16(REG_CONFIG, CFG_BASE | MODE_TRIG_BOTH)) return false;
+    if (!write16(REG_CONFIG, CFG_BASE | MODE_TRIG_BOTH))
+        return false;
 
     // Reading Mask/Enable clears CVRF, so poll it until the pair completes.
     uint32_t start = millis();
     uint16_t mask = 0;
     do {
         delay(5);
-        if (!read16(REG_MASK_EN, mask)) return false;
+        if (!read16(REG_MASK_EN, mask))
+            return false;
     } while (!(mask & MASK_CVRF) && millis() - start < CONVERSION_TIMEOUT_MS);
-    if (!(mask & MASK_CVRF)) return false;
+    if (!(mask & MASK_CVRF))
+        return false;
 
     uint16_t raw_i = 0, raw_v = 0;
-    if (!read16(REG_CURRENT, raw_i) || !read16(REG_BUS_V, raw_v)) return false;
+    if (!read16(REG_CURRENT, raw_i) || !read16(REG_BUS_V, raw_v))
+        return false;
 
     // 1.25 mA/LSB signed, 1.25 mV/LSB
     out.current_mA = (static_cast<int16_t>(raw_i) * 5) / 4;
@@ -57,7 +63,9 @@ bool INA260::read(Reading &out) {
     return true;
 }
 
-void INA260::shutdown() { write16(REG_CONFIG, CFG_BASE | MODE_SHUTDOWN); }
+void INA260::shutdown() {
+    write16(REG_CONFIG, CFG_BASE | MODE_SHUTDOWN);
+}
 
 bool INA260::write16(uint8_t reg, uint16_t val) {
     wire_->beginTransmission(addr_);
@@ -70,8 +78,10 @@ bool INA260::write16(uint8_t reg, uint16_t val) {
 bool INA260::read16(uint8_t reg, uint16_t &val) {
     wire_->beginTransmission(addr_);
     wire_->write(reg);
-    if (wire_->endTransmission(false) != 0) return false;
-    if (wire_->requestFrom(addr_, static_cast<uint8_t>(2)) != 2) return false;
+    if (wire_->endTransmission(false) != 0)
+        return false;
+    if (wire_->requestFrom(addr_, static_cast<uint8_t>(2)) != 2)
+        return false;
     val = static_cast<uint16_t>(wire_->read()) << 8;
     val |= static_cast<uint16_t>(wire_->read());
     return true;

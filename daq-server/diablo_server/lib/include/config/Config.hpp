@@ -15,8 +15,9 @@
 #include <vector>
 
 #include "config/LoadActiveBoards.hpp"  // ActiveBoardKind, PtInterface, PtBoardConfig, BoardChannels
-#include "config/T7Config.hpp"          // T7Board
-#include "time/BoardClockSync.hpp"      // fsw::time::TimeSyncConfig
+#include "config/SwitchRelayConfig.hpp"
+#include "config/T7Config.hpp"      // T7Board
+#include "time/BoardClockSync.hpp"  // fsw::time::TimeSyncConfig
 
 namespace fsw {
 namespace config {
@@ -276,6 +277,8 @@ struct Config {
     std::vector<T7Board> t7_boards;
     std::vector<std::string> t7_errors;
     std::map<std::string, ActuatorRole> actuator_roles;
+    // [switch_service] + [switch_roles.*]: Bluetooth switches the env board relays.
+    SwitchRelayConfig switch_relay;
     FireConfig fire;
     FlowConfig flow;
     ControllerServiceConfig controller_service;

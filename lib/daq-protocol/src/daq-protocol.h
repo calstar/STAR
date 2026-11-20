@@ -17,5 +17,6 @@
 #include "DiabloEnums.h"
 #include "DiabloPackets.h"
 #include "DiabloPacketUtils.h"
+#include "SwitchStatus.h"
 
 

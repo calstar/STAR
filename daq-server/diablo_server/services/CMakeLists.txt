@@ -64,6 +64,12 @@ target_link_libraries(stacklight_service
     fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY}
 )
 
+# ── Switch Service ────────────────────────────────────────────────────────────
+# SWITCH_CONFIG to the environmental board (Bluetooth switch relay)
+add_executable(switch_service switch/switch_service_main.cpp)
+target_include_directories(switch_service PRIVATE ${COMMON_INCLUDES})
+target_link_libraries(switch_service fsw_daq_lib daqv2_comms pthread ${RT_LIBRARY})
+
 # ── Config Broadcast Service ──────────────────────────────────────────────────
 # ACTUATOR_CONFIG / SENSOR_CONFIG UDP broadcast
 add_executable(config_broadcast_service config_broadcast/config_broadcast_service_main.cpp)
@@ -102,5 +108,6 @@ install(TARGETS
     sequencer_service controller_service calibration_service
     heartbeat_service config_broadcast_service ota_service
     stacklight_service
+    switch_service
     RUNTIME DESTINATION bin
 )

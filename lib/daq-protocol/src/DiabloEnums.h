@@ -22,7 +22,14 @@ enum class PacketType : uint8_t {
   SELF_TEST = 12,
   ENVIRONMENTAL_DATA = 13,
   STACKLIGHT_COMMAND = 14,
-  LOGS = 15  // Board -> server: buffered, newline-delimited log text (see create_log_packet)
+  LOGS = 15, // Board -> server: buffered, newline-delimited log text (see create_log_packet)
+  // Bluetooth switches, relayed by the environmental board (see SwitchStatus.h).
+  SWITCH_CONFIG = 16,         // server -> env board: which switch MACs, by role index
+  SWITCH_COMMAND = 17,        // server -> env board: set a role's output
+  SWITCH_COMMAND_RESULT = 18, // env board -> server: what became of a command
+  SWITCH_STATUS = 19,         // env board -> server: one role's link + raw switch status
+  SWITCH_SEEN = 20,           // env board -> server: an unlisted switch heard in a scan
+  SWITCH_DISCOVER = 21        // server -> env board: scan for unlisted switches for a while
 };
 
 /**

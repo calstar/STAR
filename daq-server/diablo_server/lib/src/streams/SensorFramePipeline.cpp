@@ -65,6 +65,36 @@ std::optional<daq_comms::protocol::SensorBatch> SensorFramePipeline::poll() {
         return std::nullopt;
     }
 
+    if (peek.packet_type == daq::PacketType::SWITCH_STATUS) {
+        daq::PacketHeader header{};
+        daq::SwitchStatusReport report;
+        if (peek.version == DIABLO_COMMS_VERSION &&
+            daq::parse_switch_status_packet(receive_buffer_.data(), static_cast<size_t>(received),
+                                            header, report))
+            last_switch_status_ = SwitchStatusSample{report, header.timestamp, last_source_ip_};
+        return std::nullopt;
+    }
+
+    if (peek.packet_type == daq::PacketType::SWITCH_COMMAND_RESULT) {
+        daq::PacketHeader header{};
+        daq::SwitchCommandResultPacket result{};
+        if (peek.version == DIABLO_COMMS_VERSION &&
+            daq::parse_switch_command_result_packet(receive_buffer_.data(),
+                                                    static_cast<size_t>(received), header, result))
+            last_switch_result_ = SwitchResultSample{result, last_source_ip_};
+        return std::nullopt;
+    }
+
+    if (peek.packet_type == daq::PacketType::SWITCH_SEEN) {
+        daq::PacketHeader header{};
+        daq::SwitchSeenPacket seen{};
+        if (peek.version == DIABLO_COMMS_VERSION &&
+            daq::parse_switch_seen_packet(receive_buffer_.data(), static_cast<size_t>(received),
+                                          header, seen))
+            last_switch_seen_ = SwitchSeenSample{seen, last_source_ip_};
+        return std::nullopt;
+    }
+
     if (peek.packet_type == daq::PacketType::SENSOR_DATA) {
         daq::PacketHeader sensor_header;
         std::vector<daq::SensorDataChunkCollection> chunks;
@@ -195,6 +225,20 @@ bool SensorFramePipeline::is_ready() const {
 std::optional<SensorFramePipeline::EnvironmentalSample>
 SensorFramePipeline::get_last_environmental() {
     return std::exchange(last_environmental_, std::nullopt);
+}
+
+std::optional<SensorFramePipeline::SwitchStatusSample>
+SensorFramePipeline::get_last_switch_status() {
+    return std::exchange(last_switch_status_, std::nullopt);
+}
+
+std::optional<SensorFramePipeline::SwitchResultSample>
+SensorFramePipeline::get_last_switch_result() {
+    return std::exchange(last_switch_result_, std::nullopt);
+}
+
+std::optional<SensorFramePipeline::SwitchSeenSample> SensorFramePipeline::get_last_switch_seen() {
+    return std::exchange(last_switch_seen_, std::nullopt);
 }
 
 std::string SensorFramePipeline::last_error() const {

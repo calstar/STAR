@@ -23,3 +23,9 @@
 #define ENV_ETH_SPI_DELAY_MS 1000
 #define ENV_ETH_INIT_DELAY_MS 1000
 #define ENV_ETH_BEGIN_DELAY_MS 1000
+
+// No W5500 at boot: wait this long, then reboot and try again
+#define ENV_ETH_RETRY_REBOOT_MS 5000
+
+// BME280 missing: retry and report this often
+#define ENV_BME_RETRY_INTERVAL_MS 10000
