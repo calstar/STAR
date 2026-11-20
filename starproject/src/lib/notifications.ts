@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { sendEmail } from "@/lib/mail";
 import { displayNameOf } from "@/lib/names";
+import { PCB_STAGE_LABEL, type PcbStageKey, type PcbStageState, currentStage } from "@/lib/pcb";
 import { getSettings } from "@/lib/settings";
 
 function escapeHtml(s: string): string {
@@ -137,7 +138,8 @@ export async function runEmailBatch(): Promise<{
 
 /**
  * Nightly deadline scan. Emails assignees of tasks that are overdue or due
- * today/tomorrow, once per (task, user, kind) — idempotent via NotifLog.
+ * today/tomorrow, once per (task, user, kind) — idempotent via NotifLog. On a
+ * PCB board it is the current stage's people, about that stage's date.
  */
 export async function runDeadlineScan(): Promise<{
   dueSoon: number;
@@ -153,30 +155,70 @@ export async function runDeadlineScan(): Promise<{
   const endWindow = new Date(startOfToday);
   endWindow.setDate(endWindow.getDate() + 2);
 
-  const tasks = await prisma.task.findMany({
-    where: {
-      status: { not: "done" },
-      assignees: { some: {} }, // has at least one assignee
-      dueDate: { lt: endWindow }, // overdue or due-soon; far-future excluded
-    },
-    include: {
-      project: { select: { id: true, name: true } },
-      assignees: { select: { id: true, email: true, name: true } },
-    },
-  });
+  const person = { select: { id: true, email: true, name: true } } as const;
+  const [plain, boards] = await Promise.all([
+    prisma.task.findMany({
+      where: {
+        status: { not: "done" },
+        assignees: { some: {} }, // has at least one assignee
+        dueDate: { lt: endWindow }, // overdue or due-soon; far-future excluded
+      },
+      include: {
+        project: { select: { id: true, name: true } },
+        assignees: person,
+        pcb: { select: { stages: { select: { stage: true, status: true } } } },
+      },
+    }),
+    // A PCB board's deadline is its current stage's, which can fall well
+    // before the task's own (the last stage's), so boards are read apart.
+    prisma.task.findMany({
+      where: {
+        status: { not: "done" },
+        pcb: { stages: { some: { status: "open", dueDate: { lt: endWindow } } } },
+      },
+      include: {
+        project: { select: { id: true, name: true } },
+        pcb: { select: { stages: { include: { assignees: person } } } },
+      },
+    }),
+  ]);
+
+  // Each deadline: who to tell, about what. A PCB board with a stage still
+  // open is told about that stage only, to that stage's people, and logged per
+  // stage ("overdue:layout") so each stage gets its own reminder.
+  type Deadline = {
+    task: { id: string; projectId: string; title: string; project: { name: string } };
+    due: Date;
+    stage: PcbStageKey | null;
+    people: { id: string; email: string; name: string | null }[];
+  };
+  const deadlines: Deadline[] = [];
+  for (const t of plain) {
+    if (!t.dueDate) continue;
+    if (t.pcb && currentStage(t.pcb.stages as { stage: PcbStageKey; status: PcbStageState }[])) continue;
+    deadlines.push({ task: t, due: t.dueDate, stage: null, people: t.assignees });
+  }
+  for (const t of boards) {
+    const cur = currentStage(
+      (t.pcb?.stages ?? []).map((s) => ({ ...s, stage: s.stage as PcbStageKey, status: s.status as PcbStageState })),
+    );
+    if (!cur?.dueDate || cur.dueDate >= endWindow) continue;
+    deadlines.push({ task: t, due: cur.dueDate, stage: cur.stage, people: cur.assignees });
+  }
 
   let dueSoon = 0;
   let overdue = 0;
 
-  for (const t of tasks) {
-    if (!t.dueDate) continue;
-    const kind = t.dueDate < startOfToday ? "overdue" : "due_soon";
+  for (const { task: t, due, stage, people } of deadlines) {
+    const late = due < startOfToday;
+    const kind = `${late ? "overdue" : "due_soon"}${stage ? `:${stage}` : ""}`;
+    const what = stage ? `${PCB_STAGE_LABEL[stage]} for ${t.title}` : t.title;
 
     // One email per assignee, deduped per (task, user, kind) via NotifLog.
-    for (const assignee of t.assignees) {
+    for (const assignee of people) {
       const settings = await getSettings(assignee.id);
-      if (kind === "due_soon" && !settings.emailDueSoon) continue;
-      if (kind === "overdue" && !settings.emailOverdue) continue;
+      if (!late && !settings.emailDueSoon) continue;
+      if (late && !settings.emailOverdue) continue;
 
       const already = await prisma.notifLog.findFirst({
         where: { taskId: t.id, userId: assignee.id, kind },
@@ -184,22 +226,22 @@ export async function runDeadlineScan(): Promise<{
       if (already) continue;
 
       const link = taskLink(t.projectId, t.id);
-      const dueStr = t.dueDate.toISOString().slice(0, 10);
-      const word = kind === "overdue" ? "overdue" : "due soon";
+      const dueStr = due.toISOString().slice(0, 10);
+      const word = late ? "overdue" : "due soon";
       const ok = await sendEmail({
         to: assignee.email,
-        subject: `${kind === "overdue" ? "Overdue" : "Due soon"}: ${t.title}`,
-        html: `<p><strong>${escapeHtml(t.title)}</strong> in ${escapeHtml(
+        subject: `${late ? "Overdue" : "Due soon"}: ${what}`,
+        html: `<p><strong>${escapeHtml(what)}</strong> in ${escapeHtml(
           t.project.name,
         )} is ${word} (due ${dueStr}).</p><p><a href="${link}">Open the task</a></p>`,
-        text: `"${t.title}" in ${t.project.name} is ${word} (due ${dueStr}).\n${link}`,
+        text: `"${what}" in ${t.project.name} is ${word} (due ${dueStr}).\n${link}`,
       });
       if (!ok) continue;
 
       await prisma.notifLog.create({
         data: { taskId: t.id, userId: assignee.id, kind },
       });
-      if (kind === "overdue") overdue++;
+      if (late) overdue++;
       else dueSoon++;
     }
   }

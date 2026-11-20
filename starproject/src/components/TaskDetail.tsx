@@ -10,6 +10,8 @@ import { BlockerEditor } from "@/components/BlockerEditor";
 import { CopyLinkButton } from "@/components/CopyLinkButton";
 import { PointsBadge } from "@/components/PointsBadge";
 import { ManufacturingSection } from "@/components/ManufacturingSection";
+import { PcbSection } from "@/components/PcbSection";
+import { AssigneeChip } from "@/components/AssigneeChip";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import { AssigneeSelect } from "@/components/fields/AssigneeSelect";
 import { BlockedNoteInput } from "@/components/fields/BlockedNoteInput";
@@ -26,6 +28,7 @@ import { archiveTask } from "@/lib/actions/tasks";
 import { dateLabel } from "@/lib/activity";
 import { leavesBoardAt, onBoard } from "@/lib/board";
 import { effectivePoints, shareLabel } from "@/lib/leaderboard";
+import { dueFollowsStages } from "@/lib/pcb";
 import type { TaskDetailData } from "@/lib/task-detail";
 import { STATUS_BADGE, STATUS_LABEL, isBlocked } from "@/lib/tasks";
 
@@ -120,20 +123,40 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
             <div>
               <p className={label}>Assignees</p>
               <div className="mt-1">
-                <AssigneeSelect
-                  // Re-seed when the assignees change elsewhere (making someone a
-                  // Design or Manufacturing RE assigns them), not only from this picker.
-                  key={task.assignees.map((a) => a.id).join(",")}
-                  taskId={task.id}
-                  value={task.assignees.map((a) => a.id)}
-                  users={users}
-                />
+                {task.pcb ? (
+                  // A PCB board's assignees are everyone on its stages.
+                  <div className="flex min-h-11 flex-wrap items-center gap-1.5 sm:min-h-0 sm:py-1">
+                    {task.assignees.map((a) => (
+                      <AssigneeChip key={a.id} user={a} />
+                    ))}
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400">
+                      {task.assignees.length ? "from the stages" : "Assign people on the stages below"}
+                    </span>
+                  </div>
+                ) : (
+                  <AssigneeSelect
+                    // Re-seed when the assignees change elsewhere (making someone a
+                    // Design or Manufacturing RE assigns them), not only from this picker.
+                    key={task.assignees.map((a) => a.id).join(",")}
+                    taskId={task.id}
+                    value={task.assignees.map((a) => a.id)}
+                    users={users}
+                  />
+                )}
               </div>
             </div>
             <div>
               <p className={label}>Due</p>
               <div className="mt-1 [&_input]:min-h-11 [&_input]:w-full sm:[&_input]:min-h-0 sm:[&_input]:w-auto">
-                <DueDateInput taskId={task.id} value={due} />
+                {task.pcb && dueFollowsStages(task.pcb.stages) ? (
+                  // Once a stage is dated, the board is due when its last stage is.
+                  <p className="flex min-h-11 items-center gap-2 text-sm sm:min-h-0 sm:py-1">
+                    {due}
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400">last stage</span>
+                  </p>
+                ) : (
+                  <DueDateInput key={due} taskId={task.id} value={due} />
+                )}
               </div>
             </div>
           </div>
@@ -266,6 +289,16 @@ export function TaskDetail({ data }: { data: TaskDetailData }) {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="mt-4">
+        <PcbSection
+          key={task.pcb ? "on" : "off"}
+          taskId={task.id}
+          pcb={task.pcb}
+          users={users}
+          onChanged={refresh}
+        />
       </div>
 
       <div className="mt-4">

@@ -123,23 +123,40 @@ export function TaskTable({
       }),
       col.accessor("assigneeName", {
         header: "Assignees",
-        cell: (info) => (
-          <div onClick={stop}>
-            <AssigneeSelect
-              taskId={info.row.original.id}
-              value={info.row.original.assigneeIds}
-              users={users}
-            />
-          </div>
-        ),
+        cell: (info) =>
+          // A PCB board's assignees come from its stages: set them in the task.
+          info.row.original.pcbStage ? (
+            <span className="text-sm text-neutral-700 dark:text-neutral-300">
+              {info.getValue() || "—"}
+            </span>
+          ) : (
+            <div onClick={stop}>
+              <AssigneeSelect
+                taskId={info.row.original.id}
+                value={info.row.original.assigneeIds}
+                users={users}
+              />
+            </div>
+          ),
       }),
       col.accessor("due", {
         header: "Due",
-        cell: (info) => (
-          <div onClick={stop} className={info.row.original.overdue ? "text-red-600" : ""}>
-            <DueDateInput taskId={info.row.original.id} value={info.getValue()} />
-          </div>
-        ),
+        cell: (info) => {
+          const r = info.row.original;
+          // A PCB board: the current stage and when it is due, read-only.
+          if (r.pcbStage)
+            return (
+              <span className={`text-sm ${r.overdue ? "text-red-600" : "text-neutral-700 dark:text-neutral-300"}`}>
+                {r.pcbStage.label}
+                {r.pcbStage.due && <> · {r.pcbStage.due}</>}
+              </span>
+            );
+          return (
+            <div onClick={stop} className={r.overdue ? "text-red-600" : ""}>
+              <DueDateInput taskId={r.id} value={info.getValue()} />
+            </div>
+          );
+        },
       }),
       ...(admin
         ? [

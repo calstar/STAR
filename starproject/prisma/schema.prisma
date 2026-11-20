@@ -50,6 +50,7 @@ model User {
   oauthCodes              OAuthCode[]
   designReParts           TaskManufacturing[]  @relation("ManufacturingDesignRe")
   manufacturingReParts    TaskManufacturing[]  @relation("ManufacturingMfgRe")
+  pcbStages               TaskPcbStage[]       @relation("PcbStageAssignee")
   createdBomItems         BomItem[]            @relation("BomItemCreatedBy")
   purchasedBomItems       BomItem[]            @relation("BomItemPurchaser")
   createdPurchaseRequests PurchaseRequest[]    @relation("PurchaseRequestCreatedBy")
@@ -290,6 +291,8 @@ model Task {
   activities    Activity[]
   // Present only for a manufacturing task: the part's details.
   manufacturing TaskManufacturing?
+  // Present only for a PCB task: its Altium link and its six stages.
+  pcb           TaskPcb?
   bomItems      BomItem[]
 
   @@index([projectId, status])
@@ -314,6 +317,49 @@ model TaskManufacturing {
   mfgRe      User?    @relation("ManufacturingMfgRe", fields: [mfgReId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+}
+
+// A board as one task: a task is a PCB task exactly when it has this row, made
+// with all six stages (src/lib/pcb.ts). The stages are a fixed list, not a
+// workflow: each has its own assignees, due date and open/done/skipped, and
+// the task's assignees and due date follow them (src/lib/actions/pcb.ts). The
+// task's status stays the person's to set. Deleted with its task.
+model TaskPcb {
+  taskId    String         @id
+  task      Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  altiumUrl String?
+  stages    TaskPcbStage[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
+
+model TaskPcbStage {
+  id        String         @id @default(cuid())
+  taskId    String
+  pcb       TaskPcb        @relation(fields: [taskId], references: [taskId], onDelete: Cascade)
+  stage     PcbStage
+  status    PcbStageStatus @default(open)
+  dueDate   DateTime?
+  assignees User[]         @relation("PcbStageAssignee")
+  updatedAt DateTime       @updatedAt
+
+  @@unique([taskId, stage])
+}
+
+// In board order: the order src/lib/pcb.ts PCB_STAGES walks them in.
+enum PcbStage {
+  components
+  schematic
+  layout
+  review
+  solder
+  bringup
+}
+
+enum PcbStageStatus {
+  open
+  done
+  skipped
 }
 
 // Display-only dependency edges: "task is blocked by blockedByTask". No cascade

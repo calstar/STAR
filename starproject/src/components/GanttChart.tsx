@@ -1,9 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useTaskModal } from "@/components/TaskModalProvider";
+import { shiftPcbDates, updatePcbStage } from "@/lib/actions/pcb";
 import { setTaskDates } from "@/lib/actions/tasks";
 import { type BoardTask, STATUS_COLUMNS } from "@/lib/board";
 import {
@@ -14,6 +15,7 @@ import {
   toTimeline,
   todayDay,
 } from "@/lib/gantt";
+import type { PcbStageKey, StageMark } from "@/lib/pcb";
 
 const VIEW_MODES = ["Day", "Week", "Month"] as const;
 type ViewMode = (typeof VIEW_MODES)[number];
@@ -74,11 +76,18 @@ function nextMonthStart(day: number): number {
 
 type Drag = {
   id: string;
-  mode: "move" | "start" | "end";
+  /** "stage": one PCB stage's deadline, `stage` says which. */
+  mode: "move" | "start" | "end" | "stage";
+  stage?: PcbStageKey;
   x0: number;
   dd: number;
   moved: boolean;
 };
+
+/** The stage an end-resize moves on a PCB board: the one due last. */
+function lastMark(marks: StageMark[]): StageMark {
+  return marks.reduce((a, b) => (b.day >= a.day ? b : a));
+}
 
 type Row =
   | {
@@ -129,7 +138,7 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
   // to the `tasks` they were made against, so a refresh drops them by itself.
   const [pending, setPending] = useState<{
     tasks: BoardTask[];
-    dates: Record<string, { start: number; end: number }>;
+    dates: Record<string, { start: number; end: number; marks?: Record<string, number> }>;
   }>({ tasks, dates: {} });
   const committed = pending.tasks === tasks ? pending.dates : {};
 
@@ -166,9 +175,33 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
     const { dd, mode } = live;
     if (mode === "move" || t.dueOnly)
       return { start: base.start + dd, end: base.end + dd };
+    if (mode === "stage") {
+      // A stage dragged past either end of the bar stretches it.
+      const m = t.stages?.find((s) => s.stage === live.stage);
+      if (!m) return base;
+      const day = (committed[t.id]?.marks?.[m.stage] ?? m.day) + dd;
+      return { start: Math.min(base.start, day), end: Math.max(base.end, day) };
+    }
     if (mode === "start")
       return { start: Math.min(base.start + dd, base.end), end: base.end };
     return { start: base.start, end: Math.max(base.end + dd, base.start) };
+  };
+
+  // A PCB board's stage deadlines as drawn: committed, then the live drag.
+  const markDays = (t: TimelineItem, live: Drag | null = drag): StageMark[] => {
+    const marks = t.stages ?? [];
+    const kept = committed[t.id]?.marks;
+    const last = marks.length ? lastMark(marks).stage : null;
+    return marks.map((m) => {
+      let day = kept?.[m.stage] ?? m.day;
+      if (live && live.id === t.id) {
+        if (live.mode === "move" || t.dueOnly) day += live.dd;
+        else if (live.mode === "stage" && live.stage === m.stage) day += live.dd;
+        else if (live.mode === "end" && m.stage === last)
+          day = Math.max(day + live.dd, dates(t, null).start);
+      }
+      return { ...m, day };
+    });
   };
 
   // Time range: the work plus slack, widened to fill the viewport. Day view
@@ -241,15 +274,31 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
   const commit = (t: TimelineItem, d: Drag) => {
     const next = dates(t, d);
     const base = committed[t.id] ?? { start: t.start, end: t.end };
-    if (next.start === base.start && next.end === base.end) return;
-    setPending({ tasks, dates: { ...committed, [t.id]: next } });
-    setTaskDates(
-      t.id,
-      t.dueOnly ? "" : dayToYmd(next.start),
-      dayToYmd(next.end),
-    )
-      .then(() => router.refresh())
-      .catch(() => setPending({ tasks, dates: {} }));
+    const before = markDays(t, null);
+    const after = markDays(t, d);
+    const marksMoved = after.some((m, i) => m.day !== before[i].day);
+    if (next.start === base.start && next.end === base.end && !marksMoved) return;
+    setPending({
+      tasks,
+      dates: {
+        ...committed,
+        [t.id]: { ...next, marks: Object.fromEntries(after.map((m) => [m.stage, m.day])) },
+      },
+    });
+    // A PCB board's dates belong to its stages: a move shifts them all, an end
+    // resize or a stage edge moves that one stage, and only a start resize
+    // touches the task itself (its due date goes back unchanged).
+    let save: Promise<unknown>;
+    if (t.stages?.length && (d.mode === "move" || t.dueOnly)) save = shiftPcbDates(t.id, d.dd);
+    else if (t.stages?.length && (d.mode === "end" || d.mode === "stage")) {
+      const stage = d.mode === "stage" ? d.stage! : lastMark(t.stages).stage;
+      const day = after.find((m) => m.stage === stage)!.day;
+      save = updatePcbStage(t.id, stage, { dueDate: dayToYmd(day) }).then((r) => {
+        if (r.error) throw new Error(r.error);
+      });
+    } else
+      save = setTaskDates(t.id, t.dueOnly ? "" : dayToYmd(next.start), dayToYmd(next.end));
+    save.then(() => router.refresh()).catch(() => setPending({ tasks, dates: {} }));
   };
 
   // Dragging is mouse-only so a touch swipe scrolls instead of rescheduling;
@@ -258,12 +307,13 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
     e: React.PointerEvent,
     t: TimelineItem,
     mode: Drag["mode"],
+    stage?: PcbStageKey,
   ) => {
     if (e.pointerType !== "mouse" || e.button !== 0) return;
     e.stopPropagation();
     e.preventDefault();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    setDrag({ id: t.id, mode, x0: e.clientX, dd: 0, moved: false });
+    setDrag({ id: t.id, mode, stage, x0: e.clientX, dd: 0, moved: false });
   };
   const onTrackMove = (e: React.PointerEvent) => {
     const drag = dragRef.current;
@@ -638,6 +688,14 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
                         height: BAR_H,
                       }}
                     >
+                      {t.stages && (
+                        <StageSegments
+                          marks={markDays(t)}
+                          start={start}
+                          ppd={ppd}
+                          onEdgeDown={(e, stage) => onBarDown(e, t, "stage", stage)}
+                        />
+                      )}
                       {w >= 28 && (
                         <>
                           <span
@@ -662,7 +720,13 @@ export function GanttChart({ tasks }: { tasks: BoardTask[] }) {
       )}
 
       {hovered && hover && (
-        <Tooltip item={hovered} {...dates(hovered)} x={hover.x} y={hover.y} />
+        <Tooltip
+          item={hovered}
+          {...dates(hovered)}
+          marks={markDays(hovered)}
+          x={hover.x}
+          y={hover.y}
+        />
       )}
 
       {unscheduled.length > 0 && (
@@ -818,16 +882,71 @@ function Connectors({
   );
 }
 
+/**
+ * A PCB board's stages drawn inside its bar: each stage is the stretch from the
+ * previous stage's deadline to its own, shaded once done, with a divider on its
+ * deadline that drags to move just that stage. A stage due before an earlier
+ * one (nothing cascades) gets a red divider. The last divider is the bar's own
+ * end, which the end handle already drags.
+ */
+function StageSegments({
+  marks,
+  start,
+  ppd,
+  onEdgeDown,
+}: {
+  marks: StageMark[];
+  start: number;
+  ppd: number;
+  onEdgeDown: (e: React.PointerEvent, stage: PcbStageKey) => void;
+}) {
+  const latest = Math.max(...marks.map((m) => m.day));
+  let from = start;
+  return (
+    <>
+      {marks.map((m) => {
+        const left = (from - start) * ppd;
+        const right = (m.day + 1 - start) * ppd;
+        from = Math.max(from, m.day + 1);
+        return (
+          <Fragment key={m.stage}>
+            {m.status === "done" && right > left && (
+              <span
+                className="pointer-events-none absolute inset-y-0 bg-black/20 dark:bg-white/20"
+                style={{ left, width: right - left }}
+              />
+            )}
+            {m.day !== latest && (
+              <span
+                onPointerDown={(e) => onEdgeDown(e, m.stage)}
+                title={`${m.label}: drag to move this stage`}
+                className="absolute inset-y-0 z-10 flex w-2 -translate-x-1/2 cursor-ew-resize justify-center"
+                style={{ left: right }}
+              >
+                <span
+                  className={`h-full w-0.5 ${m.outOfOrder ? "bg-red-600" : "bg-white/90 dark:bg-neutral-900/90"}`}
+                />
+              </span>
+            )}
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
 function Tooltip({
   item,
   start,
   end,
+  marks,
   x,
   y,
 }: {
   item: TimelineItem;
   start: number;
   end: number;
+  marks: StageMark[];
   x: number;
   y: number;
 }) {
@@ -851,6 +970,28 @@ function Tooltip({
       <p className="mt-0.5 text-neutral-500 dark:text-neutral-400">
         {item.assignees || "Unassigned"}
       </p>
+      {marks.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5">
+          {marks.map((m) => (
+            <li
+              key={m.stage}
+              className={`flex gap-1.5 ${
+                m.status === "done"
+                  ? "text-neutral-400 line-through dark:text-neutral-500"
+                  : m.outOfOrder
+                    ? "text-red-600 dark:text-red-400"
+                    : "text-neutral-700 dark:text-neutral-200"
+              }`}
+            >
+              <span className="w-[4.75rem] shrink-0 font-medium">{m.label}</span>
+              <span className="shrink-0">{dayLabel(m.day)}</span>
+              <span className="min-w-0 truncate text-neutral-500 dark:text-neutral-400">
+                {m.assignees.join(", ")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
         <span
           className={`tl-${item.status} inline-flex items-center gap-1 text-neutral-700 dark:text-neutral-200`}

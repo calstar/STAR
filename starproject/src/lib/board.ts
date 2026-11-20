@@ -1,5 +1,6 @@
 import type { Prisma, Task, TaskStatus } from "@prisma/client";
 
+import { type PcbLite, currentStage, currentStageOverdue, stageSummary } from "@/lib/pcb";
 import { isBlocked } from "@/lib/tasks";
 
 // The minimal user shape the cards/pickers need to render a person's name.
@@ -16,6 +17,9 @@ export type BoardTask = Task & {
   // Set when a task shown in a parent project actually belongs to a subproject,
   // so the card/row can indicate which one.
   subproject?: { name: string; color: string | null } | null;
+  // Present on a PCB task when the view loaded it (PCB_INCLUDE): the card shows
+  // its current stage and the timeline its stage deadlines.
+  pcb?: PcbLite | null;
 };
 
 // A task enriched with the display names the list table and filters need. A
@@ -51,7 +55,23 @@ export type TaskRowData = {
   overdue: boolean;
   blocked: boolean;
   subproject?: { name: string; color: string | null } | null;
+  /** On a PCB board: its current stage ("Layout") and that stage's due date.
+   * The row then shows assignees and due read-only (the stages set them). */
+  pcbStage?: { label: string; due: string } | null;
 };
+
+const DAY = 86_400_000;
+
+/** Past due: the task's due date, or on a PCB task its current stage's, which
+ * is the deadline someone is actually working to. */
+export function isOverdue(
+  t: Pick<BoardTask, "dueDate" | "status" | "pcb">,
+  now: Date = new Date(),
+): boolean {
+  if (t.status === "done") return false;
+  if (t.dueDate && new Date(t.dueDate).getTime() < now.getTime()) return true;
+  return !!t.pcb && currentStageOverdue(t.pcb, t.status, Math.floor(now.getTime() / DAY));
+}
 
 /** Flatten a task to the shared list-table row shape. */
 export function toRowData(t: WorkspaceTask): TaskRowData {
@@ -70,12 +90,18 @@ export function toRowData(t: WorkspaceTask): TaskRowData {
     subteamId: t.subteamId ?? "",
     subteamName: t.subteamName,
     due: t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 10) : "",
-    overdue:
-      !!t.dueDate &&
-      t.status !== "done" &&
-      new Date(t.dueDate).getTime() < Date.now(),
+    overdue: isOverdue(t),
     blocked: isBlocked(t.blockedBy),
     subproject: t.subproject ?? null,
+    pcbStage: t.pcb ? pcbStageOf(t.pcb) : null,
+  };
+}
+
+function pcbStageOf(pcb: PcbLite): { label: string; due: string } {
+  const cur = currentStage(pcb.stages);
+  return {
+    label: stageSummary(pcb),
+    due: cur?.dueDate ? new Date(cur.dueDate).toISOString().slice(0, 10) : "",
   };
 }
 

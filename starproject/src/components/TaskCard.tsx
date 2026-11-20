@@ -8,6 +8,8 @@ import { AssigneeChip } from "@/components/AssigneeChip";
 import { PointsBadge } from "@/components/PointsBadge";
 import { useTaskModal } from "@/components/TaskModalProvider";
 import type { BoardTask } from "@/lib/board";
+import { displayNameOf } from "@/lib/names";
+import { currentStage, currentStageOverdue, stageSummary } from "@/lib/pcb";
 import { PRIORITY_BADGE, isBlocked } from "@/lib/tasks";
 
 import { BlockedBadge } from "./BlockedBadge";
@@ -54,7 +56,32 @@ function CardBody({ task }: { task: BoardTask }) {
           </span>
         )}
       </div>
+      {task.pcb && <StageLine task={task} pcb={task.pcb} />}
     </>
+  );
+}
+
+/** A PCB board's current stage: "Layout · Ryan, Kody · 2026-11-25", red when
+ * that stage is late (the board's own due date is its last stage's). */
+function StageLine({ task, pcb }: { task: BoardTask; pcb: NonNullable<BoardTask["pcb"]> }) {
+  const cur = currentStage(pcb.stages);
+  const late = currentStageOverdue(pcb, task.status, Math.floor(Date.now() / 86_400_000));
+  const who = cur?.assignees.map((a) => displayNameOf(a)).join(", ");
+  const due = cur?.dueDate ? new Date(cur.dueDate).toISOString().slice(0, 10) : null;
+  return (
+    <p className="mt-2 text-xs leading-5 text-neutral-500 dark:text-neutral-400">
+      <span className="mr-1.5 rounded bg-emerald-100 px-1.5 py-0.5 font-medium text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+        PCB
+      </span>
+      <span className="font-medium text-neutral-700 dark:text-neutral-200">{stageSummary(pcb)}</span>
+      {who && <> · {who}</>}
+      {due && (
+        <>
+          {" · "}
+          <span className={late ? "font-medium text-red-600" : ""}>{due}</span>
+        </>
+      )}
+    </p>
   );
 }
 

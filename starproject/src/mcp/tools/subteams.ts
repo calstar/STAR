@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { createSubteamReturningId, deleteSubteam, updateSubteam } from "@/lib/actions/subteams";
 import { prisma } from "@/lib/db";
+import { PCB_INCLUDE } from "@/lib/pcb";
 import { getProjectTree } from "@/lib/projects";
 import { subteamCreateSchema } from "@/lib/validation";
 
@@ -140,6 +141,7 @@ export const subteamTools: ToolModule = (server) => {
                 subteam: { select: { id: true, name: true } },
                 assignees: { select: { id: true, name: true, email: true, displayName: true } },
                 blockedBy: { include: { blockedByTask: { select: { id: true, title: true, status: true } } } },
+                pcb: PCB_INCLUDE,
               },
               orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
             },
