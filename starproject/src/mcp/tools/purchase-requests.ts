@@ -156,8 +156,7 @@ export const purchaseRequestTools: ToolModule = (server) => {
     },
   );
 
-  defineTool(
-    server,
+  pvpOnly(
     "add_pvp",
     {
       description: "PVPs only. Make someone a PVP by their email.",
@@ -170,8 +169,7 @@ export const purchaseRequestTools: ToolModule = (server) => {
     },
   );
 
-  defineTool(
-    server,
+  pvpOnly(
     "remove_pvp",
     {
       description: "PVPs only. Remove a PVP. The last PVP can't be removed.",
