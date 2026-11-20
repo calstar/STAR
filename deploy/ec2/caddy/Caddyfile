@@ -25,6 +25,7 @@
 	route {
 		request_header -X-Auth-Email
 		request_header -X-Auth-User
+		request_header -X-Auth-Gate
 
 		forward_auth {$AUTH_UPSTREAM:auth:5000} {
 			uri /verify
@@ -36,6 +37,14 @@
 			header_up -Connection
 			header_up -Upgrade
 		}
+
+		# Past the gate: prove to the app that this request came through it.
+		# STARProject, with AUTH_GATE_SECRET set to the same value, trusts
+		# X-Auth-Email only when this header matches (starproject/src/lib/auth.ts),
+		# so a container that reaches starproject:3000 directly on the compose
+		# network cannot name a user. Empty when unset, which the app reads as
+		# "no gate configured".
+		request_header X-Auth-Gate {$AUTH_GATE_SECRET}
 	}
 }
 
