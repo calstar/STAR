@@ -99,7 +99,7 @@ config: `[actuator_roles]` puts each actuator name on a board and channel,
 * Without `channels` (`None`) the hookup is the old kind (pins, then names and
   roles), written and bound exactly as before. `GET /api/hookup` still shows it
   as a box: `backend/daqbox.wiring` puts each row the matching binds on the
-  DAQ's own connector for that name (`statemachines/diablo_channels.json`, from
+  DAQ's own connector for that name (`statemachines/engine_channels.json`, from
   the DAQ's `[actuator_roles]`; board 12 is shown as 12 V and 14 as 24 V, a
   guess) and every PT, RTD and TC on its board. Saving that box changes no
   binding.

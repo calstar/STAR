@@ -1,8 +1,8 @@
-# Diablo DAQ System
+# STAR DAQ System
 
-Ground support data acquisition, monitoring, and control system for Diablo Avionics rocket test operations.
+Ground support data acquisition, monitoring, and control system for STAR rocket test operations.
 
-The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge → Elodin time-series DB → backend → web GUI. This is the `daq-server/` subproject of the STAR monorepo; the pipeline product code lives under `diablo_server/`.
+The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge → Elodin time-series DB → backend → web GUI. This is the `daq-server/` subproject of the STAR monorepo; the pipeline product code lives under `star_server/`.
 
 ---
 
@@ -10,7 +10,7 @@ The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge
 
 ```
 daq-server/                 # this subproject (inside the STAR monorepo)
-├── diablo_server/          # All pipeline product code
+├── star_server/          # All pipeline product code
 │   ├── daq_bridge/         # C++ UDP receiver → Elodin DB publisher
 │   ├── services/           # C++ background services
 │   │   ├── sequencer/      # State machine + actuator UDP (TCP :9998)
@@ -122,8 +122,8 @@ build   # runs scripts/build.sh from repo root
 ### Install Frontend/Backend Dependencies
 
 ```bash
-cd diablo_server/backend && npm install
-cd diablo_server/frontend && npm install
+cd star_server/backend && npm install
+cd star_server/frontend && npm install
 ```
 
 ---

@@ -7,7 +7,7 @@
  * in React wiring — a ref's initial value, a listener set, a timer, an effect. The pure
  * decisions already have coverage in checkoutPolicy.test.ts and it was not enough.
  *
- * Mirrors daq-server/diablo_server/frontend/vitest.config.ts, which is the working
+ * Mirrors daq-server/star_server/frontend/vitest.config.ts, which is the working
  * precedent for this stack in this repo.
  */
 import { defineConfig } from 'vitest/config';

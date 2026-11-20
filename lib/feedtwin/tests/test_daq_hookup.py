@@ -327,7 +327,7 @@ def test_a_state_flagged_abort_is_reachable_and_the_name_no_longer_decides() -> 
 def test_without_flags_an_abort_is_whatever_says_abort(tmp_path: Path) -> None:
     """No ``<name>_states.csv``: the twin's old rule, by name."""
     for table in ("actuators", "transitions"):
-        shutil.copy(TABLES / f"diablo_{table}.csv", tmp_path / f"diablo_{table}.csv")
+        shutil.copy(TABLES / f"engine_{table}.csv", tmp_path / f"engine_{table}.csv")
     bare = load_machine(tables=tmp_path)
     assert bare.aborts is None and bare.layout == {}
     assert {s for s in bare.states if bare.is_abort(s)} == ABORTS
@@ -344,8 +344,17 @@ def test_without_flags_an_abort_is_whatever_says_abort(tmp_path: Path) -> None:
 
 
 @needs_tables
+def test_a_stand_saved_under_the_old_name_loads_the_engine_table() -> None:
+    # The table was diablo_* until it was named for what it runs. Stands and
+    # run records saved before then still say "diablo".
+    old = load_machine("diablo", tables=TABLES)
+    assert old.name == "engine"
+    assert old.to_dict() == load_machine("engine", tables=TABLES).to_dict()
+
+
+@needs_tables
 def test_the_shipped_panel_places_the_states_and_flags_the_aborts() -> None:
-    machine = load_machine("diablo", tables=TABLES)
+    machine = load_machine("engine", tables=TABLES)
     assert machine.layout["Idle"] == (0, 0)
     assert machine.layout["Press Standby"] == (2, 0)
     assert machine.layout["Fire"] == (5, 0)

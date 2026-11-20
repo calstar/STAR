@@ -126,8 +126,8 @@ Binaries land in `build/bin/` (what the units resolve as `./build/bin/<name>`).
 
 ```bash
 cd ~/STAR-daq/daq-server
-(cd diablo_server/backend  && (npm ci || npm install))
-(cd diablo_server/frontend && (npm ci || npm install))
+(cd star_server/backend  && (npm ci || npm install))
+(cd star_server/frontend && (npm ci || npm install))
 bash deploy/startup/ensure_frontend_build.sh   # builds frontend/dist (served on :3000)
 ```
 

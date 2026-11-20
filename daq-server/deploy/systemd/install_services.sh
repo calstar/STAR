@@ -19,7 +19,7 @@ for u in $UNITS; do
   # The committed units carry a placeholder WorkingDirectory=%h/sensor_system[/subdir].
   # Rebase that onto the real checkout path via a drop-in, so the DAQ works from
   # wherever it's cloned — no ~/sensor_system symlink required. Preserve any
-  # subdir suffix (sensor-backend uses .../diablo_server/backend); overriding the
+  # subdir suffix (sensor-backend uses .../star_server/backend); overriding the
   # whole path with $DAQ_DIR would run npm from the wrong dir.
   wd="$(sed -n 's/^WorkingDirectory=//p' "$DIR/$u.service" | head -n1)"
   case "$wd" in

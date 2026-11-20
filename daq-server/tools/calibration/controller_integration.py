@@ -4,7 +4,7 @@ Controller Integration Module
 Provides actuator command/status communication and controller wrapper
 for integration with the calibration orchestrator.
 
-Uses exact DiabloAvionics packet format from combined_gui.py
+Uses exact StarAvionics packet format from combined_gui.py
 """
 
 import socket
@@ -18,8 +18,8 @@ from collections import deque
 
 logger = logging.getLogger(__name__)
 
-# ── DiabloAvionics Protocol Constants (from combined_gui.py) ─────────────
-DIABLO_COMMS_VERSION = 0
+# ── StarAvionics Protocol Constants (from combined_gui.py) ─────────────
+COMMS_VERSION = 0
 MAX_PACKET_SIZE = 512
 
 
@@ -155,7 +155,7 @@ class ActuatorComm:
 
         # Packet header
         packet_type = PacketType.ACTUATOR_COMMAND
-        version = DIABLO_COMMS_VERSION
+        version = COMMS_VERSION
         timestamp = (
             int(time.time() * 1000) & 0xFFFFFFFF
         )  # 32-bit timestamp in milliseconds
@@ -181,7 +181,7 @@ class ActuatorComm:
 
     def send_command(self, actuator_id: int, state: int) -> bool:
         """
-        Send actuator command via UDP (exact DiabloAvionics format).
+        Send actuator command via UDP (exact StarAvionics format).
 
         Args:
             actuator_id: 1-10 (1-indexed channel on actuator board)

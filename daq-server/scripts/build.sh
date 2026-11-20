@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Canonical C++ build for this repo. Used by the `build` / `diablo-build` alias,
+# Canonical C++ build for this repo. Used by the `build` alias,
 # test/test_integration.sh, and deploy/startup/start_tmux_dev.sh so integration,
 # guitest / Playwright E2E, and manual builds all produce identical binaries.
 #

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Fix Ethernet interface configuration for DiabloAvionics board
+# Fix Ethernet interface configuration for StarAvionics board
 
 echo "=== Ethernet Interface Setup ==="
 echo ""
@@ -20,7 +20,7 @@ for iface in $(ip link show | grep -E "^[0-9]+:.*:" | awk -F: '{print $2}' | tr 
 done
 
 echo ""
-echo "Which interface is your DiabloAvionics board connected to?"
+echo "Which interface is your StarAvionics board connected to?"
 echo "  (Usually enp* for built-in Ethernet, enx* for USB adapter)"
 echo ""
 

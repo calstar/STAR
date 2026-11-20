@@ -103,7 +103,7 @@ def main() -> int:
                 "diagram": drawing,
                 "engine": engine,
                 "fluid_set": opened.get("fluid_set", "hotfire"),
-                "machine": opened.get("machine", "diablo"),
+                "machine": opened.get("machine", "engine"),
                 "multiphase": opened.get("multiphase", False),
             },
             json=body,

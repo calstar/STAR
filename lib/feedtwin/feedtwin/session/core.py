@@ -293,7 +293,7 @@ CHILLED_BAND = 0.5
 #: Temperature of the gas a GSE fill delivers [K]: a bank at ambient.
 FILL_SUPPLY_T = 293.15
 #: The state table's actuators for the GSE side of a bottle whose fill is not
-#: drawn: its charge and its dump, the Diablo table's rows read as the DAQ reads
+#: drawn: its charge and its dump, the engine table's rows read as the DAQ reads
 #: them. The one place the session names actuators itself, because that side
 #: has no valve on the drawing for the hookup to bind. A table without them
 #: cannot charge or dump such a bottle, and the notes say so (`Session._notes`).
@@ -715,7 +715,7 @@ class Setup:
     temperature the drawing states for it, the way a supplier's cylinder does.
 
     Off (the default), it starts empty and ``GN2 High Press`` fills it from
-    GSE over ``copv_fill_s`` -- which is what the Diablo table's ``GSE High
+    GSE over ``copv_fill_s`` -- which is what the engine table's ``GSE High
     Press Control`` actuator is for. On, the bottle is cold, so the tanks it
     presses sag only by their own charge heating (~30 psi), which is what a
     stand whose bottle was filled hours earlier shows."""

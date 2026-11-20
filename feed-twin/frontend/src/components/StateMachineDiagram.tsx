@@ -1,5 +1,5 @@
 /**
- * The Diablo state machine, as a grid of buttons in the DAQ's rows.
+ * The engine state machine, as a grid of buttons in the DAQ's rows.
  *
  * The rows are the DAQ's (`daq-server/.../components/controls/
  * StateMachineDiagram.tsx`): Idle; Armed and the fills; Press Standby and the
@@ -10,7 +10,7 @@
  *
  * The reachable set is not a hardcoded table: it is what the backend's
  * machine says from the stand's current state, the same left-aligned reading
- * of `diablo_transitions.csv` the DAQ makes. The current state is filled; a
+ * of `engine_transitions.csv` the DAQ makes. The current state is filled; a
  * state you can go to is lit and clickable; the rest are dim and say why.
  */
 

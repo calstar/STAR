@@ -192,7 +192,7 @@ enum MessageType {
   BOARD_LOG = 'board_log',
 }
 
-// A local copy of the state ids, kept in step with diablo_server/shared/types.ts. It used to hold
+// A local copy of the state ids, kept in step with star_server/shared/types.ts. It used to hold
 // only the handful this file referenced by name, which silently broke the [fire] lookup below:
 // resolving "Fire" produced undefined and the whole fire phase skipped itself. Complete now.
 // (This is one of several duplicates of the state list across the tree — the config-owned state
@@ -2154,7 +2154,7 @@ function collectPtCal(
 
 /** Newest non-excluded factory-cubic JSON in the cal dir → logical-ch → [A,B,C,D], matching the
  *  service's find_latest_json_file (which skips adjustments / cubic_calibration / *learned_prior*). */
-// The test runs from diablo_server/backend, so resolve the service's cal dir via the env the harness
+// The test runs from star_server/backend, so resolve the service's cal dir via the env the harness
 // exports (INTEGRATION_CAL_DIR) or known-relative fallbacks.
 function findCalDir(): string | null {
   const candidates = [

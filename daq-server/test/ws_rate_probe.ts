@@ -12,7 +12,7 @@
  * Usage: tsx test/ws_rate_probe.ts [ws_url] [seconds]
  *   defaults: ws://localhost:8081, 10 s
  * Example (from daq-server/, stack running):
- *   cd diablo_server/backend && npx tsx ../../test/ws_rate_probe.ts ws://localhost:8081 10
+ *   cd star_server/backend && npx tsx ../../test/ws_rate_probe.ts ws://localhost:8081 10
  */
 
 import WebSocket from 'ws';

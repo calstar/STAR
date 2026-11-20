@@ -172,7 +172,7 @@ def test_firing_empty_tanks_makes_no_thrust() -> None:
     make, and it must not look like a successful burn."""
     # Placed directly rather than walked through Armed -> Press Standby -> ...
     #
-    # The shipped Diablo transition table has 10 malformed rows, `Armed` among
+    # The shipped engine transition table has 10 malformed rows, `Armed` among
     # them, and `can_go` now fails *closed* on a row it could not read -- so
     # that walk is refused, correctly. See
     # `backend/statemachines/NEEDS-REPAIR.md`. What this test is actually about

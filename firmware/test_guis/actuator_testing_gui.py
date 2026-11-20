@@ -11,7 +11,7 @@ import pyqtgraph as pg
 
 # ---------------------- Protocol constants (DAQv2-Comms) ----------------------
 
-DIABLO_COMMS_VERSION = 0
+COMMS_VERSION = 0
 MAX_PACKET_SIZE = 512
 
 
@@ -210,7 +210,7 @@ def parse_sensor_data_packet(data: bytes) -> Optional[Tuple[dict, List[dict]]]:
 
 def _make_header(packet_type: int) -> bytes:
     ts = int(time.time() * 1000) & 0xFFFFFFFF
-    return struct.pack(PACKET_HEADER_FORMAT, packet_type, DIABLO_COMMS_VERSION, ts)
+    return struct.pack(PACKET_HEADER_FORMAT, packet_type, COMMS_VERSION, ts)
 
 
 def build_server_heartbeat_packet() -> bytes:
@@ -246,7 +246,7 @@ def create_actuator_command_packet(commands: List[Tuple[int, int]]) -> bytes:
     offset = 0
 
     packet_type = PacketType.ACTUATOR_COMMAND
-    version = DIABLO_COMMS_VERSION
+    version = COMMS_VERSION
     timestamp = int(time.time() * 1000) & 0xFFFFFFFF
     struct.pack_into(PACKET_HEADER_FORMAT, pkt, offset, packet_type, version, timestamp)
     offset += PACKET_HEADER_SIZE

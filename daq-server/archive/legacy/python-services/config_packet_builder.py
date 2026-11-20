@@ -3,7 +3,7 @@
 Build ACTUATOR_CONFIG and SENSOR_CONFIG packets from config.toml.
 Replaces backend packet-building logic so config_broadcast_service is self-contained.
 
-Packet formats match DAQv2-Comms / DiabloPacketUtils.cpp.
+Packet formats match DAQv2-Comms / DaqPacketUtils.cpp.
 """
 
 from __future__ import annotations

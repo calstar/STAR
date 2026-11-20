@@ -10,12 +10,12 @@
 #include <vector>
 
 // DAQv2-Comms (uses our Arduino.h stub via -I stubs)
-#include "DiabloEnums.h"
-#include "DiabloPacketUtils.h"
-#include "DiabloPackets.h"
+#include "DaqEnums.h"
+#include "DaqPacketUtils.h"
+#include "DaqPackets.h"
 
 // Pull in the implementation
-#include "DiabloPacketUtils.cpp"
+#include "DaqPacketUtils.cpp"
 
 // ---------------------------------------------------------------------------
 // Board Heartbeat

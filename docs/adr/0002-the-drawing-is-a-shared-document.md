@@ -19,7 +19,7 @@ Three facts shape the answer.
 
 **There are three consumers of the drawing, not two.** Authoring it
 (`pid-designer`), solving it (`feed-twin`), and showing live or replayed test
-data on it (the DAQ GUI, `daq-server/diablo_server/frontend`). The third is not
+data on it (the DAQ GUI, `daq-server/star_server/frontend`). The third is not
 hypothetical — ADR-0001 already cites it as the reason the schematic view could
 not live inside EngineDesign, and the `feed-twin` README already schedules the
 canvas as `lib/feed-canvas` "so the DAQ GUI can import it too".

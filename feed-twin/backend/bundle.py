@@ -32,6 +32,8 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from feedtwin.session.statemachine import canonical
+
 from backend.overrides import unreadable
 
 FORMAT = "hotbench-stand"
@@ -99,7 +101,7 @@ def pack(
             else None
         ),
         "machine": {
-            "name": str(stand.get("machine") or "diablo"),
+            "name": canonical(str(stand.get("machine") or "engine")),
             "table": dict(machine) if machine is not None else None,
         },
         "overrides": dict(overrides),

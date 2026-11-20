@@ -141,7 +141,7 @@ For reference — you don't need to run any of this manually if you ran
 - `elodin-db` (Rust binary) — installed via the upstream prebuilt installer,
   or built from source as a fallback
 - Node 20 (from NodeSource on Linux, Homebrew on macOS) + `npm install` for
-  both `diablo_server/backend/` and `diablo_server/frontend/`
+  both `star_server/backend/` and `star_server/frontend/`
 - Python venv at `daq-server/.venv` with everything in `requirements.txt`
 - `cmake` + `make` for the target binaries (skip with `--no-build`)
 
@@ -303,7 +303,7 @@ STAR/
 │   ├── CMakeLists.txt               # top-level: daqv2_comms lib → ../lib/...
 │   ├── config/config.toml           # board IPs, calibration CSV paths,
 │   │                                #   state-machine durations, etc.
-│   ├── diablo_server/               # C++ source for daq_bridge, sequencer,
+│   ├── star_server/               # C++ source for daq_bridge, sequencer,
 │   │   ├── daq_bridge/              #   heartbeat, config_broadcast,
 │   │   ├── services/                #   calibration, controller services
 │   │   │   ├── sequencer/           #

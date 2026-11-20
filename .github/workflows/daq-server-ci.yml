@@ -97,15 +97,15 @@ jobs:
       with:
         node-version: '20.x'
         cache: 'npm'
-        cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
+        cache-dependency-path: daq-server/star_server/frontend/package-lock.json
 
     # Frontend imports ../backend/src/* (shared types/config); install backend so module resolution works.
     - name: Install backend dependencies
-      working-directory: daq-server/diablo_server/backend
+      working-directory: daq-server/star_server/backend
       run: npm ci || npm install
 
     - name: Install frontend dependencies
-      working-directory: daq-server/diablo_server/frontend
+      working-directory: daq-server/star_server/frontend
       run: npm ci || npm install
 
     # shared/types.js is a committed runtime artifact (prod backend does
@@ -113,22 +113,22 @@ jobs:
     # Regenerate it from types.ts and fail if the checked-in copy drifted —
     # a stale copy silently ships an undefined enum member to the frontend.
     - name: Verify shared types are in sync
-      working-directory: daq-server/diablo_server/frontend
+      working-directory: daq-server/star_server/frontend
       run: |
         npm run build:shared
         git diff --exit-code -- ../shared/types.js ../shared/types.d.ts ../shared/types.js.map ../shared/types.d.ts.map \
           || { echo "::error::shared/types.* is stale — run 'npm run build:shared' in frontend/ and commit the result."; exit 1; }
 
     - name: Run backend unit tests
-      working-directory: daq-server/diablo_server/backend
+      working-directory: daq-server/star_server/backend
       run: npm run test
 
     - name: Run frontend unit tests
-      working-directory: daq-server/diablo_server/frontend
+      working-directory: daq-server/star_server/frontend
       run: npm run test
 
     - name: Verify Vite build
-      working-directory: daq-server/diablo_server/frontend
+      working-directory: daq-server/star_server/frontend
       run: npm run test:build
 
   # The VIDCOMM video backend against the real gateway: the pinned MediaMTX
@@ -153,24 +153,24 @@ jobs:
       with:
         node-version: '20.x'
         cache: 'npm'
-        cache-dependency-path: daq-server/diablo_server/backend/package-lock.json
+        cache-dependency-path: daq-server/star_server/backend/package-lock.json
 
     - name: Install ffmpeg
       run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
     - name: Install backend dependencies
-      working-directory: daq-server/diablo_server/backend
+      working-directory: daq-server/star_server/backend
       run: npm ci || npm install
 
     - name: Install Chromium
-      working-directory: daq-server/diablo_server/backend
+      working-directory: daq-server/star_server/backend
       run: npx playwright-core install --with-deps chromium
 
     - name: Fetch the pinned gateway
       run: scripts/video-gateway.sh --fetch
 
     - name: Run the gateway integration test
-      working-directory: daq-server/diablo_server/backend
+      working-directory: daq-server/star_server/backend
       run: npm run test:video-gateway
 
   # Build with multiple compilers (Release only)
@@ -224,7 +224,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.ccache
-        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('daq-server/CMakeLists.txt', 'daq-server/diablo_server/CMakeLists.txt', 'daq-server/archive/legacy/utl/**/*.cpp', 'daq-server/archive/legacy/utl/**/*.hpp', 'daq-server/diablo_server/**/*.cpp', 'daq-server/diablo_server/**/*.hpp') }}
+        key: ${{ runner.os }}-ccache-${{ matrix.compiler }}-${{ hashFiles('daq-server/CMakeLists.txt', 'daq-server/star_server/CMakeLists.txt', 'daq-server/archive/legacy/utl/**/*.cpp', 'daq-server/archive/legacy/utl/**/*.hpp', 'daq-server/star_server/**/*.cpp', 'daq-server/star_server/**/*.hpp') }}
         restore-keys: |
           ${{ runner.os }}-ccache-${{ matrix.compiler }}-
 
@@ -300,7 +300,7 @@ jobs:
           --include="*.hpp" \
           --include="*.c" \
           --include="*.h" \
-          diablo_server/ archive/legacy/utl/ || true)
+          star_server/ archive/legacy/utl/ || true)
         if [ -n "$TODOS" ]; then
           echo "::warning::Found TODO/FIXME/HACK comments:"
           echo "$TODOS"
@@ -322,7 +322,7 @@ jobs:
     - name: Check for missing includes
       run: |
         echo "Checking for common include issues..."
-        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" diablo_server/ archive/legacy/utl/ | \
+        if grep -r "#include <iostream>" --include="*.cpp" --include="*.hpp" star_server/ archive/legacy/utl/ | \
            grep -v "#include <iostream>" | head -5; then
           echo "::warning::Potential missing includes detected"
         fi
@@ -380,7 +380,7 @@ jobs:
           --include="*.hpp" \
           --include="*.py" \
           --include="*.sh" \
-          diablo_server/ archive/legacy/utl/ scripts/ || true)
+          star_server/ archive/legacy/utl/ scripts/ || true)
         if [ -n "$SECRETS" ]; then
           echo "::warning::Potential hardcoded secrets found:"
           echo "$SECRETS"
@@ -394,7 +394,7 @@ jobs:
         UNSAFE=$(grep -rE "\b(strcpy|sprintf|gets|scanf|strcat)\s*\(" \
           --include="*.cpp" \
           --include="*.hpp" \
-          diablo_server/ archive/legacy/utl/ || true)
+          star_server/ archive/legacy/utl/ || true)
         if [ -n "$UNSAFE" ]; then
           echo "::warning::Potentially unsafe C functions found:"
           echo "$UNSAFE"
@@ -656,7 +656,7 @@ jobs:
         cmake --build ${{ env.BUILD_DIR }} --parallel $(nproc)
 
     - name: Install backend dependencies
-      run: cd diablo_server/backend && npm install
+      run: cd star_server/backend && npm install
 
     - name: Install Python dependencies
       run: pip3 install tomli || true
@@ -765,7 +765,7 @@ jobs:
 
     - name: Install backend dependencies
       run: |
-        cd diablo_server/backend && npm install
+        cd star_server/backend && npm install
 
     - name: Install Python dependencies
       run: |
@@ -779,7 +779,7 @@ jobs:
         bash test/test_integration.sh
 
     - name: Environmental startup and database restart recovery
-      working-directory: daq-server/diablo_server/backend
+      working-directory: daq-server/star_server/backend
       run: |
         ELODIN_DB="$(command -v elodin-db)" \
         DAQ_BRIDGE="$GITHUB_WORKSPACE/daq-server/build/bin/daq_bridge" \
@@ -848,7 +848,7 @@ jobs:
       with:
         node-version: '20.x'
         cache: 'npm'
-        cache-dependency-path: daq-server/diablo_server/frontend/package-lock.json
+        cache-dependency-path: daq-server/star_server/frontend/package-lock.json
 
     # Reuse the build job's Release output rather than compiling in this job.
     # Note this job previously ran the unoptimized default build via build.sh;
@@ -865,10 +865,10 @@ jobs:
         ls -l "${BUILD_DIR}/bin/"
 
     - name: Install backend dependencies
-      run: cd diablo_server/backend && (npm ci || npm install)
+      run: cd star_server/backend && (npm ci || npm install)
 
     - name: Install frontend dependencies
-      run: cd diablo_server/frontend && (npm ci || npm install)
+      run: cd star_server/frontend && (npm ci || npm install)
 
     # ~/.cache/ms-playwright is NOT covered by setup-node's npm cache, so
     # Chromium (~150 MB) was re-downloaded on every run.
@@ -877,12 +877,12 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('daq-server/diablo_server/frontend/package-lock.json') }}
+        key: ${{ runner.os }}-playwright-${{ hashFiles('daq-server/star_server/frontend/package-lock.json') }}
         restore-keys: ${{ runner.os }}-playwright-
 
     - name: Install Playwright Chromium
       if: steps.cache-playwright.outputs.cache-hit != 'true'
-      run: cd diablo_server/frontend && npx playwright install chromium
+      run: cd star_server/frontend && npx playwright install chromium
 
     - name: Install Python dependencies (sim / config)
       run: pip3 install tomli || pip3 install --user tomli || true
@@ -905,7 +905,7 @@ jobs:
         name: playwright-e2e-diagnostics
         path: |
           /tmp/gui_logs/
-          daq-server/diablo_server/frontend/test-results/
+          daq-server/star_server/frontend/test-results/
         if-no-files-found: warn
         retention-days: 7
 
@@ -969,7 +969,7 @@ jobs:
       run: chmod +x "${BUILD_DIR}/bin/"* || true
 
     - name: Install backend dependencies
-      run: cd diablo_server/backend && (npm ci || npm install)
+      run: cd star_server/backend && (npm ci || npm install)
 
     - name: Install Python dependencies (sim / config)
       run: pip3 install tomli || pip3 install --user tomli || true

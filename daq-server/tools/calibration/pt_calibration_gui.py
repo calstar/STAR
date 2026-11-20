@@ -81,7 +81,7 @@ class HighPerformanceCalibrationGUI:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("PT Calibration System - Diablo FSW")
+        self.root.title("PT Calibration System - Star FSW")
         self.root.geometry("1600x1000")
         self.root.configure(bg="#2b2b2b")
 

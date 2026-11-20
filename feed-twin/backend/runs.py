@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from feedtwin.session.gauge import ATMOSPHERE_PSI
+from feedtwin.session.statemachine import canonical
 
 from backend import userdata
 
@@ -277,14 +278,21 @@ def _same(a: Any, b: Any) -> bool:
     return bool(a == b)
 
 
+def _current_names(flat: dict[str, Any]) -> dict[str, Any]:
+    """A run recorded before its machine was renamed differs in name only."""
+    if isinstance(flat.get("machine"), str):
+        flat["machine"] = canonical(flat["machine"])
+    return flat
+
+
 def diff(a: Mapping[str, Any], b: Mapping[str, Any]) -> dict[str, Any]:
     """What differs between two runs: inputs, code and stand, then outcome.
 
     ``inputs`` lists every changed leaf with its group (:func:`group_of`), so a
     reader sees "setup.vapour: false -> true" rather than "the setup changed".
     """
-    fa = flatten(a.get("inputs") or {})
-    fb = flatten(b.get("inputs") or {})
+    fa = _current_names(flatten(a.get("inputs") or {}))
+    fb = _current_names(flatten(b.get("inputs") or {}))
     changed = [
         {"key": key, "group": group_of(key), "a": fa.get(key), "b": fb.get(key)}
         for key in sorted(set(fa) | set(fb))

@@ -31,7 +31,7 @@ COPIES=(
   "star-icon.svg:EngineDesign/frontend/public"
   "star-icon.svg:pid-designer/frontend/public"
   "star-icon.svg:star-openrocket/frontend/public"
-  "star-icon.svg:daq-server/diablo_server/frontend/public"
+  "star-icon.svg:daq-server/star_server/frontend/public"
   "star-icon.svg:daq-server/tools/postprocessing/webviewer/frontend/public"
 )
 

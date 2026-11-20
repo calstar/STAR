@@ -28,7 +28,7 @@ fi
 
 echo ""
 echo "📡 Monitoring for incoming packets (30 seconds)..."
-echo "   Send packets from your DiabloAvionics board to: $(hostname -I | awk '{print $1}'):5006"
+echo "   Send packets from your StarAvionics board to: $(hostname -I | awk '{print $1}'):5006"
 echo ""
 
 # Monitor logs

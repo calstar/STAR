@@ -3,7 +3,7 @@
 The DAQ GUI's **Video** view shows every camera and the HiDes link live, records them, and
 feeds OBS. This folder is the gateway side: `mediamtx.yml` (MediaMTX's config) and
 `agent.mjs` (the video agent that keeps recordings). The DAQ backend's half is
-`diablo_server/backend/src/video/`, the page is `diablo_server/frontend/app/video/`.
+`star_server/backend/src/video/`, the page is `star_server/frontend/app/video/`.
 
 ```
 cameras ──RTSP pull──┐                                  ┌─ WebRTC (UDP 8189) ─▶ Video view, any LAN browser
@@ -113,9 +113,9 @@ source needs its network caching lowered from 1000 ms to about 200.
 ## Testing
 
 ```bash
-cd diablo_server/backend && npm test                 # unit tests (fakes)
-cd diablo_server/backend && npm run test:video-gateway  # the real MediaMTX + ffmpeg + Chromium
-cd diablo_server/frontend && npm test
+cd star_server/backend && npm test                 # unit tests (fakes)
+cd star_server/backend && npm run test:video-gateway  # the real MediaMTX + ffmpeg + Chromium
+cd star_server/frontend && npm test
 ```
 
 Not yet checked on hardware: real cameras, the UT-130 end to end through the gateway, OBS,

@@ -1,6 +1,6 @@
-# DAQv2-Comms
+# daq-protocol
 
-The **wire protocol** for the Diablo DAQ system — the single source of truth for
+The **wire protocol** for the STAR DAQ system — the single source of truth for
 every packet exchanged between the ESP32 avionics boards (`firmware/`) and the
 ground DAQ server (`daq-server/`). It defines the packet types, the board/engine
 state enums, and the serialize/parse routines both sides use, so the two never
@@ -8,7 +8,7 @@ drift out of sync.
 
 Packaged as an Arduino library (`library.properties`, target `esp32`). It is
 **vendored** into this monorepo — the firmware consumes it through a symlink at
-`firmware/libraries/DAQv2-Comms`, and the daq-server builds it as the
+`firmware/libraries/daq-protocol`, and the daq-server builds it as the
 `daqv2_comms` CMake target. It is *not* added as a git submodule.
 
 ## Overview
@@ -29,14 +29,14 @@ packets — don't hand-pack buffers.
               type-specific body (fixed or variable length)
 ```
 
-`version` is the protocol version (`DIABLO_COMMS_VERSION`, currently `0`).
-Sizing limits live in `DAQv2-Comms.h`: up to `MAX_SENSORS_PER_BOARD` (10) and
+`version` is the protocol version (`COMMS_VERSION`, currently `0`).
+Sizing limits live in `daq-protocol.h`: up to `MAX_SENSORS_PER_BOARD` (10) and
 `MAX_ACTUATORS_PER_BOARD` (10) per board, `MAX_CHUNKS_PER_PACKET` (10), and
 `MAX_PACKET_SIZE` (512 bytes).
 
 ## Packet types
 
-`PacketType` (`DiabloEnums.h`) — direction is board↔server:
+`PacketType` (`DaqEnums.h`) — direction is board↔server:
 
 | # | Type | Direction | Purpose |
 |---|---|---|---|
@@ -67,13 +67,13 @@ State enums travel inside several of these packets:
 
 ```
 src/
-├── DAQv2-Comms.h        # umbrella include + version & size constants
-├── DiabloEnums.h        # PacketType, BoardState, EngineState
-├── DiabloPackets.h      # packed on-wire structs (PacketHeader + bodies)
+├── daq-protocol.h       # umbrella include + version & size constants
+├── DaqEnums.h           # PacketType, BoardState, EngineState
+├── DaqPackets.h         # packed on-wire structs (PacketHeader + bodies)
 │                        #   and high-level collection structs (e.g.
 │                        #   SensorDataChunkCollection) used before serializing
-├── DiabloPacketUtils.h  # create_*() / parse_*() declarations
-└── DiabloPacketUtils.cpp# their implementations
+├── DaqPacketUtils.h     # create_*() / parse_*() declarations
+└── DaqPacketUtils.cpp   # their implementations
 ```
 
 ## Usage
@@ -81,8 +81,8 @@ src/
 Serialize into a caller-owned buffer, then send it:
 
 ```cpp
-#include "DAQv2-Comms.h"
-using namespace Diablo;
+#include "daq-protocol.h"
+using namespace daq;
 
 uint8_t buf[MAX_PACKET_SIZE];
 
@@ -107,14 +107,14 @@ if (parse_server_heartbeat_packet(buf, len, sh)) {
 ```
 
 `create_*` returns the number of bytes written (`0` on error, e.g. buffer too
-small). See `DiabloPacketUtils.h` for the full set: heartbeats, sensor data,
+small). See `DaqPacketUtils.h` for the full set: heartbeats, sensor data,
 sensor/actuator config, actuator commands (binary + PWM), abort, self-test,
 environmental, and stacklight packets.
 
 ## Conventions
 
 - On-wire structs are `__attribute__((packed))` — never add fields without
-  bumping `DIABLO_COMMS_VERSION` and updating both firmware and server.
+  bumping `COMMS_VERSION` and updating both firmware and server.
 - The "collection" structs (e.g. `SensorDataChunkCollection`) are the
   ergonomic, *non-packed* representation used to assemble data before calling
   `create_sensor_data_packet`; only the packed structs go over the wire.

@@ -1,5 +1,5 @@
 /*
- * The run viewer, drawn the way the DAQ console is (daq-server/diablo_server/frontend,
+ * The run viewer, drawn the way the DAQ console is (daq-server/star_server/frontend,
  * app/globals.css; feed-twin's console shares it): true black, a panel is a region
  * between hairlines rather than a card, nothing is rounded, floats or glows, labels and
  * controls are small spaced monospace capitals, and colour is kept for what it means —

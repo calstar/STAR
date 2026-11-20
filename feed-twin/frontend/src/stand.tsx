@@ -393,7 +393,7 @@ export function StandProvider({ children }: { children: ReactNode }) {
   /** The open stand's hookup and knobs, applied to every fresh session on it. */
   const standPayload = useRef<StandPayload | null>(null);
 
-  const where: Where = { diagram, engine, fluidSet: 'hotfire', machine: 'diablo' };
+  const where: Where = { diagram, engine, fluidSet: 'hotfire', machine: 'engine' };
   const session = useRef('');
   /** Set by Reset: the next open must be a new stand, not the remembered one. */
   const wantFresh = useRef(false);

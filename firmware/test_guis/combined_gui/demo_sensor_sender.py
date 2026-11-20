@@ -3,9 +3,9 @@ Fake sensor data generator for demo mode.
 Builds UDP packets in the same format as the real boards so the GUI receives and
 decodes them exactly like real hardware.
 
-Buffer layout matches Diablo::create_sensor_data_packet() in DAQv2-Comms:
-  - DiabloPackets.h: PacketHeader, SensorDataPacket, SensorDataChunk, SensorDatapoint
-  - DiabloPacketUtils.cpp: write order = header -> body_header -> for each chunk
+Buffer layout matches daq::create_sensor_data_packet() in DAQv2-Comms:
+  - DaqPackets.h: PacketHeader, SensorDataPacket, SensorDataChunk, SensorDatapoint
+  - DaqPacketUtils.cpp: write order = header -> body_header -> for each chunk
     (chunk timestamp -> num_sensors × datapoint)
 No Qt or socket usage here.
 """
@@ -19,7 +19,7 @@ import numpy as np
 # Same as DAQv2-Comms.h
 MAX_PACKET_SIZE = 512
 
-# Packet layout: must match DiabloPackets.h packed structs (little-endian)
+# Packet layout: must match DaqPackets.h packed structs (little-endian)
 # PacketHeader: packet_type (uint8_t), version (uint8_t), timestamp (uint32_t)
 PACKET_HEADER_FORMAT = "<BBI"
 PACKET_HEADER_SIZE = 6
@@ -185,7 +185,7 @@ def create_sensor_data_packet(
 ) -> bytes:
     """
     Build a sensor data UDP packet. Byte layout is identical to
-    Diablo::create_sensor_data_packet() in DAQv2-Comms (DiabloPacketUtils.cpp):
+    daq::create_sensor_data_packet() in DAQv2-Comms (DaqPacketUtils.cpp):
     header (6) -> num_chunks, num_sensors (2) -> for each chunk: timestamp (4)
     then num_sensors × (sensor_id (1), data (4)).
     chunks: list of (chunk_timestamp_ms, [(sensor_id, adc_code_uint32), ...])

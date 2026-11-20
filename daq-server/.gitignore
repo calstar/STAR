@@ -1,4 +1,4 @@
-# Diablo-FSW Sensor System .gitignore
+# Star-FSW Sensor System .gitignore
 
 # Build artifacts
 build/
@@ -258,4 +258,9 @@ video/obs.password
 video/buffer/
 video/recordings/
 # ...but not the GUI's Recordings view, which the bare `recordings/` rule above would hide.
-!diablo_server/frontend/app/recordings/
+!star_server/frontend/app/recordings/
+
+# Generated, never committed
+build-clang-ci/
+build-ci/
+star_server/backend/dist/

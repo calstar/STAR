@@ -2,13 +2,13 @@
 """
 Autonomous PT Calibration System
 Automatically calibrates PT sensors by listening to raw UDP packets from the
-DiabloAvionics boards and collecting calibration points at known reference pressures.
+StarAvionics boards and collecting calibration points at known reference pressures.
 
 All board IPs, ports, sensor counts, and calibration paths are read from
 config/config.toml via config_loader so you only change the config file.
 
 Features:
-- Reads raw board UDP packets (DiabloAvionics protocol) — no external dependencies
+- Reads raw board UDP packets (StarAvionics protocol) — no external dependencies
 - Automatic calibration point collection with quality scoring
 - Reference pressure input (from gauges, regulators, etc.)
 - Automatic cubic polynomial fitting (psi = A·adc³ + B·adc² + C·adc + D)
@@ -91,7 +91,7 @@ def _default_calibration_dir():
     return Path(__file__).parent / "calibrations"
 
 
-# ── DiabloAvionics packet constants (match combined_gui.py exactly) ─────
+# ── StarAvionics packet constants (match combined_gui.py exactly) ─────
 PACKET_HEADER_FORMAT = "<BBI"  # packet_type(u8), version(u8), timestamp(u32) = 6 bytes
 PACKET_HEADER_SIZE = 6
 SENSOR_DATA_PACKET_FORMAT = "<BB"  # num_chunks(u8), num_sensors(u8) = 2 bytes
@@ -138,7 +138,7 @@ class SensorCalibrationState:
 class AutonomousPTCalibrator:
     """
     Autonomous PT calibration system that automatically calibrates sensors
-    by listening to raw DiabloAvionics UDP packets and collecting calibration
+    by listening to raw StarAvionics UDP packets and collecting calibration
     points at known reference pressures.
 
     Data path: Board → UDP → this script (direct, no middleware needed)
@@ -192,7 +192,7 @@ class AutonomousPTCalibrator:
     # ── UDP packet parsing ──────────────────────────────────────────────
     @staticmethod
     def _parse_sensor_packet(data: bytes) -> Optional[List[Tuple[int, int, int]]]:
-        """Parse a DiabloAvionics sensor data packet.
+        """Parse a StarAvionics sensor data packet.
         Returns list of (sensor_id, adc_signed, adc_raw) or None."""
         if len(data) < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE:
             return None
@@ -518,7 +518,7 @@ class AutonomousPTCalibrator:
             logger.error(f"Error saving JSON: {e}")
             json_path = None
 
-        # ── CSV (DiabloAvionics compat format) ──
+        # ── CSV (StarAvionics compat format) ──
         try:
             csv_path = CALIBRATION_DIR / f"pt_calibration_{timestamp}.csv"
             cols = ["Timestamp"]

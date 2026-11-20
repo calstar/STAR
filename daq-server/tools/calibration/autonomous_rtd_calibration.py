@@ -76,7 +76,7 @@ def _default_calibration_dir():
     return Path(__file__).parent / "calibrations" / "rtd"
 
 
-# ── DiabloAvionics packet constants ─────────────────────────────────────
+# ── StarAvionics packet constants ─────────────────────────────────────
 PACKET_HEADER_FORMAT = "<BBI"
 PACKET_HEADER_SIZE = 6
 SENSOR_DATA_PACKET_FORMAT = "<BB"

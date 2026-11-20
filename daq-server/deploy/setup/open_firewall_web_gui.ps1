@@ -21,19 +21,22 @@ if (-NOT ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 Write-Host ""
-Write-Host "Diablo FSW - Web GUI LAN Firewall Setup" -ForegroundColor Cyan
+Write-Host "Star FSW - Web GUI LAN Firewall Setup" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # -- 1. Windows Firewall: TCP ports -------------------------------------------
 $tcpRules = @(
-    @{ Name = "Diablo FSW - Web GUI Frontend (3000)";         Port = 3000; Desc = "Next.js frontend" },
-    @{ Name = "Diablo FSW - Web GUI WebSocket (8081)";        Port = 8081; Desc = "Backend WebSocket" },
-    @{ Name = "Diablo FSW - Calibration Sidecar HTTP (8100)"; Port = 8100; Desc = "Calibration HTTP" },
-    @{ Name = "Diablo FSW - Calibration Sidecar WS (8101)";   Port = 8101; Desc = "Calibration WebSocket" }
+    @{ Name = "Star FSW - Web GUI Frontend (3000)";         Port = 3000; Desc = "Next.js frontend" },
+    @{ Name = "Star FSW - Web GUI WebSocket (8081)";        Port = 8081; Desc = "Backend WebSocket" },
+    @{ Name = "Star FSW - Calibration Sidecar HTTP (8100)"; Port = 8100; Desc = "Calibration HTTP" },
+    @{ Name = "Star FSW - Calibration Sidecar WS (8101)";   Port = 8101; Desc = "Calibration WebSocket" }
 )
 
 Write-Host "  Windows Firewall - TCP ports:" -ForegroundColor Yellow
+# Rules made before the rename were named "Star FSW - ..."; drop them.
+Remove-NetFirewallRule -DisplayName "Star FSW - Web GUI *" -ErrorAction SilentlyContinue
+Remove-NetFirewallRule -DisplayName "Star FSW - Calibration Sidecar *" -ErrorAction SilentlyContinue
 foreach ($rule in $tcpRules) {
     Remove-NetFirewallRule -DisplayName $rule.Name -ErrorAction SilentlyContinue
     New-NetFirewallRule `
@@ -62,10 +65,11 @@ $wslVmCreatorId = "{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}"
 $hyperVSupported = $false
 
 try {
-    Remove-NetFirewallHyperVRule -Name "Diablo-FSW-WebGUI" -ErrorAction SilentlyContinue
+    Remove-NetFirewallHyperVRule -Name "Diablo-FSW-WebGUI" -ErrorAction SilentlyContinue  # before the rename
+    Remove-NetFirewallHyperVRule -Name "Star-FSW-WebGUI" -ErrorAction SilentlyContinue
     New-NetFirewallHyperVRule `
-        -Name        "Diablo-FSW-WebGUI" `
-        -DisplayName "Diablo FSW Web GUI (WSL2)" `
+        -Name        "Star-FSW-WebGUI" `
+        -DisplayName "Star FSW Web GUI (WSL2)" `
         -Direction   Inbound `
         -VMCreatorId $wslVmCreatorId `
         -Protocol    TCP `

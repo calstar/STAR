@@ -216,7 +216,7 @@ def test_a_turn_after_the_burn_and_before_its_record_is_not_what_it_fired_on() -
     burn was fired on. The first change since Fire says what they were."""
     at_fire = {"setup": {"dome": 450.0}, "knobs": {"dome": 450.0}}
     opened = main._Opened(
-        diagram="d", engine="e", fluid_set="hotfire", machine="diablo",
+        diagram="d", engine="e", fluid_set="hotfire", machine="engine",
         multiphase=False, user="local",
         commands=[
             {"t": 9.0, "command": {"state": "Fire"}},

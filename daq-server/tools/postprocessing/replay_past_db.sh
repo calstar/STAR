@@ -12,9 +12,9 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
-# The GUI lives in diablo_server/, two levels up from tools/postprocessing.
-BACKEND_DIR="$SCRIPT_DIR/../../diablo_server/backend"
-FRONTEND_DIR="$SCRIPT_DIR/../../diablo_server/frontend"
+# The GUI lives in star_server/, two levels up from tools/postprocessing.
+BACKEND_DIR="$SCRIPT_DIR/../../star_server/backend"
+FRONTEND_DIR="$SCRIPT_DIR/../../star_server/frontend"
 
 if [[ -z "${1:-}" ]]; then
   echo "Usage: $0 <DB_NAME>"

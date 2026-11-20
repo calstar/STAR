@@ -1,6 +1,6 @@
 # Test-GUI
 
-Standardized, per-board test GUIs for the STAR **Diablo** avionics boards
+Standardized, per-board test GUIs for the STAR avionics boards
 (LC, PT, TC, RTD, Actuator). Each board gets its own small app that runs on a
 tester's laptop, acts as the ground DAQ **server**, and shows — in one window —
 everything the board does: state machine, heartbeats, Ethernet/packet health,

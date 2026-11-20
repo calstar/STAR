@@ -43,7 +43,7 @@ if [ "$PACKET_COUNT" -gt 0 ]; then
 else
     echo "⚠️  No packets received yet."
     echo ""
-    echo "Make sure your DiabloAvionics board is:"
+    echo "Make sure your StarAvionics board is:"
     echo "  1. Connected via Ethernet"
     echo "  2. Configured to send to: 192.168.1.20:5006"
     echo "  3. Powered on and sending packets"

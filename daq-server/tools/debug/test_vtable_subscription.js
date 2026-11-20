@@ -1,7 +1,7 @@
 // Diagnostic script to verify multiple concurrent subscriptions to Elodin DB.
 // Usage: node scripts/debug/test_vtable_subscription.js [elodin_host] [elodin_port]
 
-const { ElodinClient, ElodinPacketType } = require('../../diablo_server/backend/src/elodin-client.js');
+const { ElodinClient, ElodinPacketType } = require('../../star_server/backend/src/elodin-client.js');
 
 const host = process.argv[2] || '127.0.0.1';
 const port = parseInt(process.argv[3] || '2240', 10);

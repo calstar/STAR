@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 FSW Combined Sensor & Actuator Control GUI
-Similar to DiabloAvionics combined_gui.py but integrated with FSW stack
+Similar to StarAvionics combined_gui.py but integrated with FSW stack
 
 Features:
 - Real-time sensor data visualization (pressure plots)
@@ -56,7 +56,7 @@ PT_CALIBRATION_CSV = os.path.join(
 )
 CALIBRATION_JSON_DIR = Path(__file__).parent.parent / "calibration" / "calibrations"
 
-# Packet format (DiabloAvionics)
+# Packet format (StarAvionics)
 PACKET_HEADER_FORMAT = "<BBI"  # packet_type, version, timestamp
 PACKET_HEADER_SIZE = 6
 SENSOR_DATA_PACKET_FORMAT = "<BB"  # num_chunks, num_sensors
@@ -1368,7 +1368,7 @@ class ActuatorControlWidget(QtWidgets.QWidget):
             self.actuator_command_sent.emit(actuator_id, state)
 
     def send_udp_command(self, actuator_id: int, state: int):
-        """Send UDP command to actuator board (exact DiabloAvionics format)"""
+        """Send UDP command to actuator board (exact StarAvionics format)"""
         try:
             # Use exact format from combined_gui.py
             commands = [(actuator_id, state)]
@@ -1382,7 +1382,7 @@ class ActuatorControlWidget(QtWidgets.QWidget):
 
     def create_actuator_command_packet(self, commands: List[Tuple[int, int]]) -> bytes:
         """
-        Create an actuator command packet (exact format from DiabloAvionics combined_gui.py).
+        Create an actuator command packet (exact format from StarAvionics combined_gui.py).
         commands: List of (actuator_id, actuator_state) tuples
         actuator_id: 1-10 (1-indexed)
         actuator_state: 0 = OFF, non-zero = ON

@@ -5,7 +5,7 @@ Standalone binary data logger for sensor runs.
 Connects to backend WebSocket, receives SENSOR_UPDATE/STATE_UPDATE/ACTUATOR_UPDATE,
 and writes .sensorlog files. Starts on ARMED, stops on IDLE or EMERGENCY_ABORT.
 
-File format matches diablo_server/backend DataLogger:
+File format matches star_server/backend DataLogger:
   HEADER: SLOG magic, version, startTime, channel table
   RECORDS: 14 bytes each (timestamp_ms offset, channel_idx, value)
 

@@ -31,12 +31,12 @@ scripts/startup/start_full_system.sh
 #   - Reads pressure data from Elodin
 #   - Sends actuator commands via UDP to boards
 #   - State machine for pressure-based control
-# DiabloBoardPacketParser (compiled into libdaq_comms_lib.so)
+# BoardPacketParser (compiled into libdaq_comms_lib.so)
 #   - Constructs actuator command packets (matching DAQv2-Comms format)
 #   - Little-endian packet format
 # UDPSocket (compiled into libdaq_comms_lib.so)
 #   - UDP transport for sending commands to actuator boards
-#   - Reused socket pattern (like DiabloAvionics GUI)
+#   - Reused socket pattern (like StarAvionics GUI)
 # ElodinClient (compiled into libfsw_daq_lib.so)
 #   - Reads pressure data packets from Elodin
 #   - Mutex-protected read operations

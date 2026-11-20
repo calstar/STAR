@@ -5,7 +5,7 @@
  * has two empty tanks and a flat bottle, and the route from there to a lit
  * engine is thirteen state changes, four of which are waits — for a tank to
  * load, for the bottle to charge, for a tank to come up to pressure. An
- * operator who knows the Diablo table walks it from memory; nobody else could
+ * operator who knows the engine table walks it from memory; nobody else could
  * find it, and the twin read as broken.
  *
  * This reads the sequence off the stand's physical state rather than off a

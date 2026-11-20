@@ -10,7 +10,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FRONTEND="$SCRIPT_DIR/../../diablo_server/frontend"
+FRONTEND="$SCRIPT_DIR/../../star_server/frontend"
 cd "$FRONTEND"
 
 if [ ! -d node_modules ]; then

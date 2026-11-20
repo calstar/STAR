@@ -1,6 +1,6 @@
 # Documentation
 
-Reference docs for the Diablo DAQ server / flight software. For environment
+Reference docs for the STAR DAQ server / flight software. For environment
 setup and running tests, see the monorepo root [`SETUP.md`](../../SETUP.md) and
 the subproject [`README.md`](../README.md).
 
@@ -13,7 +13,7 @@ the subproject [`README.md`](../README.md).
 - [../../lib/DAQv2-Comms/README.md](../../lib/DAQv2-Comms/README.md) — Wire
   protocol (packet types, 6-byte header, serialize/parse). Single source of
   truth for the on-wire format.
-- [DIABLOAVIONICS_NETWORK_CONFIG.md](DIABLOAVIONICS_NETWORK_CONFIG.md) — Board
+- [STARAVIONICS_NETWORK_CONFIG.md](STARAVIONICS_NETWORK_CONFIG.md) — Board
   network/IP/port configuration for the DAQ bridge.
 - [SENSOR_ASSIGNMENT_SYSTEM.md](SENSOR_ASSIGNMENT_SYSTEM.md) — Sensor assignment,
   IP assignment, and configuration distribution.

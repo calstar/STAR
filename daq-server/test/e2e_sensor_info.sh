@@ -26,7 +26,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-FRONTEND="$REPO_ROOT/diablo_server/frontend"
+FRONTEND="$REPO_ROOT/star_server/frontend"
 
 PLAYWRIGHT_BASE_URL="${PLAYWRIGHT_BASE_URL:-http://127.0.0.1:3000}"
 BACKEND_CHECK="${E2E_BACKEND_CHECK_URL:-${NEXT_PUBLIC_API_URL:-http://127.0.0.1:8081}/api/debug}"

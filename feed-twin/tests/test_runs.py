@@ -42,7 +42,7 @@ INPUTS: dict[str, Any] = {
     "diagram": "sha256:d1",
     "engine": "sha256:e1",
     "fluid_set": "hotfire",
-    "machine": "diablo",
+    "machine": "engine",
     "multiphase": False,
     "setup": {"vapour": True, "line_walls": True, "dome_psi": 500.0},
     "hookup": {"valves": {}, "knobs": []},
@@ -79,6 +79,14 @@ def test_a_diff_names_the_setting_and_the_outcome_change() -> None:
     assert thrust["delta"] == pytest.approx(-100.0)
     assert thrust["pct"] == pytest.approx(-100.0 / 6800.0 * 100.0)
     assert run_records.diff(a, a)["inputs"] == []
+
+
+def test_a_run_recorded_under_the_machine_s_old_name_differs_in_nothing() -> None:
+    # The engine table was "diablo" until it was renamed; a burn recorded
+    # before then ran the same table, so the ladder has nothing to swap.
+    a = _record("20261006T000000-aaaaaa", _changed(machine="diablo"))
+    b = _record("20261006T000001-bbbbbb", INPUTS)
+    assert run_records.diff(a, b)["inputs"] == []
 
 
 def test_the_list_says_what_each_run_ran_on() -> None:

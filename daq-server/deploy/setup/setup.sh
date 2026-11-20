@@ -74,12 +74,12 @@ echo -e "${GREEN}Python environment setup complete.${NC}"
 print_header "Step 3: Setting up Node.js Environments"
 
 # Backend
-echo "Setting up Backend (diablo_server/backend)..."
-(cd diablo_server/backend && npm install)
+echo "Setting up Backend (star_server/backend)..."
+(cd star_server/backend && npm install)
 
 # Frontend
-echo "Setting up Frontend (diablo_server/frontend)..."
-(cd diablo_server/frontend && npm install)
+echo "Setting up Frontend (star_server/frontend)..."
+(cd star_server/frontend && npm install)
 
 echo -e "${GREEN}Node.js dependencies installed successfully.${NC}"
 
@@ -102,7 +102,7 @@ fi
 print_header "Setup Complete!"
 echo -e "To start the system:"
 echo -e " 1. ${CYAN}Activate Python:${NC} source .venv/bin/activate"
-echo -e " 2. ${CYAN}Start Backend:${NC}   (cd diablo_server/backend && npm run dev)"
-echo -e " 3. ${CYAN}Start Frontend:${NC}  (cd diablo_server/frontend && npm run dev)"
+echo -e " 2. ${CYAN}Start Backend:${NC}   (cd star_server/backend && npm run dev)"
+echo -e " 3. ${CYAN}Start Frontend:${NC}  (cd star_server/frontend && npm run dev)"
 echo -e " 4. ${CYAN}Start Control:${NC}   python3 scripts/calibration/calibration_server.py"
 echo -e "\n${GREEN}Enjoy your Sensor System setup!${NC}\n"

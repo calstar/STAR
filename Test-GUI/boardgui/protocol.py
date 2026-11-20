@@ -4,7 +4,7 @@ DAQv2-Comms wire protocol — encode / decode.
 This is the single source of truth for the packets exchanged between the STAR
 avionics boards (firmware/) and this GUI, which plays the role of the ground
 DAQ server. It mirrors, byte-for-byte, the C++ implementation in
-``firmware/libraries/DAQv2-Comms`` (DiabloPackets.h / DiabloPacketUtils.cpp).
+``firmware/libraries/DAQv2-Comms`` (DaqPackets.h / DaqPacketUtils.cpp).
 
 Every message is a small packed binary struct: a 6-byte header followed by a
 type-specific body. All multi-byte fields are little-endian, matching the
@@ -30,9 +30,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 # -----------------------------------------------------------------------------
-# Protocol constants  (keep in lock-step with DAQv2-Comms.h / DiabloEnums.h)
+# Protocol constants  (keep in lock-step with DAQv2-Comms.h / DaqEnums.h)
 # -----------------------------------------------------------------------------
-DIABLO_COMMS_VERSION = 0
+COMMS_VERSION = 0
 MAX_PACKET_SIZE = 512
 
 PACKET_HEADER_FORMAT = "<BBI"          # packet_type, version, timestamp_ms
@@ -50,13 +50,13 @@ SENSOR_DATA_CHUNK_SIZE = 4
 SENSOR_DATAPOINT_FORMAT = "<BI"        # sensor_id, raw u32 value
 SENSOR_DATAPOINT_SIZE = 5
 
-# Actuator command / PWM command (DiabloPackets.h, packed little-endian)
+# Actuator command / PWM command (DaqPackets.h, packed little-endian)
 ACTUATOR_COMMAND_FORMAT = "<BB"        # actuator_id, actuator_state
 ACTUATOR_COMMAND_SIZE = 2
 PWM_ACTUATOR_COMMAND_FORMAT = "<BIff"  # actuator_id, duration_ms, duty, freq
 PWM_ACTUATOR_COMMAND_SIZE = 13
 
-# Actuator config (abort) — see ActuatorConfigPacket in DiabloPackets.h.
+# Actuator config (abort) — see ActuatorConfigPacket in DaqPackets.h.
 # The u32 IPs are the firmware's "logical" big-endian value (a<<24|b<<16|c<<8|d)
 # stored little-endian on the wire, i.e. wire bytes are [d, c, b, a].
 ABORT_ACTUATOR_LOCATION_FORMAT = "<IBBB"  # ip, actuator_id, vent, abort
@@ -66,7 +66,7 @@ ABORT_PT_LOCATION_SIZE = 9
 
 
 class PacketType:
-    """PacketType enum (DiabloEnums.h). board <-> server."""
+    """PacketType enum (DaqEnums.h). board <-> server."""
     BOARD_HEARTBEAT = 1       # board -> server : liveness + fw hash + state
     SERVER_HEARTBEAT = 2      # server -> board : liveness + engine state
     SENSOR_DATA = 3           # board -> server : load-cell / sensor readings
@@ -84,7 +84,7 @@ class PacketType:
 
 
 class BoardState:
-    """A board's own state-machine value (DiabloEnums.h)."""
+    """A board's own state-machine value (DaqEnums.h)."""
     SETUP = 1
     ACTIVE = 2
     CONNECTION_LOSS_DETECTED = 3
@@ -98,7 +98,7 @@ class BoardState:
 
 
 class EngineState:
-    """System-wide engine state the server broadcasts (DiabloEnums.h)."""
+    """System-wide engine state the server broadcasts (DaqEnums.h)."""
     SAFE = 0
     PRESSURIZING = 1
     LOX_FILL = 2
@@ -286,7 +286,7 @@ def u32_to_ip_str(ip: int) -> str:
 # -----------------------------------------------------------------------------
 def _make_header(packet_type: int, timestamp_ms: Optional[int] = None) -> bytes:
     ts = now_ms() if timestamp_ms is None else (timestamp_ms & 0xFFFFFFFF)
-    return struct.pack(PACKET_HEADER_FORMAT, packet_type, DIABLO_COMMS_VERSION, ts)
+    return struct.pack(PACKET_HEADER_FORMAT, packet_type, COMMS_VERSION, ts)
 
 
 def build_server_heartbeat(engine_state: int = EngineState.SAFE,
@@ -375,7 +375,7 @@ def parse_sensor_config(data: bytes) -> Optional[SensorConfig]:
 
 
 # -----------------------------------------------------------------------------
-# Actuator packets (server -> actuator board), mirroring DiabloPacketUtils.cpp
+# Actuator packets (server -> actuator board), mirroring DaqPacketUtils.cpp
 # -----------------------------------------------------------------------------
 @dataclass
 class ActuatorCommand:

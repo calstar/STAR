@@ -1,6 +1,6 @@
 """
 boardgui — a small, standardized framework for building a per-board test GUI
-for the STAR Diablo avionics boards (LC, PT, TC, RTD).
+for the STAR avionics boards (LC, PT, TC, RTD).
 
 A board GUI is just a :class:`~boardgui.profile.BoardProfile` handed to
 :func:`~boardgui.launch.launch`. See ``Sense-GUI/sense_gui.py`` for the

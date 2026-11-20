@@ -28,7 +28,7 @@ STAND: dict[str, Any] = {
     "diagram": "sha256:" + "a" * 64,
     "engine": "sha256:" + "b" * 64,
     "fluid_set": "hotfire",
-    "machine": "diablo",
+    "machine": "engine",
     "setup": {"vapour": True, "wall_htc_film": 100.0},
     "hookup": {
         "pins": {"PV-OX": "OX Main"},

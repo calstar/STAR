@@ -21,7 +21,7 @@ except ModuleNotFoundError:
             "Install one with `pip install tomli` (or use Python >= 3.11)."
         )
 
-# DiabloAvionics Packet Types (DAQv2-Comms DiabloEnums.h)
+# StarAvionics Packet Types (DAQv2-Comms DaqEnums.h)
 PACKET_TYPE_HEARTBEAT = 1
 PACKET_TYPE_SERVER_HEARTBEAT = 2
 PACKET_TYPE_SENSOR_DATA = 3
@@ -31,7 +31,7 @@ PACKET_TYPE_ACTUATOR_CONFIG = 6
 PACKET_TYPE_SELF_TEST = 12
 PACKET_TYPE_LOGS = 15
 
-# Board States (DAQv2-Comms DiabloEnums.h)
+# Board States (DAQv2-Comms DaqEnums.h)
 BOARD_STATE_SETUP = 1
 BOARD_STATE_ACTIVE = 2
 BOARD_STATE_SELF_TEST = 10
@@ -145,7 +145,7 @@ class SimulatedBoard:
             "RTD": BOARD_TYPE_RTD,
             "TC": BOARD_TYPE_TC,
             "ACTUATOR": BOARD_TYPE_ACTUATOR,
-            # Diablo::BoardType has no ENCODER yet — wire UNKNOWN(0); config drives routing.
+            # daq::BoardType has no ENCODER yet — wire UNKNOWN(0); config drives routing.
             "ENCODER": 0,
             "ENVIRONMENTAL": 7,
             "BALL_VALVE": BOARD_TYPE_BALL_VALVE,
@@ -638,7 +638,7 @@ class SimulatedBoard:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DiabloAvionics Board Simulator")
+    parser = argparse.ArgumentParser(description="StarAvionics Board Simulator")
     parser.add_argument(
         "--config", default="config/config.toml", help="Path to config.toml"
     )

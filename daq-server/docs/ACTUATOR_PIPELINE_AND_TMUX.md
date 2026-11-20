@@ -32,7 +32,7 @@ Notes:
 **Command routing:** state transitions and manual actuator commands go from the
 frontend → backend (WS) → **sequencer_service** over TCP :9998 as text commands
 (`TRANSITION:`, `ACTUATOR:`, …). The sequencer's `ActuatorCommander`
-(`diablo_server/services/sequencer/ActuatorCommander.cpp`) sends the UDP
+(`star_server/services/sequencer/ActuatorCommander.cpp`) sends the UDP
 ACTUATOR_COMMAND packets to boards. The thin backend does **not** send actuator
 UDP directly.
 
@@ -65,7 +65,7 @@ packet_type (1B) | version (1B) | timestamp_ms (4B LE)
 - **Destination:** Unicast to each board IP:5005
 
 **Path:** state transition → backend sends `TRANSITION:<csvName>\n` over TCP :9998 →
-`sequencer_service` → `ActuatorCommander` (`diablo_server/services/sequencer/ActuatorCommander.cpp`,
+`sequencer_service` → `ActuatorCommander` (`star_server/services/sequencer/ActuatorCommander.cpp`,
 `construct_actuator_command_packet()`) → UDP to board IPs. The board IPs and
 actuator-role mapping come from `[boards.*]` and `[actuator_roles]` in
 `config/config.toml`; the per-state actuator positions come from
@@ -103,7 +103,7 @@ recorded on `[0x35] BV_CMD.B<n>.CH<m>` rather than `[0x32] ACT_CMD`, its positio
   no-connection abort the valve board opens itself 5 s after the last server heartbeat and ignores
   CLOSE, so a survivor's command could not hold it anywhere else.
 
-(Sent by `diablo_server/services/config_broadcast/config_broadcast_service_main.cpp`.)
+(Sent by `star_server/services/config_broadcast/config_broadcast_service_main.cpp`.)
 
 ---
 
@@ -143,11 +143,11 @@ recorded on `[0x35] BV_CMD.B<n>.CH<m>` rather than `[0x32] ACT_CMD`, its positio
 
 1. User changes state in frontend (e.g. GSE → ARMED).
 2. Frontend sends a WebSocket command to the backend.
-3. Backend validates the transition and calls `sendToActuatorService("TRANSITION:<csvName>\n")` (`diablo_server/backend/src/server.ts`).
+3. Backend validates the transition and calls `sendToActuatorService("TRANSITION:<csvName>\n")` (`star_server/backend/src/server.ts`).
 4. Backend opens TCP to `127.0.0.1:9998` (the `sequencer_service` command port), sends the line, and reads `OK\n` / `ERR:<reason>\n`.
 5. `sequencer_service` looks up the per-state actuator positions from `config/state_machine_actuators.csv` and sends UDP ACTUATOR_COMMAND packets to each board IP from config.
 
-The sequencer's TCP text protocol verbs are `TRANSITION:<state>`, `ACTUATOR:<role>:<0|1>`, `DEBUG_MODE:<0|1>` and `EXTEND_FIRE` (see `diablo_server/services/sequencer/sequencer_main.cpp`). There is deliberately no reload verb: config is applied at session start and frozen for the run.
+The sequencer's TCP text protocol verbs are `TRANSITION:<state>`, `ACTUATOR:<role>:<0|1>`, `DEBUG_MODE:<0|1>` and `EXTEND_FIRE` (see `star_server/services/sequencer/sequencer_main.cpp`). There is deliberately no reload verb: config is applied at session start and frozen for the run.
 
 ## Parse Failures (Messages Not Read)
 

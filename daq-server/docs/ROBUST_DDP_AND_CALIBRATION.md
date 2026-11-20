@@ -10,8 +10,8 @@ This document describes the implementation of:
 ## Robust DDP Controller
 
 ### Location
-- Header: `diablo_server/lib/include/control/RobustDDPController.hpp`
-- Implementation: `diablo_server/lib/src/control/RobustDDPController.cpp`
+- Header: `star_server/lib/include/control/RobustDDPController.hpp`
+- Implementation: `star_server/lib/src/control/RobustDDPController.cpp`
 
 ### Features
 - Thrust regulation via pressure control
@@ -80,8 +80,8 @@ while (running) {
 ## Enhanced EKF Navigation
 
 ### Location
-- Header: `diablo_server/lib/include/nav/EKFNavigationEnhanced.hpp`
-- Implementation: `diablo_server/lib/include/nav/EKFNavigationEnhanced.hpp` (header-only; no active .cpp source)
+- Header: `star_server/lib/include/nav/EKFNavigationEnhanced.hpp`
+- Implementation: `star_server/lib/include/nav/EKFNavigationEnhanced.hpp` (header-only; no active .cpp source)
 
 ### Enhancements
 - Magnetometer integration for heading estimation
@@ -135,8 +135,8 @@ Calibration is performed using Python scripts (similar to PT calibration), and t
 For the Python calibration workflow and per-sensor procedures, see [`../tools/calibration/README_IMU.md`](../tools/calibration/README_IMU.md).
 
 ### C++ Runtime Application
-- Header: `diablo_server/lib/include/calibration/IMUCalibration.hpp`
-- Implementation: `diablo_server/lib/src/calibration/IMUCalibration.cpp`
+- Header: `star_server/lib/include/calibration/IMUCalibration.hpp`
+- Implementation: `star_server/lib/src/calibration/IMUCalibration.cpp`
 
 ### Usage
 
@@ -216,4 +216,4 @@ All components integrate with SITL:
 
 - Engine Simulation Controller: `engine_sim/docs/control/`
 - DDP Solver: `engine_sim/docs/control/DDP_SOLVER.md`
-- EKF Navigation: `diablo_server/lib/include/nav/EKFNavigation.hpp`
+- EKF Navigation: `star_server/lib/include/nav/EKFNavigation.hpp`

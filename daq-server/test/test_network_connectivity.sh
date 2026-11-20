@@ -1,5 +1,5 @@
 #!/bin/bash
-# Test network connectivity for DiabloAvionics board communication
+# Test network connectivity for StarAvionics board communication
 
 echo "=== Network Connectivity Test ==="
 echo ""

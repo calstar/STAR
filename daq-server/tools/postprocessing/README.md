@@ -18,7 +18,7 @@ Export Elodin DB data to parquet, CSV, or Arrow for analysis. This document desc
 
 **Controller measurement (10% sample):**
 
-- Code: `diablo_server/lib/src/control/ControllerService.cpp` — the `tick % 10` measurement-write block (lines ~702–703)
+- Code: `star_server/lib/src/control/ControllerService.cpp` — the `tick % 10` measurement-write block (lines ~702–703)
 - Logic: `if (tick % 10 == 0) { writeMeasurementToDB(meas); }`
 - At 10 Hz: ~1 measurement/sec vs ~10 actuation + ~10 diagnostics/sec
 

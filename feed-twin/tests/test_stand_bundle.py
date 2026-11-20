@@ -96,7 +96,7 @@ def _stand() -> tuple[dict[str, Any], str]:
         "diagram": drawing,
         "engine": engine,
         "fluid_set": "hotfire",
-        "machine": "diablo",
+        "machine": "engine",
         "setup": {"pressurant": "helium", "dome": 535.0},
         "hookup": {},
         "operating_point": {"knobs": {"DOME": 535.0}},
@@ -132,7 +132,7 @@ def test_an_export_carries_everything_the_stand_names() -> None:
     assert json.loads(out["engine"]["card"]) == json.loads(
         (SAMPLE / "ethalox-doublet.card.json").read_text()
     )
-    assert out["machine"]["name"] == "diablo" and out["machine"]["table"]["states"]
+    assert out["machine"]["name"] == "engine" and out["machine"]["table"]["states"]
     assert out["overrides"]["params"]["node_1"]["volume"]["value"] == 4.6871
     assert out["stand"]["setup"] == stand["setup"]
     assert out["stand"]["operating_point"] == stand["operating_point"]
@@ -180,6 +180,19 @@ def test_an_import_rebuilds_the_stand_on_a_server_that_has_none_of_it() -> None:
     )
     assert opened.status_code == 200, opened.text
     client.delete(f"/api/session/{opened.json()['id']}")
+
+
+def test_a_bundle_from_before_the_engine_table_was_renamed_imports_as_engine() -> None:
+    # Exported when the table was "diablo": same table, new name, no notes.
+    stand, name = _stand()
+    out = _export(stand)
+    out["stand"]["machine"] = "diablo"
+    out["machine"]["name"] = "diablo"
+    _forget(stand, name)
+
+    got = client.post("/api/twin/bundle/import", json=out).json()
+    assert got["stand"]["machine"] == "engine"
+    assert not any("state table" in n for n in got["notes"]), got["notes"]
 
 
 def test_a_differing_state_table_travels_as_the_stands_own() -> None:

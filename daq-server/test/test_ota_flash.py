@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fake-board test for the C++ ota_service (diablo_server/services/ota).
+Fake-board test for the C++ ota_service (star_server/services/ota).
 
 No hardware. Exercises the exact ethernet-flash wire format that a real ESP32-S3
 board depends on, against a loopback TCP "fake board" that speaks the espota

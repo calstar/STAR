@@ -19,10 +19,10 @@ chmod +x "$FORMAT_SH" 2>/dev/null || true
 "$FORMAT_SH"
 
 # Only consider trees format.sh touches — ignore unrelated dirty files elsewhere.
-if ! git diff --quiet HEAD -- daq-server/diablo_server daq-server/archive/legacy/utl firmware 2>/dev/null; then
+if ! git diff --quiet HEAD -- daq-server/star_server daq-server/archive/legacy/utl firmware 2>/dev/null; then
   echo "" >&2
   echo "pre-push: format.sh changed tracked files under one of:" >&2
-  echo "           daq-server/diablo_server/" >&2
+  echo "           daq-server/star_server/" >&2
   echo "           daq-server/archive/legacy/utl/" >&2
   echo "           firmware/    (excludes firmware/Archive, firmware/libraries, firmware/.pio)" >&2
   echo "         Stage and commit (or amend), then push again." >&2

@@ -33,7 +33,7 @@ export const EMPTY_STAND: StandPayload = {
   diagram: '',
   engine: '',
   fluid_set: 'hotfire',
-  machine: 'diablo',
+  machine: 'engine',
   setup: {},
   hookup: {},
   operating_point: {},

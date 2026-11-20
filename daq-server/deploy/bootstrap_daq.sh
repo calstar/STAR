@@ -119,10 +119,10 @@ c_ok "C++ built → $DAQ/build/bin"
 
 # ── 6. Web GUI deps + SPA build ───────────────────────────────────────────────
 c_info "installing web-gui deps + building the SPA"
-( cd "$DAQ/diablo_server/backend"  && (npm ci || npm install) )
-( cd "$DAQ/diablo_server/frontend" && (npm ci || npm install) )
+( cd "$DAQ/star_server/backend"  && (npm ci || npm install) )
+( cd "$DAQ/star_server/frontend" && (npm ci || npm install) )
 ( cd "$DAQ" && FRONTEND_FORCE_BUILD=1 bash deploy/startup/ensure_frontend_build.sh )
-c_ok "SPA built → diablo_server/frontend/dist"
+c_ok "SPA built → star_server/frontend/dist"
 
 # ── 6b. Video gateway binary ──────────────────────────────────────────────────
 # Fetched (and checksum-checked) now, while there is internet: sensor-video must start

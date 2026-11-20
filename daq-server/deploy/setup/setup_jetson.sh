@@ -106,8 +106,8 @@ echo -e "${GREEN}✅ Python venv ready${NC}"
 # 6. Web GUI (Node.js)
 # -----------------------------------------------------------------------------
 print_header "6. Installing Web GUI dependencies"
-(cd "$REPO_ROOT/diablo_server/backend" && npm install)
-(cd "$REPO_ROOT/diablo_server/frontend" && npm install)
+(cd "$REPO_ROOT/star_server/backend" && npm install)
+(cd "$REPO_ROOT/star_server/frontend" && npm install)
 echo -e "${GREEN}✅ Web GUI deps installed${NC}"
 
 # -----------------------------------------------------------------------------

@@ -107,7 +107,7 @@ except ImportError:
     ACTUATOR_COMM_AVAILABLE = False
     logger.warning("⚠️  Actuator communication not available")
 
-# ── DiabloAvionics packet constants ─────────────────────────────────────
+# ── StarAvionics packet constants ─────────────────────────────────────
 PACKET_HEADER_FORMAT = "<BBI"
 PACKET_HEADER_SIZE = 6
 SENSOR_DATA_PACKET_FORMAT = "<BB"
@@ -188,7 +188,7 @@ N_PARAMS = 9  # Paper: 9-parameter environmental-robust basis (φ₀–φ₈)
 
 
 class UDPSensorReceiver(threading.Thread):
-    """Receives raw DiabloAvionics UDP packets and dispatches samples."""
+    """Receives raw StarAvionics UDP packets and dispatches samples."""
 
     def __init__(self, port: int):
         super().__init__(daemon=True)
@@ -203,7 +203,7 @@ class UDPSensorReceiver(threading.Thread):
 
     @staticmethod
     def parse(data: bytes):
-        """Parse DiabloAvionics sensor data packet with error handling."""
+        """Parse StarAvionics sensor data packet with error handling."""
         try:
             if len(data) < PACKET_HEADER_SIZE + SENSOR_DATA_PACKET_SIZE:
                 return None
@@ -1152,7 +1152,7 @@ class CalibrationOrchestrator:
             with open(jp, "w") as f:
                 json.dump(data, f, indent=2)
 
-            # ── CSV (DiabloAvionics compat — 4 coeffs per channel) ──
+            # ── CSV (StarAvionics compat — 4 coeffs per channel) ──
             cp = info.calibration_dir / f"{stype.lower()}_calibration_{ts}.csv"
             cols = ["Timestamp"]
             for ch in sorted(calibrated.keys()):

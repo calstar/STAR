@@ -1,7 +1,7 @@
 #!/bin/bash
-# Fix IP to match DiabloAvionics board configuration
+# Fix IP to match StarAvionics board configuration
 
-echo "=== DiabloAvionics IP Configuration Fix ==="
+echo "=== StarAvionics IP Configuration Fix ==="
 echo ""
 
 INTERFACE="enx00e04c680240"
@@ -12,11 +12,11 @@ CURRENT_IP=$(ip addr show $INTERFACE 2>/dev/null | grep "inet.*192.168.2" | awk 
 echo "Current IP on $INTERFACE: ${CURRENT_IP:-none}"
 echo ""
 
-# DiabloAvionics boards typically send to 192.168.2.20
+# StarAvionics boards typically send to 192.168.2.20
 # But check your board's firmware for the actual receiverIP!
 EXPECTED_IP="192.168.2.20"
 
-echo "DiabloAvionics boards typically send to: $EXPECTED_IP"
+echo "StarAvionics boards typically send to: $EXPECTED_IP"
 echo ""
 echo "⚠️  IMPORTANT: Check your board's Serial monitor to see what receiverIP it's using!"
 echo "   Look for: 'receiverIP = IPAddress(...)' or 'Send to: X.X.X.X'"
