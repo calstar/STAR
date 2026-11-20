@@ -172,6 +172,8 @@ check idle "Idle logic (Aaron, PR #162): heartbeat schedule, battery, Arm" \
 
 check health_radio "health task, watchdog check-ins, sleep lease, SelfTest send" \
   ctest_suite health_radio tests/health_radio
+check ethernet "Ethernet: W5500 UDP, DAQv2 packets vs lib/daq-protocol" \
+  ctest_suite ethernet tests/ethernet
 
 # ── stage 3: end to end ────────────────────────────────────────────────────
 stage "3  end to end: flight (drivers -> cores -> eMMC) and Idle (heartbeats, Stop, Arm)"

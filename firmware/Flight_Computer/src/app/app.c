@@ -2,6 +2,7 @@
 
 #include "bringup_task.h"
 #include "cmsis_os2.h"
+#include "daq_task.h"
 #include "emmc_stm32.h"
 #include "gnss_task.h"
 #include "health_task.h"
@@ -37,6 +38,7 @@ bool app_start(void) {
         /* No writer to check in: a dead eMMC must not become a reset loop. */
         health_task_set_active(HEALTH_LOG, false);
     }
+    ok = daq_task_start() && ok;
     ok = sensors_task_start() && ok;
     ok = gnss_task_start() && ok;
     ok = radio_task_start() && ok;

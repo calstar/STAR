@@ -24,3 +24,9 @@ bool board_soft_init(void (*init)(void)) {
 uint32_t board_now_ms(void) {
     return HAL_GetTick();
 }
+
+void board_uid(uint32_t words[3]) {
+    words[0] = HAL_GetUIDw0();
+    words[1] = HAL_GetUIDw1();
+    words[2] = HAL_GetUIDw2();
+}
