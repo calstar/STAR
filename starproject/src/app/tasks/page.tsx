@@ -6,6 +6,7 @@ import {
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
+import { PCB_INCLUDE } from "@/lib/pcb";
 import { colorOf, flatten, pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { getSubteams } from "@/lib/subteams";
@@ -35,6 +36,7 @@ export default async function TasksPage({
             blockedByTask: { select: { id: true, title: true, status: true } },
           },
         },
+        pcb: PCB_INCLUDE,
       },
       orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
     }),

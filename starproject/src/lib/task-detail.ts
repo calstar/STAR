@@ -1,6 +1,7 @@
 import { listAdmins } from "@/lib/admins";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { PCB_INCLUDE } from "@/lib/pcb";
 import { ancestors, flatten, pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { getSubteams } from "@/lib/subteams";
@@ -41,6 +42,7 @@ export async function getTaskDetailData(projectId: string, taskId: string) {
         blocking: {
           include: { task: { select: { id: true, title: true, status: true } } },
         },
+        pcb: PCB_INCLUDE,
         manufacturing: {
           include: {
             designRe: { select: { id: true, name: true, email: true, displayName: true } },

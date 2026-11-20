@@ -179,7 +179,9 @@ export const tasksWriteTools: ToolModule = (server) => {
         "Edit any subset of a task's fields (same as the inline editors). Only the fields you pass change; " +
         "pass null to clear priority, subteam, dates, description or blockedNote. assigneeIds replaces the whole set. " +
         "Moving to done archives the task; moving out of done restores it. Each change is logged. " +
-        "points (admins only; null clears) is a whole number 0-1000, split between non-admin assignees when done.",
+        "points (admins only; null clears) is a whole number 0-1000, split between non-admin assignees when done. " +
+        "On a PCB board (see set_pcb) assigneeIds is refused, and so is dueDate once a stage is dated: the stages " +
+        "set those (update_pcb_stage).",
       inputSchema: {
         taskId: z.string().min(1),
         title: z.string().trim().min(1).max(300).optional(),
@@ -206,7 +208,10 @@ export const tasksWriteTools: ToolModule = (server) => {
     server,
     "set_task_dates",
     {
-      description: "Set a task's start and due dates together (what dragging or resizing a Gantt bar does). Logged like any edit.",
+      description:
+        "Set a task's start and due dates together (what dragging or resizing a Gantt bar does). Logged like any " +
+        "edit. On a PCB board with dated stages the due date must stay as it is (use shift_pcb_dates or " +
+        "update_pcb_stage).",
       inputSchema: {
         taskId: z.string().min(1),
         startDate: DateInput,

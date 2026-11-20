@@ -62,6 +62,7 @@ function row(over: Partial<TaskRow> = {}): TaskRow {
     createdAt: new Date("2026-01-01T10:00:00Z"),
     updatedAt: new Date("2026-01-02T10:00:00Z"),
     blockedBy: [],
+    pcb: null,
     ...over,
   };
 }

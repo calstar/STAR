@@ -302,14 +302,18 @@ Subteams → Budget is.
 | `health` | DB round-trip and counts | read |
 | `list_api_tokens` | Your tokens with their scopes (never the secret) | read |
 | `revoke_api_token` | Revoke one of your tokens | destructive |
-| `list_tasks` | The /tasks list with its filters (status, project + subprojects, subteam, assignee, mine, archived, search, due range, overdue, blocked); `{ total, tasks }`, paged. `archived` defaults to active, or all when status includes done | read |
-| `get_task` | One task by `taskId` or `number`: fields, assignees, creator, blockers both ways, project path, activity log | read |
+| `list_tasks` | The /tasks list with its filters (status, project + subprojects, subteam, assignee, mine, archived, search, due range, overdue, blocked); `{ total, tasks }`, paged. `archived` defaults to active, or all when status includes done. A PCB board's row carries `pcb` (current stage, stages) and is overdue when its current stage is | read |
+| `get_task` | One task by `taskId` or `number`: fields, assignees, creator, blockers both ways, project path, activity log, and `pcb` (stages) on a PCB board | read |
 | `board` | A project's (with subtree) or subteam's open tasks grouped by status, plus those done in the last 30 days in `done` (most recently completed first), sorted like the Board view | read |
 | `gantt` | A project's or subteam's timeline rows (`toGanttTasks`): dated open (not done) tasks with dependencies | read |
 | `my_tasks` | The home page's "My tasks": active tasks assigned to you, soonest due first | read |
 | `create_task` | New task in a project: title, description, priority, assignees, subteam, dates, points (admins only); returns it with its `#number` | write; logs created + assigned, emails assignees |
-| `update_task` | Edit any subset of fields; `null` clears priority / subteam / dates / description / blockedNote / points; `points` is admins only; `assigneeIds` replaces the set | idempotent; done ⇄ archived follows the UI |
-| `set_task_dates` | Start and due together (the Gantt drag) | idempotent |
+| `update_task` | Edit any subset of fields; `null` clears priority / subteam / dates / description / blockedNote / points; `points` is admins only; `assigneeIds` replaces the set. On a PCB board `assigneeIds`, and `dueDate` once a stage is dated, are refused: the stages set them | idempotent; done ⇄ archived follows the UI |
+| `set_task_dates` | Start and due together (the Gantt drag); a PCB board with dated stages must keep its due date | idempotent |
+| `set_pcb` | Make a task a PCB board: six stages (components, schematic, layout, review, solder, bringup), open, undated, unassigned; optional `altiumUrl` (null clears) | idempotent |
+| `update_pcb_stage` | One stage's `dueDate` (null clears), `status` (open / done / skipped) and `assigneeIds` (replaces). Then the task's assignees become everyone on any stage and its due date the last unskipped stage's. Nothing cascades | idempotent; logs each change, emails new assignees |
+| `shift_pcb_dates` | Move a whole board: its start and every stage date by `days` (the Gantt bar drag) | idempotent; one History row |
+| `remove_pcb` | Stop tracking a task as a PCB board; its stages go, its assignees and due date stay | destructive |
 | `move_task` | Kanban move: `status` plus `boardOrder`, or `afterTaskId` / `beforeTaskId` (midpoint of the neighbours on `boardProjectId`'s board -- that project and its subprojects, as the project page shows; default the task's own project); default end of column | idempotent |
 | `archive_task` | Hide from active lists, or `archived=false` to restore | idempotent |
 | `delete_task` | Permanent; returns `{deleted, number}` | destructive, admins only |

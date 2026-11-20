@@ -1,4 +1,5 @@
 import { BOM_FIELD_LABEL } from "@/lib/bom";
+import { PCB_FIELD_LABEL } from "@/lib/pcb";
 
 // Field → label for the "changed {field}" activity sentence. Kept in its own
 // prisma-free module so both the server (feed, digest) and the client (task-popup
@@ -22,6 +23,8 @@ export const FIELD_LABEL: Record<string, string> = {
   material: "material",
   designReId: "Design RE",
   mfgReId: "Manufacturing RE",
+  // PCB boards and their stages (see lib/pcb.ts).
+  ...PCB_FIELD_LABEL,
 };
 
 /** A BOM activity row as a sentence. `toValue` on bom_added/bom_removed names

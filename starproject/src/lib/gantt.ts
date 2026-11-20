@@ -1,7 +1,8 @@
 import type { TaskStatus } from "@prisma/client";
 
-import type { BoardTask } from "@/lib/board";
+import { type BoardTask, isOverdue } from "@/lib/board";
 import { displayNameOf } from "@/lib/names";
+import { type StageMark, stageMarks } from "@/lib/pcb";
 import { isBlocked } from "@/lib/tasks";
 
 const DAY_MS = 86_400_000;
@@ -43,6 +44,8 @@ export type TimelineItem = {
   assignees: string;
   /** Ids of on-chart tasks this one is blocked by. */
   deps: string[];
+  /** A PCB board's dated stages, in board order: the bar is split at each. */
+  stages?: StageMark[];
 };
 
 /** How the timeline's rows are grouped: by subproject (else project), or not at all. */
@@ -68,13 +71,22 @@ export function toTimeline(
   today = todayDay(),
   grouping: TimelineGrouping = "subproject",
 ): { groups: TimelineGroup[]; unscheduled: BoardTask[] } {
-  const dated = tasks.filter((t) => t.startDate || t.dueDate);
+  const marksOf = new Map(
+    tasks.flatMap((t) => (t.pcb ? [[t.id, stageMarks(t.pcb.stages, displayNameOf)] as const] : [])),
+  );
+  const dated = tasks.filter((t) => t.startDate || t.dueDate || marksOf.get(t.id)?.length);
   const ids = new Set(dated.map((t) => t.id));
 
   const byGroup = new Map<string, TimelineGroup>();
   for (const t of dated) {
-    const start = dayOf((t.startDate ?? t.dueDate) as Date);
-    const end = Math.max(start, dayOf((t.dueDate ?? t.startDate) as Date));
+    // A PCB board spans its stage dates: from its start (else its first stage
+    // deadline) to the latest of its due date and its stages.
+    const marks = marksOf.get(t.id) ?? [];
+    const days = marks.map((m) => m.day);
+    const firstDay = (t.startDate ?? t.dueDate) as Date | null;
+    const start = firstDay && (t.startDate || !days.length) ? dayOf(firstDay) : Math.min(...days);
+    const lastDay = (t.dueDate ?? t.startDate) as Date | null;
+    const end = Math.max(start, lastDay ? dayOf(lastDay) : start, ...days);
     const item: TimelineItem = {
       id: t.id,
       projectId: t.projectId,
@@ -82,13 +94,16 @@ export function toTimeline(
       status: t.status,
       start,
       end,
-      dueOnly: !t.startDate,
+      dueOnly: !t.startDate && marks.length < 2,
       blocked: t.status === "blocked" || isBlocked(t.blockedBy),
-      overdue: !!t.dueDate && t.status !== "done" && end < today,
+      overdue: t.pcb
+        ? isOverdue(t, new Date(today * 86_400_000))
+        : !!t.dueDate && t.status !== "done" && end < today,
       assignees: assigneeLabel(t),
       deps: (t.blockedBy ?? [])
         .map((b) => b.blockedByTask.id)
         .filter((id) => ids.has(id)),
+      ...(marks.length ? { stages: marks } : {}),
     };
     const key =
       grouping === "none"
@@ -119,7 +134,7 @@ export function toTimeline(
 
   return {
     groups,
-    unscheduled: tasks.filter((t) => !t.startDate && !t.dueDate),
+    unscheduled: tasks.filter((t) => !ids.has(t.id)),
   };
 }
 

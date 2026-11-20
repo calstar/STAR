@@ -8,6 +8,7 @@ import { onBoardWhere } from "@/lib/board";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
+import { PCB_INCLUDE } from "@/lib/pcb";
 import { getProjectOptions } from "@/lib/projects";
 import { getTeamUsers } from "@/lib/user";
 
@@ -43,6 +44,7 @@ export default async function SubteamPage({
               },
             },
             project: { select: { name: true, color: true } },
+            pcb: PCB_INCLUDE,
           },
           orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
         },

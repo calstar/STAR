@@ -73,6 +73,7 @@ const DESTRUCTIVE = [
   "delete_project",
   "delete_subteam",
   "delete_milestone",
+  "remove_pcb",
   "remove_admin",
   "revoke_api_token",
   "untrack_subteam",

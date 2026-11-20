@@ -6,6 +6,7 @@ import { BomTab } from "@/components/bom/BomTab";
 import { DetailView, type DetailViewMode } from "@/components/DetailView";
 import { NewTaskForm } from "@/components/NewTaskForm";
 import { isAdmin } from "@/lib/admins";
+import { PCB_INCLUDE } from "@/lib/pcb";
 import { isPvp } from "@/lib/pvp";
 import { bomRollsUp, sectionsFor } from "@/lib/bom";
 import { loadBomLines } from "@/lib/bom-data";
@@ -71,6 +72,7 @@ export async function ProjectView({
       },
       project: { select: { name: true, color: true } },
       subteam: { select: { name: true } },
+      pcb: PCB_INCLUDE,
     },
     orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
   });

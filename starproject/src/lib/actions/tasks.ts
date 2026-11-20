@@ -17,6 +17,7 @@ import { prisma } from "@/lib/db";
 import { pathOf } from "@/lib/project-tree";
 import { getProjectTree } from "@/lib/projects";
 import { notifyAssignment } from "@/lib/notifications";
+import { dueFollowsStages } from "@/lib/pcb";
 import { STATUS_LABEL, statusChangePatch } from "@/lib/tasks";
 import { getCurrentDbUser } from "@/lib/user";
 import {
@@ -196,6 +197,33 @@ export async function updateTask(formData: FormData) {
     const v = String(formData.get("startDate") ?? "");
     if (!isValidDateInput(v)) throw new Error("Enter a valid start date with a 4-digit year.");
     data.startDate = v === "" ? null : new Date(v);
+  }
+
+  // A PCB task's assignees are everyone on its stages, and once a stage is
+  // dated its due date is the last stage's (src/lib/actions/pcb.ts), so those
+  // are edited on the stages. An unchanged value passes: the Gantt's start
+  // resize sends the due date back as it was.
+  if (formData.has("assigneeIds") || formData.has("dueDate")) {
+    const pcb = await prisma.taskPcb.findUnique({
+      where: { taskId: id },
+      select: { stages: { select: { status: true, dueDate: true } } },
+    });
+    if (pcb) {
+      const sameSet = (a: string[], b: string[]) =>
+        a.length === b.length && a.every((x) => b.includes(x));
+      if (
+        formData.has("assigneeIds") &&
+        !sameSet(csvToIds(formData.get("assigneeIds")), old.assignees.map((a) => a.id))
+      )
+        throw new Error("This is a PCB board: assign people on its stages.");
+      const due = data.dueDate as Date | null | undefined;
+      if (
+        formData.has("dueDate") &&
+        dueFollowsStages(pcb.stages) &&
+        (due?.getTime() ?? null) !== (old.dueDate?.getTime() ?? null)
+      )
+        throw new Error("This is a PCB board: its due date is its last stage's. Change the stage dates.");
+    }
   }
 
   const task = await prisma.task.update({

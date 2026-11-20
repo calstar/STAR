@@ -6,12 +6,14 @@ import { prisma } from "@/lib/db";
 import { toGanttTasks } from "@/lib/gantt";
 import { displayNameOf } from "@/lib/names";
 import { type ProjectTree, descendants, pathOf } from "@/lib/project-tree";
+import { PCB_INCLUDE } from "@/lib/pcb";
 import { getProjectTree } from "@/lib/projects";
 import { getTaskDetailData } from "@/lib/task-detail";
 import { getCurrentDbUser } from "@/lib/user";
 import { TaskStatusEnum } from "@/lib/validation";
 
 import { READ, defineTool, type ToolModule } from "./_shared";
+import { serializePcb } from "./pcb";
 
 // Task reads: the /tasks list, a task's detail view, the board and timeline of
 // a project or subteam, and the home page's "My tasks". Every tool here runs
@@ -28,6 +30,7 @@ const TASK_INCLUDE = {
   subteam: { select: { id: true, name: true } },
   assignees: { select: { id: true, name: true, email: true, displayName: true } },
   blockedBy: { include: { blockedByTask: { select: { id: true, title: true, status: true } } } },
+  pcb: PCB_INCLUDE,
 } satisfies Prisma.TaskInclude;
 
 export type TaskRow = Prisma.TaskGetPayload<{ include: typeof TASK_INCLUDE }>;
@@ -141,6 +144,8 @@ export type SerializedTaskRow = {
   /** Under a project scope (board/gantt): the task's path below that project
    * when it belongs to a subproject, as the project page tags it. */
   subproject?: { name: string; color: string | null } | null;
+  /** Only on a PCB board: its stages and the current one (see update_pcb_stage). */
+  pcb?: ReturnType<typeof serializePcb>;
   createdAt: string;
   updatedAt: string;
 };
@@ -190,6 +195,7 @@ export function serializeTaskRow(t: TaskRow, tree: ProjectTree, opts: { below?: 
     updatedAt: new Date(t.updatedAt).toISOString(),
   };
   if (opts.below) out.subproject = ws.subproject ?? null;
+  if (t.pcb) out.pcb = serializePcb(t.pcb);
   return out;
 }
 
@@ -304,7 +310,8 @@ export const tasksReadTools: ToolModule = (server) => {
     {
       description:
         "One task in full, by id or #number: description, blocked note, dates, assignees, creator, " +
-        "blockers both ways, project path and the activity log (newest first).",
+        "blockers both ways, project path, the activity log (newest first) and, on a PCB board, its stages " +
+        "(pcb: Altium link, current stage, each stage's status, due date and assignees).",
       inputSchema: {
         taskId: z.string().min(1).optional(),
         number: z.number().int().positive().optional().describe("The task's #number"),
@@ -337,6 +344,7 @@ export const tasksReadTools: ToolModule = (server) => {
         blockedBy: task.blockedBy.map((b) => ({ ...b.blockedByTask, note: b.note, since: b.createdAt })),
         blocking: task.blocking.map((b) => ({ ...b.task, note: b.note, since: b.createdAt })),
         activities: task.activities.map((a) => ({ ...a, actor: named(a.actor) })),
+        pcb: task.pcb ? serializePcb(task.pcb) : null,
       };
     },
   );

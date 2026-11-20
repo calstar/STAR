@@ -130,6 +130,76 @@ try {
   const blockedList = await call("list_tasks", { search: TAG, blocked: true, archived: "all" });
   check("list_tasks blocked=true finds A", blockedList.ok && blockedList.data.total === 1);
 
+  // --- PCB boards: stages own the assignees and due date -------------------
+  const pcbTask = await call("create_task", { projectId: project.id, title: `${TAG} PCB`, assigneeIds: [me.data.id] });
+  if (pcbTask.ok) created.push(pcbTask.data);
+  const users = await call("list_users");
+  const other = (users.ok ? users.data : []).find((u) => u.id !== me.data.id);
+  const p0 = await call("set_pcb", { taskId: pcbTask.data.id, altiumUrl: "https://altium.example/designs/e2e" });
+  check("set_pcb makes six open stages, components current",
+    p0.ok && p0.data.pcb?.stages.length === 6 && p0.data.pcb.currentStage === "components" &&
+      p0.data.pcb.altiumUrl === "https://altium.example/designs/e2e", p0.text.slice(0, 160));
+  check("set_pcb leaves the task's assignees until a stage sets them", p0.ok && p0.data.assignees.length === 1);
+  const badUrl = await call("set_pcb", { taskId: pcbTask.data.id, altiumUrl: "not a link" });
+  check("set_pcb refuses a non-link", !badUrl.ok && /https/.test(badUrl.text), badUrl.text);
+
+  const laid = await call("update_pcb_stage", {
+    taskId: pcbTask.data.id, stage: "layout", dueDate: "2027-02-10", assigneeIds: other ? [other.id] : [me.data.id],
+  });
+  check("a stage's assignees become the task's (others dropped)",
+    laid.ok && laid.data.assignees.map((a) => a.id).join() === (other ? other.id : me.data.id), laid.text.slice(0, 160));
+  check("the task is due when its last dated stage is", laid.ok && laid.data.dueDate === "2027-02-10", laid.data?.dueDate);
+  const rev = await call("update_pcb_stage", { taskId: pcbTask.data.id, stage: "review", dueDate: "2027-02-05", assigneeIds: [me.data.id] });
+  check("a stage due earlier than another moves nothing (no cascade)",
+    rev.ok && rev.data.dueDate === "2027-02-10" &&
+      rev.data.pcb.stages.find((s) => s.stage === "layout").dueDate === "2027-02-10", rev.text.slice(0, 160));
+  check("assignees are everyone on any stage", rev.ok && rev.data.assignees.length === (other ? 2 : 1));
+  const skipLayout = await call("update_pcb_stage", { taskId: pcbTask.data.id, stage: "layout", status: "skipped" });
+  check("skipping the last stage moves the due date to the last unskipped one",
+    skipLayout.ok && skipLayout.data.dueDate === "2027-02-05", skipLayout.data?.dueDate);
+  await call("update_pcb_stage", { taskId: pcbTask.data.id, stage: "layout", status: "open" });
+  for (const stage of ["components", "schematic"])
+    await call("update_pcb_stage", { taskId: pcbTask.data.id, stage, status: "done" });
+  if (isAdmin && other) {
+    // Layout became current: its person (not us, the actor) is queued a
+    // "your stage is up" email; finishing a later stage early queues nothing.
+    const queue = await call("list_email_queue");
+    const ready = (queue.ok ? queue.data : []).filter(
+      (q) => q.taskTitle === pcbTask.data.title && String(q.kind).startsWith("stage_ready:"),
+    );
+    check("marking the current stage done queues 'your stage is up' for the next stage's people",
+      ready.length === 1 && ready[0].kind === "stage_ready:layout" && ready[0].userEmail === other.email,
+      JSON.stringify(ready));
+  }
+  const cur = await call("get_task", { taskId: pcbTask.data.id });
+  check("get_task shows the current stage (first one open)", cur.ok && cur.data.pcb?.currentStage === "layout", cur.data?.pcb?.currentStage);
+
+  const handDue = await call("update_task", { taskId: pcbTask.data.id, dueDate: "2027-03-01" });
+  check("update_task refuses a PCB board's due date", !handDue.ok && /stage/i.test(handDue.text), handDue.text);
+  const handWho = await call("update_task", { taskId: pcbTask.data.id, assigneeIds: [] });
+  check("update_task refuses a PCB board's assignees", !handWho.ok && /stage/i.test(handWho.text), handWho.text);
+  const startOnly = await call("set_task_dates", { taskId: pcbTask.data.id, startDate: "2027-01-20", dueDate: "2027-02-10" });
+  check("set_task_dates may move the start of a board when the due date is unchanged", startOnly.ok, startOnly.text.slice(0, 120));
+
+  const shifted = await call("shift_pcb_dates", { taskId: pcbTask.data.id, days: 7 });
+  check("shift_pcb_dates moves every stage and the start together",
+    shifted.ok && shifted.data.dueDate === "2027-02-17" &&
+      shifted.data.pcb.stages.find((s) => s.stage === "review").dueDate === "2027-02-12", shifted.text.slice(0, 160));
+  const listedPcb = await call("list_tasks", { search: `${TAG} PCB` });
+  check("list_tasks rows carry the board", listedPcb.ok && listedPcb.data.tasks[0]?.pcb?.currentStage === "layout");
+  const late = await call("update_pcb_stage", { taskId: pcbTask.data.id, stage: "layout", dueDate: "2020-01-01" });
+  const lateRow = await call("list_tasks", { search: `${TAG} PCB` });
+  check("a late current stage makes the board overdue though its due date is ahead",
+    late.ok && late.data.dueDate === "2027-02-12" && lateRow.data.tasks[0]?.overdue === true, lateRow.text.slice(0, 160));
+  const hist = await call("get_task", { taskId: pcbTask.data.id });
+  const fields = new Set((hist.data?.activities ?? []).map((x) => x.field));
+  check("History logs the stage edits",
+    ["pcb", "altiumUrl", "pcb.layout.due", "pcb.layout.status", "pcb.review.assignees", "pcb.shift", "due"].every((f) => fields.has(f)),
+    [...fields].join(","));
+  const gone = await call("remove_pcb", { taskId: pcbTask.data.id });
+  check("remove_pcb drops the stages and keeps assignees and due",
+    gone.ok && gone.data.pcb === null && gone.data.assignees.length > 0 && gone.data.dueDate === "2027-02-12", gone.text.slice(0, 160));
+
   // --- resources ----------------------------------------------------------
   const res = await client.readResource({ uri: `starproject://tasks/${a.data.number}` });
   check("resource tasks/{number} reads A", res.contents?.[0]?.text?.includes(a.data.id));
