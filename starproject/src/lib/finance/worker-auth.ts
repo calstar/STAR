@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 // callink-worker calls /api/worker/* with `Authorization: Bearer <WORKER_TOKEN>`.
 // This fails closed: with no token configured (or a short one) nothing gets in,
-// unlike the cron routes, which skip their check when CRON_SECRET is unset.
+// like the cron and internal routes (src/lib/internalAuth.ts).
 
 export const MIN_TOKEN_LENGTH = 32;
 
