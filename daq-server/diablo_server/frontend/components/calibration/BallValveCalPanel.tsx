@@ -5,14 +5,16 @@
  * commanded. Adjust until the position (shown above it) is fully open or fully closed, then
  * "Save as open" / "Save as closed": that current becomes the state's, and the trial ends.
  *
- * The page no longer captures position endpoints ("Fully closed" / "Fully open", the team,
- * 2026-11-20). A valve that still has stored endpoints (backend/src/ball-valve-cal.ts) shows them
- * and a "Clear position cal" button, so an old calibration is never applied out of sight.
+ * Step 2, position: with the valve driven at its saved closed current, "Record as 0%" stores the
+ * feedback (FB) reading as fully closed; at its open current, "Record as 100%" stores fully open.
+ * % open is then a straight line between those two feedback readings
+ * (backend/src/ball-valve-cal.ts) instead of the ideal 4-20 mA line.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSensorValue } from '@/lib/store';
 import { getApiBaseUrl } from '@/lib/websocket';
 import { elodinSlotFromBoardId } from '@/lib/sensor-info-entities';
+import { loopMilliamps } from '@/lib/ball-valve';
 
 interface Endpoints { closedCounts?: number; openCounts?: number; closedAtMs?: number; openAtMs?: number }
 interface ValveCal { entity: string; endpoints: Endpoints | null; liveCounts: number | null; noSignal: boolean }
@@ -28,6 +30,7 @@ type CurrentAction =
   | { action: 'end_trial' }
   | { action: 'save'; as: 'open' | 'closed' }
   | { action: 'clear' };
+type EndpointAction = 'closed' | 'open' | 'clear';
 
 function fmtLeft(ms: number): string {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -50,18 +53,18 @@ function CommandCurrentRow({ role, entity, stored, trial, limits, onAction, busy
   const v = Number(ma);
   const err = Number.isFinite(v) && v >= limits.minMa && v <= limits.maxMa ? null : `Must be ${limits.minMa}-${limits.maxMa} mA`;
   const running = trial !== undefined && trial.expiresAtMs > nowMs;
-  const input = 'ctl h-8 w-20 px-2 text-[12px] font-mono tabular-nums';
-  const btn = 'ctl h-8 px-2 text-[11px]';
+  const input = 'ctl h-10 w-28 px-3 text-[14px] font-mono tabular-nums';
+  const btn = 'ctl h-10 px-4 text-[12px]';
   return (
-    <div className="flex flex-col gap-1.5 pt-1" data-testid={`bv-current:${role}`}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[11px] font-bold text-text-muted uppercase tracking-wide">Command current</span>
-        <span className="font-mono text-[11px] text-text-muted">
+    <div className="rounded-xl border border-gray-700 bg-card p-5 flex flex-col gap-3" data-testid={`bv-current:${role}`}>
+      <div className="flex items-baseline justify-between gap-2 flex-wrap">
+        <span className="text-sm font-bold text-text">Step 1 · Command current: set the open and closed current</span>
+        <span className="font-mono text-sm text-text-muted">
           closed {closedMa.toFixed(2)} mA · open {openMa.toFixed(2)} mA{custom ? '' : ' (ideal)'}
         </span>
       </div>
-      <div className="flex gap-2 items-center flex-wrap">
-        <label className="flex items-center gap-1 text-[11px] text-text-muted">Trial
+      <div className="flex gap-3 items-center flex-wrap">
+        <label className="flex items-center gap-2 text-sm text-text-muted">Trial
           <input aria-label={`${role} trial mA`} className={input} type="number" inputMode="decimal"
             step={0.05} min={limits.minMa} max={limits.maxMa} value={ma}
             onChange={(e) => setMa(e.target.value)} />mA</label>
@@ -82,11 +85,11 @@ function CommandCurrentRow({ role, entity, stored, trial, limits, onAction, busy
           onClick={() => onAction(entity, { action: 'clear' })}>Reset</button>
       </div>
       {running && (
-        <p className="text-[11px] text-amber-400" role="status">
-          Driving {trial!.ma.toFixed(2)} mA · ends in {fmtLeft(trial!.expiresAtMs - nowMs)} · a command that changes this valve, or the failsafe, ends it on the board: Stop, or Drive a new current, to try again
+        <p className="text-sm text-amber-400" role="status">
+          Driving {trial!.ma.toFixed(2)} mA · ends in {fmtLeft(trial!.expiresAtMs - nowMs)}
         </p>
       )}
-      {err && <p className="text-[11px] text-amber-400">{err}</p>}
+      {err && <p className="text-sm text-amber-400">{err}</p>}
     </div>
   );
 }
@@ -104,45 +107,155 @@ export function ballValveRoles(config: Record<string, any> | null): { role: stri
     .map(([role, t]) => ({ role, entity: `BV${elodinSlotFromBoardId(Number(t[2]))}_Cal.CH${Number(t[1])}` }));
 }
 
-function ValveRow({ role, entity, cal, onClear, busy, children }: {
-  role: string; entity: string; cal?: ValveCal;
-  onClear: (entity: string) => void; busy: boolean;
+function ValveRow({ role, entity, cal, busy, onClearAll, children }: {
+  role: string; entity: string; cal?: ValveCal; busy: boolean;
+  onClearAll: (entity: string, role: string) => void;
   children?: React.ReactNode;
 }) {
   const pct = useSensorValue(entity, 'position_pct');
-  const ep = cal?.endpoints;
-  const calibrated = ep?.closedCounts !== undefined || ep?.openCounts !== undefined;
   const live = cal?.noSignal ? 'NO SIGNAL' : pct != null ? `${Math.round(pct)}% open` : '--- %';
   return (
-    <div className="px-4 py-3 flex flex-col gap-2" data-testid={`bv-cal:${role}`}>
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="font-semibold text-text truncate">{role}</span>
-        <span className="font-mono text-sm tabular-nums text-text">{live}</span>
+    <div className="flex flex-col gap-6" data-testid={`bv-cal:${role}`}>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-3xl font-bold text-text tracking-tight">{role}</h2>
+          <div className="text-sm text-text-muted font-mono mt-1.5">Ball valve · {entity}</div>
+        </div>
+        <button onClick={() => onClearAll(entity, role)} disabled={busy}
+          className="ctl border-[var(--color-danger)] text-[var(--color-danger)] hover:!border-[var(--color-danger)] hover:!bg-[var(--color-danger-solid)] hover:!text-white h-10 px-5 text-[12px]">
+          Clear calibration
+        </button>
       </div>
-      <div className="font-mono text-[11px] text-text-muted flex gap-3 flex-wrap items-center">
-        <span>raw {cal?.liveCounts ?? '—'}</span>
-        {calibrated && (
-          <>
-            <span>position cal: closed {ep?.closedCounts ?? 'ideal'}, open {ep?.openCounts ?? 'ideal'}</span>
-            <button className="ctl h-6 px-2 text-[10px]" disabled={busy}
-              title="Forget the stored position endpoints: % open back on the ideal 4-20 mA line"
-              onClick={() => onClear(entity)}>Clear position cal</button>
-          </>
-        )}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-xl border border-gray-700 bg-card px-4 py-3">
+          <div className="text-xs font-bold text-text-muted uppercase tracking-wide">Position</div>
+          <div className={`font-mono font-bold tabular-nums leading-tight mt-1 text-3xl ${cal?.noSignal ? 'text-red-400' : 'text-green-400'}`}>{live}</div>
+        </div>
+        <div className="rounded-xl border border-gray-700 bg-card px-4 py-3" data-testid={`bv-fb:${role}`}
+          title="The valve's position feedback loop current (FB), as the board measures it across its 120 ohm sense resistor. 4 mA closed, 20 mA open.">
+          <div className="text-xs font-bold text-text-muted uppercase tracking-wide">Feedback current</div>
+          <div className="font-mono font-bold tabular-nums leading-tight mt-1 text-xl text-gray-300">
+            {cal?.liveCounts != null ? `${loopMilliamps(cal.liveCounts).toFixed(2)} mA` : '—'}
+          </div>
+        </div>
+        <div className="rounded-xl border border-gray-700 bg-card px-4 py-3">
+          <div className="text-xs font-bold text-text-muted uppercase tracking-wide">Raw</div>
+          <div className="font-mono font-bold tabular-nums leading-tight mt-1 text-xl text-gray-300">{cal?.liveCounts ?? '—'}</div>
+        </div>
       </div>
       {children}
     </div>
   );
 }
 
-/** `sessionActive` is accepted for the page's call but unused: nothing here needs the live
- *  stream to act, and config_broadcast, which delivers the currents, runs without a session. */
-export function BallValveCalPanel({ config }: { config: Record<string, any> | null; sessionActive?: boolean }) {
+/**
+ * Step 2: record the feedback current at each end of travel. "Drive closed" / "Drive open" run a
+ * trial at the saved current (step 1); once the feedback settles, "Record as 0%" / "Record as
+ * 100%" store it (the backend averages the last second).
+ */
+function PositionCalCard({ role, entity, cal, stored, busy, onEndpoint, onAction }: {
+  role: string; entity: string; cal?: ValveCal; stored?: StoredCurrents; busy: boolean;
+  onEndpoint: (entity: string, action: EndpointAction) => void;
+  onAction: (entity: string, body: CurrentAction) => void;
+}) {
+  const closedMa = stored?.closedMa ?? DEFAULT_CLOSED_MA;
+  const openMa = stored?.openMa ?? DEFAULT_OPEN_MA;
+  const ep = cal?.endpoints;
+  const live = cal?.liveCounts != null ? loopMilliamps(cal.liveCounts) : null;
+  const fb = (counts?: number) => (counts !== undefined ? `${loopMilliamps(counts).toFixed(2)} mA` : 'not set');
+  const btn = 'ctl h-10 px-4 text-[12px]';
+  const noLive = cal?.liveCounts == null || cal?.noSignal;
+  const end = (label: string, which: 'closed' | 'open', ma: number, counts: number | undefined) => (
+    <div className="rounded-lg border border-gray-800 bg-black/20 p-4 flex flex-col gap-3">
+      <div className="flex items-baseline justify-between gap-2 flex-wrap">
+        <span className="text-sm font-semibold text-text">{label}</span>
+        <span className="font-mono text-sm text-text-muted">feedback {fb(counts)}</span>
+      </div>
+      <div className="flex gap-3 flex-wrap">
+        <button className={btn} disabled={busy}
+          title={`Drive the valve at its saved ${which} current (${ma.toFixed(2)} mA) so it travels fully ${which}`}
+          onClick={() => onAction(entity, { action: 'trial', ma })}>Drive {which} ({ma.toFixed(2)} mA)</button>
+        <button className={btn} disabled={busy || noLive}
+          title={`Once the feedback has stopped moving: store it as fully ${which} (${which === 'closed' ? '0' : '100'} %)`}
+          onClick={() => onEndpoint(entity, which)}>Record as {which === 'closed' ? '0%' : '100%'}</button>
+      </div>
+    </div>
+  );
+  return (
+    <div className="rounded-xl border border-gray-700 bg-card p-5 flex flex-col gap-3" data-testid={`bv-position:${role}`}>
+      <div className="flex items-baseline justify-between gap-2 flex-wrap">
+        <span className="text-sm font-bold text-text">Step 2 · Position: record the feedback current at closed and open</span>
+        <span className="font-mono text-sm text-text-muted">live feedback {live != null ? `${live.toFixed(2)} mA` : '—'}</span>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        {end('Fully closed (0 %)', 'closed', closedMa, ep?.closedCounts)}
+        {end('Fully open (100 %)', 'open', openMa, ep?.openCounts)}
+      </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <button className={btn} disabled={busy} title="Stop driving the trial current: back to the commanded state's current"
+          onClick={() => onAction(entity, { action: 'end_trial' })}>Stop driving</button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Sidebar list: one row per ball valve with its live position. Clicking a row opens that valve's
+ * calibration in the page's center pane (BallValveCalPanel with `entity`).
+ */
+function BallValveListRow({ role, entity, selected, onSelect }: { role: string; entity: string; selected: boolean; onSelect: () => void }) {
+  const pct = useSensorValue(entity, 'position_pct');
+  return (
+    <button onClick={onSelect} data-testid={`bv-row:${role}`}
+      className={`w-full text-left pl-4 pr-4 py-3.5 flex items-center gap-3 border-l-[3px] transition-colors
+        ${selected ? 'bg-blue-950/40 border-l-blue-500' : 'border-l-transparent hover:bg-white/5'}`}>
+      <div className="min-w-0 flex-1">
+        <span className={`text-base font-semibold truncate ${selected ? 'text-text' : 'text-gray-200'}`}>{role}</span>
+        <div className="text-sm font-mono text-text-muted mt-1">ball valve</div>
+      </div>
+      <span className="text-xl font-mono font-bold tabular-nums text-green-400 leading-none">
+        {pct != null ? `${Math.round(pct)}%` : '---'}
+      </span>
+    </button>
+  );
+}
+
+export function BallValveList({ config, selected, onSelect }: {
+  config: Record<string, any> | null; selected: string | null; onSelect: (entity: string) => void;
+}) {
   const valves = useMemo(() => ballValveRoles(config), [config]);
+  const [open, setOpen] = useState(true);
+  if (valves.length === 0) return null;
+  return (
+    <div className="flex-shrink-0 border-t border-gray-800">
+      <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5">
+        <div className="text-left">
+          <div className="text-xs font-bold text-text-muted uppercase tracking-wide">Ball valves</div>
+        </div>
+        <span className="text-gray-600">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="divide-y divide-gray-800/40 border-t border-gray-800/60">
+          {valves.map((v) => (
+            <BallValveListRow key={v.entity} role={v.role} entity={v.entity}
+              selected={v.entity === selected} onSelect={() => onSelect(v.entity)} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The center-pane detail. `entity` limits it to the valve picked in BallValveList; without one
+ *  it shows every valve. `sessionActive` is accepted for the page's call but unused: nothing here
+ *  needs the live stream to act, and config_broadcast, which delivers the currents, runs without a
+ *  session. */
+export function BallValveCalPanel({ config, entity }: { config: Record<string, any> | null; entity?: string | null; sessionActive?: boolean }) {
+  const allValves = useMemo(() => ballValveRoles(config), [config]);
+  const valves = useMemo(() => (entity ? allValves.filter((v) => v.entity === entity) : allValves), [allValves, entity]);
   const [cal, setCal] = useState<Record<string, ValveCal>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState(true);
 
   const [currents, setCurrents] = useState<Record<string, StoredCurrents>>({});
   const [trials, setTrials] = useState<Record<string, StoredTrial>>({});
@@ -202,8 +315,7 @@ export function BallValveCalPanel({ config }: { config: Record<string, any> | nu
     }
   }, []);
 
-  const onClear = useCallback(async (entity: string) => {
-    const action = 'clear';
+  const onEndpoint = useCallback(async (entity: string, action: EndpointAction) => {
     setBusy(true);
     setError(null);
     try {
@@ -220,28 +332,26 @@ export function BallValveCalPanel({ config }: { config: Record<string, any> | nu
     }
   }, []);
 
+  // Clear calibration: the command currents back to 4 / 20 mA and the recorded feedback readings
+  // forgotten, so % open is back on the ideal 4-20 mA line.
+  const onClearAll = useCallback(async (entity: string, role: string) => {
+    if (typeof window !== 'undefined' && !window.confirm(`Clear the calibration for ${role}? Its currents go back to 4 / 20 mA and its recorded feedback readings are dropped.`)) return;
+    await onCurrentAction(entity, { action: 'clear' });
+    await onEndpoint(entity, 'clear');
+  }, [onCurrentAction, onEndpoint]);
+
   if (valves.length === 0) return null;
   return (
-    <div className="flex-shrink-0 border-t border-gray-800">
-      <button onClick={() => setOpen((v) => !v)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-white/5">
-        <div className="text-left">
-          <div className="text-xs font-bold text-text-muted uppercase tracking-wide">Ball valves</div>
-          <div className="text-sm text-text-muted mt-1">Command current: closed and open, in mA</div>
-        </div>
-        <span className="text-gray-600">{open ? '▾' : '▸'}</span>
-      </button>
-      {open && (
-        <div className="divide-y divide-gray-800/40 border-t border-gray-800/60">
-          {error && <p className="px-4 py-2 text-[12px] text-red-400" role="alert">{error}</p>}
-          {valves.map((v) => (
-            <ValveRow key={v.entity} role={v.role} entity={v.entity} cal={cal[v.entity]}
-              onClear={onClear} busy={busy}>
-              <CommandCurrentRow role={v.role} entity={v.entity} stored={currents[v.entity]}
-                trial={trials[v.entity]} limits={limits} onAction={onCurrentAction} busy={busy} nowMs={nowMs} />
-            </ValveRow>
-          ))}
-        </div>
-      )}
+    <div className="p-8 max-w-5xl mx-auto flex flex-col gap-10">
+      {error && <p className="rounded-lg border border-red-800 bg-red-950/30 px-4 py-2 text-sm text-red-400" role="alert">{error}</p>}
+      {valves.map((v) => (
+        <ValveRow key={v.entity} role={v.role} entity={v.entity} cal={cal[v.entity]} busy={busy} onClearAll={onClearAll}>
+          <CommandCurrentRow key={v.entity} role={v.role} entity={v.entity} stored={currents[v.entity]}
+            trial={trials[v.entity]} limits={limits} onAction={onCurrentAction} busy={busy} nowMs={nowMs} />
+          <PositionCalCard role={v.role} entity={v.entity} cal={cal[v.entity]} stored={currents[v.entity]}
+            busy={busy} onEndpoint={onEndpoint} onAction={onCurrentAction} />
+        </ValveRow>
+      ))}
     </div>
   );
 }

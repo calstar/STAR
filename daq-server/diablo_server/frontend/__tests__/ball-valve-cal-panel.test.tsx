@@ -5,7 +5,7 @@
 import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BallValveCalPanel, ballValveRoles } from '@/components/calibration/BallValveCalPanel';
+import { BallValveCalPanel, BallValveList, ballValveRoles } from '@/components/calibration/BallValveCalPanel';
 
 vi.mock('@/lib/websocket', () => ({ getApiBaseUrl: () => 'http://localhost:8081', getWebSocketClient: () => ({ on: () => () => {} }) }));
 
@@ -57,35 +57,81 @@ describe('ballValveRoles', () => {
   });
 });
 
+describe('BallValveList (sidebar)', () => {
+  it('lists each valve and reports the clicked one, so the page opens it in the center', () => {
+    const onSelect = vi.fn();
+    render(<BallValveList config={CONFIG} selected={null} onSelect={onSelect} />);
+    fireEvent.click(screen.getByTestId('bv-row:Ox Fill'));
+    expect(onSelect).toHaveBeenCalledWith('BV1_Cal.CH2');
+    // The controls are not in the sidebar any more.
+    expect(screen.queryByTestId('bv-current:Ox Fill')).toBeNull();
+  });
+});
+
+describe('BallValveCalPanel with entity (center pane)', () => {
+  it('shows only the selected valve', async () => {
+    render(<BallValveCalPanel config={CONFIG} entity="BV1_Cal.CH2" sessionActive />);
+    await screen.findByTestId('bv-cal:Ox Fill');
+    expect(screen.queryByTestId('bv-cal:Ox Vent')).toBeNull();
+  });
+});
+
 describe('BallValveCalPanel', () => {
-  it('no longer offers to capture fully closed / fully open', async () => {
+  it('Step 2: Drive closed / open runs a trial at that valve\'s saved current', async () => {
+    postReply = { status: 200, body: currents() };  // the backend answers with the snapshot
     render(<BallValveCalPanel config={CONFIG} sessionActive />);
-    await screen.findByTestId('bv-cal:Ox Vent');
-    expect(screen.queryByRole('button', { name: 'Fully closed' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Fully open' })).toBeNull();
+    await waitFor(() => expect(inPos('Ox Fill', 'Drive closed (4.20 mA)')).toBeEnabled());
+    fireEvent.click(inPos('Ox Fill', 'Drive closed (4.20 mA)'));
+    await waitFor(() => expect(posts).toEqual([{ entity: 'BV1_Cal.CH2', action: 'trial', ma: 4.2 }]));
+    fireEvent.click(inPos('Ox Fill', 'Drive open (19.60 mA)'));
+    await waitFor(() => expect(posts[1]).toEqual({ entity: 'BV1_Cal.CH2', action: 'trial', ma: 19.6 }));
+  });
+
+  it('Step 2: Record as 0% / 100% stores the live feedback as fully closed / open', async () => {
+    postReply = { status: 200, body: { valves: [{ entity: 'BV1_Cal.CH1', endpoints: { closedCounts: 356 }, liveCounts: 356, noSignal: false }] } };
+    render(<BallValveCalPanel config={CONFIG} sessionActive />);
+    await waitFor(() => expect(inPos('Ox Vent', 'Record as 0%')).toBeEnabled());
+    fireEvent.click(inPos('Ox Vent', 'Record as 0%'));
+    await waitFor(() => expect(posts).toEqual([{ entity: 'BV1_Cal.CH1', action: 'closed' }]));
+    expect(postUrls[0]).toMatch(/\/api\/ball_valve_cal$/);
+    fireEvent.click(inPos('Ox Vent', 'Record as 100%'));
+    await waitFor(() => expect(posts[1]).toEqual({ entity: 'BV1_Cal.CH1', action: 'open' }));
+  });
+
+  it('Step 2: nothing to record from a valve with no live feedback', async () => {
+    render(<BallValveCalPanel config={CONFIG} sessionActive />);
+    await waitFor(() => expect(inPos('Ox Vent', 'Record as 0%')).toBeEnabled());
+    // Ox Fill has no live reading in the snapshot.
+    expect(inPos('Ox Fill', 'Record as 0%')).toBeDisabled();
   });
 
   it('shows the live reading', async () => {
     render(<BallValveCalPanel config={CONFIG} sessionActive />);
     const row = await screen.findByTestId('bv-cal:Ox Vent');
-    await waitFor(() => expect(row.textContent).toMatch(/raw 356/));
+    await waitFor(() => expect(row.textContent).toMatch(/Raw356/));
   });
 
-  it('a valve with an old position calibration shows it and can clear it', async () => {
+  it('shows the feedback loop current in mA', async () => {
     render(<BallValveCalPanel config={CONFIG} sessionActive />);
-    const row = await screen.findByTestId('bv-cal:Ox Vent');
-    await waitFor(() => expect(row.textContent).toMatch(/position cal: closed 355, open ideal/));
-    fireEvent.click(screen.getByRole('button', { name: 'Clear position cal' }));
-    await waitFor(() => expect(posts).toEqual([{ entity: 'BV1_Cal.CH1', action: 'clear' }]));
-    expect(postUrls[0]).toMatch(/\/api\/ball_valve_cal$/);
+    // 356 counts on the server's ideal 100 ohm / 3.3 V / 12-bit scale = 2.87 mA.
+    await waitFor(() => expect(screen.getByTestId('bv-fb:Ox Vent').textContent).toMatch(/2\.87 mA/));
   });
 
-  it('a valve without one shows no clear button', async () => {
+  it('a recorded feedback reading is shown in mA; Clear calibration clears currents and readings', async () => {
     render(<BallValveCalPanel config={CONFIG} sessionActive />);
-    const row = await screen.findByTestId('bv-cal:Ox Fill');
-    await waitFor(() => expect(screen.getByTestId('bv-cal:Ox Vent').textContent).toMatch(/position cal/));
-    expect(row.textContent).not.toMatch(/position cal/);
+    const card = await screen.findByTestId('bv-position:Ox Vent');
+    // 355 counts = 2.86 mA; open not recorded.
+    await waitFor(() => expect(card.textContent).toMatch(/feedback 2\.86 mA.*feedback not set/));
+    vi.stubGlobal('confirm', () => true);
+    const header = screen.getByTestId('bv-cal:Ox Vent');
+    fireEvent.click([...header.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Clear calibration')!);
+    // Both: the command currents, then the recorded feedback readings.
+    await waitFor(() => expect(posts).toEqual([{ entity: 'BV1_Cal.CH1', action: 'clear' }, { entity: 'BV1_Cal.CH1', action: 'clear' }]));
+    expect(postUrls[0]).toMatch(/\/api\/ball_valve_current$/);
+    expect(postUrls[1]).toMatch(/\/api\/ball_valve_cal$/);
+    expect(screen.queryByRole('button', { name: 'Clear position cal' })).toBeNull();
   });
+
 
   it('a refusal is shown', async () => {
     postReply = { status: 400, body: { error: 'Open current must be 3.8-20.475 mA' } };
@@ -156,6 +202,14 @@ describe('Command current', () => {
 function within(role: string, name: string): HTMLButtonElement {
   const row = screen.getByTestId(`bv-current:${role}`);
   const b = [...row.querySelectorAll('button')].find((x) => x.textContent === name);
+  if (!b) throw new Error(`no ${name} button for ${role}`);
+  return b as HTMLButtonElement;
+}
+
+/** The button named `name` in that role's step-2 position card. */
+function inPos(role: string, name: string): HTMLButtonElement {
+  const card = screen.getByTestId(`bv-position:${role}`);
+  const b = [...card.querySelectorAll('button')].find((x) => x.textContent === name);
   if (!b) throw new Error(`no ${name} button for ${role}`);
   return b as HTMLButtonElement;
 }
