@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orweb"
+version = "0.1.0"
+description = "OpenRocket 24.12's rocket model, .ork I/O, mass and Barrowman aerodynamics, ported to Python"
+license = "GPL-3.0-only"
+requires-python = ">=3.11"
+# The physics needs numpy alone; the API router (orweb.api) is the `api` extra.
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.128", "pydantic>=2.12", "python-multipart>=0.0.20"]
+
+[tool.setuptools.packages.find]
+include = ["orweb*"]
+
+[tool.setuptools.package-data]
+# motors.json (OpenRocket's own curves for the bundled examples) and the example
+# rockets /examples serves.
+orweb = ["data/*.json", "data/examples/*.ork"]

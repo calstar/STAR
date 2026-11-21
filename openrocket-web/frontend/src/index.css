@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+/* Tailwind v4 only scans files it can reach from this project's root; the
+   shared design-tool components live outside it (same as star-openrocket). */
+@source "../../../lib/stardesign-ui/src";
+
+/* The page itself is only a frame for <OpenRocketWorkbench/>, whose look --
+   OpenRocket's own light Swing/FlatLaf -- is scoped to its root in
+   src/workbench/openrocket.css so it can sit inside star-openrocket's dark
+   shell later without either leaking into the other. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f2f2f2;
+}

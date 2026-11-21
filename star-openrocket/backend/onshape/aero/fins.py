@@ -203,8 +203,18 @@ def _fin_groups(faces: list[FaceGeometry], axis: Axis) -> tuple[list[list[FaceGe
             groups[-1].append(fg)
         else:
             groups.append([fg])
+    # Close the circle, as count_fins does: a fin on the 0/360 seam has its two sides
+    # at ~2 deg and ~358 deg, which the sweep above leaves as two "fins" -- a 4-fin set
+    # read as 5 uneven ones, and flagged asymmetric.
+    if len(groups) > 1 and azimuth(groups[0][0]) + 360.0 - azimuth(groups[-1][-1]) < 25.0:
+        groups[0] = groups.pop() + groups[0]
 
-    azimuths = [float(np.mean([azimuth(fg) for fg in g])) for g in groups]
+    def circular_mean(g: list[FaceGeometry]) -> float:
+        # Not the arithmetic mean: 2 and 358 average to 180, the opposite side.
+        a = np.radians([azimuth(fg) for fg in g])
+        return float(np.degrees(np.arctan2(np.sin(a).sum(), np.cos(a).sum())) % 360.0)
+
+    azimuths = [circular_mean(g) for g in groups]
     return groups, azimuths
 
 
@@ -292,6 +302,35 @@ def planform_outline_3d(pf: FinPlanform, axis: Axis, azimuth_deg: float) -> dict
         for i in range(DIVISIONS)
     ]
     return {"lead": lead_pts, "trail": trail_pts}
+
+
+#: Below this a "fin" has no planform to speak of. A millimetre of chord or span (and a
+#: square millimetre of area) is far under any fin that flies, and far over rounding.
+DEGENERATE_FIN_LENGTH = 1e-3
+
+
+def degenerate_fin_reason(pf: FinPlanform) -> str | None:
+    """Why this planform is not a fin, or None if it is one.
+
+    Fin detection keeps any flat face whose plane passes through the axis, and on a
+    model with trimmed or stray geometry that can be a sliver with no chord and no
+    area. Accepting it does not move the CP (zero area, zero CNa) but it is not
+    harmless: the .ork export writes it as a fin set metres from the body, and the
+    fin count, chords and the exported length are all wrong.
+    """
+    tiny = DEGENERATE_FIN_LENGTH
+    if pf.root_chord < tiny:
+        return f"root chord {pf.root_chord * 1000:.2f} mm"
+    if pf.span < tiny:
+        return f"span {pf.span * 1000:.2f} mm"
+    if pf.area < tiny * tiny:
+        return f"area {pf.area * 1e6:.3f} mm²"
+    return None
+
+
+def degenerate_fin_note(reason: str) -> str:
+    return (f"Faces were detected as fins, but they do not form one ({reason}): ignored. "
+            "Pick the fin faces by hand if this rocket has fins.")
 
 
 def fin_set_aero_from_faces(

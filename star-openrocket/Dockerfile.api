@@ -31,6 +31,14 @@ RUN --mount=type=cache,target=/root/.cache/pip pip install -r requirements-fligh
 COPY lib/stardesign/ /stardesign/
 RUN --mount=type=cache,target=/root/.cache/pip pip install /stardesign
 
+# The OpenRocket tab's API: openrocket-web's pure-Python port of OpenRocket 24.12
+# (package `orweb`, GPLv3), mounted by backend/main.py at /api/ork. Only the package
+# and its pyproject -- not the tests, the oracle or the frontend. The example
+# rockets /api/ork/examples serves ship inside the package (orweb/data/examples).
+COPY openrocket-web/pyproject.toml /openrocket-web/pyproject.toml
+COPY openrocket-web/orweb/ /openrocket-web/orweb/
+RUN --mount=type=cache,target=/root/.cache/pip pip install "/openrocket-web[api]"
+
 COPY star-openrocket/backend/ ./backend/
 
 # physics/ is the recovery calculator's pure library (imported as a top-level

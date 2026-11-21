@@ -12,12 +12,16 @@ name: STAR OpenRocket CI
       # run these tests.
       - 'lib/stardesign/**'
       - 'lib/stardesign-ui/**'
+      # The OpenRocket tab: openrocket-web's port (orweb, mounted at /api/ork) and
+      # its <OpenRocketWorkbench/>, compiled from source by this app's Vite.
+      - 'openrocket-web/**'
       - '.github/workflows/star-openrocket-ci.yml'
   pull_request:
     paths:
       - 'star-openrocket/**'
       - 'lib/stardesign/**'
       - 'lib/stardesign-ui/**'
+      - 'openrocket-web/**'
       - '.github/workflows/star-openrocket-ci.yml'
   workflow_dispatch:
 
@@ -71,6 +75,8 @@ jobs:
         # The design core shared across the design tools. Installed from a
         # path, not published -- it is versioned with the repo.
         pip install -e ../lib/stardesign
+        # The OpenRocket tab's API (openrocket-web's orweb, mounted at /api/ork).
+        pip install -e '../openrocket-web[api]'
 
     # --timeout guards against a test that somehow gets past the socket block
     # and then hangs on a real connection. thread method so a stuck C-level
@@ -80,6 +86,40 @@ jobs:
         python -m pytest tests/ \
           --timeout=120 --timeout-method=thread \
           --durations=15 -q
+
+  # Fin detection on its own line, so a regression is visible at a glance. The gate
+  # above runs these files too; this job exists to be read, not to add coverage.
+  # Whole synthetic rockets (tests/rocket_mesh.py: typed and untyped faces, 3 and 4
+  # fins, tilted, finless) held to the dimensions they were built with and to the
+  # OpenRocket port's CP/CNa, plus every route agreeing on the reference rocket.
+  # Seconds, offline.
+  fin-detection:
+    name: Fin detection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: star-openrocket/requirements-ci.txt
+
+    - name: Install dependencies (CI subset)
+      run: |
+        pip install -r requirements-ci.txt
+        pip install -e ../lib/stardesign
+        # The OpenRocket port is the independent CP/CNa these tests compare against.
+        pip install -e '../openrocket-web[api]'
+
+    - name: Fin detection tests
+      run: |
+        python -m pytest tests/test_fin_detection.py tests/test_fin_consistency.py \
+          --timeout=120 --timeout-method=thread -v
 
   # Positive proof that the suite cannot spend API quota, rather than an
   # assumption that nobody will ever add a live test.
@@ -105,6 +145,8 @@ jobs:
         # The design core shared across the design tools. Installed from a
         # path, not published -- it is versioned with the repo.
         pip install -e ../lib/stardesign
+        # The OpenRocket tab's API (openrocket-web's orweb, mounted at /api/ork).
+        pip install -e '../openrocket-web[api]'
 
     # A request with no credentials must fail loudly. If this ever passes, the
     # keys have acquired a default somewhere and CI could start billing us.
@@ -165,6 +207,8 @@ jobs:
         # The design core shared across the design tools. Installed from a
         # path, not published -- it is versioned with the repo.
         pip install -e ../lib/stardesign
+        # The OpenRocket tab's API (openrocket-web's orweb, mounted at /api/ork).
+        pip install -e '../openrocket-web[api]'
 
     - name: Import backend app
       run: python -c "from backend.main import app; print('backend.main imports OK')"
@@ -286,6 +330,8 @@ jobs:
       run: |
         pip install -r requirements-ci.txt
         pip install -e ../lib/stardesign
+        # The OpenRocket tab's API (openrocket-web's orweb, mounted at /api/ork).
+        pip install -e '../openrocket-web[api]'
 
     - name: Set up Java
       uses: actions/setup-java@v4
@@ -323,6 +369,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - python-tests
+      - fin-detection
       - offline-guarantee
       - backend-smoke
       - frontend
@@ -341,6 +388,7 @@ jobs:
         echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
         echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
         echo "| Python tests (gate) | ${{ needs.python-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Fin detection | ${{ needs.fin-detection.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Offline guarantee | ${{ needs.offline-guarantee.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Backend smoke | ${{ needs.backend-smoke.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| Frontend build | ${{ needs.frontend.result }} |" >> $GITHUB_STEP_SUMMARY

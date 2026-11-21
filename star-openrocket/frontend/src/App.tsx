@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import starWordmark from './assets/star-wordmark.png'
 import {
+  ORK_API,
+  cadAsOrkDocument,
   computeFlight,
   computeStability,
   downloadMotorFile,
@@ -49,6 +51,24 @@ import type {
   StabilityResult,
 } from './types'
 import { applyOverrides, orkRequest } from './lib/designRequests'
+// The OpenRocket tab: openrocket-web's workbench, compiled from source (vite.config.ts
+// alias). GPLv3 -- see openrocket-web/LICENSE and the README's note.
+import { OpenRocketWorkbench, type WorkbenchLoad, type WorkbenchState } from '@openrocket-web'
+import { OrkVsCadTab } from './components/orkcompare/OrkVsCadTab'
+
+type Tab = 'cad' | 'openrocket' | 'orkvscad' | 'environment' | 'flight' | 'recovery' | 'fullflight' | 'units'
+
+/** Tab bar order: the OpenRocket tab right after CAD, and the comparison of the two after it. */
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'cad', label: 'CAD & Stability' },
+  { id: 'openrocket', label: 'OpenRocket' },
+  { id: 'orkvscad', label: 'ORK vs CAD' },
+  { id: 'environment', label: 'Environment' },
+  { id: 'flight', label: 'Flight Dynamics' },
+  { id: 'recovery', label: 'Recovery' },
+  { id: 'fullflight', label: 'Full Flight' },
+  { id: 'units', label: 'Units' },
+]
 
 /** Survives reloads so a new build does not hijack which model is open. */
 const LAST_MODEL_KEY = 'star-openrocket:last-model'
@@ -134,8 +154,22 @@ export default function App() {
   // has not changed, and the viewer would keep showing the previous build.
   const [reloadNonce, setReloadNonce] = useState(0)
 
-  // Top-level tab: CAD viewer, the 6-DOF ascent flight dynamics, or recovery.
-  const [activeTab, setActiveTab] = useState<'cad' | 'environment' | 'flight' | 'recovery' | 'fullflight' | 'units'>('cad')
+  // Top-level tab: CAD viewer, the OpenRocket workbench and its comparison with the
+  // CAD, the 6-DOF ascent flight dynamics, or recovery.
+  const [activeTab, setActiveTab] = useState<Tab>('cad')
+
+  // The OpenRocket tab. Mounted the first time either it or ORK vs CAD is opened,
+  // then kept mounted (hidden on other tabs) so its document, undo history and
+  // selection survive a tab switch. Its document is NOT part of the design: it
+  // autosaves per browser (openrocket-web:document) like the standalone app.
+  const [orkMounted, setOrkMounted] = useState(false)
+  useEffect(() => {
+    if (activeTab === 'openrocket' || activeTab === 'orkvscad') setOrkMounted(true)
+  }, [activeTab])
+  const [orkState, setOrkState] = useState<WorkbenchState | null>(null)
+  const [orkLoad, setOrkLoad] = useState<WorkbenchLoad | null>(null)
+  const [orkLoadBusy, setOrkLoadBusy] = useState(false)
+  const [orkLoadError, setOrkLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     listModels()
@@ -505,6 +539,25 @@ export default function App() {
     }
   }, [modelId, outerFaces, finFaces, finCount, massOverrides, motorSel, railLength, flight, recovery])
 
+  // "Load CAD into OpenRocket tab": the same .ork Export .ork downloads, imported
+  // into the workbench (replacing its document), so a comparison starts from the CAD.
+  const handleLoadCadIntoOrk = useCallback(async () => {
+    if (!modelId) return
+    setOrkLoadBusy(true)
+    setOrkLoadError(null)
+    try {
+      const document = await cadAsOrkDocument(
+        modelId,
+        orkRequest({ outerFaces, finFaces, finCount, motor: motorSel, railLength, flight }, recovery, massOverrides),
+      )
+      setOrkLoad({ key: Date.now(), document })
+    } catch (exc) {
+      setOrkLoadError(exc instanceof Error ? exc.message : String(exc))
+    } finally {
+      setOrkLoadBusy(false)
+    }
+  }, [modelId, outerFaces, finFaces, finCount, massOverrides, motorSel, railLength, flight, recovery])
+
   const [motorFileError, setMotorFileError] = useState<string | null>(null)
   const handleDownloadMotorFile = useCallback(async () => {
     if (!motorSel) return
@@ -620,15 +673,17 @@ export default function App() {
     [parts, selectedSet],
   )
 
-  if (error && !manifest) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-[var(--color-bg-primary)] p-8 text-[var(--color-text-secondary)]">
+  // No model (or it failed to load): said in the CAD tab's body rather than over the
+  // whole app, so the tabs that need no CAD model -- OpenRocket above all -- stay
+  // reachable on a fresh install.
+  const noModelNotice = error && !manifest ? (
+      <div className="flex flex-1 items-center justify-center p-8 text-[var(--color-text-secondary)]">
         <div className="max-w-xl rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-6">
           <h1 className="mb-2 text-lg font-semibold text-[var(--color-text-primary)]">Nothing to show</h1>
           <p className="text-sm whitespace-pre-wrap">{error}</p>
-          {/* The picker lives in the header, which does not exist yet on a
-              fresh install -- so it is repeated here, otherwise there would be
-              no way to build a first model without going back to the CLI. */}
+          {/* The header's picker follows the checkout, and a fresh install has no
+              design to hold yet -- so it is repeated here, live, otherwise there
+              would be no way to build a first model without going back to the CLI. */}
           <div className="mt-4">
             <ModelPicker
               models={models}
@@ -639,13 +694,16 @@ export default function App() {
           </div>
         </div>
       </div>
-    )
-  }
+  ) : null
+
+  // A model whose stability result predates a mass edit: the comparison says so.
+  const stabilityStale =
+    stability != null && liveStability != null && Math.abs(liveStability.cgFromNose - stability.cg.fromNose) > 1e-9
 
   // Only take over the screen while a *selected* model's manifest is loading. With
   // no model (e.g. a fresh/blank design) we still render the header + design bar so
   // the user can pick a model or switch designs -- the body shows a prompt instead.
-  if (modelId && !manifest) {
+  if (modelId && !manifest && !error) {
     return (
       <div className="flex h-screen items-center justify-center bg-[var(--color-bg-primary)] text-[var(--color-text-muted)]">
         Loading…
@@ -666,18 +724,13 @@ export default function App() {
         <h1 className="text-xl font-bold">STAR OpenRocket</h1>
 
         <nav className="flex items-center gap-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60 p-1 text-sm">
-          {(['cad', 'environment', 'flight', 'recovery', 'fullflight', 'units'] as const).map((tab) => (
+          {TABS.map((tab) => (
             <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`rounded px-3 py-1 font-medium ${activeTab === tab ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'}`}
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`rounded px-2.5 py-1 font-medium ${activeTab === tab.id ? 'bg-[var(--color-accent)] text-white' : 'text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-tertiary)]'}`}
             >
-              {tab === 'cad' ? 'CAD & Stability'
-                : tab === 'environment' ? 'Environment'
-                : tab === 'flight' ? 'Flight Dynamics'
-                : tab === 'recovery' ? 'Recovery'
-                : tab === 'fullflight' ? 'Full Flight'
-                : 'Units'}
+              {tab.label}
             </button>
           ))}
         </nav>
@@ -729,6 +782,21 @@ export default function App() {
             <UnitsPanel />
           </div>
         </div>
+      ) : activeTab === 'openrocket' ? null /* the workbench below, kept mounted */ : activeTab === 'orkvscad' ? (
+        <ReadOnlyProvider readOnly={!editable}>
+          <OrkVsCadTab
+            modelId={manifest ? modelId : null}
+            stability={stability}
+            stabilityStale={stabilityStale}
+            stabilityBusy={stabilityBusy}
+            stabilityError={stabilityError}
+            onComputeStability={handleComputeStability}
+            ork={orkState}
+            onLoadCadIntoOrk={handleLoadCadIntoOrk}
+            loadBusy={orkLoadBusy}
+            loadError={orkLoadError}
+          />
+        </ReadOnlyProvider>
       ) : (
         <ReadOnlyProvider readOnly={!editable}>
         {activeTab === 'environment' ? (
@@ -752,6 +820,8 @@ export default function App() {
           result={flightDynResult}
           onResult={setFlightDynResult}
         />
+      ) : noModelNotice ? (
+        noModelNotice
       ) : !manifest || !modelId ? (
         <div className="flex flex-1 items-center justify-center p-8 text-center text-[var(--color-text-muted)]">
           Select or build a model in the header to begin — this design has no model yet.
@@ -860,6 +930,27 @@ export default function App() {
         </>
       )}
         </ReadOnlyProvider>
+      )}
+
+      {/* The OpenRocket tab. Outside the design's ReadOnlyProvider: its document is
+          its own (not part of the design), so the checkout does not gate it. Its
+          OpenRocket light look is scoped to its own root (.orw). */}
+      {orkMounted && (
+        <div
+          className="relative min-h-0 flex-1"
+          style={{ display: activeTab === 'openrocket' ? undefined : 'none' }}
+          data-testid="openrocket-tab"
+        >
+          <div className="absolute inset-0">
+            <OpenRocketWorkbench
+              apiBase={ORK_API}
+              allowMock={false}
+              active={activeTab === 'openrocket'}
+              onState={setOrkState}
+              load={orkLoad}
+            />
+          </div>
+        </div>
       )}
 
       {flightOpen && (

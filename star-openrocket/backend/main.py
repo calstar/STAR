@@ -51,6 +51,8 @@ from physics.site import FAR_ELEV_M  # noqa: E402
 from .onshape.aero.axis import Axis
 from .onshape.aero.fins import (
     count_fins,
+    degenerate_fin_note,
+    degenerate_fin_reason,
     detect_fin_faces,
     extract_fin_planform,
     planform_outline_3d,
@@ -151,6 +153,15 @@ for _recovery_router in (
     configs_store,
 ):
     app.include_router(_recovery_router.router)
+
+# The OpenRocket tab: openrocket-web's API (a pure-Python port of OpenRocket 24.12's
+# design view -- model, .ork I/O, mass, Barrowman), mounted whole under /api/ork. It
+# is the same router openrocket-web serves at /api on its own; installed from
+# ../openrocket-web as the `orweb` package (setup.sh, dev.sh, CI, Dockerfile.api).
+# GPLv3, like OpenRocket itself -- see openrocket-web/LICENSE.
+from orweb.api import router as _openrocket_router  # noqa: E402
+
+app.include_router(_openrocket_router, prefix="/api/ork")
 
 
 def _model_dirs() -> list[Path]:
@@ -322,6 +333,33 @@ def _axis_payload(axis: Axis) -> dict:
     return {"origin": axis.origin.tolist(), "direction": axis.direction.tolist()}
 
 
+def _resolve_body(store, outer_faces, axis_payload) -> tuple[list[tuple[str, str]], Axis]:
+    """The airframe faces and axis every geometry route works against.
+
+    One rule, so /fins, /stability, /export.ork and the flight routes see the same body
+    and therefore the same fins: faces as picked (else auto-detected), and the axis as
+    sent, else the model's own -- ``detect_outer_surface``'s, read off the CAD's
+    cylinder faces. Leaving the axis to ``build_profile`` instead re-fits it to the
+    picked triangles, which on some models tilts it enough that the fin detector, run
+    against it, accepts faces /fins rejected: Compute stability saw no fins while
+    Export .ork wrote two (and the UI sends its picked faces without an axis).
+    """
+    faces = [(f.key, f.faceId) for f in outer_faces]
+    if axis_payload is not None:
+        import numpy as np
+
+        axis = Axis(
+            origin=np.asarray(axis_payload.origin, dtype=float),
+            direction=np.asarray(axis_payload.direction, dtype=float)
+            / (np.linalg.norm(axis_payload.direction) or 1.0),
+        )
+        if not faces:
+            faces = detect_outer_surface(store).faces
+        return faces, axis
+    guess = detect_outer_surface(store)
+    return (faces or guess.faces), guess.axis
+
+
 @app.get("/api/models/{model_id}/outer-surface")
 # Sync `def`, NOT `async def`, and deliberately so. This is CPU-bound work --
 # a mesh walk, a Barrowman sweep, a 6-DOF flight solve -- and an `async def`
@@ -367,10 +405,16 @@ def fins(model_id: str):
         fin_geo = store.faces_for(fin_faces)
         count = 0
         planforms: list = []
+        note = None
         if fin_geo:
             pf = extract_fin_planform(fin_geo, axis, profile.r_max)
-            count = pf.n_fins
-            planforms = [planform_outline_3d(pf, axis, az) for az in pf.azimuths]
+            reason = degenerate_fin_reason(pf)
+            if reason is not None:
+                # The same rejection /stability makes, so the guess it seeds agrees.
+                fin_faces, note = [], degenerate_fin_note(reason)
+            else:
+                count = pf.n_fins
+                planforms = [planform_outline_3d(pf, axis, az) for az in pf.azimuths]
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
@@ -381,6 +425,7 @@ def fins(model_id: str):
         # The exposed fin planforms, so Auto-detect shows the same surface Compute
         # does (rooted at the body, tab excluded) rather than nothing.
         "planforms": planforms,
+        "note": note,
     }
 
 
@@ -399,18 +444,7 @@ def stability(model_id: str, request: StabilityRequest):
     store = _load_store(model_dir)
     manifest = json.loads((model_dir / "manifest.json").read_text())
 
-    faces = [(f.key, f.faceId) for f in request.outerFaces]
-    axis = None
-    if not faces:
-        faces = detect_outer_surface(store).faces
-    if request.axis is not None:
-        import numpy as np
-
-        axis = Axis(
-            origin=np.asarray(request.axis.origin, dtype=float),
-            direction=np.asarray(request.axis.direction, dtype=float)
-            / (np.linalg.norm(request.axis.direction) or 1.0),
-        )
+    faces, axis = _resolve_body(store, request.outerFaces, request.axis)
 
     fin_faces = (
         [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
@@ -460,6 +494,7 @@ def stability(model_id: str, request: StabilityRequest):
             "area": result.fin_area,
             "planforms": result.fin_planforms,
             "symmetric": result.fin_symmetric,
+            "note": result.fin_note,
         },
         "motor": motor_block,
     }
@@ -503,18 +538,7 @@ def export_ork(model_id: str, request: OrkExportRequest):
     store = _load_store(model_dir)
     manifest = json.loads((model_dir / "manifest.json").read_text())
 
-    faces = [(f.key, f.faceId) for f in request.outerFaces]
-    if not faces:
-        faces = detect_outer_surface(store).faces
-    axis = None
-    if request.axis is not None:
-        import numpy as np
-
-        axis = Axis(
-            origin=np.asarray(request.axis.origin, dtype=float),
-            direction=np.asarray(request.axis.direction, dtype=float)
-            / (np.linalg.norm(request.axis.direction) or 1.0),
-        )
+    faces, axis = _resolve_body(store, request.outerFaces, request.axis)
     fin_faces = (
         [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
     )
@@ -583,18 +607,7 @@ def flight(model_id: str, request: StabilityRequest):
     store = _load_store(model_dir)
     manifest = json.loads((model_dir / "manifest.json").read_text())
 
-    faces = [(f.key, f.faceId) for f in request.outerFaces]
-    axis = None
-    if not faces:
-        faces = detect_outer_surface(store).faces
-    if request.axis is not None:
-        import numpy as np
-
-        axis = Axis(
-            origin=np.asarray(request.axis.origin, dtype=float),
-            direction=np.asarray(request.axis.direction, dtype=float)
-            / (np.linalg.norm(request.axis.direction) or 1.0),
-        )
+    faces, axis = _resolve_body(store, request.outerFaces, request.axis)
     fin_faces = (
         [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
     )
@@ -682,18 +695,7 @@ def flight_dynamics(model_id: str, request: FlightDynamicsRequest):
     store = _load_store(model_dir)
     manifest = json.loads((model_dir / "manifest.json").read_text())
 
-    faces = [(f.key, f.faceId) for f in request.outerFaces]
-    if not faces:
-        faces = detect_outer_surface(store).faces
-    axis = None
-    if request.axis is not None:
-        import numpy as np
-
-        axis = Axis(
-            origin=np.asarray(request.axis.origin, dtype=float),
-            direction=np.asarray(request.axis.direction, dtype=float)
-            / (np.linalg.norm(request.axis.direction) or 1.0),
-        )
+    faces, axis = _resolve_body(store, request.outerFaces, request.axis)
     fin_faces = (
         [(f.key, f.faceId) for f in request.finFaces] if request.finFaces is not None else None
     )

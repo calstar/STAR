@@ -1,0 +1,96 @@
+name: openrocket-web CI
+
+'on':
+  push:
+    branches: [main]
+    paths:
+      - 'openrocket-web/**'
+      - 'lib/stardesign-ui/**'
+      - '.github/workflows/openrocket-web-ci.yml'
+  pull_request:
+    paths:
+      - 'openrocket-web/**'
+      - 'lib/stardesign-ui/**'
+      - '.github/workflows/openrocket-web-ci.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: openrocket-web-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: openrocket-web
+
+jobs:
+  # The port against the committed golden files (OpenRocket's own output).
+  python-tests:
+    name: Port vs OpenRocket golden data
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: openrocket-web/requirements.txt
+    - run: pip install -r requirements.txt
+    - run: python -m pytest tests/ -q -rs
+
+  # The same, plus the tests that run OpenRocket itself on files the port wrote:
+  # a saved .ork must load back in OpenRocket to the same numbers.
+  openrocket-oracle:
+    name: OpenRocket reads what the port writes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      OPENROCKET_VERSION: '24.12'
+      OPENROCKET_SHA256: 4959b72f52f5f607941e9722abbb7b7f0c4a38ebbbf84204a329db9f31c4f897
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+        cache-dependency-path: openrocket-web/requirements.txt
+    - run: pip install -r requirements.txt
+    - uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: '17'
+    - name: Cache OpenRocket jar
+      id: orjar
+      uses: actions/cache@v4
+      with:
+        path: ~/openrocket
+        key: openrocket-${{ env.OPENROCKET_VERSION }}-${{ env.OPENROCKET_SHA256 }}
+    - name: Download OpenRocket
+      if: steps.orjar.outputs.cache-hit != 'true'
+      run: |
+        mkdir -p ~/openrocket
+        curl -fsSL -o ~/openrocket/OpenRocket.jar \
+          "https://github.com/openrocket/openrocket/releases/download/release-${OPENROCKET_VERSION}/OpenRocket-${OPENROCKET_VERSION}.jar"
+    - name: Verify jar
+      run: echo "${OPENROCKET_SHA256}  $HOME/openrocket/OpenRocket.jar" | sha256sum -c -
+    - name: Oracle tests
+      run: OPENROCKET_JAR=$HOME/openrocket/OpenRocket.jar python -m pytest tests/ -q -rs -m oracle
+
+  frontend:
+    name: Frontend (types, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: openrocket-web/frontend
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+        cache-dependency-path: openrocket-web/frontend/package-lock.json
+    - run: npm ci
+    - run: npm run lint
+    - run: npm test
+    - run: npm run build

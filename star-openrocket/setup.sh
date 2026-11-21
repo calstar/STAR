@@ -88,6 +88,10 @@ fi
 # a checkout and a Docker build context (see Dockerfile.api).
 pip install --quiet -e ../lib/stardesign
 ok "Shared design core installed (lib/stardesign)"
+# The OpenRocket tab's API: openrocket-web's port of OpenRocket 24.12 (package
+# `orweb`, GPLv3), mounted at /api/ork. Editable, so a change there is live here.
+pip install --quiet -e "../openrocket-web[api]"
+ok "OpenRocket port installed (openrocket-web, package orweb)"
 deactivate
 
 # ─── 3. Frontend ─────────────────────────────────────────────────────────────

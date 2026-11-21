@@ -1,0 +1,725 @@
+/*
+ * OpenRocket 24.12's look (Swing + FlatLaf Light), scoped to the workbench root
+ * so the app can sit as a tab inside star-openrocket's dark shell without
+ * either one leaking into the other. Colours are sampled from screenshots of
+ * OpenRocket 24.12 itself (docs/reference-ui/); the font is the Inter that
+ * OpenRocket ships and registers (swing/.../gui/util/GUIUtil.java).
+ */
+
+@font-face {
+  font-family: 'OR Inter';
+  /* Relative, so the host app's Vite bundles it too (see src/assets/pix/README.md). */
+  src: url('../assets/fonts/Inter-Variable.ttf') format('truetype');
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+.orw {
+  --or-bg: #f2f2f2;
+  --or-white: #ffffff;
+  --or-text: #000000;
+  --or-text-dim: #8c8c8c;
+  --or-disabled-text: #a0a0a0;
+  --or-border: #c2c2c2;
+  --or-border-dis: #cecece;
+  --or-tree-border: #969696;
+  --or-select: #2675bf;
+  --or-tab-active: #dee6ed;
+  --or-tab-underline: #3c83c5;
+  --or-slider: #2285e1;
+  --or-slider-track: #cfcfcf;
+  --or-navy: #040481;
+  --or-fig-body: #0000f0;
+  --or-fig-internal: #aa0064;
+  --or-fig-mass: #000000;
+  --or-fig-recovery: #ff0000;
+  --or-fig-motor-fill: #9b9b9b;
+  --or-fig-motor-line: #272727;
+  --or-fig-select: #00a0ff;
+
+  font-family: 'OR Inter', Inter, 'Noto Sans', 'DejaVu Sans', system-ui, Arial, sans-serif;
+  font-size: 13.4px;
+  line-height: 1.25;
+  color: var(--or-text);
+  background: var(--or-bg);
+  font-feature-settings: 'tnum' 0;
+  -webkit-font-smoothing: antialiased;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+.orw *,
+.orw *::before,
+.orw *::after {
+  box-sizing: border-box;
+}
+
+/* Tailwind's preflight makes svg/img blocks; Swing glyphs sit in the text. */
+.orw svg,
+.orw img {
+  display: inline-block;
+}
+
+.orw input,
+.orw select,
+.orw textarea,
+.orw button {
+  font: inherit;
+  color: inherit;
+}
+
+/* ── Menu bar ─────────────────────────────────────────────────────────── */
+.orw-menubar {
+  display: flex;
+  height: 24px;
+  background: var(--or-white);
+  border-bottom: 1px solid #e6e6e6;
+  font-size: 14.2px;
+  flex: none;
+  align-items: stretch;
+}
+.orw-menubar > .orw-menu-title {
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  cursor: default;
+}
+.orw-menubar > .orw-menu-title.open {
+  background: var(--or-select);
+  color: white;
+}
+.orw-popup {
+  position: absolute;
+  z-index: 60;
+  background: var(--or-white);
+  border: 1px solid #c8c8c8;
+  box-shadow: 2px 3px 8px rgba(0, 0, 0, 0.18);
+  padding: 4px 0;
+  min-width: 270px;
+  font-size: 14.2px;
+}
+.orw-popup .orw-mi {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px 0 6px;
+  white-space: nowrap;
+  position: relative;
+}
+.orw-popup .orw-mi:not(.dis):hover,
+.orw-popup .orw-mi.hot {
+  background: var(--or-select);
+  color: white;
+}
+.orw-popup .orw-mi.dis {
+  color: var(--or-disabled-text);
+}
+.orw-popup .orw-mi .ic {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.orw-popup .orw-mi .acc {
+  margin-left: auto;
+  padding-left: 24px;
+  font-size: 14px;
+  color: #505050;
+}
+.orw-popup .orw-mi:not(.dis):hover .acc {
+  color: white;
+}
+.orw-popup .orw-mi .sub {
+  margin-left: auto;
+  padding-left: 20px;
+  font-size: 12px;
+}
+.orw-popup hr {
+  border: 0;
+  border-top: 1px solid #dcdcdc;
+  margin: 4px 0;
+}
+
+/* ── Tabs (JTabbedPane, FlatLaf underline style) ─────────────────────── */
+.orw-tabs {
+  display: flex;
+  align-items: stretch;
+  height: 33px;
+  flex: none;
+  border-bottom: 1px solid #d9d9d9;
+}
+.orw-tab {
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  position: relative;
+  cursor: default;
+  white-space: nowrap;
+}
+.orw-tab + .orw-tab::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  border-left: 1px solid var(--or-border);
+}
+.orw-tab.active {
+  background: var(--or-tab-active);
+  box-shadow: inset 0 -3px 0 var(--or-tab-underline);
+}
+.orw-tab.active + .orw-tab::before,
+.orw-tab.active::before {
+  display: none;
+}
+.orw-tab:not(.active):not(.dis):hover {
+  background: #e6e6e6;
+}
+.orw-tab.dis {
+  color: var(--or-disabled-text);
+}
+.orw-tabs.small {
+  height: 32px;
+}
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+.orw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 23px;
+  padding: 0 14px;
+  background: var(--or-white);
+  border: 1px solid var(--or-border);
+  border-radius: 3px;
+  white-space: nowrap;
+  cursor: default;
+}
+.orw-btn:not(:disabled):hover {
+  background: #f7f7f7;
+  border-color: #b0b0b0;
+}
+.orw-btn:not(:disabled):active {
+  background: #e6e6e6;
+}
+.orw-btn:disabled {
+  background: var(--or-bg);
+  border-color: var(--or-border-dis);
+  color: var(--or-disabled-text);
+}
+.orw-btn:disabled img {
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.orw-btn.left {
+  justify-content: flex-start;
+  padding-left: 14px;
+}
+.orw-btn img {
+  width: 16px;
+  height: 16px;
+}
+.orw-btn:focus-visible {
+  outline: 2px solid #89b0d4;
+  outline-offset: -1px;
+}
+.orw-btn.default {
+  border-color: #b7cde3;
+}
+
+/* ── Text fields, combos, check boxes ─────────────────────────────────── */
+.orw-field {
+  height: 23px;
+  background: var(--or-white);
+  border: 1px solid var(--or-border);
+  border-radius: 3px;
+  padding: 0 6px;
+  outline: none;
+  min-width: 0;
+}
+.orw-field:focus {
+  border-color: #89b0d4;
+  box-shadow: 0 0 0 1px #89b0d4;
+}
+.orw-field:disabled {
+  background: var(--or-bg);
+  color: var(--or-disabled-text);
+  border-color: var(--or-border-dis);
+}
+.orw-field[aria-invalid='true'] {
+  border-color: #e05555;
+}
+select.orw-field {
+  appearance: none;
+  padding-right: 24px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23555' stroke-width='1.2'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+select.orw-field.italic {
+  font-style: italic;
+}
+textarea.orw-field {
+  height: auto;
+  padding: 4px 6px;
+  resize: none;
+  user-select: text;
+}
+input.orw-field {
+  user-select: text;
+}
+
+.orw-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.orw-check input {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid #a8a8a8;
+  border-radius: 2px;
+  background: white;
+  display: inline-grid;
+  place-content: center;
+}
+.orw-check input:checked {
+  border-color: var(--or-slider);
+}
+.orw-check input:checked::after {
+  content: '';
+  width: 8px;
+  height: 4px;
+  border-left: 1.6px solid var(--or-slider);
+  border-bottom: 1.6px solid var(--or-slider);
+  transform: translateY(-1px) rotate(-45deg);
+}
+.orw-check input:disabled {
+  background: var(--or-bg);
+  border-color: var(--or-border-dis);
+}
+.orw-check.dis {
+  color: var(--or-disabled-text);
+}
+
+.orw-radio input {
+  border-radius: 50%;
+}
+.orw-radio input:checked {
+  border-color: var(--or-slider);
+}
+.orw-radio input:checked::after {
+  width: 8px;
+  height: 8px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--or-slider);
+  transform: none;
+}
+
+/* Spinner: number + up/down chevrons, then a grey unit box. */
+.orw-spin {
+  display: inline-flex;
+  height: 23px;
+  border: 1px solid var(--or-border);
+  border-radius: 3px;
+  background: white;
+  overflow: hidden;
+}
+.orw-spin:focus-within {
+  border-color: #89b0d4;
+  box-shadow: 0 0 0 1px #89b0d4;
+}
+.orw-spin input {
+  border: 0;
+  outline: none;
+  padding: 0 6px;
+  width: 100%;
+  min-width: 0;
+  background: transparent;
+  user-select: text;
+}
+.orw-spin .arrows {
+  width: 20px;
+  flex: none;
+  border-left: 1px solid #d4d4d4;
+  display: flex;
+  flex-direction: column;
+}
+.orw-spin .arrows span {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
+.orw-spin .arrows span:hover {
+  background: #ececec;
+}
+.orw-spin.dis {
+  background: var(--or-bg);
+  border-color: var(--or-border-dis);
+  color: var(--or-disabled-text);
+}
+.orw-spin[aria-invalid='true'] {
+  border-color: #e05555;
+}
+.orw-unit {
+  height: 23px;
+  min-width: 34px;
+  padding: 0 6px;
+  border: 1px solid #e3e3e3;
+  background: #f0f0f0;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  cursor: default;
+  white-space: nowrap;
+}
+.orw-unit.clickable:hover {
+  border-color: var(--or-border);
+}
+.orw-unit.dis {
+  color: var(--or-disabled-text);
+}
+
+/* Slider (JSlider, FlatLaf): blue filled track, round thumb. */
+.orw-slider {
+  appearance: none;
+  height: 16px;
+  background: transparent;
+  margin: 0;
+}
+.orw-slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--or-slider) 0 var(--fill, 0%), var(--or-slider-track) var(--fill, 0%) 100%);
+}
+.orw-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--or-slider);
+  border: 0;
+}
+.orw-slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--or-slider-track);
+}
+.orw-slider::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--or-slider);
+}
+.orw-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--or-slider);
+  border: 0;
+}
+.orw-slider:disabled {
+  opacity: 0.45;
+}
+
+/* TitledBorder group box. */
+.orw-group {
+  border: 1px solid #d9d9d9;
+  padding: 10px 8px 10px 8px;
+  margin: 0;
+  min-width: 0;
+}
+.orw-group > legend {
+  padding: 0 2px;
+  margin-left: -2px;
+}
+.orw-group.bold > legend {
+  font-weight: 600;
+}
+
+/* ── Component tree ───────────────────────────────────────────────────── */
+.orw-tree {
+  background: white;
+  border: 1px solid var(--or-tree-border);
+  overflow: auto;
+  outline: none;
+  padding: 2px 0 6px 4px;
+}
+.orw-tree .row {
+  height: 22px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  position: relative;
+}
+.orw-tree .label {
+  padding: 1px 1px;
+  line-height: 18px;
+}
+.orw-tree .row.sel .label {
+  background: var(--or-select);
+  color: white;
+}
+.orw-tree .row.drop-before::after {
+  content: '';
+  position: absolute;
+  left: 30px;
+  right: 0;
+  top: -1px;
+  border-top: 2px solid var(--or-select);
+}
+.orw-tree .twist {
+  width: 9px;
+  height: 9px;
+  border: 1px solid #555;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  line-height: 1;
+  background: white;
+  position: relative;
+  z-index: 1;
+}
+.orw-tree .twist::before {
+  content: '';
+  width: 5px;
+  border-top: 1px solid #222;
+  position: absolute;
+}
+.orw-tree .twist.closed::after {
+  content: '';
+  height: 5px;
+  border-left: 1px solid #222;
+  position: absolute;
+}
+.orw-tree .guide {
+  position: absolute;
+  border-color: #a0a0a0;
+  border-style: dotted;
+  border-width: 0;
+}
+.orw-tree input.rename {
+  height: 20px;
+  border: 1px solid var(--or-select);
+  padding: 0 2px;
+  outline: none;
+}
+
+/* ── Add-component panel ──────────────────────────────────────────────── */
+.orw-addpanel {
+  position: relative;
+  border: 1px solid #d9d9d9;
+  background: var(--or-bg);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.orw-addbtn {
+  width: 100px;
+  height: 82px;
+  background: white;
+  border: 1px solid var(--or-border);
+  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 2px 7px;
+  gap: 4px;
+  text-align: center;
+  line-height: 1.1;
+  white-space: pre-line;
+  cursor: default;
+}
+.orw-addbtn img {
+  width: 48px;
+  height: 48px;
+  margin-bottom: 1px;
+}
+.orw-addbtn:not(:disabled):hover {
+  background: #f7f7f7;
+  border-color: #a9a9a9;
+}
+.orw-addbtn:disabled {
+  background: var(--or-bg);
+  border-color: var(--or-border-dis);
+  color: var(--or-disabled-text);
+}
+.orw-addbtn:disabled img {
+  opacity: 0.35;
+  filter: grayscale(1);
+}
+
+/* Split-pane handle: the "..." grip. */
+.orw-splitter {
+  flex: none;
+  height: 12px;
+  display: grid;
+  place-items: center;
+  cursor: row-resize;
+  color: #9a9a9a;
+  letter-spacing: 1px;
+  font-size: 12px;
+  line-height: 1;
+}
+.orw-vsplit {
+  flex: none;
+  width: 14px;
+  display: grid;
+  place-items: center;
+  color: #9a9a9a;
+}
+
+/* ── Rocket panel ─────────────────────────────────────────────────────── */
+.orw-figure-wrap {
+  position: relative;
+  background: white;
+  overflow: hidden;
+}
+.orw-ruler {
+  background: var(--or-bg);
+  position: absolute;
+  overflow: hidden;
+}
+.orw-overlay {
+  position: absolute;
+  font-size: 11.5px;
+  line-height: 16px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.orw-hint {
+  font-size: 11px;
+  word-spacing: 1px;
+}
+
+/* ── Tables (JTable) ──────────────────────────────────────────────────── */
+.orw-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  background: white;
+}
+.orw-table th {
+  font-weight: 400;
+  text-align: center;
+  height: 25px;
+  border-bottom: 1px solid #e6e6e6;
+  border-right: 1px solid #e6e6e6;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: white;
+  position: sticky;
+  top: 0;
+}
+.orw-table td {
+  height: 20px;
+  padding: 0 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.orw-table tr.sel td {
+  background: var(--or-select);
+  color: white;
+}
+.orw-table td.num {
+  text-align: right;
+  padding-right: 8px;
+}
+
+/* ── Dialogs (JDialog without a WM title bar, as in the reference shots) ── */
+.orw-dialog {
+  position: absolute;
+  z-index: 40;
+  background: var(--or-bg);
+  border: 1px solid #b4b4b4;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+.orw-dialog .titlebar {
+  height: 22px;
+  flex: none;
+  cursor: move;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 12px;
+  color: #6b6b6b;
+  background: #e9e9e9;
+  border-bottom: 1px solid #d6d6d6;
+}
+.orw-dialog .titlebar .x {
+  margin-left: auto;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  cursor: default;
+}
+.orw-dialog .titlebar .x:hover {
+  background: #e05555;
+  color: white;
+}
+.orw-desc {
+  background: white;
+  border: 1px solid #a9a9a9;
+  padding: 4px 6px;
+  font-size: 12.5px;
+  line-height: 15px;
+  user-select: text;
+}
+.orw-info-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #6d8fdc, #1d3fa0 70%);
+  color: white;
+  font: italic 700 13px Georgia, serif;
+  display: grid;
+  place-items: center;
+}
+.orw-scroll {
+  overflow: auto;
+}
+.orw-banner {
+  font-size: 12px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6b4e00;
+}
+
+/* Inside a host app (star-openrocket's dark shell) its global rules reach in:
+   take back the two that would show -- dark scrollbars and tabular digits. */
+.orw table {
+  font-variant-numeric: normal;
+  font-feature-settings: 'tnum' 0;
+}
+
+.orw ::-webkit-scrollbar-track {
+  background: #f2f2f2;
+}
+
+.orw ::-webkit-scrollbar-thumb {
+  background: #c2c2c2;
+  border-radius: 4px;
+}
+
+.orw ::-webkit-scrollbar-thumb:hover {
+  background: #a0a0a0;
+}

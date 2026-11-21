@@ -18,6 +18,7 @@ import type {
   StabilityRequest,
   StabilityResult,
 } from '../types'
+import type { Analysis as OrkAnalysis, Conditions as OrkConditions, RocketDocument } from '@openrocket-web'
 
 /** The server puts the real reason in `detail`; surfacing it beats a bare 502. */
 async function fail(url: string, response: Response): Promise<never> {
@@ -215,4 +216,43 @@ export async function computeFlightDynamics(
   })
   if (!response.ok) await fail(url, response)
   return response.json() as Promise<FlightDynamicsResult>
+}
+
+// -- The OpenRocket tab (openrocket-web's API, mounted at /api/ork) -------------
+
+/** Where backend/main.py mounts openrocket-web's router. */
+export const ORK_API = '/api/ork'
+
+/**
+ * The CAD as an OpenRocket document: the same .ork "Export .ork" downloads (same
+ * request body, so the same selection, motor and recovery), imported through the
+ * OpenRocket tab's own reader. What "Load CAD into OpenRocket" puts in the workbench.
+ */
+export async function cadAsOrkDocument(modelId: string, request: OrkExportRequest): Promise<RocketDocument> {
+  const exportUrl = `/api/models/${modelId}/export.ork`
+  const exported = await fetch(exportUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  })
+  if (!exported.ok) await fail(exportUrl, exported)
+  const form = new FormData()
+  form.append('file', await exported.blob(), 'cad.ork')
+  const importUrl = `${ORK_API}/ork/import`
+  const imported = await fetch(importUrl, { method: 'POST', body: form })
+  if (!imported.ok) await fail(importUrl, imported)
+  return (await imported.json()) as RocketDocument
+}
+
+/** OpenRocket's analysis of a document (openrocket-web's port of 24.12's design view). */
+export async function analyzeOrk(doc: RocketDocument, conditions: OrkConditions, signal?: AbortSignal): Promise<OrkAnalysis> {
+  const url = `${ORK_API}/analyze`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ document: doc, conditions }),
+    signal,
+  })
+  if (!response.ok) await fail(url, response)
+  return (await response.json()) as OrkAnalysis
 }
