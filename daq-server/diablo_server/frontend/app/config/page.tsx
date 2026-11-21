@@ -3202,6 +3202,12 @@ export default function ConfigPage() {
           {activeTab === 'roles' && (
             <div className="bg-card rounded-lg p-6">
               <h2 className="text-xl font-bold mb-4">Sensor Roles</h2>
+              {Object.values((config.boards || {}) as Record<string, any>).some((b) => b?.type === 'T7') && (
+                <p className="text-sm text-text-muted mb-4">
+                  LabJack T7 channels are named, and their conversion set, in each T7&apos;s channel
+                  table on the Boards tab.
+                </p>
+              )}
               <div className="space-y-8">
                 {/* One role panel per sensor board in config: sensor_roles_<boardKey>. Generalized
                     from a fixed pt_board/pt2/rtd/tc list so any board (incl. a 3rd PT board or an

@@ -3,9 +3,13 @@
  *
  * Listens on TCP (default port 9998) for newline-terminated text commands:
  *
- *   TRANSITION:<state_name>[:<ms>]   — request state transition; the optional duration
+ *   TRANSITION:<state_name>[:<ms>][:VALVES=<role>=<ms|shut>,...]
+ *                                    — request state transition; the optional duration
  *                                      overrides the hold of a state configured to accept
- *                                      one (never the burn state — that is refused)
+ *                                      one (never the burn state — that is refused), and the
+ *                                      optional VALVES plan retimes or holds shut individual
+ *                                      valves for that one entry (same gate as the duration:
+ *                                      a gui-settable hold state only). See ValvePlan.hpp.
  *   ACTUATOR:<role_name>:<0|1>       — manual actuator command (debug mode only)
  *   DEBUG_MODE:<0|1>                 — toggle debug mode
  *   EXTEND_FIRE                      — extend FIRE window
@@ -41,6 +45,7 @@
 
 #include "control/HoldParse.hpp"
 #include "control/SequencerService.hpp"
+#include "control/ValvePlan.hpp"
 
 namespace {
 std::atomic<bool> g_running{true};
@@ -81,9 +86,26 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
 
     // ── TRANSITION:<state_name> ──────────────────────────────────────────
     if (cmd.compare(0, 11, "TRANSITION:") == 0) {
-        const std::string rest = trim(cmd.substr(11));
+        std::string rest = trim(cmd.substr(11));
         std::string state_name = rest;
         uint32_t hold_ms = 0;
+        sequencer::ValvePlan plan;
+
+        // Optional trailing :VALVES=<plan>, stripped BEFORE the duration is parsed so the
+        // duration's "split on the last colon" sees the same string it always did. Keyed on a
+        // literal marker rather than on position: a state name would have to contain ":VALVES="
+        // to be mistaken for one, and such a name misparses into an unknown state that is refused
+        // rather than into an unintended actuation — the direction to fail in.
+        const size_t vmark = rest.rfind(":VALVES=");
+        if (vmark != std::string::npos) {
+            std::string why;
+            if (!sequencer::parseValvePlan(trim(rest.substr(vmark + 8)), plan, &why)) {
+                sendReply("ERR:" + why + "\n");
+                return;
+            }
+            rest = trim(rest.substr(0, vmark));
+            state_name = rest;
+        }
 
         // Optional trailing :<ms>. Split on the LAST colon like the ACTUATOR branch below, because
         // state names contain spaces and may not be assumed colon-free either — and only accept the
@@ -107,9 +129,16 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
         }
 
         std::string why;
+        // An empty plan takes the plan-free overload, so a frame with no VALVES field reaches the
+        // service by exactly the path it did before plans existed. Evaluated lazily, AFTER the
+        // empty-name check — a transition must not be attempted for a command already known bad.
+        auto accepted = [&]() {
+            return plan.empty() ? svc.transitionTo(state_name, hold_ms, &why)
+                                : svc.transitionTo(state_name, hold_ms, plan, &why);
+        };
         if (state_name.empty()) {
             sendReply("ERR:empty state name\n");
-        } else if (svc.transitionTo(state_name, hold_ms, &why)) {
+        } else if (accepted()) {
             // Echo the window actually used so the client displays the sequencer's number rather
             // than assuming its own was honoured.
             sendReply(hold_ms ? "OK:" + std::to_string(hold_ms) + "\n" : std::string("OK\n"));

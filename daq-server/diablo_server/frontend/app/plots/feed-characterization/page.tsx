@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { useSensorStore } from '@/lib/store';
 import { useSensorConfig } from '@/lib/sensor-config';
 import { useControlMode } from '@/lib/control-mode';
-import { loadStates, flowStateId, flowSettings, stateIdByName, stateName } from '@/lib/states';
+import { loadStates, flowStateId, flowSettings, stateIdByName, stateName, type FlowConfig } from '@/lib/states';
 import { getApiBaseUrl, getWebSocketClient } from '@/lib/websocket';
 import { getEntityColor } from '@/lib/sensor-colors';
 import { MessageType } from '@/lib/types';
@@ -31,6 +31,14 @@ import {
   coefficientOfVariationPercent,
   computeCdAIntegral,
   reynoldsPipe,
+  buildValvePlan,
+  referenceValve,
+  plannedHoldMs,
+  valvePlanProblem,
+  valvePlanSummary,
+  valveOpenDelayMs,
+  valveSettingFor,
+  type ValveSetting,
   sliceSamplesByTime,
   upstreamSlopePsiPerSec,
   averagePressures,
@@ -56,6 +64,14 @@ interface CharacterizationResult {
   sampleCount?: number;
   stdevDeltaPsi?: number;
   cvDeltaPPercent?: number;
+  /**
+   * What the valves did on the run this number came from — "Ox Main +250 ms · Fuel Main held shut".
+   *
+   * A CdA measured with one side held shut, or with a stagger trimmed between shots, is a
+   * measurement of a different thing than the row above it. Without this the table is two numbers
+   * that disagree and no way to tell why, which is how a bench session ends in an argument.
+   */
+  valves?: string;
 }
 
 const FLUID_PROPERTIES: Record<string, { density: number; viscosity: number }> = {
@@ -137,6 +153,20 @@ export default function FeedCharacterizationPage() {
    *  the window. */
   const [drainTimeoutMs, setDrainTimeoutMs] = usePersisted('drainTimeoutMs', 3000);
 
+  /**
+   * Per-valve settings for the next run, keyed by actuator role name.
+   *
+   * Persisted like the rest of the operator's setup: trimming the lead between the two mains is an
+   * afternoon of shots, and losing the trim on a page reload means starting the search over. The
+   * CONFIG is still the default — a role absent from here runs on the delays CSV's timing — so
+   * this only ever holds what the operator deliberately changed, and the card says so beside each
+   * row. Nothing here is sent unless it differs from the config.
+   */
+  const [valveSettings, setValveSettings] = usePersisted<Record<string, ValveSetting>>('valvePlan', {});
+  /** What the valves actually did on the last run, frozen at the moment it ran. Read from the
+   *  settings at run time rather than at Calculate time: the operator trims between the two. */
+  const [lastValveSummary, setLastValveSummary] = useState<string | null>(null);
+
   const [results, setResults] = useState<CharacterizationResult[]>([]);
 
   const [pulsePhase, setPulsePhase] = useState<PulsePhase>('idle');
@@ -160,7 +190,7 @@ export default function FeedCharacterizationPage() {
   // so the operator can rename or move it in Config without touching this page. null means no state
   // is flagged, which disables the run rather than guessing one.
   const [flowState, setFlowState] = useState<number | null>(null);
-  const [flowCfg, setFlowCfg] = useState<{ returnTarget: string; durationMs: number | null; maxMs: number | null } | null>(null);
+  const [flowCfg, setFlowCfg] = useState<FlowConfig | null>(null);
   /** Last backend ERROR frame. The page used to drop these, so a refused command looked like a
    *  run that simply never produced flow. */
   const [pulseError, setPulseError] = useState<string | null>(null);
@@ -173,7 +203,7 @@ export default function FeedCharacterizationPage() {
       if (cancelled) return;
       setFlowState(flowStateId());
       const f = flowSettings();
-      setFlowCfg(f ? { returnTarget: f.returnTarget, durationMs: f.durationMs, maxMs: f.maxMs } : null);
+      setFlowCfg(f);
       if (f?.durationMs) setCommandedDurationSec(f.durationMs / 1000);
     });
     return () => { cancelled = true; };
@@ -226,6 +256,57 @@ export default function FeedCharacterizationPage() {
   const canHold = controlEnabled;
   const canManual = controlEnabled && debugMode;
   const maxHoldSec = flowCfg?.maxMs ? flowCfg.maxMs / 1000 : null;
+
+  // ── The valves this run moves ────────────────────────────────────────────────────────────────
+  //
+  // Which valves a characterization run opens is the flow state's own column, resolved by the
+  // server from the same two CSVs the sequencer reads. Nothing here names a valve: a stand whose
+  // mains are called something else, or which has three of them, gets its own rows with no code
+  // change, and a stand with no readable CSV gets no rows and the controls say so rather than
+  // offering valves that may not exist.
+  const flowValves = useMemo(() => flowCfg?.valves ?? [], [flowCfg]);
+  const gateActuator = flowCfg?.gateActuator ?? null;
+  const requestedMs = Math.round(commandedDurationSec * 1000);
+
+  /** This run's setting for one valve. Absent = the config's own timing, which is the default. */
+  const settingFor = useCallback(
+    (role: string) => valveSettingFor(flowValves, valveSettings, role),
+    [flowValves, valveSettings],
+  );
+  const setValve = useCallback(
+    (role: string, patch: Partial<ValveSetting>) =>
+      setValveSettings((prev) => ({ ...prev, [role]: { ...settingFor(role), ...patch } })),
+    [setValveSettings, settingFor],
+  );
+  const openDelayMs = useCallback(
+    (role: string) => valveOpenDelayMs(flowValves, valveSettings, role),
+    [flowValves, valveSettings],
+  );
+
+  const valvePlan = useMemo(
+    () => buildValvePlan(flowValves, valveSettings),
+    [flowValves, valveSettings],
+  );
+  /** True when nothing differs from the config — then the field is omitted from the command
+   *  entirely and the frame is byte-for-byte the one this page always sent. */
+  const planIsConfig = Object.keys(valvePlan).length === 0;
+
+  const reference = useMemo(
+    () => referenceValve(flowValves, valveSettings, gateActuator),
+    [flowValves, valveSettings, gateActuator],
+  );
+  const holdMsPlanned = useMemo(
+    () => plannedHoldMs(requestedMs, flowValves, valveSettings, gateActuator),
+    [requestedMs, flowValves, valveSettings, gateActuator],
+  );
+  const planProblem = useMemo(
+    () => valvePlanProblem(requestedMs, flowValves, valveSettings, gateActuator),
+    [requestedMs, flowValves, valveSettings, gateActuator],
+  );
+  const valveSummary = useCallback(
+    () => valvePlanSummary(requestedMs, flowValves, valveSettings, gateActuator),
+    [requestedMs, flowValves, valveSettings, gateActuator],
+  );
   // The PT list comes from the rig's own [sensor_roles_*], so it follows a config edit with no code
   // change. The page used to hardcode Fuel/LOX/COPV pairs belonging to the full stand — on a rig
   // that does not have those roles every preset resolved to null, dP was never a number, and the
@@ -291,6 +372,12 @@ export default function FeedCharacterizationPage() {
       setPulseStatus('Arm control first — the backend rejects control commands otherwise.');
       return;
     }
+    if (planProblem) {
+      // The sequencer refuses these too, without transitioning. Stopping here costs the operator
+      // a sentence instead of a refusal notification after the baseline has already been taken.
+      setPulseStatus(planProblem);
+      return;
+    }
 
     pulseAbortRef.current = false;
     pulseSamplesRef.current = [];
@@ -347,8 +434,26 @@ export default function FeedCharacterizationPage() {
       // duration that never happened.
       const holdMs = Math.round(commandedDurationSec * 1000);
       setPulsePhase('wait_spike');
-      setPulseStatus(`Sequencer holding ${(holdMs / 1000).toFixed(3)} s — recording trace…`);
-      ws.sendCommand({ commandType: 'state_transition', data: { state: flowState, holdMs } });
+      // The duration asked for is how long the REFERENCE valve is open; the sequencer holds the
+      // state for longer or shorter than that to make it so (see plannedHoldMs). Say both numbers,
+      // because the top of the trace is the state and the window being integrated is the valve.
+      setPulseStatus(
+        `Sequencer holding ${stateName(flowState)} ${(holdMsPlanned / 1000).toFixed(3)} s` +
+        (reference ? ` so "${reference}" is open ${(holdMs / 1000).toFixed(3)} s` : '') +
+        ' — recording trace…',
+      );
+      // Freeze what the valves are doing for the run record before anything moves: the operator
+      // trims between shots, so reading this at Calculate time would label the number with the
+      // NEXT run's plan.
+      setLastValveSummary(valveSummary());
+      ws.sendCommand({
+        commandType: 'state_transition',
+        // Omitted entirely when nothing differs from the config, so an untouched card puts the
+        // same frame on the wire it always did.
+        data: planIsConfig
+          ? { state: flowState, holdMs }
+          : { state: flowState, holdMs, valvePlan },
+      });
 
       // Observe the entry and exit rather than assuming them: the window that counts is the one the
       // sequencer actually ran, and if it refuses the request we must not sit here pretending.
@@ -356,7 +461,9 @@ export default function FeedCharacterizationPage() {
       let entered = false;
       let exited = false;
       let tValveCloseSec: number | null = null;
-      const giveUpAt = Date.now() + holdMs + spikeTimeoutMs;
+      // Measured against the STATE's window, not the valve's: what is being waited for is the
+      // sequencer leaving the hold, and a plan can make the state's window the longer of the two.
+      const giveUpAt = Date.now() + holdMsPlanned + spikeTimeoutMs;
       while (Date.now() < giveUpAt) {
         if (pulseAbortRef.current) break;
         await sleep(SAMPLE_PERIOD_MS);
@@ -510,8 +617,9 @@ export default function FeedCharacterizationPage() {
       pulseInFlightRef.current = false;
       setPulsePhase('idle');
     }
-  }, [baselineMs, canHold, commandedDurationSec, downEntity, drainTimeoutMs, flowState, pulsePhase,
-    sampleNow, spikeDeltaPsi, spikeTimeoutMs, upEntity, ventToAtmosphere, ws]);
+  }, [baselineMs, canHold, commandedDurationSec, downEntity, drainTimeoutMs, flowState, planProblem,
+    pulsePhase, planIsConfig, holdMsPlanned, reference, sampleNow, spikeDeltaPsi, spikeTimeoutMs, upEntity,
+    valvePlan, valveSummary, ventToAtmosphere, ws]);
 
   const cancelPulse = useCallback(() => {
     pulseAbortRef.current = true;
@@ -584,6 +692,7 @@ export default function FeedCharacterizationPage() {
       sampleCount: n,
       stdevDeltaPsi,
       cvDeltaPPercent,
+      valves: lastValveSummary ?? undefined,
     };
 
     setResults((prev) => [...prev, newResult]);
@@ -627,6 +736,7 @@ export default function FeedCharacterizationPage() {
       'Baseline Down (PSI)',
       'Spike t (s)',
       'Samples',
+      'Valves',
     ];
     const rows = results.map((r) => [
       r.timestamp,
@@ -646,6 +756,8 @@ export default function FeedCharacterizationPage() {
       r.baselineDownPsi?.toFixed(2) ?? '',
       r.spikeTimeSec?.toFixed(4) ?? '',
       r.sampleCount?.toString() ?? '',
+      // Quoted: the summary carries the separators this file is built out of.
+      `"${(r.valves ?? '').replace(/"/g, '""')}"`,
     ]);
 
     const csvContent =
@@ -673,6 +785,10 @@ export default function FeedCharacterizationPage() {
             system: `${upEntity} / ${ventToAtmosphere ? 'atm' : downEntity}`,
             fluid: selectedFluid,
             commandedDurationSec,
+            // What the valves did, and the plan that produced it — a trace without this cannot be
+            // compared against the next one.
+            valves: lastValveSummary,
+            valvePlan: planIsConfig ? null : valvePlan,
             baselineMs,
             spikeDeltaPsi,
             baselineDownPsi: lastBaselinePsi,
@@ -713,6 +829,9 @@ export default function FeedCharacterizationPage() {
         shuts (drain). CdA comes from ∫√ΔP dt over that window, so a decaying blowdown ΔP is handled
         exactly rather than averaged. Weigh the catch, enter the mass, Calculate. Model: incompressible
         ṁ = CdA√(2ρΔP) — right for water under GN2; a gas through the orifice needs compressible relations.
+        The <strong>Valves</strong> card retimes that one run: trim each valve&apos;s delay until both
+        mains open together, or hold one side shut to characterize a single tank. Those overrides
+        apply to the run you press, never to the config.
       </p>
 
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-3 flex-shrink-0">
@@ -897,6 +1016,121 @@ export default function FeedCharacterizationPage() {
         </div>
 
         <div className="bg-card border border-gray-800 rounded-lg p-4 flex flex-col gap-3">
+          <h2 className="text-xs font-bold text-text-muted uppercase tracking-widest border-b border-gray-800 pb-2 flex items-center justify-between">
+            <span>Valves (this run)</span>
+            {!planIsConfig && <span className="text-[9px] text-amber-400 normal-case tracking-normal">overridden</span>}
+          </h2>
+
+          <p className="text-[9px] text-gray-500 leading-snug">
+            Every valve <span className="font-mono">{flowState !== null ? stateName(flowState) : 'the flow state'}</span>{' '}
+            opens, with the stagger its delays column gives it. Change one here and it applies to
+            the next run only — the config is untouched, so nothing survives into a run you did not
+            set up. Trim the delays until both mains open together; hold a side shut to characterize
+            one tank at a time.
+          </p>
+
+          {flowValves.length === 0 ? (
+            <p className="text-[10px] text-amber-200 leading-snug border border-amber-900/50 rounded p-2 bg-amber-950/30">
+              The state-machine CSVs did not say which valves this state opens, so there is nothing
+              to retime here. The run still works on the config&apos;s own timing. Check Config →
+              State management if you expected rows.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {flowValves.map((v) => {
+                const st = settingFor(v.role);
+                const d = openDelayMs(v.role);
+                const isRef = reference === v.role;
+                const closeAt = holdMsPlanned + v.closeDelayMs;
+                return (
+                  <div
+                    key={v.role}
+                    className={`rounded border p-2 flex flex-col gap-1.5 ${st.shut ? 'border-gray-800 bg-gray-950/60' : 'border-gray-700 bg-gray-900/40'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`font-mono text-[11px] ${st.shut ? 'text-gray-500 line-through' : 'text-white'}`}>
+                        {v.role}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {v.role === flowCfg?.gateActuator && (
+                          <span className="text-[8px] uppercase font-bold text-gray-500 border border-gray-700 rounded px-1" title="[flow].gate_actuator — the valve the configured window is measured on">
+                            gate
+                          </span>
+                        )}
+                        {isRef && (
+                          <span className="text-[8px] uppercase font-bold text-blue-300 border border-blue-900 rounded px-1" title="The open duration above is how long THIS valve is open; the state is held longer or shorter to make that true.">
+                            timed
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <label className="flex items-center gap-1 text-[9px] uppercase text-text-muted cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!st.shut}
+                          disabled={pulseBusy}
+                          onChange={(e) => setValve(v.role, { shut: !e.target.checked })}
+                        />
+                        Flow
+                      </label>
+                      <div className="flex items-center gap-1 ml-auto">
+                        <span className="text-[9px] uppercase text-text-muted">Delay</span>
+                        <input
+                          type="number"
+                          min={0}
+                          step={10}
+                          value={st.delayMs}
+                          disabled={pulseBusy || st.shut}
+                          onChange={(e) => setValve(v.role, { delayMs: Number(e.target.value) })}
+                          title="Milliseconds after the sequencer enters the state before this valve is commanded. 0 cancels a stagger the config declares."
+                          className={`w-16 bg-gray-900 border rounded px-1.5 py-0.5 text-[11px] font-mono text-right disabled:opacity-40 ${d !== v.delayMs && !st.shut ? 'border-amber-600 text-amber-300' : 'border-gray-700'}`}
+                        />
+                        <span className="text-[9px] text-text-muted">ms</span>
+                      </div>
+                    </div>
+
+                    <p className="text-[9px] text-gray-500 font-mono leading-snug">
+                      {st.shut
+                        ? 'held shut — commanded closed on entry and kept there'
+                        : `opens +${d} ms · closes +${closeAt} ms · open ${closeAt - d} ms`}
+                      {!st.shut && d !== v.delayMs && (
+                        <span className="text-amber-500/80"> · config {v.delayMs} ms</span>
+                      )}
+                    </p>
+                  </div>
+                );
+              })}
+
+              <div className="flex items-center justify-between gap-2 border-t border-gray-800 pt-2">
+                <p className="text-[9px] text-gray-500 leading-snug">
+                  State held <span className="font-mono text-gray-300">{holdMsPlanned} ms</span>
+                  {reference
+                    ? <> so <span className="font-mono text-gray-300">{reference}</span> is open the {requestedMs} ms asked for</>
+                    : " — no valve is timed, so this is the state's own window"}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setValveSettings({})}
+                  disabled={pulseBusy || planIsConfig}
+                  className="text-[9px] uppercase font-bold border border-gray-700 rounded px-2 py-1 disabled:opacity-30 hover:bg-gray-800"
+                  title="Drop every override and run the config's own valve timing"
+                >
+                  Reset to config
+                </button>
+              </div>
+
+              {planProblem && (
+                <p className="text-[10px] text-red-200 leading-snug border border-red-900/50 rounded p-2 bg-red-950/30">
+                  {planProblem}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="bg-card border border-gray-800 rounded-lg p-4 flex flex-col gap-3">
           <h2 className="text-xs font-bold text-text-muted uppercase tracking-widest border-b border-gray-800 pb-2">
             Capture
           </h2>
@@ -956,7 +1190,7 @@ export default function FeedCharacterizationPage() {
               <button
                 type="button"
                 onClick={() => void runTimedPulse()}
-                disabled={pulseBusy || flowState === null || !canHold}
+                disabled={pulseBusy || flowState === null || !canHold || planProblem !== null}
                 title={flowState !== null ? `Holds ${stateName(flowState)} for exactly this long` : undefined}
                 className="ctl border-[var(--color-warning)] text-[var(--color-warning)] hover:!border-[var(--color-warning)] hover:!bg-[var(--color-warning-solid)] hover:!text-white h-11 w-full text-[12px]"
               >
@@ -1193,6 +1427,9 @@ export default function FeedCharacterizationPage() {
                 <th className="px-2 py-1 font-bold">σΔP</th>
                 <th className="px-2 py-1 font-bold">CdA</th>
                 <th className="px-2 py-1 font-bold">Re</th>
+                {/* What the valves did. A row measured with one side held shut, or with a trimmed
+                    stagger, is a measurement of a different thing than the row above it. */}
+                <th className="px-2 py-1 font-bold">Valves</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800/40">
@@ -1211,11 +1448,14 @@ export default function FeedCharacterizationPage() {
                     <td className="px-2 py-1 font-mono">{r.stdevDeltaPsi?.toFixed(2) ?? '—'}</td>
                     <td className="px-2 py-1 font-mono text-emerald-400">{r.cda.toExponential(3)}</td>
                     <td className="px-2 py-1 font-mono text-amber-400">{r.re.toExponential(2)}</td>
+                    <td className="px-2 py-1 text-gray-400 max-w-[22rem] truncate" title={r.valves ?? undefined}>
+                      {r.valves ?? '—'}
+                    </td>
                   </tr>
                 ))}
               {results.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-3 py-4 text-center text-gray-600 italic">
+                  <td colSpan={9} className="px-3 py-4 text-center text-gray-600 italic">
                     No data recorded.
                   </td>
                 </tr>

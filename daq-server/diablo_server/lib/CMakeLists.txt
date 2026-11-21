@@ -301,6 +301,28 @@ add_test(NAME hold_rules COMMAND test_hold_rules)
 # loaded box pushes it straight past them. It binds a fixed UDP port too.
 set_tests_properties(hold_rules PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
+add_executable(test_valve_plan
+    test/test_valve_plan.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+)
+target_include_directories(test_valve_plan PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_valve_plan
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME valve_plan COMMAND test_valve_plan)
+# RUN_SERIAL for the same two reasons as hold_rules: millisecond bounds on real hold windows, and a
+# fixed UDP port.
+set_tests_properties(valve_plan PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+
 add_executable(test_script_states
     test/test_script_states.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
@@ -362,6 +384,9 @@ add_executable(test_rtd_board test/test_rtd_board.cpp)
 target_link_libraries(test_rtd_board fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME rtd_board COMMAND test_rtd_board)
 
+add_executable(test_resubscribe_backoff test/test_resubscribe_backoff.cpp)
+target_link_libraries(test_resubscribe_backoff fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME resubscribe_backoff COMMAND test_resubscribe_backoff)
 
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.

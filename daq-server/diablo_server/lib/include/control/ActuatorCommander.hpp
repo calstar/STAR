@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "control/StateMachine.hpp"
+#include "control/ValvePlan.hpp"
 #include "elodin/ElodinClient.hpp"
 
 namespace sequencer {
@@ -86,8 +87,19 @@ public:
      * the CSV's per-actuator delays as a staged schedule; on the 1 Hz republish it sends the
      * settled (final) positions with no delay. Without that split the republish would re-arm every
      * pending delay once a second and the schedule would never finish.
+     *
+     * @param plan optional per-run override of the two CSVs — a valve held shut, or opened on its
+     *        own delay instead of the column's. Null (and empty) is the CSVs alone, byte for byte
+     *        what this did before plans existed.
+     *
+     *        Only read on a transition, and then REMEMBERED for as long as the state is current
+     *        (see active_plan_). The remembering is not an optimisation: the 1 Hz republish sends
+     *        the settled positions again, and a republish that resolved them from the column alone
+     *        opened a valve the plan was holding shut one second into the run — the entry commanded
+     *        it closed, correctly, and the first republish then opened it. A plan has to be a
+     *        property of the state's occupancy, not of the instant it was entered.
      */
-    void applyForState(State state, bool is_transition = false);
+    void applyForState(State state, bool is_transition = false, const ValvePlan* plan = nullptr);
 
     /**
      * Start the 1 Hz continuous re-send loop for the given state.
@@ -183,6 +195,18 @@ private:
     std::map<std::string, ActuatorRole> roles_;
     /** state -> actuator -> delay in seconds, from state_machine_actuator_delays.csv. */
     std::map<std::string, std::map<std::string, double>> state_actuator_delays_;
+
+    /**
+     * The plan the CURRENT state was entered with, and which state that was.
+     *
+     * Keyed by state so it cannot leak: an abort entry does not come through the transition path
+     * that clears this, and a plan silently applying to the abort state's column would be a valve
+     * held shut during an abort. Entering any other state makes it inert, and the next transition
+     * into this one (with or without a plan of its own) replaces it.
+     */
+    std::mutex plan_mutex_;
+    ValvePlan active_plan_;
+    State active_plan_state_{State::UNKNOWN};
     /** Bumped on every transition so an in-flight delayed stage from the previous state aborts
      *  instead of landing after we have already moved on. */
     State fire_state_{State::FIRE};

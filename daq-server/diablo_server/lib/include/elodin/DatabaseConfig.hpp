@@ -119,6 +119,16 @@ public:
                                           const std::vector<uint8_t>& board_ids);
 
     /**
+     * @brief Register BOARD firmware-digest VTables for specific board IDs.
+     *
+     * packet_id {0x11, board_id}, written only when a board's firmware digest
+     * changes (see routing/HeartbeatRouter and comms BoardFirmwareMessage.hpp).
+     * Shares the heartbeat's entity so a board's facts stay on one entity.
+     */
+    static bool register_firmware_tables(ElodinClient& client,
+                                         const std::vector<uint8_t>& board_ids);
+
+    /**
      * @brief Register SELF_TEST VTables for specific board IDs.
      */
     static bool register_self_test_tables(ElodinClient& client,
