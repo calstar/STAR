@@ -30,6 +30,7 @@ set(FSW_SOURCES
     src/calibration/PTCalibration.cpp
     src/calibration/CubicCalibrationStore.cpp
     src/calibration/LcTareStore.cpp
+    src/calibration/ValveCommandCurrent.cpp
     src/calibration/CaptureWindow.cpp
     src/calibration/SensorCalibration.cpp
     src/calibration/TypeK.cpp
@@ -85,6 +86,10 @@ add_test(NAME subscription_tracker COMMAND test_subscription_tracker)
 add_executable(test_ball_valve_position test/test_ball_valve_position.cpp)
 target_link_libraries(test_ball_valve_position fsw_daq_lib)
 add_test(NAME ball_valve_position COMMAND test_ball_valve_position)
+
+add_executable(test_ball_valve_current test/test_ball_valve_current.cpp)
+target_link_libraries(test_ball_valve_current fsw_daq_lib)
+add_test(NAME ball_valve_current COMMAND test_ball_valve_current)
 
 add_executable(test_robust_ddp test/test_robust_ddp.cpp)
 target_include_directories(test_robust_ddp PRIVATE

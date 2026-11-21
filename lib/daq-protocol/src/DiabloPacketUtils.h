@@ -148,6 +148,30 @@ size_t create_stacklight_command_packet(const StacklightCommandPacket &data,
                                         uint8_t *buffer, size_t buffer_size);
 
 /**
+ * @brief Creates a VALVE_CURRENT_CONFIG packet (type 16).
+ *
+ * Layout: PacketHeader + ValveCurrentConfigPacket (num_valves) +
+ * num_valves x ValveCurrentEntry (actuator_id, closed_ua, open_ua).
+ * @return bytes written, or 0 if the buffer is too small or there are more
+ *         than MAX_ACTUATORS_PER_BOARD entries.
+ */
+size_t create_valve_current_config_packet(const std::vector<ValveCurrentEntry> &entries,
+                                          uint32_t timestamp_ms,
+                                          uint8_t *buffer, size_t buffer_size);
+
+/**
+ * @brief Creates a VALVE_TEST_CURRENT packet (type 17).
+ *
+ * Layout: PacketHeader + ValveTestCurrentPacket (num_valves) +
+ * num_valves x ValveTestCurrentEntry (actuator_id, ua).
+ * @return bytes written, or 0 if the buffer is too small or there are more
+ *         than MAX_ACTUATORS_PER_BOARD entries.
+ */
+size_t create_valve_test_current_packet(const std::vector<ValveTestCurrentEntry> &entries,
+                                        uint32_t timestamp_ms,
+                                        uint8_t *buffer, size_t buffer_size);
+
+/**
  * @brief Creates a LOGS packet (type 15): buffered board log text for the server.
  *
  * Layout: PacketHeader (LOGS) + flags (1B) + text_len (2B, uint16 LE) + text bytes.
@@ -234,6 +258,25 @@ bool parse_environmental_data_packet(const uint8_t *buffer, size_t buffer_size,
 bool parse_stacklight_command_packet(const uint8_t *buffer, size_t buffer_size,
                                      PacketHeader &header_out,
                                      StacklightCommandPacket &data_out);
+
+/**
+ * @brief Parses a VALVE_CURRENT_CONFIG packet from buffer.
+ * @return true on success, false on error (type mismatch, truncated, or more
+ *         than MAX_ACTUATORS_PER_BOARD entries). Values are not range-checked:
+ *         that is the board's call.
+ */
+bool parse_valve_current_config_packet(const uint8_t *buffer, size_t buffer_size,
+                                       PacketHeader &header_out,
+                                       std::vector<ValveCurrentEntry> &entries_out);
+
+/**
+ * @brief Parses a VALVE_TEST_CURRENT packet from buffer.
+ * @return true on success, false on type mismatch, truncation, or more than
+ *         MAX_ACTUATORS_PER_BOARD entries.
+ */
+bool parse_valve_test_current_packet(const uint8_t *buffer, size_t buffer_size,
+                                     PacketHeader &header_out,
+                                     std::vector<ValveTestCurrentEntry> &entries_out);
 
 /**
  * @brief Parses a Sensor Config packet from buffer.

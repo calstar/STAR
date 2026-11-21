@@ -25,11 +25,29 @@ below would read, converted from its calibrated 120 ohm reading.
 
 | Direction | Packet | Meaning |
 |---|---|---|
-| server → board | `ACTUATOR_COMMAND` actuator 1, 2 | 1 = open (20 mA), 0 = closed |
+| server → board | `ACTUATOR_COMMAND` actuator 1, 2 | 1 = open, 0 = closed, at that valve's command current (default 20 / 4 mA) |
+| server → board | `VALVE_CURRENT_CONFIG` (16) | each valve's closed / open command current in µA, every cycle (config_broadcast, from `ball_valve_currents.json`); kept in NVS |
+| server → board | `VALVE_TEST_CURRENT` (17) | a trial current while calibrating (from `ball_valve_trials.json`), 0 = none; see "Command current" below |
 | server → board | `ACTUATOR_CONFIG` | only the log-mode byte is read |
 | server → board | `SERVER_HEARTBEAT` | board is Active while current; after 5 s without one it **opens the valve** and ignores CLOSE until heartbeats return |
 | board → server | `BOARD_HEARTBEAT` | |
 | board → server | `SENSOR_DATA` sensors 1, 2 | position, raw 12-bit counts: V = counts/4095·3.3, mA = V·10, % open = (mA−4)/16·100 |
+
+## Command current (added 2026-11-20)
+
+The Calibration page sets the current each valve is driven at to be fully closed and fully open,
+in place of the ideal 4 / 20 mA: type a trial current and **Drive** (the board drives the valve at
+it now, whatever it is commanded), watch % open, then **Save as open** / **Save as closed**. That
+current becomes the state's and the trial ends. **Reset** returns the valve to 4 / 20.
+
+- Store: `backend/src/ball-valve-current.ts` writes `ball_valve_currents.json` and
+  `ball_valve_trials.json` (a trial expires after 2 min); `lib` `ValveCommandCurrent.hpp` parses
+  them; config_broadcast sends both packets to every BALL_VALVE board every cycle.
+- Board (`firmware/Hotfire_Code/common/ball_valve_current.h`): 3.8-20.475 mA, ends at least 1 mA
+  apart. A trial needs current heartbeats, is dropped 3 s after the server stops repeating it, and
+  is ended by a command that changes that valve's state, the failsafe or an OTA. One the board
+  ended is not resumed by the server's next repeat: Stop, or Drive a different current.
+- The page no longer captures position endpoints; a stored one is shown with "Clear position cal".
 
 Goal: the valve is configured as a board plus an actuator role, appears as an
 actuator everywhere actuators appear, shows **% open when commanded open and %

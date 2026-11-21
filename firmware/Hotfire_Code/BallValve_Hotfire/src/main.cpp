@@ -7,7 +7,14 @@
  *   command   MCP4728 DAC (I2C 0x60, channel A = valve 1, B = valve 2) into
  *             an XTR111, 10 mA per volt: a 4-20 mA loop sourced from the 24 V
  *             supply into the actuator's input. ACTUATOR_COMMAND state 1 is
- *             20 mA (valve open), state 0 is 4 mA (valve closed).
+ *             the valve's open current, state 0 its closed current: 20 / 4 mA
+ *             until the server's VALVE_CURRENT_CONFIG says otherwise (the
+ *             Calibration page's "Command current"). Kept in NVS, so a board
+ *             that reboots without a server still opens on its calibrated
+ *             current. While calibrating, VALVE_TEST_CURRENT drives a valve
+ *             at a trial current instead, until a command that changes that
+ *             valve's state, the failsafe, an OTA, a 0, or 3 s without a
+ *             repeat ends it.
  *   position  The actuator's 4-20 mA feedback (FB) across 120 ohm into ADC1,
  *             streamed to the server as SENSOR_DATA. Read calibrated (mV),
  *             then sent as the 12-bit counts daq-server's ideal loop model
@@ -44,6 +51,7 @@
 #include <EthernetUdp.h>
 #include <SPI.h>
 #include <STAR_EthernetOTA.h>
+#include <Preferences.h>
 #include <Wire.h>
 #include <daq-protocol.h>
 #include <esp_mac.h>
@@ -53,6 +61,7 @@
 #include <vector>
 
 #include "actuator_config.h"
+#include "ball_valve_current.h"
 #include "board_net.h"
 #include "firmware_hash.h"
 
@@ -84,9 +93,12 @@ static constexpr float V24_DIVIDER = 11.0f;
 
 // MCP4728 on its internal 2.048 V reference, gain x1: 0.5 mV per code, and
 // the XTR111's 1.00 k R_SET gives 10 mA per volt, so 5 uA per code.
-static constexpr float DAC_CODES_PER_MA = 200.0f;
-static constexpr uint16_t CODE_CLOSED = 800;  // 4 mA (state 0)
-static constexpr uint16_t CODE_OPEN = 4000;   // 20 mA (state 1)
+// Scale, defaults and the VALVE_CURRENT_CONFIG limits live in
+// ../common/ball_valve_current.h, where Hotfire_Tests runs them on the host.
+namespace bvc = ball_valve_current;
+static constexpr float DAC_CODES_PER_MA = bvc::DAC_CODES_PER_MA;
+static constexpr uint16_t CODE_CLOSED = bvc::CODE_CLOSED_DEFAULT;  // 4 mA
+static constexpr uint16_t CODE_OPEN = bvc::CODE_OPEN_DEFAULT;      // 20 mA
 
 // FB and RET are both sensed on 120 ohm to GND.
 static constexpr float SENSE_OHMS = 120.0f;
@@ -181,6 +193,14 @@ struct Valve {
     float ret_ma;
     bool ef_low;
     Debounced faults[NUM_LOOP_FAULTS];
+    // DAC codes for state 0 and 1 (VALVE_CURRENT_CONFIG, NVS).
+    uint16_t closed_code = CODE_CLOSED;
+    uint16_t open_code = CODE_OPEN;
+    // VALVE_TEST_CURRENT: 0 = none; else driven in place of the state's code.
+    uint16_t trial_code = 0;
+    unsigned long trial_seen_ms = 0;
+    uint16_t trial_blocked_code = 0;  // ended on the board: not resumed
+    uint16_t trial_ignored_code = 0;  // last "ignored" logged, logged once
 };
 
 // Strapping pins (0, 3, 45, 46) and USB (19, 20) are not used.
@@ -265,12 +285,12 @@ static constexpr unsigned long DAC_EEPROM_WRITE_MS =
 
 static bool dac_ok = false;
 
-static uint16_t codeForState(uint8_t s) {
-    return s ? CODE_OPEN : CODE_CLOSED;
+static uint16_t codeForState(const Valve& v) {
+    return bvc::drive_code(v.state, v.closed_code, v.open_code, v.trial_code);
 }
 
 static float commandedMa(const Valve& v) {
-    return codeForState(v.state) / DAC_CODES_PER_MA;
+    return codeForState(v) / DAC_CODES_PER_MA;
 }
 
 static bool dacCommand(uint8_t cmd) {
@@ -287,7 +307,7 @@ static bool dacCommand(uint8_t cmd) {
 static bool dacApply() {
     uint16_t codes[4] = {0, 0, 0, 0};
     for (const auto& v : valves)
-        codes[v.dac_channel] = codeForState(v.state);
+        codes[v.dac_channel] = codeForState(v);
 
     bool ok = dacCommand(DAC_CMD_VREF_ALL_INTERNAL) &&
               dacCommand(DAC_CMD_GAIN_ALL_X1);
@@ -367,8 +387,24 @@ static Valve* findValve(uint8_t actuator_id) {
     return nullptr;
 }
 
+/** The board ending a trial itself: a command, the failsafe, an OTA. */
+static void endTrial(Valve& v, const char* reason) {
+    if (!bvc::end_trial_on_board(v.trial_code, v.trial_blocked_code))
+        return;
+    v.commanded_at_ms = millis();
+    HF_LOGF("[VALVE %u] trial current ended (%s)\n",
+            static_cast<unsigned>(v.actuator_id), reason);
+}
+
+/**
+ * A command that changes the valve's state ends its trial current. One that
+ * repeats it does not: the sequencer republishes every position at 1 Hz, and
+ * that would end every trial within a second.
+ */
 static void setValve(Valve& v, uint8_t new_state, const char* reason) {
     bool changed = v.state != new_state;
+    if (changed)
+        endTrial(v, reason);
     v.state = new_state;
     if (changed)
         v.commanded_at_ms = millis();
@@ -384,9 +420,12 @@ static void setValve(Valve& v, uint8_t new_state, const char* reason) {
     }
 }
 
+/** The failsafe and an OTA end every trial, whatever the valve's state. */
 static void setAllValvesSafe(const char* reason) {
-    for (auto& v : valves)
+    for (auto& v : valves) {
+        endTrial(v, reason);
         setValve(v, SAFE_STATE, reason);
+    }
 }
 
 static void processActuatorCommands(
@@ -406,6 +445,165 @@ static void processActuatorCommands(
             HF_LOGLN(" ignored -- no current SERVER_HEARTBEAT");
         }
     }
+}
+
+//-----------------------------------------------------------------------------
+// Command current (VALVE_CURRENT_CONFIG)
+//-----------------------------------------------------------------------------
+static Preferences prefs;
+static constexpr const char* NVS_NAMESPACE = "bv_current";
+
+static void logCurrents(const Valve& v, const char* source) {
+    HF_LOGF("[VALVE %u] command current closed %.2f mA, open %.2f mA (%s)\n",
+            static_cast<unsigned>(v.actuator_id),
+            v.closed_code / DAC_CODES_PER_MA, v.open_code / DAC_CODES_PER_MA,
+            source);
+}
+
+/**
+ * Calibrated codes from NVS, before the first DAC write. Bad or absent: default.
+ * Opened read-write: read-only fails (and logs an error) on a board whose
+ * namespace does not exist yet. Runs before Serial starts, so it logs nothing;
+ * the start-up "Valve:" line shows the currents.
+ */
+static void loadCurrents() {
+    prefs.begin(NVS_NAMESPACE, false);
+    for (auto& v : valves) {
+        char kc[4] = {'c', static_cast<char>('0' + v.actuator_id), 0};
+        char ko[4] = {'o', static_cast<char>('0' + v.actuator_id), 0};
+        bvc::restore(v.closed_code, v.open_code, prefs.getUShort(kc, 0),
+                     prefs.getUShort(ko, 0));
+    }
+    prefs.end();
+}
+
+static void saveCurrents(const Valve& v) {
+    char kc[4] = {'c', static_cast<char>('0' + v.actuator_id), 0};
+    char ko[4] = {'o', static_cast<char>('0' + v.actuator_id), 0};
+    prefs.begin(NVS_NAMESPACE, false);
+    prefs.putUShort(kc, v.closed_code);
+    prefs.putUShort(ko, v.open_code);
+    prefs.end();
+}
+
+/**
+ * Takes effect at once, including on a valve sitting in that state now: that
+ * is how the operator trims it, watching the position. Written to NVS only
+ * when it changes (the server repeats it every cycle). A bad entry is logged
+ * and leaves that valve on what it had.
+ */
+static void processValveCurrents(
+    const std::vector<daq::ValveCurrentEntry>& entries) {
+    bool any_changed = false;
+    for (const auto& e : entries) {
+        Valve* v = findValve(e.actuator_id);
+        if (v == nullptr)
+            continue;
+        const bvc::Result r =
+            bvc::apply(v->closed_code, v->open_code, e.closed_ua, e.open_ua);
+        if (r == bvc::Result::Refused) {
+            HF_LOGF(
+                "[VALVE %u] command current closed %u uA, open %u uA "
+                "refused (%u-%u uA, at least %u uA apart)\n",
+                static_cast<unsigned>(e.actuator_id),
+                static_cast<unsigned>(e.closed_ua),
+                static_cast<unsigned>(e.open_ua),
+                static_cast<unsigned>(bvc::MIN_UA),
+                static_cast<unsigned>(bvc::MAX_UA),
+                static_cast<unsigned>(bvc::MIN_SPAN_UA));
+            continue;
+        }
+        if (r == bvc::Result::Unchanged)
+            continue;
+        // The step re-arms the tracking check's settle time.
+        v->commanded_at_ms = millis();
+        saveCurrents(*v);
+        logCurrents(*v, "server");
+        any_changed = true;
+    }
+    if (any_changed)
+        dacApply();
+}
+
+/**
+ * Trial currents: the operator drives a valve at a current, watches its
+ * position, and saves it as open or closed on the server. Only while the
+ * server is current: a valve on its failsafe is not trimmed.
+ */
+static void processValveTrials(
+    const std::vector<daq::ValveTestCurrentEntry>& entries) {
+    bool rewrite = false;
+    const unsigned long now = millis();
+    for (const auto& e : entries) {
+        Valve* v = findValve(e.actuator_id);
+        if (v == nullptr)
+            continue;
+        const bvc::TrialResult r =
+            bvc::apply_trial(v->trial_code, v->trial_blocked_code, e.ua,
+                             state == BallValveState::Active);
+        const bool ignored = r == bvc::TrialResult::NotActive ||
+                             r == bvc::TrialResult::Refused;
+        // An ignored trial is repeated every cycle: log it once, not 1 Hz.
+        if (ignored && e.ua == v->trial_ignored_code)
+            continue;
+        v->trial_ignored_code = ignored ? e.ua : 0;
+        switch (r) {
+            case bvc::TrialResult::Started:
+            case bvc::TrialResult::Changed:
+                v->trial_seen_ms = now;
+                v->commanded_at_ms = now;
+                rewrite = true;
+                HF_LOGF("[VALVE %u] trial current %.3f mA\n",
+                        static_cast<unsigned>(v->actuator_id),
+                        v->trial_code / DAC_CODES_PER_MA);
+                break;
+            case bvc::TrialResult::Refreshed:
+                v->trial_seen_ms = now;
+                break;
+            case bvc::TrialResult::Ended:
+                v->commanded_at_ms = now;
+                rewrite = true;
+                HF_LOGF("[VALVE %u] trial current ended (server)\n",
+                        static_cast<unsigned>(v->actuator_id));
+                break;
+            case bvc::TrialResult::NotActive:
+                HF_LOGF("[VALVE %u] trial current ignored -- no current "
+                        "SERVER_HEARTBEAT\n",
+                        static_cast<unsigned>(v->actuator_id));
+                break;
+            case bvc::TrialResult::Refused:
+                HF_LOGF("[VALVE %u] trial current %u uA refused (%u-%u uA)\n",
+                        static_cast<unsigned>(v->actuator_id),
+                        static_cast<unsigned>(e.ua),
+                        static_cast<unsigned>(bvc::MIN_UA),
+                        static_cast<unsigned>(bvc::MAX_UA));
+                break;
+            case bvc::TrialResult::None:
+            case bvc::TrialResult::Blocked:
+                break;
+        }
+    }
+    if (rewrite)
+        dacApply();
+}
+
+/** A trial the server stopped repeating goes back to the commanded state. */
+static void expireTrials(unsigned long now) {
+    bool rewrite = false;
+    for (auto& v : valves) {
+        // Not endTrial(): the server went quiet, it did not say stop, so a
+        // trial it resumes repeating is taken again.
+        if (bvc::trial_expired(v.trial_code, now, v.trial_seen_ms)) {
+            v.trial_code = 0;
+            v.commanded_at_ms = now;
+            HF_LOGF("[VALVE %u] trial current ended (not repeated by the "
+                    "server)\n",
+                    static_cast<unsigned>(v.actuator_id));
+            rewrite = true;
+        }
+    }
+    if (rewrite)
+        dacApply();
 }
 
 //-----------------------------------------------------------------------------
@@ -611,6 +809,22 @@ static void processIncomingPacket(const uint8_t* buffer, size_t len,
             }
             break;
         }
+        case daq::PacketType::VALVE_CURRENT_CONFIG: {
+            daq::PacketHeader dummy;
+            std::vector<daq::ValveCurrentEntry> entries;
+            if (daq::parse_valve_current_config_packet(buffer, len, dummy,
+                                                       entries))
+                processValveCurrents(entries);
+            break;
+        }
+        case daq::PacketType::VALVE_TEST_CURRENT: {
+            daq::PacketHeader dummy;
+            std::vector<daq::ValveTestCurrentEntry> entries;
+            if (daq::parse_valve_test_current_packet(buffer, len, dummy,
+                                                     entries))
+                processValveTrials(entries);
+            break;
+        }
         case daq::PacketType::ACTUATOR_COMMAND: {
             daq::PacketHeader dummy;
             std::vector<daq::ActuatorCommand> commands;
@@ -673,10 +887,11 @@ static void probeW5500Version() {
 }
 
 /**
- * Every valve to 0 (4 mA) before anything that waits: the DAC still holds
- * whatever it was last told if only the ESP32 reset.
+ * Every valve to 0 (its closed current) before anything that waits: the DAC
+ * still holds whatever it was last told if only the ESP32 reset.
  */
 static void initializeValves() {
+    loadCurrents();
     Wire.begin(I2C_SDA, I2C_SCL, I2C_HZ);
     unsigned long now = millis();
     for (auto& v : valves) {
@@ -767,10 +982,12 @@ void setup() {
     for (const auto& v : valves) {
         Serial.printf(
             "Valve: actuator_id %u (DAC %c), position sensor_id %u (GPIO%d), "
-            "state 0 -- FB %.2f mA, RET %.2f mA, EF %s\n",
+            "state 0 -- FB %.2f mA, RET %.2f mA, EF %s, closed %.2f mA, "
+            "open %.2f mA\n",
             static_cast<unsigned>(v.actuator_id), 'A' + v.dac_channel,
             static_cast<unsigned>(v.sensor_id), v.fb_pin, v.fb_ma, v.ret_ma,
-            v.ef_low ? "low" : "high");
+            v.ef_low ? "low" : "high", v.closed_code / DAC_CODES_PER_MA,
+            v.open_code / DAC_CODES_PER_MA);
     }
     Serial.println("State -> WaitingForServer");
     Serial.flush();
@@ -859,6 +1076,7 @@ void loop() {
     }
 
     unsigned long now = millis();
+    expireTrials(now);
     if (now - last_dac_refresh_ms >= DAC_REFRESH_MS) {
         last_dac_refresh_ms = now;
         dacApply();

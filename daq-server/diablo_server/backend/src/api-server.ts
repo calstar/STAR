@@ -43,6 +43,7 @@ import { t7Channels } from '../../shared/config-validation.js';
 import { handleVideoRequest } from './video/routes.js';
 import type { VideoService } from './video/service.js';
 import { captureEndpoint, clearEndpoints, valveCalibrationSnapshot } from './ball-valve-cal.js';
+import { clearCurrents, currentsSnapshot, endTrial, saveTrialAs, setCurrents, startTrial } from './ball-valve-current.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -983,6 +984,39 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'action must be closed, open or clear' }));
         }
+      } else if (url.pathname === '/api/ball_valve_current' && req.method === 'GET') {
+        // Each ball valve channel's closed/open command current (unlisted: 4 / 20 mA).
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(currentsSnapshot()));
+      } else if (url.pathname === '/api/ball_valve_current' && req.method === 'POST') {
+        // { entity: "BV1_Cal.CH1", closed_ma: 4.1, open_ma: 19.6 } | { entity, action: "clear" }
+        // Moves hardware: config_broadcast sends it within one interval and the board applies it
+        // at once, to a valve sitting in that state too. Operators only.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        //   { entity, action: "trial", ma }          drive the valve at ma now (trial)
+        //   { entity, action: "end_trial" }          back to its commanded state's current
+        //   { entity, action: "save", as: "open" | "closed" }  the trial becomes that state's current
+        //   { entity, action: "clear" }              back to 4 / 20, trial ended
+        //   { entity, closed_ma, open_ma }           set both directly
+        const body = await readJsonBody(req);
+        const entity = String(body?.entity ?? '');
+        const action = body?.action;
+        let r: { ok: true } | { ok: false; error: string };
+        if (action === 'clear') { clearCurrents(entity); r = { ok: true }; }
+        else if (action === 'trial') r = startTrial(entity, Number(body?.ma));
+        else if (action === 'end_trial') { endTrial(entity); r = { ok: true }; }
+        else if (action === 'save') {
+          r = body?.as === 'open' || body?.as === 'closed'
+            ? saveTrialAs(entity, body.as)
+            : { ok: false, error: 'as must be open or closed' };
+        } else if (action === undefined) r = setCurrents(entity, Number(body?.closed_ma), Number(body?.open_ma));
+        else r = { ok: false, error: 'action must be trial, end_trial, save or clear' };
+        res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(r.ok ? currentsSnapshot() : { error: r.error }));
       } else if (url.pathname === '/api/lc_tare' && req.method === 'GET') {
         // The live load-cell tares, for the UI to badge tared channels and show their offsets.
         //

@@ -532,6 +532,55 @@ void test_log_packet_parse_wrong_type() {
 }
 
 // ---------------------------------------------------------------------------
+// Valve Current Config (ball valve boards)
+// ---------------------------------------------------------------------------
+
+void test_valve_current_config_roundtrip() {
+    std::vector<daq::ValveCurrentEntry> in;
+    in.push_back({1, 4200, 19550});
+    in.push_back({2, 4000, 20000});
+
+    uint8_t buf[512];
+    size_t n = daq::create_valve_current_config_packet(in, 42u, buf, sizeof(buf));
+    // header + num_valves + 2 x (id, closed_ua, open_ua)
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader) + 1 + 2 * 5, n);
+
+    daq::PacketHeader hdr;
+    std::vector<daq::ValveCurrentEntry> out;
+    TEST_ASSERT_TRUE(
+        daq::parse_valve_current_config_packet(buf, n, hdr, out));
+    TEST_ASSERT_EQUAL(42u, hdr.timestamp);
+    TEST_ASSERT_EQUAL(2, out.size());
+    TEST_ASSERT_EQUAL(1, out[0].actuator_id);
+    TEST_ASSERT_EQUAL(4200, out[0].closed_ua);
+    TEST_ASSERT_EQUAL(19550, out[0].open_ua);
+    TEST_ASSERT_EQUAL(2, out[1].actuator_id);
+    TEST_ASSERT_EQUAL(20000, out[1].open_ua);
+}
+
+void test_valve_current_config_truncated_and_wrong_type() {
+    std::vector<daq::ValveCurrentEntry> in;
+    in.push_back({1, 4000, 20000});
+    uint8_t buf[512];
+    size_t n = daq::create_valve_current_config_packet(in, 0u, buf, sizeof(buf));
+    daq::PacketHeader hdr;
+    std::vector<daq::ValveCurrentEntry> out;
+    TEST_ASSERT_FALSE(
+        daq::parse_valve_current_config_packet(buf, n - 1, hdr, out));
+    buf[0] = static_cast<uint8_t>(daq::PacketType::ACTUATOR_COMMAND);
+    TEST_ASSERT_FALSE(
+        daq::parse_valve_current_config_packet(buf, n, hdr, out));
+}
+
+void test_valve_current_config_too_many_entries() {
+    std::vector<daq::ValveCurrentEntry> in(MAX_ACTUATORS_PER_BOARD + 1,
+                                           daq::ValveCurrentEntry{1, 4000, 20000});
+    uint8_t buf[512];
+    TEST_ASSERT_EQUAL(
+        0, daq::create_valve_current_config_packet(in, 0u, buf, sizeof(buf)));
+}
+
+// ---------------------------------------------------------------------------
 // Unity runner
 // ---------------------------------------------------------------------------
 
@@ -584,6 +633,11 @@ int main(int argc, char** argv) {
     RUN_TEST(test_log_packet_roundtrip);
     RUN_TEST(test_log_packet_parse_truncated);
     RUN_TEST(test_log_packet_parse_wrong_type);
+
+    // Valve Current Config
+    RUN_TEST(test_valve_current_config_roundtrip);
+    RUN_TEST(test_valve_current_config_truncated_and_wrong_type);
+    RUN_TEST(test_valve_current_config_too_many_entries);
 
     // Null buffer
     RUN_TEST(test_parse_null_buffer);

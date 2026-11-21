@@ -22,7 +22,9 @@ enum class PacketType : uint8_t {
   SELF_TEST = 12,
   ENVIRONMENTAL_DATA = 13,
   STACKLIGHT_COMMAND = 14,
-  LOGS = 15  // Board -> server: buffered, newline-delimited log text (see create_log_packet)
+  LOGS = 15,  // Board -> server: buffered, newline-delimited log text (see create_log_packet)
+  VALVE_CURRENT_CONFIG = 16,  // Server -> ball valve board: per-valve closed/open command current
+  VALVE_TEST_CURRENT = 17     // Server -> ball valve board: drive a valve at a trial current now
 };
 
 /**
