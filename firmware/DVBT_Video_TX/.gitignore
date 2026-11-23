@@ -1,0 +1,5 @@
+gateware/sim_build/
+gateware/build/
+__pycache__/
+*.pyc
+results.xml
