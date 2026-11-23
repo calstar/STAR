@@ -3,6 +3,14 @@
 #include "board_time.h"
 #include "main.h"
 
+/*
+ * PD1 / EXTI1 = ISM330DHCX INT2 (MLC). CubeMX should label it IMU_INT2.
+ * If the label is missing, GPIO_PIN_1 still matches PD1 on this board.
+ */
+#ifndef IMU_INT2_Pin
+#define IMU_INT2_Pin GPIO_PIN_1
+#endif
+
 typedef struct {
     uint16_t pin;
     osThreadId_t volatile thread;
@@ -12,6 +20,7 @@ typedef struct {
 
 static route_t routes[] = {
     {IMU_INT1_Pin, NULL, 0, 0},
+    {IMU_INT2_Pin, NULL, 0, 0}, /* MLC class-change → Idle wake (EXTI1) */
     {ACCEL_INT_1_Pin, NULL, 0, 0},
     {RADIO_DIO1_Pin, NULL, 0, 0},
     {ETH_INT_Pin, NULL, 0, 0},

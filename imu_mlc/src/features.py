@@ -1,96 +1,89 @@
 """
-Feature Engineering for IMU Machine Learning Core (MLC).
+Pad/idle MLC features for ISM330DHCX (6-DOF only).
 
-Computes rolling window statistical features matching STMicroelectronics MLC hardware:
-- Vector norms: accel_norm, gyro_norm, mag_norm
-- Statistical operators across window:
-    * mean:        Arithmetic mean over window
-    * var:         Sample variance over window
-    * ptp:         Peak-to-peak (Max - Min) amplitude over window
-    * min:         Minimum value over window
-    * max:         Maximum value over window
-    * diff:        Window delta / gradient (last - first sample in window)
+v1 feature set (alignment plan):
+  - accel_norm_var: variance of |a| over the window
+  - accel_z_zcr:    zero-crossing rate of mean-removed a_z
+
+No magnetometer channels (chip has none). Gyro optional for logging only.
 """
 
-from typing import List, Tuple
+from __future__ import annotations
+
+from typing import List, Sequence, Tuple
+
 import numpy as np
 import pandas as pd
 
+# Allowed MLC ODRs (EMB_FUNC_ODR_CFG_C); independent of firmware 833 Hz sensor ODR.
+MLC_ODR_HZ_CHOICES: Sequence[float] = (12.5, 26.0, 52.0, 104.0)
 
-# Primary sensor channels
-BASE_CHANNELS = [
-    "accel_x", "accel_y", "accel_z",
-    "gyro_x", "gyro_y", "gyro_z",
-    "mag_x", "mag_y", "mag_z",
-]
+DEFAULT_MLC_ODR_HZ = 26.0
+DEFAULT_WINDOW_S = 1.0
 
-
-def compute_vector_norms(df: pd.DataFrame) -> pd.DataFrame:
-    """Computes triaxial vector magnitudes (norms) for Accel, Gyro, and Mag."""
-    df_out = df.copy()
-    df_out["accel_norm"] = np.sqrt(
-        df_out["accel_x"] ** 2 + df_out["accel_y"] ** 2 + df_out["accel_z"] ** 2
-    )
-    df_out["gyro_norm"] = np.sqrt(
-        df_out["gyro_x"] ** 2 + df_out["gyro_y"] ** 2 + df_out["gyro_z"] ** 2
-    )
-    df_out["mag_norm"] = np.sqrt(
-        df_out["mag_x"] ** 2 + df_out["mag_y"] ** 2 + df_out["mag_z"] ** 2
-    )
-    return df_out
+PAD_FEATURE_NAMES = ["accel_norm_var", "accel_z_zcr"]
 
 
-def compute_rolling_mlc_features(
+def window_samples(
+    odr_hz: float = DEFAULT_MLC_ODR_HZ, window_s: float = DEFAULT_WINDOW_S
+) -> int:
+    if odr_hz not in MLC_ODR_HZ_CHOICES:
+        raise ValueError(f"odr_hz must be one of {MLC_ODR_HZ_CHOICES}, got {odr_hz}")
+    n = int(round(odr_hz * window_s))
+    return max(n, 2)
+
+
+def _zero_crossing_rate(x: np.ndarray) -> float:
+    if x.size < 2:
+        return 0.0
+    x = x - np.mean(x)
+    signs = np.sign(x)
+    # Treat exact zeros as previous sign to avoid spurious crossings.
+    for i in range(1, signs.size):
+        if signs[i] == 0:
+            signs[i] = signs[i - 1]
+    crossings = np.count_nonzero(signs[1:] * signs[:-1] < 0)
+    return float(crossings) / float(x.size - 1)
+
+
+def compute_pad_mlc_features(
     df: pd.DataFrame,
-    window_size: int = 20,
+    odr_hz: float = DEFAULT_MLC_ODR_HZ,
+    window_s: float = DEFAULT_WINDOW_S,
 ) -> Tuple[pd.DataFrame, List[str]]:
     """
-    Computes rolling window statistical features matching ST MLC sensor capabilities.
+    Rolling pad/idle features at MLC ODR.
 
-    Parameters:
-        df: Input DataFrame with raw sensor channels.
-        window_size: Number of samples in rolling window (default: 20 samples = 0.20s at 100 Hz).
-
-    Returns:
-        DataFrame containing computed feature columns, and the list of feature column names.
+    Expects columns accel_x, accel_y, accel_z in g (training scale = firmware ±16 g).
     """
-    df_data = compute_vector_norms(df)
+    for col in ("accel_x", "accel_y", "accel_z"):
+        if col not in df.columns:
+            raise KeyError(f"missing required column '{col}'")
 
-    # All channels to extract features from
-    channels = [
-        "accel_x", "accel_y", "accel_z", "accel_norm",
-        "gyro_x", "gyro_y", "gyro_z", "gyro_norm",
-        "mag_x", "mag_y", "mag_z", "mag_norm",
-    ]
+    w = window_samples(odr_hz, window_s)
+    accel_norm = np.sqrt(
+        df["accel_x"].to_numpy(dtype=float) ** 2
+        + df["accel_y"].to_numpy(dtype=float) ** 2
+        + df["accel_z"].to_numpy(dtype=float) ** 2
+    )
+    accel_z = df["accel_z"].to_numpy(dtype=float)
 
-    features_dict = {}
+    n = len(df)
+    var_out = np.zeros(n, dtype=float)
+    zcr_out = np.zeros(n, dtype=float)
 
-    for ch in channels:
-        series = df_data[ch]
-        rolling = series.rolling(window=window_size, min_periods=1)
+    for i in range(n):
+        start = max(0, i - w + 1)
+        segment_n = accel_norm[start : i + 1]
+        segment_z = accel_z[start : i + 1]
+        var_out[i] = float(np.var(segment_n, ddof=1)) if segment_n.size > 1 else 0.0
+        zcr_out[i] = _zero_crossing_rate(segment_z)
 
-        # 1. Mean
-        r_mean = rolling.mean()
-        features_dict[f"{ch}_mean"] = r_mean
-
-        # 2. Variance
-        r_var = rolling.var().fillna(0.0)
-        features_dict[f"{ch}_var"] = r_var
-
-        # 3. Min & Max
-        r_min = rolling.min()
-        r_max = rolling.max()
-        features_dict[f"{ch}_min"] = r_min
-        features_dict[f"{ch}_max"] = r_max
-
-        # 4. Peak-to-Peak (ptp)
-        features_dict[f"{ch}_ptp"] = r_max - r_min
-
-        # 5. Diff (delta over window: current minus value window_size ago)
-        r_diff = series.diff(periods=window_size // 2).fillna(0.0)
-        features_dict[f"{ch}_diff"] = r_diff
-
-    feature_df = pd.DataFrame(features_dict, index=df.index)
-    feature_names = list(feature_df.columns)
-
-    return feature_df, feature_names
+    feature_df = pd.DataFrame(
+        {
+            "accel_norm_var": var_out,
+            "accel_z_zcr": zcr_out,
+        },
+        index=df.index,
+    )
+    return feature_df, list(PAD_FEATURE_NAMES)

@@ -26,7 +26,6 @@ from sklearn.metrics import accuracy_score, f1_score, classification_report
 
 from src.features import compute_rolling_mlc_features
 
-
 TOTAL_NODE_BUDGET = 512
 
 TREE_CONFIGS = [
@@ -112,17 +111,27 @@ def export_unico_gui_format(
     lines = []
 
     # Unico-GUI header with sensor MLC configuration metadata
-    lines.append("// ==============================================================================")
+    lines.append(
+        "// =============================================================================="
+    )
     lines.append("// STMicroelectronics Unico-GUI MLC Decision Tree Export")
     lines.append(f"// Tree {tree_meta['id']}: {tree_meta['name']}")
     lines.append(f"// Description: {tree_meta['description']}")
     lines.append(f"// Target Column: {tree_meta['target_col']}")
-    lines.append(f"// Exported: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    lines.append(f"// Leaf Nodes: {clf.get_n_leaves()} | Total Nodes: {tree_.node_count}")
+    lines.append(
+        f"// Exported: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    lines.append(
+        f"// Leaf Nodes: {clf.get_n_leaves()} | Total Nodes: {tree_.node_count}"
+    )
     lines.append(f"// Max Depth: {clf.get_depth()}")
     lines.append(f"// Target Classes: {list(class_names)}")
-    lines.append("// Target Hardware: ST LSM6DSOX / LSM6DSRX / ISM330DHCX Machine Learning Core")
-    lines.append("// ==============================================================================\n")
+    lines.append(
+        "// Target Hardware: ST LSM6DSOX / LSM6DSRX / ISM330DHCX Machine Learning Core"
+    )
+    lines.append(
+        "// ==============================================================================\n"
+    )
 
     def recurse(node_id: int, depth: int, prefix: str = ""):
         left_child = tree_.children_left[node_id]
@@ -147,7 +156,9 @@ def export_unico_gui_format(
             left_class_idx = int(np.argmax(tree_.value[left_child][0]))
             left_label = class_names[left_class_idx]
             left_samples = int(tree_.n_node_samples[left_child])
-            lines.append(f"{indent}{feat_name} <= {thresh:.6f} : {left_label} ({left_samples}.0)")
+            lines.append(
+                f"{indent}{feat_name} <= {thresh:.6f} : {left_label} ({left_samples}.0)"
+            )
         else:
             lines.append(f"{indent}{feat_name} <= {thresh:.6f}")
             recurse(left_child, depth + 1)
@@ -158,7 +169,9 @@ def export_unico_gui_format(
             right_class_idx = int(np.argmax(tree_.value[right_child][0]))
             right_label = class_names[right_class_idx]
             right_samples = int(tree_.n_node_samples[right_child])
-            lines.append(f"{indent}{feat_name} > {thresh:.6f} : {right_label} ({right_samples}.0)")
+            lines.append(
+                f"{indent}{feat_name} > {thresh:.6f} : {right_label} ({right_samples}.0)"
+            )
         else:
             lines.append(f"{indent}{feat_name} > {thresh:.6f}")
             recurse(right_child, depth + 1)
@@ -180,10 +193,14 @@ def prepare_dataset(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, List[str]]:
     """Loads flight data and extracts rolling MLC features."""
     if not os.path.exists(csv_path):
-        raise FileNotFoundError(f"Flight data not found at '{csv_path}'. Run data generator first.")
+        raise FileNotFoundError(
+            f"Flight data not found at '{csv_path}'. Run data generator first."
+        )
 
     raw_df = pd.read_csv(csv_path)
-    features_df, feature_names = compute_rolling_mlc_features(raw_df, window_size=window_size)
+    features_df, feature_names = compute_rolling_mlc_features(
+        raw_df, window_size=window_size
+    )
     return features_df, raw_df, feature_names
 
 
@@ -197,7 +214,9 @@ def train_and_evaluate_mlc_trees(
     Trains all 8 DecisionTreeClassifier models, enforces the <= 512 total node budget,
     evaluates performance on a holdout test split, and exports Unico-GUI compatible rule files.
     """
-    features_df, raw_df, feature_names = prepare_dataset(csv_path, window_size=window_size)
+    features_df, raw_df, feature_names = prepare_dataset(
+        csv_path, window_size=window_size
+    )
 
     # Train / Test split (80% train, 20% test)
     train_idx, test_idx = train_test_split(
@@ -237,7 +256,11 @@ def train_and_evaluate_mlc_trees(
         # Predictions & Metrics
         y_pred = clf.predict(X_test)
         acc = accuracy_score(y_test, y_pred)
-        f1 = f1_score(y_test, y_pred, average="weighted" if cfg["class_type"] == "multiclass" else "binary")
+        f1 = f1_score(
+            y_test,
+            y_pred,
+            average="weighted" if cfg["class_type"] == "multiclass" else "binary",
+        )
 
         leaf_count = clf.get_n_leaves()
         node_count = clf.tree_.node_count

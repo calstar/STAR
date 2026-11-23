@@ -2,17 +2,24 @@
 
 #include "board.h"
 #include "board_bringup.h"
+#include "board_exti.h"
 #include "board_sleep.h"
 #include "bringup_task.h"
 #include "cmsis_os2.h"
 #include "health_task.h"
+#include "idle_mlc.h"
 #include "main.h"
 #include "mode.h"
 #include "radio_task.h"
 
 #define EV_MODE (1U << 0)
 #define EV_CMD (1U << 1)
+#define EV_MLC (1U << 2)      /* ISM330 INT2 / PD1 MLC class-change wake */
 #define FRAME_HEARTBEAT 0x01U /* src/radio/frame.h FrameType::Heartbeat */
+
+#ifndef IMU_INT2_Pin
+#define IMU_INT2_Pin GPIO_PIN_1 /* PD1 EXTI1 */
+#endif
 
 /* Aaron's proposals (src/app/IDLE.md); the budget covers one SF9 TxDone
  * (2 x 165 ms time on air + 50 ms, sx1262_setup.cpp). */
@@ -88,6 +95,19 @@ static void idle_task(void* argument) {
                                      poll_command};
     (void)board_sleep_init();
     (void)idle_init(&idle, &config, &port, NULL);
+
+    /* Route ISM330 INT2 (PD1 / EXTI1) to this task when MLC Idle wake is on.
+     * board_sleep already wakes Stop on any EXTI; this delivers EV_MLC so the
+     * Idle loop resumes promptly after an MLC class change.
+     * Use osThreadGetId() — osThreadNew may schedule us before assigning the
+     * static `thread` handle. */
+    if (idle_mlc_wake_enabled()) {
+        osThreadId_t self = osThreadGetId();
+        if (self != NULL) {
+            (void)board_exti_route(IMU_INT2_Pin, self, EV_MLC);
+        }
+    }
+
     for (;;) {
         if (!want_active) {
             (void)osThreadFlagsWait(EV_MODE, osFlagsWaitAny, osWaitForever);
@@ -109,7 +129,10 @@ static void idle_task(void* argument) {
             }
             /* Stop freezes every task: lease the sleep to the health task
              * so the frozen workers are not counted as stalled. IWDG1 keeps
-             * counting in Stop and outlasts 10 s (board_watchdog.c). */
+             * counting in Stop and outlasts 10 s (board_watchdog.c).
+             * Do NOT call ism330_power_down / idle_mlc_maybe_power_down_imu
+             * here while STAR_MLC_IDLE_WAKE=1 — MLC must stay alive for INT2.
+             */
             const board_sleep_info_t* si = board_sleep_info();
             uint32_t hal_before = board_now_ms();
             bool leased =
@@ -120,8 +143,10 @@ static void idle_task(void* argument) {
                 (void)health_task_resume(board_now_ms() - hal_before + slept);
             }
             if (slept == 0U && !work_waiting()) {
-                /* Stop refused (option byte, LSI): wait awake instead. */
-                (void)osThreadFlagsWait(EV_CMD | EV_MODE, osFlagsWaitAny, ms);
+                /* Stop refused (option byte, LSI): wait awake instead.
+                 * Include EV_MLC so a class-change IRQ still unblocks. */
+                (void)osThreadFlagsWait(EV_CMD | EV_MODE | EV_MLC,
+                                        osFlagsWaitAny, ms);
             }
         }
     }

@@ -6,12 +6,17 @@
  * the task that owns the chip:
  *
  *   PD0  IMU_INT1     ISM330DHCX data ready (rising)   -> sensors task
+ *   PD1  IMU_INT2     ISM330DHCX MLC class change       -> idle task (wake)
  *   PD3  ACCEL_INT_1  H3LIS100DL data ready (rising)   -> sensors task
  *   PB2  RADIO_DIO1   SX1262 IRQ (rising)              -> radio task
  *   PE15 ETH_INT      W5500 INTn (falling, active low) -> ethernet task
  *
  * The ISR only stamps the edge time (board_time_us) and sets the task's
  * thread flags; all bus traffic happens in the task.
+ *
+ * MLC note: INT2/PD1 is a Stop-mode wake source (any EXTI wakes DStop). Do not
+ * call ism330_power_down() while MLC Idle wake is enabled — the core must keep
+ * running to assert INT2. MLC remains hint-only (no pyro/launch authority).
  */
 
 #include <stdbool.h>
