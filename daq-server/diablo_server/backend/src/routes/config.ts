@@ -18,13 +18,18 @@ const CONFIG_PATH = process.env.CONFIG_PATH ||
   join(process.cwd(), '..', 'config', 'config.toml');
 
 export function getConfigPath(): string {
-  // Try multiple possible paths
-  const possiblePaths = [
-    CONFIG_PATH,
-    join(process.cwd(), '..', '..', 'config', 'config.toml'),
-    // __dirname resolves relative to the compiled JS — walk up to project root
-    join(__dirname, '..', '..', '..', '..', 'config', 'config.toml'),
-  ];
+  // An explicit CONFIG_PATH is the only candidate, even before its file exists: the self-heal
+  // below generates it from the profiles beside it. Falling back to the checkout's config here is
+  // how tests pointing CONFIG_PATH at a fresh temp dir wrote profiles into a developer's real
+  // config/. Without it, try the usual places.
+  const possiblePaths = process.env.CONFIG_PATH
+    ? [CONFIG_PATH]
+    : [
+        CONFIG_PATH,
+        join(process.cwd(), '..', '..', 'config', 'config.toml'),
+        // __dirname resolves relative to the compiled JS — walk up to project root
+        join(__dirname, '..', '..', '..', '..', 'config', 'config.toml'),
+      ];
 
   for (const path of possiblePaths) {
     try {
