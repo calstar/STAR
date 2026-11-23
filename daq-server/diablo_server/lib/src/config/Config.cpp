@@ -94,8 +94,8 @@ BoardConfig parse_board(const std::string& section, const toml::table& bt) {
     b.board_id =
         static_cast<int>(b.type == "ENVIRONMENTAL" ? id : i_or(bt["board_id"], i_or(bt["id"], -1)));
     b.num_actuators = static_cast<int>(i_or(bt["num_actuators"], 0));
-    b.send_port = static_cast<uint16_t>(i_or(bt["send_port"], 5005));
-    b.listen_port = static_cast<uint16_t>(i_or(bt["listen_port"], 5005));
+    b.send_port = static_cast<uint16_t>(i_or(bt["send_port"], b.send_port));
+    b.listen_port = static_cast<uint16_t>(i_or(bt["listen_port"], b.listen_port));
     b.voltage_reference = static_cast<int>(i_or(bt["voltage_reference"], 0));
     b.necessary_for_abort = b_or(bt["necessary_for_abort"], false);
     b.designated_survivor = b_or(bt["designated_survivor"], false);
@@ -144,35 +144,36 @@ Config from_table(const toml::table& t) {
     Config c;
 
     c.network.bind_ip = s_or(t["network"]["bind_ip"], c.network.bind_ip);
-    c.network.sensor_port = static_cast<uint16_t>(i_or(t["network"]["sensor_port"], 5006));
+    c.network.sensor_port =
+        static_cast<uint16_t>(i_or(t["network"]["sensor_port"], c.network.sensor_port));
     c.network.actuator_cmd_port =
-        static_cast<uint16_t>(i_or(t["network"]["actuator_cmd_port"], 5005));
+        static_cast<uint16_t>(i_or(t["network"]["actuator_cmd_port"], c.network.actuator_cmd_port));
 
     c.database.host = s_or(t["database"]["host"], c.database.host);
-    c.database.port = static_cast<uint16_t>(i_or(t["database"]["port"], 2240));
+    c.database.port = static_cast<uint16_t>(i_or(t["database"]["port"], c.database.port));
 
-    c.server_heartbeat.interval_ms =
-        static_cast<uint32_t>(i_or(t["server_heartbeat"]["interval_ms"], 1000));
-    c.server_heartbeat.broadcast_port =
-        static_cast<uint16_t>(i_or(t["server_heartbeat"]["broadcast_port"], 5005));
+    c.server_heartbeat.interval_ms = static_cast<uint32_t>(
+        i_or(t["server_heartbeat"]["interval_ms"], c.server_heartbeat.interval_ms));
+    c.server_heartbeat.broadcast_port = static_cast<uint16_t>(
+        i_or(t["server_heartbeat"]["broadcast_port"], c.server_heartbeat.broadcast_port));
     c.server_heartbeat.broadcast_ip =
         s_or(t["server_heartbeat"]["broadcast_ip"], c.server_heartbeat.broadcast_ip);
 
     c.heartbeat_service.enabled = b_or(t["heartbeat_service"]["enabled"], false);
-    c.heartbeat_service.interval_ms =
-        static_cast<uint32_t>(i_or(t["heartbeat_service"]["interval_ms"], 1000));
+    c.heartbeat_service.interval_ms = static_cast<uint32_t>(
+        i_or(t["heartbeat_service"]["interval_ms"], c.heartbeat_service.interval_ms));
     // broadcast_ip/port fall back to [server_heartbeat] when absent (matches the old heartbeat
     // main).
     c.heartbeat_service.broadcast_ip =
         s_or(t["heartbeat_service"]["broadcast_ip"],
              s_or(t["server_heartbeat"]["broadcast_ip"], c.heartbeat_service.broadcast_ip));
-    c.heartbeat_service.broadcast_port =
-        static_cast<uint16_t>(i_or(t["heartbeat_service"]["broadcast_port"],
-                                   i_or(t["server_heartbeat"]["broadcast_port"], 5005)));
+    c.heartbeat_service.broadcast_port = static_cast<uint16_t>(
+        i_or(t["heartbeat_service"]["broadcast_port"],
+             i_or(t["server_heartbeat"]["broadcast_port"], c.heartbeat_service.broadcast_port)));
     c.heartbeat_service.elodin_host =
         s_or(t["heartbeat_service"]["elodin_host"], c.heartbeat_service.elodin_host);
-    c.heartbeat_service.elodin_port =
-        static_cast<uint16_t>(i_or(t["heartbeat_service"]["elodin_port"], 2240));
+    c.heartbeat_service.elodin_port = static_cast<uint16_t>(
+        i_or(t["heartbeat_service"]["elodin_port"], c.heartbeat_service.elodin_port));
 
     // Default: the bridge sends the heartbeat unless the standalone service is enabled.
     c.server_heartbeat.send_from_daq_bridge =
@@ -241,9 +242,11 @@ Config from_table(const toml::table& t) {
     c.fire.expiry_target = s_or(t["fire"]["expiry_target"], "");
     // Durations: [fire] is the home; fall back to the legacy [controller_service].fire_* keys.
     c.fire.duration_ms = static_cast<uint32_t>(
-        i_or(t["fire"]["duration_ms"], i_or(t["controller_service"]["fire_duration_ms"], 6000)));
+        i_or(t["fire"]["duration_ms"],
+             i_or(t["controller_service"]["fire_duration_ms"], c.fire.duration_ms)));
     c.fire.extended_ms = static_cast<uint32_t>(
-        i_or(t["fire"]["extended_ms"], i_or(t["controller_service"]["fire_extended_ms"], 10000)));
+        i_or(t["fire"]["extended_ms"],
+             i_or(t["controller_service"]["fire_extended_ms"], c.fire.extended_ms)));
 
     // [flow] — the characterization hold. No `state` key by design: which state this is comes from
     // the is_flow flag on a [[states]] entry, so a rename cannot orphan it the way [fire].state
@@ -254,12 +257,13 @@ Config from_table(const toml::table& t) {
     c.fire.gate_actuator = s_or(t["fire"]["gate_actuator"], "");
     c.flow.gate_actuator = s_or(t["flow"]["gate_actuator"], "");
 
-    c.controller_service.port = static_cast<uint16_t>(i_or(t["controller_service"]["port"], 9999));
+    c.controller_service.port =
+        static_cast<uint16_t>(i_or(t["controller_service"]["port"], c.controller_service.port));
     c.controller_service.host = s_or(t["controller_service"]["host"], c.controller_service.host);
-    c.controller_service.fire_duration_ms =
-        static_cast<uint32_t>(i_or(t["controller_service"]["fire_duration_ms"], 6000));
-    c.controller_service.fire_extended_ms =
-        static_cast<uint32_t>(i_or(t["controller_service"]["fire_extended_ms"], 10000));
+    c.controller_service.fire_duration_ms = static_cast<uint32_t>(
+        i_or(t["controller_service"]["fire_duration_ms"], c.controller_service.fire_duration_ms));
+    c.controller_service.fire_extended_ms = static_cast<uint32_t>(
+        i_or(t["controller_service"]["fire_extended_ms"], c.controller_service.fire_extended_ms));
     c.controller_service.sequencer_owns_valves =
         b_or(t["controller_service"]["sequencer_owns_valves"], false);
 
@@ -273,7 +277,8 @@ Config from_table(const toml::table& t) {
     c.controller.lut_path = s_or(t["controller"]["lut_path"], "");
     c.controller.thrust_curve_path = s_or(t["controller"]["thrust_curve_path"], "");
 
-    c.actuator_service.port = static_cast<uint16_t>(i_or(t["actuator_service"]["port"], 9998));
+    c.actuator_service.port =
+        static_cast<uint16_t>(i_or(t["actuator_service"]["port"], c.actuator_service.port));
     c.actuator_service.bind_address =
         s_or(t["actuator_service"]["bind_address"], c.actuator_service.bind_address);
 

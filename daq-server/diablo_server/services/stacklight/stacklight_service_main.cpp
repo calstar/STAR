@@ -24,6 +24,7 @@
 
 #include "DiabloPacketUtils.h"
 #include "DiabloPackets.h"
+#include "config/NetworkDefaults.hpp"
 #include "control/StateMachine.hpp"
 #include "daq-protocol.h"
 #include "elodin/DatabaseConfig.hpp"
@@ -177,7 +178,7 @@ std::string getTomlValue(const std::string& content, const std::string& section,
 int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
     std::string elodin_host = "127.0.0.1";
-    uint16_t elodin_port = 2240;
+    uint16_t elodin_port = fsw::config::defaults::kElodinPort;
     int interval_ms = 1000;                  // keepalive resend interval
     std::string target_ip = "192.168.2.70";  // PLACEHOLDER — update once team assigns a real IP
     uint16_t target_port = 5006;             // PLACEHOLDER — update once team confirms

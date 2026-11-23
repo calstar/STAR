@@ -9,13 +9,14 @@
 #include <sstream>
 
 #include "DiabloPacketUtils.h"
+#include "config/NetworkDefaults.hpp"
 
 namespace fsw {
 namespace config {
 
 SensorAssignmentManager::SensorAssignmentManager()
-    : gse_base_ip_("192.168.2.0"),
-      flight_base_ip_("192.168.3.0"),
+    : gse_base_ip_(fsw::config::defaults::kGseSubnet),
+      flight_base_ip_(fsw::config::defaults::kFlightSubnet),
       gse_ip_range_start_(100),
       gse_ip_range_end_(150),
       flight_ip_range_start_(100),
@@ -192,7 +193,7 @@ std::string SensorAssignmentManager::assign_board_ip(uint8_t board_id,
     BoardConfiguration& config = board_configs_[board_id];
     config.board_id = board_id;
     config.board_ip = assigned_ip;
-    config.board_port = 5005;  // Default DiabloAvionics port
+    config.board_port = fsw::config::defaults::kBoardPort;
     config.mac_address = mac_address;
     config.system_state = system_state;
     config.is_configured = false;

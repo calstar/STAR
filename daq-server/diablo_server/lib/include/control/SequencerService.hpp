@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "config/Config.hpp"
+#include "config/NetworkDefaults.hpp"
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
 #include "control/HoldTimer.hpp"
@@ -278,7 +279,7 @@ private:
     // no db and every valve reads "undefined".
     static constexpr int kElodinRetrySeconds = 5;
     std::string elodin_host_ = "127.0.0.1";
-    uint16_t elodin_port_ = 2240;
+    uint16_t elodin_port_ = fsw::config::defaults::kElodinPort;
     std::thread elodin_retry_thread_;
     std::atomic<bool> elodin_retry_stop_{false};
 

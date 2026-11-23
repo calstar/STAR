@@ -12,6 +12,7 @@
 
 #include "ControllerLUT.hpp"
 #include "RobustDDPController.hpp"
+#include "config/NetworkDefaults.hpp"
 #include "elodin/ElodinClient.hpp"
 
 namespace fsw {
@@ -46,7 +47,7 @@ public:
     struct PWMConfig {
         PWMTarget fuel;
         PWMTarget ox;
-        uint16_t actuator_port = 5005;
+        uint16_t actuator_port = fsw::config::defaults::kBoardPort;
         /** Local address PWM commands leave from; "0.0.0.0" leaves the NIC to the kernel.
          *  Resolved by the caller (see net/DaqInterface.hpp) — this is the fire path, and it must
          *  not reach the actuator board over whichever interface the route table happened to
@@ -73,7 +74,8 @@ public:
      */
     bool initialize(const PWMConfig& pwm_config,
                     const RobustDDPController::Config& controller_config,
-                    const std::string& elodin_host = "", uint16_t elodin_port = 2240,
+                    const std::string& elodin_host = "",
+                    uint16_t elodin_port = fsw::config::defaults::kElodinPort,
                     const std::string& lut_path = "", const std::string& thrust_curve_path = "");
 
     /** Start the controller loop at the given rate. */
@@ -204,7 +206,7 @@ private:
     // Elodin DB — subscriber (read-only; dedicated to receiving calibrated PT data)
     std::unique_ptr<elodin::ElodinClient> elodin_subscriber_;
     std::string elodin_host_;
-    uint16_t elodin_port_ = 2240;
+    uint16_t elodin_port_ = fsw::config::defaults::kElodinPort;
 
     // PWM output
     PWMConfig pwm_config_;

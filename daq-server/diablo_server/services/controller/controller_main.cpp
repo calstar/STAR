@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "config/Config.hpp"
+#include "config/NetworkDefaults.hpp"
 #include "control/ControllerService.hpp"
 #include "control/PWMTargets.hpp"
 #include "control/RobustDDPController.hpp"
@@ -344,7 +345,7 @@ int main(int argc, char* argv[]) {
     if (elodin_host.empty())
         elodin_host = "127.0.0.1";
     if (elodin_port == 0)
-        elodin_port = 2240;
+        elodin_port = fsw::config::defaults::kElodinPort;
 
     // Control port from [controller_service].port (FIRE_START / FIRE_STOP TCP gate); --control-port
     // wins.

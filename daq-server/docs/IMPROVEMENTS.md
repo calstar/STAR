@@ -524,7 +524,8 @@ box (`04709920`), which now carries the board LAN, the site LAN and a Docker bri
 
 Not fixed, deliberately: `PressureStateMachine`'s command socket. Nothing constructs that class —
 pinning a socket that never opens is churn — so it carries a comment pointing at the resolver
-instead.
+instead. (2026-11-05: the class itself has since been deleted, along with its hard-coded
+fallback actuator address `192.168.2.206`.)
 
 ### By the config draft-only work (2026-09-07)
 

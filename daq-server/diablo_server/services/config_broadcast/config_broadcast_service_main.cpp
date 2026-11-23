@@ -37,6 +37,7 @@ static inline void store_u32(uint8_t* dst, uint32_t v) {
 #include <vector>
 
 #include "config/Config.hpp"
+#include "config/NetworkDefaults.hpp"
 #include "config/SensorTables.hpp"
 #include "net/DaqInterface.hpp"
 
@@ -50,7 +51,7 @@ void signalHandler(int /*sig*/) {
 
 constexpr uint8_t SENSOR_CONFIG = 5;
 constexpr uint8_t ACTUATOR_CONFIG = 6;
-constexpr uint16_t DEFAULT_LISTEN_PORT = 5005;
+constexpr uint16_t DEFAULT_LISTEN_PORT = fsw::config::defaults::kBoardPort;
 
 std::string trim(const std::string& s) {
     size_t a = s.find_first_not_of(" \t\r\n\"");

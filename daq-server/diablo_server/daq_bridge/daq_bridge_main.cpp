@@ -123,12 +123,7 @@ struct BoardConfig {
     int board_id;  // Added board_id
 };
 
-struct ServerHeartbeatConfig {
-    uint32_t interval_ms = 1000;
-    uint16_t broadcast_port = 5005;
-    std::string broadcast_ip = "255.255.255.255";
-    bool send_from_daq_bridge = true;  // false when heartbeat_service is used
-};
+using ServerHeartbeatConfig = fsw::config::ServerHeartbeatConfig;
 
 // Loopback fallback routing (integration test only): the simulator binds 127.0.0.<host-octet> per
 // board, where host-octet is the last octet of that board's config IP, so the bridge resolves those
@@ -158,8 +153,9 @@ static void load_board_map_from_config(const std::string& config_path,
                                        ServerHeartbeatConfig* out_hb = nullptr,
                                        fsw::time::TimeSyncConfig* out_ts = nullptr,
                                        uint16_t* out_log_port = nullptr) {
-    db_host = "127.0.0.1";
-    db_port = 2240;
+    const fsw::config::DatabaseConfig db_defaults;
+    db_host = db_defaults.host;
+    db_port = db_defaults.port;
     {
         std::ifstream f(config_path);
         if (!f.is_open())
@@ -173,12 +169,8 @@ static void load_board_map_from_config(const std::string& config_path,
         *out_sensor_port = c.network.sensor_port;
     if (out_bind_ip)
         *out_bind_ip = c.network.bind_ip;
-    if (out_hb) {
-        out_hb->interval_ms = c.server_heartbeat.interval_ms;
-        out_hb->broadcast_port = c.server_heartbeat.broadcast_port;
-        out_hb->broadcast_ip = c.server_heartbeat.broadcast_ip;
-        out_hb->send_from_daq_bridge = c.server_heartbeat.send_from_daq_bridge;
-    }
+    if (out_hb)
+        *out_hb = c.server_heartbeat;
     if (out_ts)
         *out_ts = c.time_sync;
     if (out_log_port)
@@ -308,7 +300,7 @@ int main(int argc, char* argv[]) {
     // Parse command line arguments
     std::string config_path = "config/config.toml";
     std::string bind_address = "0.0.0.0";
-    uint16_t bind_port = 5006;  // DiabloAvionics default sensor port
+    uint16_t bind_port = fsw::config::defaults::kSensorPort;
 
     if (argc > 1)
         config_path = argv[1];
@@ -464,7 +456,8 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "[Discovery] Interface: " << network_interface << std::endl;
 
-    std::string base_ip = is_flight_daq ? "192.168.3.0" : "192.168.2.0";
+    std::string base_ip =
+        is_flight_daq ? fsw::config::defaults::kFlightSubnet : fsw::config::defaults::kGseSubnet;
     discovery.initialize(network_interface, base_ip, 100, 150);
     for (const auto& [ip, cfg] : board_map) {
         if (cfg.board_id >= 0 && cfg.board_id <= 255)

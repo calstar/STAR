@@ -19,6 +19,7 @@
 
 #include "DiabloPacketUtils.h"
 #include "DiabloPackets.h"
+#include "config/NetworkDefaults.hpp"
 #include "fsw/BoardTypeWire.hpp"
 #include "util/IpFromMac.hpp"
 
@@ -95,7 +96,7 @@ void BoardDiscovery::process_board_announcement(const uint8_t* data, size_t size
     board.current_ip = source_ip;
     board.last_seen = std::chrono::steady_clock::now();
     board.is_configured = false;
-    board.port = 5005;  // Default DiabloAvionics port
+    board.port = fsw::config::defaults::kBoardPort;
 
     // MAC address will be extracted from network layer or calculated from IP
     // For now, use IP-based hash
@@ -200,7 +201,7 @@ void BoardDiscovery::process_sensor_data(const uint8_t* data, size_t size,
         board.sensors = sensors;
         board.last_seen = std::chrono::steady_clock::now();
         board.is_configured = false;
-        board.port = 5005;
+        board.port = fsw::config::defaults::kBoardPort;
         board.max_sensors = sensors.size();
         board.active_sensors = sensors.size();
 

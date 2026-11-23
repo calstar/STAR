@@ -156,8 +156,8 @@ void PressureFeed::runLoop(std::string host, uint16_t port) {
         if (n < 8)
             continue;  // receive timeout
 
-        // Header: len(4) ty(1) id_hi(1) id_lo(1) req_id(1) — EIGHT bytes. The dead
-        // PressureStateMachine uses twelve and reads a float four bytes past the one it wants.
+        // Header: len(4) ty(1) id_hi(1) id_lo(1) req_id(1) — EIGHT bytes. (The removed
+        // PressureStateMachine used twelve and read a float four bytes past the one it wanted.)
         const uint8_t type_hi = buf[5];
         const uint8_t type_lo = buf[6];
 

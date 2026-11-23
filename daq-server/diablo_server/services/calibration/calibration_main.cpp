@@ -63,6 +63,7 @@
 #include "comms/messages/sensor/T7Messages.hpp"
 #include "config/Config.hpp"
 #include "config/LoadActiveBoards.hpp"
+#include "config/NetworkDefaults.hpp"
 #include "elodin/DatabaseConfig.hpp"
 #include "elodin/ElodinClient.hpp"
 #include "elodin/SubscriptionTracker.hpp"
@@ -596,7 +597,7 @@ static std::optional<int32_t> invert_abort_psi_to_adc(
 int main(int argc, char* argv[]) {
     std::string config_path = "config/config.toml";
     std::string elodin_host = "127.0.0.1";
-    uint16_t elodin_port = 2240;
+    uint16_t elodin_port = fsw::config::defaults::kElodinPort;
     std::string adjustments_path = "scripts/calibration/calibrations/adjustments.json";
 
     for (int i = 1; i < argc; ++i) {

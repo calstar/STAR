@@ -20,6 +20,10 @@ import { clearTareFile, setRunDir } from './lc-tare.js';
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const SIM_SCRIPT = join(PROJECT_ROOT, 'sim', 'board_simulator.py');
 const SIM_CONFIG = join(PROJECT_ROOT, 'config', 'sim_config.toml');
+/** Where the board simulator sends its packets: this machine's DAQ bridge, on [network].sensor_port
+ *  (5006 in every shipped config). */
+const SIM_TARGET_HOST = '127.0.0.1';
+const SIM_TARGET_PORT = '5006';
 // The frozen canonical config the sim overlay derives from (committed; tests use it too).
 const CONFIG_BASE = join(PROJECT_ROOT, 'config', 'config_base.toml');
 const LIVE_CONFIG = join(PROJECT_ROOT, 'config', 'config.toml');
@@ -264,7 +268,7 @@ export class ServiceController {
 
   private spawnSimulator(): void {
     if (this.simProc && !this.simProc.killed) return; // already running
-    const args = [SIM_SCRIPT, '--config', SIM_CONFIG, '--target', '127.0.0.1', '--port', '5006'];
+    const args = [SIM_SCRIPT, '--config', SIM_CONFIG, '--target', SIM_TARGET_HOST, '--port', SIM_TARGET_PORT];
     const proc = spawn('python3', args, { cwd: PROJECT_ROOT, stdio: 'inherit' });
     proc.on('error', (err) => console.error('[Session] board simulator failed to start:', err));
     proc.on('exit', (code) => {

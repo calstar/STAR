@@ -16,6 +16,7 @@
 
 #include "ElodinProtocol.hpp"
 #include "comms/CommsMessage.hpp"
+#include "config/NetworkDefaults.hpp"
 #include "transport/TCPClient.hpp"
 
 namespace fsw {
@@ -37,7 +38,7 @@ public:
      * @param port Database port (default 2240)
      * @return true if connection successful, false otherwise
      */
-    bool connect(const std::string& host, uint16_t port = 2240);
+    bool connect(const std::string& host, uint16_t port = fsw::config::defaults::kElodinPort);
 
     /**
      * @brief Disconnect from database

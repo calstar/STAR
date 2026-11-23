@@ -6,9 +6,10 @@ import * as net from 'net';
 function host(): string {
   return process.env.OTA_SERVICE_HOST || '127.0.0.1';
 }
+const DEFAULT_OTA_SERVICE_PORT = 9997;
 function port(): number {
-  const n = parseInt(process.env.OTA_SERVICE_PORT || '9997', 10);
-  return Number.isFinite(n) && n > 0 ? n : 9997;
+  const n = parseInt(process.env.OTA_SERVICE_PORT || String(DEFAULT_OTA_SERVICE_PORT), 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_OTA_SERVICE_PORT;
 }
 
 export function otaSendLine(line: string, timeoutMs = 900_000): Promise<{ ok: boolean; reply: string }> {

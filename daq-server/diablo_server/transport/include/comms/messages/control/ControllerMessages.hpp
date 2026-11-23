@@ -68,7 +68,8 @@ using ControllerMeasurementMessage =
 /**
  * @brief PSM state transition event message   [0x43, 0x00]
  *
- * Written by PressureStateMachine on every executeStateEntryActions call.
+ * Originally written by the (since removed) PressureStateMachine on state entry; the backend
+ * still decodes it (elodin-protocol.ts).
  * Layout: U64(8) + U8(1) + U8(1) + U8(1) = 11 bytes
  */
 using ControllerStateTransitionMessage =
