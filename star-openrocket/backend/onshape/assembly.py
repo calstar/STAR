@@ -86,14 +86,17 @@ def walk_assembly(client: OnshapeClient, ref: ResolvedRef) -> AssemblyWalk:
     subassemblies = data.get("subAssemblies", [])
     warnings: list[str] = []
 
-    # One dictionary spanning the root and every subassembly. Instance ids are
-    # unique across the whole assembly, so a flat map is safe.
-    instances: dict[str, dict] = {}
-    for instance in root.get("instances", []):
-        instances[instance["id"]] = instance
-    for sub in subassemblies:
-        for instance in sub.get("instances", []):
-            instances[instance["id"]] = instance
+    # Instance ids are unique only *within one assembly definition*, not across the
+    # whole tree: two subassemblies made by copying one (LE4 SD's Fwd and Aft Avbay
+    # Bulkhead Assemblies) reuse the same ids. A single flat map let the later
+    # definition overwrite the earlier, so the forward bulkhead was built from the
+    # aft bulkhead's Part Studio. Each path step is therefore looked up in the
+    # definition its parent instance points at.
+    root_instances = {instance["id"]: instance for instance in root.get("instances", [])}
+    definitions: dict[tuple, dict[str, dict]] = {
+        _definition_key(sub): {instance["id"]: instance for instance in sub.get("instances", [])}
+        for sub in subassemblies
+    }
 
     occurrences: list[Occurrence] = []
     sources: dict[SourceKey, None] = {}  # dict preserves first-seen order
@@ -103,7 +106,7 @@ def walk_assembly(client: OnshapeClient, ref: ResolvedRef) -> AssemblyWalk:
         path = occ.get("path") or []
         if not path:
             continue
-        instance = instances.get(path[-1])
+        instance = _resolve_instance(path, root_instances, definitions)
         if instance is None:
             warnings.append(f"Occurrence {'/'.join(path)} resolves to no known instance; skipped.")
             continue
@@ -155,6 +158,34 @@ def walk_assembly(client: OnshapeClient, ref: ResolvedRef) -> AssemblyWalk:
         total_occurrences=len(root.get("occurrences", [])),
         warnings=warnings,
     )
+
+
+def _definition_key(node: dict) -> tuple:
+    """What identifies an assembly definition: an Assembly instance and the
+    subAssemblies entry it refers to share these four fields."""
+    return (
+        node.get("documentId"),
+        node.get("elementId"),
+        node.get("fullConfiguration") or node.get("configuration"),
+        node.get("documentMicroversion"),
+    )
+
+
+def _resolve_instance(
+    path: list[str], root_instances: dict[str, dict], definitions: dict[tuple, dict[str, dict]]
+) -> dict | None:
+    """The instance at the end of ``path``, each id looked up in its parent's definition."""
+    table = root_instances
+    instance = None
+    for depth, instance_id in enumerate(path):
+        instance = table.get(instance_id)
+        if instance is None:
+            return None
+        if depth < len(path) - 1:
+            table = definitions.get(_definition_key(instance))
+            if table is None:
+                return None
+    return instance
 
 
 def _assembly_name(data: dict, ref: ResolvedRef) -> str:

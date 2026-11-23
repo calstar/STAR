@@ -22,6 +22,12 @@ type container struct {
 
 	prevCPU uint64 // cumulative CPU, microseconds
 	prevAt  time.Time
+
+	// Peek's CPU baseline and the maxima it has seen since the last Sample.
+	peekCPU uint64
+	peekAt  time.Time
+	peakCPU float64
+	peakMem uint64
 }
 
 // Containers samples every container on the host. The inventory (names, state,
@@ -128,6 +134,34 @@ func (c *Containers) statsFallback(ctx context.Context, id string) (cpuUsec, mem
 	return s.CPUStats.CPUUsage.TotalUsage / 1000, mem, s.MemoryStats.Limit, true
 }
 
+// Peek reads each running container's cgroup between samples and keeps the
+// highest CPU and memory, so a request that balloons a container for a few
+// seconds -- or until the OOM killer takes it -- shows as a peak rather than
+// vanishing between two 15-second samples. Containers only reachable through
+// the stats fallback are not peeked; their peak is their sample.
+func (c *Containers) Peek(now time.Time) {
+	for _, ct := range c.byID {
+		if ct.state != "running" {
+			continue
+		}
+		dir := c.cgroupDir(ct.id)
+		if dir == "" {
+			continue
+		}
+		cpu, mem, ok := readCgroup(dir)
+		if !ok {
+			continue
+		}
+		ct.peakMem = max(ct.peakMem, mem)
+		if !ct.peekAt.IsZero() && cpu >= ct.peekCPU {
+			if dt := now.Sub(ct.peekAt).Microseconds(); dt > 0 {
+				ct.peakCPU = max(ct.peakCPU, 100*float64(cpu-ct.peekCPU)/float64(dt))
+			}
+		}
+		ct.peekCPU, ct.peekAt = cpu, now
+	}
+}
+
 func (c *Containers) Sample(ctx context.Context, now time.Time) ([]wire.ContainerSample, error) {
 	if c.byID == nil || now.Sub(c.listedAt) >= inventoryEvery {
 		if err := c.refresh(ctx, now); err != nil {
@@ -162,9 +196,11 @@ func (c *Containers) Sample(ctx context.Context, now time.Time) ([]wire.Containe
 				}
 				ct.prevCPU, ct.prevAt = cpu, now
 			}
+			s.CPUMax, s.MemMax = max(ct.peakCPU, s.CPU), max(ct.peakMem, s.MemUsed)
 		} else {
-			ct.prevAt = time.Time{}
+			ct.prevAt, ct.peekAt = time.Time{}, time.Time{}
 		}
+		ct.peakCPU, ct.peakMem = 0, 0
 		out = append(out, s)
 	}
 	return out, nil

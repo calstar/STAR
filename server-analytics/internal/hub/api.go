@@ -243,8 +243,9 @@ func (s *Server) handleHostSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	rollup, bucket := pickSeries(rng)
 	from := time.Now().Add(-rng).UnixMilli()
-	q := `SELECT ts / ?1 * ?1 AS ts, AVG(cpu) AS cpu, MAX(cpu) AS cpu_max, AVG(mem_used) AS mem_used,
-		MAX(mem_used) AS mem_max, MAX(mem_total) AS mem_total, AVG(swap_used) AS swap_used,
+	// Peaks are the agent's between-sample peeks (COALESCE: rows from before them).
+	q := `SELECT ts / ?1 * ?1 AS ts, AVG(cpu) AS cpu, MAX(COALESCE(cpu_max, cpu)) AS cpu_max, AVG(mem_used) AS mem_used,
+		MAX(COALESCE(mem_max, mem_used)) AS mem_max, MAX(mem_total) AS mem_total, AVG(swap_used) AS swap_used,
 		AVG(load1) AS load1, AVG(load5) AS load5, AVG(load15) AS load15, MAX(disk_used) AS disk_used,
 		MAX(disk_total) AS disk_total, AVG(net_rx) AS net_rx, AVG(net_tx) AS net_tx
 		FROM host_samples WHERE host = ?2 AND ts >= ?3 GROUP BY ts / ?1 ORDER BY 1`
@@ -301,7 +302,8 @@ func (s *Server) handleContainers(w http.ResponseWriter, r *http.Request) {
 	rows.Close()
 	from := time.Now().Add(-time.Hour).UnixMilli()
 	for i := range out {
-		sr, err := s.Store.db.Query(`SELECT ts / 60000 * 60000 AS ts, AVG(cpu) AS cpu, AVG(mem_used) AS mem_used
+		sr, err := s.Store.db.Query(`SELECT ts / 60000 * 60000 AS ts, AVG(cpu) AS cpu, AVG(mem_used) AS mem_used,
+			MAX(COALESCE(cpu_max, cpu)) AS cpu_max, MAX(COALESCE(mem_max, mem_used)) AS mem_max
 			FROM container_samples WHERE host = ? AND name = ? AND ts >= ? GROUP BY ts / 60000 ORDER BY 1`,
 			r.PathValue("host"), out[i].Name, from)
 		if err != nil {
@@ -326,7 +328,7 @@ func (s *Server) handleContainerSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rollup, bucket := pickSeries(rng)
-	table, cpuMax, memMax := "container_samples", "MAX(cpu)", "MAX(mem_used)"
+	table, cpuMax, memMax := "container_samples", "MAX(COALESCE(cpu_max, cpu))", "MAX(COALESCE(mem_max, mem_used))"
 	if rollup {
 		table, cpuMax, memMax = "container_rollups", "MAX(cpu_max)", "MAX(mem_max)"
 	}

@@ -28,6 +28,11 @@ type HostSample struct {
 	NetRx     float64 `json:"net_rx"` // bytes/s, all non-loopback interfaces
 	NetTx     float64 `json:"net_tx"`
 	Uptime    float64 `json:"uptime"` // seconds since host boot
+	// The highest CPU and memory the agent's one-second peek saw since the last
+	// sample, so a spike shorter than SAMPLE_INTERVAL is still recorded. Zero
+	// from an agent that predates them; the hub then falls back to CPU/MemUsed.
+	CPUMax float64 `json:"cpu_max,omitempty"`
+	MemMax uint64  `json:"mem_max,omitempty"`
 }
 
 type ContainerSample struct {
@@ -39,13 +44,17 @@ type ContainerSample struct {
 	Restarts int     `json:"restarts"`
 	CPU      float64 `json:"cpu"` // percent of one core, as `docker stats` reports it
 	MemUsed  uint64  `json:"mem_used"`
-	MemLimit uint64  `json:"mem_limit"` // 0 when unlimited
+	MemLimit uint64  `json:"mem_limit"`         // 0 when unlimited
+	CPUMax   float64 `json:"cpu_max,omitempty"` // as HostSample.CPUMax
+	MemMax   uint64  `json:"mem_max,omitempty"`
 }
 
 type LogLine struct {
 	TS     int64  `json:"ts"`
 	Source string `json:"source"` // "docker:<container>" or "journal:<unit>"
-	Stream string `json:"stream"` // stdout, stderr, or the journald priority name
+	// stdout, stderr, or the journald priority name. Docker events (an OOM kill,
+	// a non-zero exit) arrive on their container's source as "crit" / "err".
+	Stream string `json:"stream"`
 	Line   string `json:"line"`
 }
 

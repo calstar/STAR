@@ -24,24 +24,9 @@ WORKSPACE_URL = (
 
 
 @pytest.fixture
-def built(tmp_path, monkeypatch, empty_version_assembly):
+def built(tmp_path, monkeypatch):
     """Run the real build with every network call served from fixtures."""
-
-    def make_client(*args, **kwargs):
-        client = FakeClient()
-        original = client.get_json
-
-        def get_json(path, params=None):
-            # Force the workspace-microversion path, as on the real document.
-            if path.startswith("/assemblies/") and "/v/" in path:
-                client.requests.append((path, params or {}))
-                return empty_version_assembly
-            return original(path, params)
-
-        client.get_json = get_json  # type: ignore[method-assign]
-        return client
-
-    monkeypatch.setattr(build_mod, "OnshapeClient", make_client)
+    monkeypatch.setattr(build_mod, "OnshapeClient", lambda *a, **k: FakeClient())
     manifest = build_mod.build(WORKSPACE_URL, output_dir=tmp_path)
     return manifest, tmp_path
 
@@ -334,3 +319,67 @@ def test_an_open_mesh_records_no_inertia_and_says_so(built):
                if p["materialDefaulted"] and p["hasGeometry"] and p["inertiaPerKgWorld"] is None]
     for name in missing:
         assert any(name in w and "inertia" in w for w in manifest["warnings"])
+
+
+# -- Mass typed into Onshape's part properties --------------------------------------
+
+#: The "Motor" in the second Part Studio has no material, so Onshape's massproperties
+#: weighs it at zero -- exactly how LE4 SD's 14.2 kg motor came through.
+OVERRIDE_SOURCE, OVERRIDE_PART, OVERRIDE_KG = "65e6e7a922d0", "JPD", 0.5
+
+
+@pytest.fixture
+def built_with_override(tmp_path, monkeypatch):
+    from backend.onshape.mass import MASS_OVERRIDE_PROPERTY
+
+    class Client(FakeClient):
+        def _source_fixture(self, path, kind):
+            payload = super()._source_fixture(path, kind)
+            if kind == "parts" and self._element_of(path) == OVERRIDE_SOURCE:
+                payload = json.loads(json.dumps(payload))
+                for part in payload:
+                    props = part.setdefault("customProperties", {})
+                    if part["partId"] == OVERRIDE_PART:
+                        props[MASS_OVERRIDE_PROPERTY] = json.dumps(
+                            {"override": OVERRIDE_KG, "useOverride": True}
+                        )
+                    elif part["name"] == "Bottle":
+                        # A centre-of-mass override is reported, not applied.
+                        props["57f3fb8efa3416c06701d627"] = json.dumps(
+                            {"override": [0.1, 0, 0], "useOverride": True}
+                        )
+                    else:
+                        # Present but switched off: must change nothing.
+                        props[MASS_OVERRIDE_PROPERTY] = json.dumps(
+                            {"override": 99.0, "useOverride": False}
+                        )
+            return payload
+
+    monkeypatch.setattr(build_mod, "OnshapeClient", lambda *a, **k: Client())
+    manifest = build_mod.build(WORKSPACE_URL, output_dir=tmp_path)
+    return manifest
+
+
+def test_onshape_mass_override_is_the_parts_mass(built_with_override):
+    """Onshape's Part Studio massproperties ignores a mass typed into the part's
+    properties; the assembly total does not. LE4 SD lost 21 kg of 89.5 this way."""
+    parts = [p for p in built_with_override["parts"]
+             if p["sourceElementId"].startswith(OVERRIDE_SOURCE) and p["partId"] == OVERRIDE_PART]
+    assert parts
+    for part in parts:
+        assert part["mass"] == pytest.approx(OVERRIDE_KG)
+        assert part["massOverridden"] is True
+        assert part["materialDefaulted"] is False, "an overridden part is not 'unassigned'"
+        assert any(abs(c) > 1e-9 for c in part["centroidLocal"]), "centroid from the mesh, not the origin"
+
+
+def test_switched_off_override_changes_nothing(built, built_with_override):
+    plain = {p["key"]: p["mass"] for p in built[0]["parts"]}
+    for part in built_with_override["parts"]:
+        if part["partId"] != OVERRIDE_PART or not part["sourceElementId"].startswith(OVERRIDE_SOURCE):
+            assert part["mass"] == plain[part["key"]]
+            assert part["massOverridden"] is False
+
+
+def test_unapplied_overrides_are_reported(built_with_override):
+    assert any("centre of mass is overridden" in w for w in built_with_override["warnings"])

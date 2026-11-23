@@ -60,7 +60,7 @@ describe('the design carries no viewing preferences', () => {
       recovery: {},
     })
     const flight = reviveOrkConfig(legacy)!.cad.flight as unknown as Record<string, unknown>
-    expect(Object.keys(flight).sort()).toEqual(['cpModel', 'heading', 'inclination'])
+    expect(Object.keys(flight).sort()).toEqual(['cpModel', 'dragModel', 'finish', 'heading', 'inclination'])
     // The real launch params still survive the trip.
     expect(flight.inclination).toBe(80)
     expect(flight.heading).toBe(12)

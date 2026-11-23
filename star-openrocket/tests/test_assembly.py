@@ -105,3 +105,46 @@ def test_names_are_not_unique_so_cannot_be_identity(walk):
 def test_subassembly_nodes_are_skipped(walk):
     """Occurrences whose tail is a subassembly contribute no mass of their own."""
     assert walk.total_occurrences - len(walk.occurrences) == EXPECTED_SUBASSEMBLIES
+
+
+def test_instance_ids_reused_by_copied_subassemblies_resolve_to_their_own_parts():
+    """Instance ids are unique only within one assembly definition. LE4 SD's Fwd and
+    Aft Avbay Bulkhead Assemblies (one copied from the other) share ids, and a flat
+    id map built the forward bulkhead from the aft bulkhead's Part Studio."""
+    identity = np.eye(4).flatten().tolist()
+    mv = "m" * 24
+
+    def asm_instance(iid, element):
+        return {"id": iid, "type": "Assembly", "name": element, "documentId": ROOT_DOCUMENT_ID,
+                "elementId": element, "documentMicroversion": mv, "fullConfiguration": "default"}
+
+    def part(iid, element, name):
+        return {"id": iid, "type": "Part", "name": name, "partId": "JHD", "documentId": ROOT_DOCUMENT_ID,
+                "elementId": element, "documentMicroversion": mv, "fullConfiguration": "default"}
+
+    payload = {
+        "rootAssembly": {
+            "documentMicroversion": mv,
+            "instances": [asm_instance("FWD", "fwd-asm"), asm_instance("AFT", "aft-asm")],
+            "occurrences": [
+                {"path": ["FWD", "SAME"], "transform": identity},
+                {"path": ["AFT", "SAME"], "transform": identity},
+            ],
+        },
+        "subAssemblies": [
+            {"documentId": ROOT_DOCUMENT_ID, "elementId": "fwd-asm", "documentMicroversion": mv,
+             "fullConfiguration": "default", "instances": [part("SAME", "fwd-studio", "Fwd Bulkhead <1>")]},
+            {"documentId": ROOT_DOCUMENT_ID, "elementId": "aft-asm", "documentMicroversion": mv,
+             "fullConfiguration": "default", "instances": [part("SAME", "aft-studio", "Aft Bulkhead <1>")]},
+        ],
+    }
+    client = FakeClient(**{"/assemblies/": payload})
+    ref = ResolvedRef(ROOT_DOCUMENT_ID, "root-asm", "m", mv, "microversion")
+    walk = walk_assembly(client, ref)
+
+    got = {tuple(o.path): (o.name, o.source.element_id) for o in walk.occurrences}
+    assert got == {
+        ("FWD", "SAME"): ("Fwd Bulkhead <1>", "fwd-studio"),
+        ("AFT", "SAME"): ("Aft Bulkhead <1>", "aft-studio"),
+    }
+    assert {s.element_id for s in walk.sources} == {"fwd-studio", "aft-studio"}

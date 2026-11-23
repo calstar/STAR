@@ -43,6 +43,9 @@ const NOT_EDITING: Record<string, string> = {
     'which units you read in is a per-browser preference (lib/units/unitsContext ' +
     'over localStorage), not part of OrkConfig -- see lib/uiPrefs.ts on why that ' +
     'class of state deliberately never enters a shared design',
+  'CompareModal.tsx':
+    'reads two models side by side (POST /api/compare) and writes nothing; picking ' +
+    'which model to compare against changes the view, not the design',
   'App.tsx':
     'the tab bar and the design bar it renders; both must stay live without a ' +
     'checkout. Listed rather than left outside the glob so the exclusion is a ' +
@@ -66,6 +69,7 @@ const VIEW_ONLY: Record<string, string> = {
   'StabilityPanel.tsx:onToggleIsolate': 'isolates the outer surface in the 3D view',
   'StabilityPanel.tsx:onViewMotorCurves': 'opens the thrust-curve popup',
   'StabilityPanel.tsx:onViewFlight': 'opens the flight-profile popup',
+  'StabilityPanel.tsx:onCompare': 'opens the model comparison; it only reads',
   'StabilityPanel.tsx:onDownloadMotorFile': "downloads the motor's curve file; reads it",
   'StabilityPanel.tsx:setPickerOpen((v) => !v)': 'opens/closes the motor list; picking one is gated',
   'MotorPicker.tsx:setQuery(e.target.value)': 'search box, local state',

@@ -17,10 +17,20 @@ them: they carry no mass until someone assigns one in the viewer, and they are
 flagged so it is visible which parts those are. Volume is exact regardless, and
 their centroid comes from the mesh, so an assigned mass lands in the right
 place.
+
+**A mass typed into Onshape's "Mass" property is not in massproperties.** Onshape
+lets a part's mass be overridden in its properties (the team does this for parts
+modelled as space claims: the motor, parachutes, shock cords, epoxy, the avbay).
+The *assembly* massproperties honours the override; the Part Studio one, which the
+per-part breakdown comes from, does not -- it returns the material's mass, or zero.
+On LE4 SD that dropped 21.1 kg of 89.5 (the loaded motor alone is 14.2 kg) and the
+build failed to reconcile. The override lives in the parts listing as a custom
+property (``MASS_OVERRIDE_PROPERTY``), so it is read from there at no extra cost.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from .assembly import SourceKey
@@ -51,6 +61,26 @@ class BodyMass:
     #: Inertia tensor about the centroid, row-major 3x3, Part Studio frame, kg m^2.
     #: All zeros when ``has_mass`` is false.
     inertia: list[float] | None = None
+
+
+#: Onshape's built-in "Mass" property; its value is JSON ``{"override": kg, "useOverride": bool}``.
+MASS_OVERRIDE_PROPERTY = "57f3fb8efa3416c06701d626"
+#: Onshape's built-in "Center of mass" and "Inertia" properties, in the same shape. Not
+#: applied -- their frames are undocumented -- but a part using one is reported.
+OTHER_OVERRIDE_PROPERTIES = {
+    "57f3fb8efa3416c06701d627": "centre of mass",
+    "57f3fb8efa3416c06701d628": "inertia",
+}
+
+
+@dataclass
+class MassOverrides:
+    """Mass-property overrides set on parts in Onshape, keyed by part id."""
+
+    #: kg, for parts whose "Mass" property is overridden.
+    mass: dict[str, float]
+    #: part id -> names of overrides in use that the build does not apply.
+    unsupported: dict[str, list[str]]
 
 
 @dataclass
@@ -153,6 +183,37 @@ def fetch_source_part_names(
         if name:
             names[part["partId"]] = name
     return names
+
+
+def fetch_source_mass_overrides(
+    client: OnshapeClient, source: SourceKey, link_document_id: str | None = None
+) -> MassOverrides:
+    """Mass overrides for one Part Studio. Same endpoint as the materials fetch."""
+    payload = _fetch_parts(client, source, link_document_id)
+
+    masses: dict[str, float] = {}
+    unsupported: dict[str, list[str]] = {}
+    for part in payload or []:
+        props = part.get("customProperties") or {}
+        mass = _active_override(props.get(MASS_OVERRIDE_PROPERTY))
+        if isinstance(mass, (int, float)) and mass >= 0:
+            masses[part["partId"]] = float(mass)
+        for prop_id, label in OTHER_OVERRIDE_PROPERTIES.items():
+            if _active_override(props.get(prop_id)) is not None:
+                unsupported.setdefault(part["partId"], []).append(label)
+    return MassOverrides(masses, unsupported)
+
+
+def _active_override(raw: object) -> object | None:
+    """The ``override`` value of a property whose ``useOverride`` is on, else None."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            return None
+    if not isinstance(raw, dict) or not raw.get("useOverride"):
+        return None
+    return raw.get("override")
 
 
 def _fetch_parts(

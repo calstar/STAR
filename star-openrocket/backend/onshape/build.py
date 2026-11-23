@@ -31,7 +31,7 @@ from .client import OnshapeClient, OnshapeError
 from .geometry import inertia_per_unit_mass, transform_point, volume_and_centroid
 from .geometry_store import write_geometry
 from .glb import GLBBuilder, MeshKey
-from .mass import AssemblyTotals, BodyMass, Material
+from .mass import AssemblyTotals, BodyMass, MassOverrides, Material
 from .tessellate import PartMesh, fetch_source_meshes
 from .urls import ResolvedRef, parse_document_url, resolve
 
@@ -52,6 +52,8 @@ class SourceData:
     # The Part Studio's own name per part id, which the assembly instance name
     # is derived from. Kept so the viewer can strip the instance counter.
     part_names: dict[str, str]
+    #: Mass set on the part in Onshape's properties, which massproperties ignores.
+    overrides: MassOverrides
     meshes: dict[str, PartMesh]
     # {part_id: {face_id: FaceSurface}} -- B-rep surface type per face, for the
     # stability auto-detector. Empty if bodydetails failed for this source.
@@ -76,6 +78,8 @@ class PartRecord:
     #: still gets the part's real distribution. None when neither Onshape nor the
     #: mesh can give one.
     inertia_per_kg_world: list[float] | None = None
+    #: The mass came from Onshape's "Mass" property override, not from a material.
+    mass_overridden: bool = False
 
 
 @dataclass
@@ -225,10 +229,12 @@ def _fetch_sources(
             # One endpoint behind both, so the second call is a cache hit.
             materials = mass_mod.fetch_source_materials(client, source, link)
             part_names = mass_mod.fetch_source_part_names(client, source, link)
+            overrides = mass_mod.fetch_source_mass_overrides(client, source, link)
         except OnshapeError as exc:
             report.warn(f"Materials failed for {source.element_id}: {exc}")
             materials = {}
             part_names = {}
+            overrides = MassOverrides({}, {})
         try:
             meshes = fetch_source_meshes(client, source, link)
         except OnshapeError as exc:
@@ -239,7 +245,7 @@ def _fetch_sources(
         except OnshapeError as exc:
             report.warn(f"Body details failed for {source.element_id}: {exc}")
             surfaces = {}
-        return SourceData(source, bodies, materials, part_names, meshes, surfaces)
+        return SourceData(source, bodies, materials, part_names, overrides, meshes, surfaces)
 
     results = client.map_parallel(fetch, walk.sources)
     return {data.source: data for data in results}
@@ -270,9 +276,21 @@ def _resolve_parts(
             report.warn(f"{occ.name} ({occ.part_id}): has mass but no geometry.")
 
         volume = body.volume
-        defaulted = not body.has_mass
+        override = data.overrides.mass.get(occ.part_id)
+        defaulted = not body.has_mass and override is None
+        for label in data.overrides.unsupported.get(occ.part_id, []):
+            report.warn(f"{occ.name}: its {label} is overridden in Onshape; not applied here.")
 
-        if defaulted:
+        if override is not None:
+            # Mass set in Onshape's part properties. Onshape keeps the part's own
+            # centroid under a mass override (the assembly total agrees to the gram
+            # on LE4 SD), so the centroid is the body's, or the mesh's when the part
+            # has no material for Onshape to have computed one from.
+            part_mass = override
+            centroid_local = (
+                list(body.centroid) if body.has_mass else _mesh_centroid(mesh, occ, volume, report)
+            )
+        elif defaulted:
             # Onshape zeroes both the mass and the centroid for a part with no
             # material, and nothing is substituted for the mass here: the part
             # weighs nothing until someone says otherwise in the viewer, and
@@ -301,6 +319,7 @@ def _resolve_parts(
                 centroid_world=transform_point(centroid_local, occ.transform).tolist(),
                 material=material,
                 material_defaulted=defaulted,
+                mass_overridden=override is not None,
                 has_geometry=mesh is not None,
             )
         )
@@ -490,6 +509,7 @@ def _build_manifest(
                     {"name": p.material.name, "density": p.material.density} if p.material else None
                 ),
                 "materialDefaulted": p.material_defaulted,
+                "massOverridden": p.mass_overridden,
                 "mass": p.mass,
                 "volume": p.volume,
                 "centroidLocal": p.centroid_local,

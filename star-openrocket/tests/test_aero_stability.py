@@ -252,3 +252,73 @@ def test_detect_outer_surface_rejects_fin_plane():
     picked = set(guess.faces)
     assert ("occ:body", "F_outer") in picked
     assert ("occ:body", "F_fin") not in picked
+
+
+def test_reference_diameter_uses_the_tube_axis_not_a_vertex_fit():
+    """An asymmetric feature on the skin (LE4 SD's camera shrouds and rail lugs) tilts
+    a principal-axis fit of the vertices; on a long body that tilt reads as extra
+    radius at the ends. LE4 SD's 203.4 mm airframe came out 216.5 mm. The tubes'
+    own cylinder axis is the centreline the outer-surface preview already draws."""
+    L, R = 5.0, 0.1
+    z = np.linspace(0.0, L, 400)
+    tube = _sor_face("occ:tube", "F_tube", surface_of_revolution(z, np.full_like(z, R)), R)
+    # A dense flat patch hugging one side of the forward tube, inside the skin.
+    xs, zs = np.meshgrid(np.linspace(-0.02, 0.02, 40), np.linspace(0.2, 1.2, 200))
+    pts = np.stack([xs.ravel(), np.full(xs.size, 0.095), zs.ravel()], axis=1)
+    tris = np.stack([pts[:-2], pts[1:-1], pts[2:]], axis=1)
+    patch = FaceGeometry("occ:shroud", "part", "F_patch", tris, "PLANE", None, None, None)
+    store = StubStore([tube, patch])
+
+    result = compute_stability(
+        store, [{"key": "m", "mass": 1.0, "centroidWorld": [0, 0, 2.0]}],
+        outer_faces=[("occ:tube", "F_tube"), ("occ:shroud", "F_patch")],
+    )
+    assert result.ref_diameter == pytest.approx(2 * R, rel=1e-6)
+
+
+def test_aero_components_sum_to_the_static_cp_and_keep_the_body_apart(tmp_path):
+    """The 6-DOF's components: their CNa-weighted CP is the panel's exactly, and the
+    nose and the boattail stay separate -- one merged body component would give the
+    same CP but put all the body's lift (and damping arm) in the wrong place."""
+    from backend.onshape.aero.stability import aero_components, aero_core
+    from backend.onshape.geometry_store import GeometryStore
+    from backend.ork.importer import import_ork
+    from ork_samples import NOSE_L, sample_ork_xml
+
+    manifest = import_ork(sample_ork_xml().encode(), "sample.ork", tmp_path)
+    store = GeometryStore.load(tmp_path / manifest["source"]["modelId"])
+    core = aero_core(store, detect_outer_surface(store).faces)
+    comps = aero_components(core)
+    total = sum(c.cna for c in comps)
+    assert total == pytest.approx(core.cna_total, rel=1e-9)
+    assert sum(c.cna * c.cp_axial for c in comps) / total == pytest.approx(core.cp_axial, abs=1e-9)
+    x0 = core.profile.x_fore
+    nose = [c for c in comps if c.name.startswith("nose")]
+    tail = [c for c in comps if c.name.startswith("boattail")]
+    assert len(nose) == 1 and nose[0].cna == pytest.approx(2.0, rel=1e-3)
+    assert 0 < nose[0].cp_axial - x0 < NOSE_L
+    assert len(tail) == 1 and tail[0].cna < 0
+    assert tail[0].cp_axial - x0 > 2.4  # on the boattail, aft of the last tube
+
+
+def test_rigid_body_inertia_by_hand():
+    """Two point masses 1 m either side of the CG plus a part with its own tensor,
+    on a +z axis: I_transverse = sum m d^2 + own, I_axial = own only."""
+    from backend.onshape.aero.axis import Axis
+    from backend.onshape.aero.stability import rigid_body_inertia
+
+    own = np.diag([0.5, 0.5, 0.1]).flatten().tolist()  # per kg
+    parts = [
+        {"key": "a", "mass": 2.0, "centroidWorld": [0, 0, -1.0], "inertiaPerKgWorld": None},
+        {"key": "b", "mass": 2.0, "centroidWorld": [0, 0, 1.0], "inertiaPerKgWorld": None},
+        {"key": "c", "mass": 1.0, "centroidWorld": [0, 0, 0.0], "inertiaPerKgWorld": own},
+    ]
+    axis = Axis(origin=np.zeros(3), direction=np.array([0.0, 0.0, 1.0]))
+    rb = rigid_body_inertia(parts, axis)
+    assert rb.mass == 5.0 and rb.cg_axial == pytest.approx(0.0)
+    assert rb.i_transverse == pytest.approx(2 * 2.0 * 1.0**2 + 1.0 * 0.5)
+    assert rb.i_axial == pytest.approx(1.0 * 0.1)
+    assert rb.tensor_fraction == pytest.approx(0.2)
+    # A viewer override scales that part's own tensor with it.
+    heavier = rigid_body_inertia(parts, axis, overrides={"c": 3.0})
+    assert heavier.i_transverse == pytest.approx(4.0 + 3.0 * 0.5)

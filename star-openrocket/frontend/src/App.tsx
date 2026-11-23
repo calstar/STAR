@@ -28,6 +28,7 @@ import { EnvironmentTab } from './components/environment/EnvironmentTab'
 import { UnitsPanel } from './components/units/UnitsPanel'
 import { FlightProfileModal } from './components/viewer/FlightProfileModal'
 import { InspectorPanel } from './components/viewer/InspectorPanel'
+import { CompareModal } from './components/viewer/CompareModal'
 import { MotorCurvesModal } from './components/viewer/MotorCurvesModal'
 import { MaterialWarning } from './components/viewer/MaterialWarning'
 import { ModelPicker } from './components/viewer/ModelPicker'
@@ -122,6 +123,7 @@ export default function App() {
     [],
   )
   // Motor-curves popup: the selected motor's raw thrust/weight/CG datafile.
+  const [compareOpen, setCompareOpen] = useState(false)
   const [curvesOpen, setCurvesOpen] = useState(false)
   const [curvesDetail, setCurvesDetail] = useState<MotorDetail | null>(null)
   const [curvesBusy, setCurvesBusy] = useState(false)
@@ -183,7 +185,20 @@ export default function App() {
         setFaceEditMode(false)
         setEditTarget('body')
         setIsolateOuterFaces(false)
-        setMotorSel(null)
+        // An imported .ork names its motor and where it sits; start from that, so the
+        // rocket opens as OpenRocket flies it. A CAD build starts with none.
+        const orkMotor = loaded.ork?.motors.find((motor) => motor.default && motor.motorId) ?? null
+        setMotorSel(
+          orkMotor?.motorId
+            ? {
+                motorId: orkMotor.motorId,
+                simfileId: orkMotor.simfileId,
+                aftOffset: orkMotor.aftOffset,
+                refFace: null,
+                state: 'launch',
+              }
+            : null,
+        )
         setMotorSummary(null)
         setFlightOpen(false)
         setFlightResult(null)
@@ -838,6 +853,7 @@ export default function App() {
             motorSel={motorSel}
             motorSummary={motorSummary}
             onSelectMotor={handleSelectMotor}
+            onCompare={() => setCompareOpen(true)}
             onClearMotor={handleClearMotor}
             onSetMotorState={handleSetMotorState}
             onSetMotorOffset={handleSetMotorOffset}
@@ -871,6 +887,21 @@ export default function App() {
         />
       )}
 
+      {compareOpen && modelId && (
+        <CompareModal
+          models={models}
+          current={{
+            modelId,
+            // Empty selections mean "auto-detect" for the body; for fins only an
+            // omitted list does ([] would mean "no fins").
+            outerFaces,
+            finFaces: finFaces.length ? finFaces : undefined,
+            overrides: massOverrides,
+            motor: motorSel,
+          }}
+          onClose={() => setCompareOpen(false)}
+        />
+      )}
       {curvesOpen && (
         <MotorCurvesModal
           detail={curvesDetail}
