@@ -12,6 +12,7 @@ structure), see [`../docs/CONFIGURATION_GUIDE.md`](../docs/CONFIGURATION_GUIDE.m
 | `config_flight_daq.toml` | Flight DAQ — flight sensors/actuators. Network `192.168.3.0/24`. |
 | `config_ground_daq.toml` | Ground DAQ — GSE sensors + hotfire. Network `192.168.2.0/24`. |
 | `config_sitl.toml` | Software-in-the-loop config. |
+| `board_macs.toml` | Which physical board is which: Ethernet MAC → `board_id`, read by the DHCP server (`deploy/dhcp`). One copy for every profile. |
 | `system_config.json` | Runtime system state snapshot. |
 | `state_transitions.csv` | Allowed engine state transitions. |
 | `state_machine_actuators.csv` | Actuator positions per state. |

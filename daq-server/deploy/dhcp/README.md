@@ -8,8 +8,15 @@ replaces *how* a board gets its address, not *which* address.
 
 - **Server:** `dnsmasq`, DHCP-only (no DNS), running as the root system unit
   `star-dhcp.service`, bound to the board NIC only.
-- **Source of truth:** the `[boards.*]` table in the DAQ config. Each board's
-  `mac` field drives its reservation. See `config/README.md`.
+- **Source of truth:** two files, merged.
+  - `config/board_macs.toml`: a tracked MAC -> `board_id` map, one copy for every
+    profile. A board listed here is served `192.168.2.<board_id>` with no config
+    entry at all, so its address can be pinned before anyone writes its sensor
+    settings.
+  - The `[boards.*]` table in the DAQ config: each board's `mac` field drives
+    its reservation, as before. See `config/README.md`.
+  - The same board in both with the same MAC is one reservation. With different
+    MACs, the whole set is refused and the previous reservations stay in force.
 - **Identity comes with the address:** a board takes its ID from the address it
   is given (`192.168.2.31` -> board 31), so every board of a type runs the same
   firmware image. Which physical board is which is its `mac =` line here.
@@ -87,15 +94,22 @@ MAC from the pool, then pin it:
    # <expiry> <mac> <ip> <hostname> <client-id>
    ```
    Match the board by the pool IP it picked up (and its hostname if it sets one).
-3. **Add the MAC to that board** in the config editor (Boards tab), or in its
-   `[boards.*]` entry, and save:
+3. **Add the MAC to `config/board_macs.toml`**, with a comment saying where it
+   came from. This needs no config entry:
+   ```toml
+   [[board]]
+   mac = "aa:bb:cc:dd:ee:ff"   # lowercase, colon-separated
+   board_id = 23               # served 192.168.2.23
+   ```
+   Or add it to the board's own entry in the config editor (Boards tab), or in
+   its `[boards.*]` entry, and save:
    ```toml
    [boards.pt_board]
    ip = "192.168.2.21"
    board_id = 21               # must equal the last octet of ip
    mac = "aa:bb:cc:dd:ee:ff"   # lowercase, colon-separated
    ```
-   `star-dhcp-sync` serves it within a second (`journalctl -u star-dhcp-sync`).
+   Either way `star-dhcp-sync` serves it within a second (`journalctl -u star-dhcp-sync`).
    If it refuses the config, the Boards page says why and the previous
    reservations stay in force.
 4. **Power-cycle the board.** A board takes its address at boot, so until then it

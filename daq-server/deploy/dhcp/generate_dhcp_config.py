@@ -13,6 +13,15 @@ and `board_id`; this reads the `mac` field added alongside them. IP is handed
 out unchanged (== 192.168.2.<board_id>), so DHCP replaces *how* a board gets its
 address, not *which* address — nothing downstream renumbers.
 
+Second source: config/board_macs.toml (beside --config, or --board-macs), a
+tracked, profile-independent MAC -> board_id map. Which chip is which board is a
+fact about hardware, so it can be recorded before the board has a config entry
+at all; each [[board]] there is reserved 192.168.2.<board_id>. Absent file: the
+output is exactly the config-only output. The two sources are merged and checked
+as one list: the same board_id with the same MAC in both is one reservation; the
+same board_id with different MACs, a MAC on two boards, or two boards sharing a
+recovery address is refused.
+
 Emits two files into --out-dir:
   star-dhcp.conf   stable base config (interface, pool, options); DHCP-only.
   star-dhcp.hosts  MAC->IP reservations, one per board that has a mac.
@@ -196,6 +205,84 @@ def collect_reservations(cfg: dict, subnet: ipaddress.IPv4Network) -> list[tuple
     return reservations
 
 
+BOARD_MACS_NAME = "board_macs.toml"
+
+
+def load_board_macs(path: Path) -> list[tuple[int, str]]:
+    """(board_id, mac) per [[board]] in board_macs.toml, in file order.
+
+    Unlike a config board, an entry here exists only to name a MAC, so a blank
+    or malformed MAC, a board_id that isn't an integer in 1..254, or a board_id
+    listed twice is an error, not a skip."""
+    with path.open("rb") as fh:
+        data = _toml.load(fh)
+    entries = data.get("board", [])
+    if not isinstance(entries, list):
+        _die(f"{path}: expected [[board]] blocks")
+    out: list[tuple[int, str]] = []
+    seen: set[int] = set()
+    for i, e in enumerate(entries, 1):
+        where = f"{path} [[board]] #{i}"
+        if not isinstance(e, dict):
+            _die(f"{where}: not a table")
+        bid = e.get("board_id")
+        # bool is an int in Python; `board_id = true` is not a board.
+        if not isinstance(bid, int) or isinstance(bid, bool) or not 1 <= bid <= 254:
+            _die(f"{where}: board_id must be an integer 1-254, got {bid!r}")
+        if bid in seen:
+            _die(f"{where}: board_id {bid} is listed twice")
+        mac = normalize_mac(str(e.get("mac", "")))
+        if mac is None:
+            _die(f"{where}: board {bid} has no mac")
+        seen.add(bid)
+        out.append((bid, mac))
+    return out
+
+
+def merge_reservations(reservations: list[tuple[str, str, str]],
+                       board_macs: list[tuple[int, str]],
+                       cfg: dict,
+                       subnet: ipaddress.IPv4Network) -> list[tuple[str, str, str]]:
+    """The config's reservations plus board_macs.toml's, checked as one list.
+
+    A board_macs entry is served 192.168.2.<board_id> (the board takes its ID
+    from that address) under the name of the config board at that address, or
+    board_<id> if the config has none yet."""
+    base = ".".join(str(subnet.network_address).split(".")[:3])
+    boards = cfg.get("boards", {}) if isinstance(cfg.get("boards"), dict) else {}
+    name_at = {str(b["ip"]): n for n, b in boards.items()
+               if isinstance(b, dict) and b.get("ip")}
+    by_ip = {ip: (name, mac) for name, mac, ip in reservations}
+    owner_of_mac = {mac: name for name, mac, _ip in reservations}
+    owner_of_recovery = {recovery_address(mac): name for name, mac, _ip in reservations}
+
+    merged = list(reservations)
+    for bid, mac in board_macs:
+        ip = f"{base}.{bid}"
+        if ipaddress.ip_address(ip) not in subnet:
+            _die(f"board_macs.toml board {bid}: {ip} is outside subnet {subnet}")
+        if ip in by_ip:
+            name, cfg_mac = by_ip[ip]
+            if cfg_mac == mac:
+                continue  # both sources agree: one reservation
+            _die(f"board {bid}: board_macs.toml says {mac} but [boards.{name}] "
+                 f"says {cfg_mac}; fix whichever is wrong")
+        name = name_at.get(ip, f"board_{bid}")
+        if mac in owner_of_mac:
+            _die(f"duplicate MAC {mac} on {name!r} (board_macs.toml) and "
+                 f"{owner_of_mac[mac]!r}")
+        rec = recovery_address(mac)
+        if rec in owner_of_recovery:
+            _die(f"{name!r} and {owner_of_recovery[rec]!r} would share the recovery "
+                 f"address {rec} (their MACs end alike), so neither could be "
+                 f"reflashed there if DHCP failed")
+        by_ip[ip] = (name, mac)
+        owner_of_mac[mac] = name
+        owner_of_recovery[rec] = name
+        merged.append((name, mac, ip))
+    return merged
+
+
 def sanitize_hostname(name: str) -> str:
     """dnsmasq accepts a hostname label per reservation; keep it DNS-safe."""
     h = re.sub(r"[^a-zA-Z0-9-]", "-", name).strip("-")
@@ -224,11 +311,13 @@ def build_gui_reservations(reservations: list[tuple[str, str, str]],
     """
     entries = []
     for name, mac, ip in reservations:
-        b = boards.get(name, {})
+        # A board_macs.toml board with no config entry yet: its ID is its address.
+        bid = (boards[name].get("board_id") if isinstance(boards.get(name), dict)
+               else int(ip.rsplit(".", 1)[1]))
         entries.append({
             "mac": mac,
             "ip": ip,
-            "board_id": b.get("board_id"),
+            "board_id": bid,
             "label": name,
         })
     entries.sort(key=lambda e: ipaddress.ip_address(e["ip"]))
@@ -313,6 +402,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="also write the Test-GUI's reservations.json here, "
                          "from the same [boards.*] table (e.g. "
                          "Test-GUI/config/reservations.json)")
+    ap.add_argument("--board-macs", type=Path, default=None,
+                    help=f"MAC -> board_id map (default: {BOARD_MACS_NAME} beside "
+                         "--config, used only if it exists)")
     ap.add_argument("--check", action="store_true",
                     help="validate and print to stdout without writing files")
     args = ap.parse_args(argv)
@@ -325,6 +417,15 @@ def main(argv: list[str] | None = None) -> int:
 
     subnet = resolve_subnet(cfg)
     reservations = collect_reservations(cfg, subnet)
+
+    # Named explicitly, it must exist; the default beside the config is optional,
+    # and without it the output is exactly the config-only output.
+    macs_path = args.board_macs or cfg_path.parent / BOARD_MACS_NAME
+    if args.board_macs and not macs_path.is_file():
+        _die(f"board MAC map not found: {macs_path}")
+    if macs_path.is_file():
+        reservations = merge_reservations(reservations, load_board_macs(macs_path),
+                                          cfg, subnet)
 
     # Reservations must not sit inside the dynamic pool, or dnsmasq could hand a
     # board's reserved address to someone else.

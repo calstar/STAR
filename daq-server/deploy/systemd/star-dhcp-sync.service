@@ -5,7 +5,8 @@ Documentation=file:%h/sensor_system/daq-server/deploy/dhcp/README.md
 # board's `mac =` saved in the config editor is served with no shell step.
 # install_dhcp.sh fills in @GENERATOR@ (a root-owned copy of
 # generate_dhcp_config.py, so root never runs a script a user can edit) and
-# @CONFIG@ (the deployed config.toml, read as data only).
+# @CONFIG@ (the deployed config.toml, read as data only) and @BOARD_MACS@
+# (config/board_macs.toml, the MAC -> board ID map, also read as data only).
 After=star-dhcp.service
 
 [Service]
@@ -14,7 +15,7 @@ Type=oneshot
 # disagrees with its ip) before writing anything: the served list stays as it
 # was, and the error is in `journalctl -u star-dhcp-sync`, which the Boards page
 # shows.
-ExecStart=/usr/bin/python3 @GENERATOR@ --config @CONFIG@ --out-dir /etc/star-dhcp --hosts-only
+ExecStart=/usr/bin/python3 @GENERATOR@ --config @CONFIG@ --board-macs @BOARD_MACS@ --out-dir /etc/star-dhcp --hosts-only
 # SIGHUP: re-read the reservations without dropping a lease. No-op when
 # star-dhcp is not running.
 ExecStartPost=/bin/systemctl try-reload-or-restart star-dhcp.service

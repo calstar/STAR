@@ -28,10 +28,13 @@ LIB_DIR="/usr/local/lib/star-dhcp"
 # Config to read reservations from. Defaults to the active config; override with
 # DAQ_CONFIG or as $1.
 CONFIG="$(realpath "${1:-${DAQ_CONFIG:-$DAQ_DIR/config/config.toml}}")"
+# The MAC -> board ID map (tracked in git, one copy for every profile).
+BOARD_MACS="$(realpath "${BOARD_MACS:-$DAQ_DIR/config/board_macs.toml}")"
 
 echo "== board-LAN DHCP install =="
 echo "  daq dir : $DAQ_DIR"
 echo "  config  : $CONFIG"
+echo "  macs    : $BOARD_MACS"
 echo "  out dir : $OUT_DIR"
 
 if ! command -v dnsmasq >/dev/null 2>&1; then
@@ -43,7 +46,7 @@ systemctl disable --now dnsmasq 2>/dev/null || true
 
 echo "generating config..."
 mkdir -p "$OUT_DIR"
-python3 "$DIR/generate_dhcp_config.py" --config "$CONFIG" --out-dir "$OUT_DIR"
+python3 "$DIR/generate_dhcp_config.py" --config "$CONFIG" --board-macs "$BOARD_MACS" --out-dir "$OUT_DIR"
 
 echo "validating generated config (dnsmasq --test)..."
 dnsmasq --test --conf-file="$OUT_DIR/star-dhcp.conf"
@@ -55,7 +58,7 @@ install -m 0644 "$DAQ_DIR/deploy/systemd/star-dhcp.service" /etc/systemd/system/
 install -d -m 0755 "$LIB_DIR"
 install -m 0644 "$DIR/generate_dhcp_config.py" "$LIB_DIR/generate_dhcp_config.py"
 for unit in star-dhcp-sync.service star-dhcp-sync.path; do
-  sed -e "s|@GENERATOR@|$LIB_DIR/generate_dhcp_config.py|g" -e "s|@CONFIG@|$CONFIG|g" \
+  sed -e "s|@GENERATOR@|$LIB_DIR/generate_dhcp_config.py|g" -e "s|@CONFIG@|$CONFIG|g" -e "s|@BOARD_MACS@|$BOARD_MACS|g" \
     "$DAQ_DIR/deploy/systemd/$unit" > "/etc/systemd/system/$unit"
   chmod 0644 "/etc/systemd/system/$unit"
 done
@@ -86,8 +89,9 @@ fi
 cat <<EOF
   journalctl -u star-dhcp -f          # watch leases
 
-Reservations now follow $CONFIG by themselves: save a board's mac = in the
-config editor and star-dhcp-sync regenerates and reloads them
+Reservations now follow $CONFIG and $BOARD_MACS by
+themselves: save a board's mac = in the config editor, or a [[board]] in
+board_macs.toml, and star-dhcp-sync regenerates and reloads them
 (journalctl -u star-dhcp-sync shows each run). A board picks up a changed
 address at its next boot.
 EOF

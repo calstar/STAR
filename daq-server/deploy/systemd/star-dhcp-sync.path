@@ -5,6 +5,8 @@ Description=STAR board-LAN DHCP: watch the DAQ config for reservation changes
 # The backend writes config.toml in place (save, profile deploy), which closes
 # the file after a write: exactly what PathChanged= fires on.
 PathChanged=@CONFIG@
+# The MAC -> board ID map (config/board_macs.toml) is the other source.
+PathChanged=@BOARD_MACS@
 Unit=star-dhcp-sync.service
 
 [Install]
