@@ -3,7 +3,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import type { SystemState } from '../shared-types.js';
 import { readConfig } from '../routes/config.js';
@@ -71,7 +71,10 @@ function buildTransitionsCSVSearchPaths(): string[] {
   try {
     const config = readConfig();
     const rel = config.state_machine?.transitions_csv;
-    if (typeof rel === 'string' && rel.length > 0) {
+    if (typeof rel === 'string' && rel.length > 0 && isAbsolute(rel)) {
+      // An absolute path is used as written (C5-4); join() would have glued it onto each root.
+      paths.push(rel);
+    } else if (typeof rel === 'string' && rel.length > 0) {
       paths.push(join(__dirname, '..', '..', '..', '..', rel));
       paths.push(join(process.cwd(), '..', '..', rel));
       paths.push(join(process.cwd(), '..', rel));

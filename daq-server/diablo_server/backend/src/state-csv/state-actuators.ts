@@ -5,7 +5,7 @@
  */
 
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, isAbsolute } from 'path';
 import { fileURLToPath } from 'url';
 import { SystemState } from '../../../shared/types.js';
 import { readConfig } from '../routes/config.js';
@@ -263,7 +263,10 @@ function buildCSVSearchPaths(): string[] {
   try {
     const config = readConfig();
     const csvRelPath = config.state_machine?.actuator_csv;
-    if (typeof csvRelPath === 'string' && csvRelPath.length > 0) {
+    if (typeof csvRelPath === 'string' && csvRelPath.length > 0 && isAbsolute(csvRelPath)) {
+      // An absolute path is used as written (C5-4); join() would have glued it onto each root.
+      paths.push(csvRelPath);
+    } else if (typeof csvRelPath === 'string' && csvRelPath.length > 0) {
       // Resolve relative to project root (parent of web-gui)
       paths.push(join(__dirname, '..', '..', '..', '..', csvRelPath));
       paths.push(join(process.cwd(), '..', '..', csvRelPath));
