@@ -19,7 +19,7 @@ import {
 } from '../routes/config-profiles.js';
 import { checkStateScript } from '../routes/script-check.js';
 import { sessionManager } from '../session-manager.js';
-import { parseCsvGrid } from '../../shared/config-validation.js';
+import { parseCsvGrid } from '../../../shared/config-validation.js';
 import { isConfigWriteAuthorized } from './http.js';
 import type { APIHandlerOptions } from './http.js';
 

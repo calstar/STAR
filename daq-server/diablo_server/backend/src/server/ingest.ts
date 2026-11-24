@@ -33,7 +33,7 @@ import { noteFirstSample } from './mission-time.js';
 import { hpBoardNumbersCache, t7CalFieldsCache } from './config-caches.js';
 import { publishSample } from './sensor-stream.js';
 import { noteRawAdc } from './calibration-state.js';
-import { countHeartbeat, updateBoard, noteT7Alive, noteSelfTestResults } from './board-status.js';
+import { countHeartbeat, updateBoard, updateBoardFirmware, noteT7Alive, noteSelfTestResults } from './board-status.js';
 import { currentState, applySequencerState } from './engine-state.js';
 import { actuatorSensedState, scheduleActuatorMismatchCheck } from './actuator-mismatch.js';
 import { noteIngest } from './elodin-link.js';
@@ -49,6 +49,14 @@ export function handleElodinPacket(header: any, payload: Buffer): void {
     if (high === 0x10) {
       countHeartbeat(low);
       updateBoard(low, payload);
+      return;
+    }
+
+    // ── Board firmware digest [0x11, board_id] ──────────────────────────────
+    // daq_bridge publishes this only when a board's firmware changes, so this
+    // arrives once per board per boot or reflash, not per heartbeat.
+    if (high === 0x11) {
+      updateBoardFirmware(low, payload);
       return;
     }
 

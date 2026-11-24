@@ -30,6 +30,7 @@ import { stats } from './stats.js';
 import { wss, broadcast } from './ws-clients.js';
 import { activeNotificationKeys, broadcastNotification, raiseNotification, clearNotification } from './notifications.js';
 import { t7BoardIdForSlot } from './config-caches.js';
+import { recordFirmware } from '../firmware-log.js';
 
 export const BOARD_STATUS_HZ = 1;     // broadcast rate for board status
 /** Board marked disconnected if no Elodin [0x10] heartbeat for this long. Too low causes UI flap when DB or TCP jitters; heartbeats are usually multi-Hz but not hard-real-time. */
@@ -116,6 +117,30 @@ export function updateBoard(low: number, payload: Buffer): void {
       console.log(`[ThinServer] Board ${boardId} (${typeStr}) connected`);
     }
   }
+}
+
+/**
+ * Record the firmware image a board reports running: shown live on the Boards pane and pinned to
+ * the run in `<dbDir>/firmware.jsonl`.
+ *
+ * Payload is BoardFirmwareElodinMessage (see comms/messages/board/BoardFirmwareMessage.hpp):
+ *   u64 timestamp_ns (0) | u8 board_id (8) | u8[32] firmware_digest (9)
+ */
+export function updateBoardFirmware(low: number, payload: Buffer): void {
+  if (payload.length < 41) return;
+  const digest = payload.subarray(9, 41).toString('hex');
+  const status = boardsStatus.get(low);
+  if (!status) return; // heartbeat creates the entry; firmware only annotates it
+  if (status.firmwareDigest === digest) return;
+
+  const previous = status.firmwareDigest;
+  status.firmwareDigest = digest;
+  status.firmwareSeenMs = Date.now();
+  console.log(
+    `[ThinServer] Board ${low} (${status.type}) firmware ${previous ? 'changed to ' : ''}${digest.slice(0, 16)}…`,
+  );
+  recordFirmware(low, digest, status.type);
+  broadcastBoardStatus();
 }
 
 /**

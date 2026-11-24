@@ -511,7 +511,11 @@ async function boards(): Promise<void> {
   await sleep(5000);
 
   step('startup_board');
-  const code = await new Promise<number>((resolve) => {
+  // The startup board's lifecycle is made deterministic by holding SENSOR_CONFIG back until it
+  // has been reported stuck in SETUP (server.ts: >4 s in SETUP), and only then starting
+  // config_broadcast_service. Left running from the start, whether "stuck in setup" fired at all
+  // depended on where in its 1.5 s cycle the board appeared.
+  const exited = new Promise<number>((resolve) => {
     const p = spawn(process.env.PYTHON_BIN || 'python3', [
       process.env.BOARD_STARTUP_SIM!, '--listen-port', process.env.CHAR_STARTUP_PORT!,
       '--daq-port', process.env.CHAR_DAQ_UDP_PORT!, '--board-ip', '127.0.0.60', '--board-id', '60',
@@ -519,9 +523,26 @@ async function boards(): Promise<void> {
     ], { stdio: 'ignore' });
     p.on('exit', (c) => resolve(c ?? -1));
   });
+  const stuckBy = Date.now() + 20000;
+  const isStuck = (f: Frame) => {
+    try {
+      const m = JSON.parse(f.raw);
+      return m.type === 'notification' && m.payload?.key === 'setup_stuck_60' && m.payload?.ongoing === true;
+    } catch { return false; }
+  };
+  while (!cur!.frames.some(isStuck)) {
+    if (Date.now() > stuckBy) throw new Error('board 60 never reported stuck in setup');
+    await sleep(100);
+  }
+  const cb = spawn(process.env.CHAR_CONFIG_BROADCAST!, [
+    '--config', process.env.CHAR_CONFIG!, '--interval-ms', '1500',
+  ], { cwd: process.env.CHAR_FIXTURE!, stdio: 'ignore' });
+  fs.writeFileSync(`${process.env.CHAR_FIXTURE}/config_broadcast.pid`, String(cb.pid));
+  const code = await exited;
   if (code !== 0) throw new Error(`board_startup_sim exited ${code}`);
   // Long enough for the board's heartbeat to go stale (5 s) and the sweep to say so.
   await sleep(8000);
+  cb.kill('SIGTERM');
 
   step('http_after_startup');
   await sweep();
