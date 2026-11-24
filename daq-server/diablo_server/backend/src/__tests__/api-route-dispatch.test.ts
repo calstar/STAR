@@ -64,6 +64,8 @@ const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ROUTE_TABLE = `
 GET /api/ball_valve_cal
 POST /api/ball_valve_cal
+GET /api/ball_valve_current
+POST /api/ball_valve_current
 POST /api/board-log-mode
 GET /api/board-logs
 GET /api/board-logs/stats
@@ -131,6 +133,8 @@ type Case = [string, string, string | null, number];
 const CASES: Case[] = [
   ['GET', '/api/ball_valve_cal', null, 200],
   ['POST', '/api/ball_valve_cal', '{}', 403],
+  ['GET', '/api/ball_valve_current', null, 200],
+  ['POST', '/api/ball_valve_current', '{}', 403],
   ['POST', '/api/board-log-mode', '{}', 403],
   ['GET', '/api/board-logs', null, 200],
   ['GET', '/api/board-logs/stats', null, 200],
