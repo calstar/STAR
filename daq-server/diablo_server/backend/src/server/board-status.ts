@@ -56,6 +56,18 @@ export function loadBoardsFromConfig(): void {
         ? board.board_number
         : (typeof board.board_id === 'number' ? board.board_id : null);
       const ip = typeof board.ip === 'string' ? board.ip : `192.168.2.${id}`;
+      // Merge, never replace (C5-1). This runs again at session start and stop; replacing the
+      // entry dropped a heartbeating board's lastHeartbeatMs, so the next stale sweep reported it
+      // "connection lost" and its next heartbeat "connected" a second later. Config owns what the
+      // board is; heartbeats own whether it is alive.
+      const existing = boardsStatus.get(id);
+      if (existing) {
+        existing.type = type;
+        existing.boardNumber = boardNumber;
+        existing.ip = ip;
+        existing.expected = true;
+        continue;
+      }
       boardsStatus.set(id, {
         type, boardNumber, id, ip,
         expected: true,
