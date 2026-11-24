@@ -53,6 +53,11 @@ export interface RunIndex {
   n_reanchored: number;
   /** Channels with no stamp at all, still drawn on elodin-db's write time. */
   n_db_only: number;
+  /** The cached copy is older than the DB: the run kept recording after it was exported.
+   *  Replaced automatically once the run has stopped (`recording` false). */
+  partial?: boolean;
+  /** The DB was written to in the last few seconds — the run is still going. */
+  recording?: boolean;
   components: Component[];
   /** A config snapshot was found beside this run's DB, so entity labels are its own. */
   has_config: boolean;
