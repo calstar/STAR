@@ -228,21 +228,25 @@ int main() {
         sequencer::StateMachine::loadStatesFromConfig(toml);
         sequencer::StateMachine sm;
         check(sm.load(p + "/state_transitions.csv"), name + ": StateMachine::load accepts it");
-        const auto ea = sequencer::StateMachine::fromName("Emergency Abort");
-        const auto fire = sequencer::StateMachine::fromName("Fire");
         // Read the table back row by row: Emergency Abort from every row, Fire only from Ready
-        // (and Fire itself), where the table has those states at all.
+        // (and Fire itself), where the table has those columns at all (le4 and digital-twin
+        // have no abort columns; fromName would still answer from the compiled enum).
         std::ifstream csv(p + "/state_transitions.csv");
         std::string line;
         std::getline(csv, line);
+        const std::string header = line + ",";
+        const bool has_ea = header.find(",Emergency Abort,") != std::string::npos;
+        const bool has_fire = header.find(",Fire,") != std::string::npos;
+        const auto ea = sequencer::StateMachine::fromName("Emergency Abort");
+        const auto fire = sequencer::StateMachine::fromName("Fire");
         while (std::getline(csv, line)) {
             const std::string from_name = line.substr(0, line.find(','));
             if (from_name.empty())
                 continue;
             const auto from = sequencer::StateMachine::fromName(from_name);
-            if (ea != sequencer::State::UNKNOWN)
+            if (has_ea)
                 check(sm.isAllowed(from, ea), name + ": " + from_name + " -> Emergency Abort");
-            if (fire != sequencer::State::UNKNOWN && from_name != "Ready" && from_name != "Fire" &&
+            if (has_fire && from_name != "Ready" && from_name != "Fire" &&
                 from_name != "Calibrate")
                 check(!sm.isAllowed(from, fire), name + ": no " + from_name + " -> Fire bypass");
         }
