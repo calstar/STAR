@@ -1,10 +1,12 @@
 #include "control/PressureFeed.hpp"
 
 #include <iostream>
+#include <set>
 
 #include "comms/messages/sensor/CalibratedPTMessage.hpp"
 #include "config/SensorTables.hpp"
 #include "elodin/ElodinClient.hpp"
+#include "elodin/SubscriptionTracker.hpp"
 
 namespace sequencer {
 
@@ -14,20 +16,24 @@ constexpr int kRecvTimeoutMs = 200;
 constexpr int kReconnectBackoffMs = 200;
 
 /**
- * How often a table that has never delivered is asked for again.
+ * How long a refused subscription waits before it is asked for again.
  *
- * subscribe_tables() only reports whether the SOCKET WRITE succeeded — it sends request id 0
- * and never reads a reply, and the C++ client has no ErrorResponse handling at all. So a
- * subscription the DB refuses is silent, and on a cold start it is refused routinely: the
- * sequencer and the calibration service come up together, and whichever loses the race
- * subscribes to a calibrated PT table before calibration_service has registered its VTable.
- * Measured on the stand 2026-09-16: PressureFeed subscribed at 16:45:08.348, the calibrated
- * VTables were registered at 16:45:08.494 — 146 ms later. The DB answered "invalid msg id",
- * nothing retried, and the feed stayed blind for the life of the process. Every dynamic state
- * reading a pressure was then refused entry with "has produced no reading yet" for the whole
- * session, decided by ~150 ms of startup ordering.
+ * On a cold start a subscription is refused routinely: the sequencer and the calibration service
+ * come up together, and whichever loses the race subscribes to a calibrated PT table before
+ * calibration_service has registered its VTable. Measured on the stand 2026-09-16: PressureFeed
+ * subscribed at 16:45:08.348, the calibrated VTables were registered at 16:45:08.494 — 146 ms
+ * later. The DB answered "invalid msg id" and, before any retry existed, the feed stayed blind
+ * for the life of the process.
+ *
+ * Only a REFUSED subscription is asked for again, and the refusal names it: every subscription
+ * goes out under its own request id, which the DB echoes in its ErrorResponse
+ * (SubscriptionTracker, as calibration_service does). The previous rule — re-subscribe, every
+ * second, any table that has delivered nothing — rested on "a table that has delivered nothing
+ * cannot be duplicated", which is false for a table the DB ACCEPTED whose board is off: each
+ * re-send spawned one more stream task inside elodin-db (~3,600 an hour per silent table, D-PF),
+ * and once the board came up the feed received every row that many times.
  */
-constexpr int kResubscribeMs = 1000;
+constexpr int kRefusedRetryMs = 1000;
 }  // namespace
 
 PressureFeed::~PressureFeed() {
@@ -77,9 +83,9 @@ void PressureFeed::stop() {
 
 void PressureFeed::runLoop(std::string host, uint16_t port) {
     fsw::elodin::ElodinClient client;
-    auto last_resubscribe = std::chrono::steady_clock::now();
-    /** Say "still waiting" once, not once a second for the life of the process. */
-    bool silent_logged = false;
+    fsw::elodin::SubscriptionTracker tracker{std::chrono::milliseconds(kRefusedRetryMs)};
+    /** Say "refused" once per table, not once a second while its publisher is away. */
+    std::set<std::pair<uint8_t, uint8_t>> refusal_logged;
 
     // A separate client from the sequencer's publisher, on purpose: ElodinClient's publish_mutex_
     // does not guard the read path, so reading and publishing through one object from two threads
@@ -98,8 +104,14 @@ void PressureFeed::runLoop(std::string host, uint16_t port) {
             }
             // Re-subscribed on EVERY reconnect. The VTables live in the db process, so a
             // reconnection that skips this comes back permanently silent — connected, reading
-            // nothing, with no error to show for it.
-            if (!client.subscribe_tables(tables)) {
+            // nothing, with no error to show for it. A new connection starts with no stream
+            // tasks, so every table is sent afresh under a fresh request id.
+            tracker.reset();
+            refusal_logged.clear();
+            bool ok = true;
+            for (const auto& t : tables)
+                ok = client.subscribe_table(t.first, t.second, tracker.assign(t)) && ok;
+            if (!ok) {
                 std::cerr << "[PressureFeed] subscribe failed — dropping the socket to retry"
                           << std::endl;
                 client.disconnect();
@@ -111,41 +123,12 @@ void PressureFeed::runLoop(std::string host, uint16_t port) {
             client.set_recv_timeout_ms(kRecvTimeoutMs);
             std::cout << "[PressureFeed] subscribed to " << tables.size()
                       << " calibrated PT table(s)" << std::endl;
-            last_resubscribe = std::chrono::steady_clock::now();
-            silent_logged = false;
         }
 
-        // Ask again for anything that has never arrived. Only those: a table that HAS delivered
-        // is demonstrably subscribed, and re-sending it would spawn a second stream task in the
-        // db and double its rate. A table that has delivered nothing cannot be duplicated, so
-        // this is free to repeat until the publisher shows up — which is the only signal
-        // available, the refusal itself being unobservable from here.
-        if (client.is_connected()) {
-            const auto now = std::chrono::steady_clock::now();
-            if (now - last_resubscribe >= std::chrono::milliseconds(kResubscribeMs)) {
-                std::vector<std::pair<uint8_t, uint8_t>> missing;
-                {
-                    std::lock_guard<std::mutex> lk(mtx_);
-                    for (const auto& [id, role] : role_by_table_)
-                        if (readings_.find(role) == readings_.end())
-                            missing.push_back(id);
-                }
-                if (!missing.empty()) {
-                    if (!silent_logged) {
-                        std::cout << "[PressureFeed] " << missing.size()
-                                  << " table(s) have produced nothing yet — re-subscribing until "
-                                     "their publisher registers"
-                                  << std::endl;
-                        silent_logged = true;
-                    }
-                    client.subscribe_tables(missing);
-                } else if (silent_logged) {
-                    std::cout << "[PressureFeed] every subscribed table is delivering" << std::endl;
-                    silent_logged = false;
-                }
-                last_resubscribe = now;
-            }
-        }
+        // Ask again for exactly the tables the DB refused, once their wait is over. An accepted
+        // table is never re-sent, however quiet: its stream task already exists in the db.
+        for (const auto& t : tracker.due(std::chrono::steady_clock::now()))
+            client.subscribe_table(t.first, t.second, tracker.assign(t));
 
         uint8_t buf[4096];
         const ssize_t n = client.read_packet(buf, sizeof(buf));
@@ -155,6 +138,16 @@ void PressureFeed::runLoop(std::string host, uint16_t port) {
         }
         if (n < 8)
             continue;  // receive timeout
+
+        if (fsw::elodin::is_error_response(buf, static_cast<size_t>(n))) {
+            const auto t = tracker.rejected(buf[7], std::chrono::steady_clock::now());
+            if ((t.first != 0 || t.second != 0) && refusal_logged.insert(t).second)
+                std::cout << "[PressureFeed] DB refused the subscription to [0x" << std::hex
+                          << int(t.first) << ",0x" << int(t.second) << std::dec
+                          << "] (not registered yet) — asking again every " << kRefusedRetryMs
+                          << " ms until its publisher registers it" << std::endl;
+            continue;
+        }
 
         // Header: len(4) ty(1) id_hi(1) id_lo(1) req_id(1) — EIGHT bytes. The dead
         // PressureStateMachine uses twelve and reads a float four bytes past the one it wants.
