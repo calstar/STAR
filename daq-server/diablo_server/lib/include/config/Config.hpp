@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -323,12 +324,50 @@ struct Config {
     const std::map<std::string, double>* pga_gain_for(const std::string& section_key) const;
 };
 
-/** Parse config.toml. Invalid environmental identities throw std::invalid_argument;
- * other read/parse errors log and return a default-constructed Config. */
+/** sysexits.h EX_CONFIG. A service refused by its config exits with this before opening any
+ *  socket; every unit carries RestartPreventExitStatus=78, so systemd leaves it down instead of
+ *  restarting it into the same refusal every 5 s (STYLE S11, S13). */
+constexpr int kExitConfig = 78;
+
+/**
+ * A config that cannot be used, with every problem found in it.
+ *
+ * load() and load_from_string() collect all of them before throwing, so an operator fixes the file
+ * in one pass rather than one restart per typo. Derives from std::invalid_argument so the callers
+ * that already refused an invalid environmental identity keep refusing.
+ */
+class ConfigError : public std::invalid_argument {
+public:
+    ConfigError(const std::string& source, std::vector<std::string> problems);
+    const std::string& source() const { return source_; }
+    const std::vector<std::string>& problems() const { return problems_; }
+
+private:
+    std::string source_;
+    std::vector<std::string> problems_;
+};
+
+/** Parse config.toml. Throws ConfigError, listing every problem, when the file is missing or
+ *  unreadable, is not TOML, or carries a value of the wrong type, an out-of-range port or id, an
+ *  unparseable IPv4 address, a duplicate [[states]] name or an invalid environmental board id.
+ *  It never hands back a default Config in place of the file. */
 Config load(const std::string& path);
 
-/** Parse config from an in-memory TOML string (SequencerService / ActuatorCommander hold it so). */
+/** Parse config from an in-memory TOML string (SequencerService / ActuatorCommander hold it so).
+ *  Same checks and the same ConfigError as load(). */
 Config load_from_string(const std::string& text);
+
+/** Print every problem in `e` to stderr under `tag` and return kExitConfig. For a main's startup
+ *  block: `return report_refused(e, "[Tag]");`. */
+int report_refused(const ConfigError& e, const std::string& tag);
+
+/** STYLE S11 startup load: fills `out` and returns 0, or prints every problem under `tag` and
+ *  returns kExitConfig, which the caller's main returns before opening any socket. */
+int load_at_startup(const std::string& path, const std::string& tag, Config& out);
+
+/** True for a dotted-quad IPv4 address inet_pton accepts. Every address field in config is one:
+ *  each is handed to inet_pton / inet_aton, never to a resolver. */
+bool is_ipv4(const std::string& s);
 
 /**
  * Derive the active-board table (enabled boards -> Elodin BoardChannels), with the same

@@ -539,6 +539,10 @@ BALL_VALVE = 'Main Ball Valve'
 # Transitions: reachable only from the hub, and able to get back to it — the sequencer refuses to
 # make a state holdable at all if it cannot reach its return target.
 t = load('state_transitions.csv')
+# A short row would take the appended cell under the wrong column (D-INTPAD); the sequencer now
+# refuses such a table anyway, so say which row here rather than at its startup.
+for r in t[1:]:
+    assert len(r) == len(t[0]), f'state_transitions.csv row {r[0]!r} has {len(r)} of {len(t[0])} cells'
 t[0].append(NAME)
 for r in t[1:]:
     r.append('1' if r[0] == RETURN else '0')
@@ -637,6 +641,8 @@ HUB = 'Press Standby'
 # Reachable from the hub and able to get back: a dynamic state whose landing target it cannot
 # reach is refused at load, so this edge is what makes the state enterable at all.
 t = load(out_t)
+for r in t[1:]:
+    assert len(r) == len(t[0]), f'{out_t} row {r[0]!r} has {len(r)} of {len(t[0])} cells'
 t[0].append(NAME)
 for r in t[1:]:
     r.append('1' if r[0] == HUB else '0')

@@ -10,6 +10,8 @@ Environment=DAQ_CONFIG=config/config.toml
 EnvironmentFile=-%h/.config/daq/pipeline.env
 ExecStart=/bin/bash -c 'if [ -x ./build/bin/calibration_service ]; then exec ./build/bin/calibration_service --config ${DAQ_CONFIG} --elodin-host 127.0.0.1; else echo "calibration_service not found — run: cd build && cmake .. && make calibration_service"; exit 1; fi'
 Restart=always
+# 78 (EX_CONFIG) means the service refused its config; restarting cannot fix that.
+RestartPreventExitStatus=78
 RestartSec=5
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

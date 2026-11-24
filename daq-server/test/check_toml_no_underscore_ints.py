@@ -9,7 +9,8 @@ stringify emits these separators for every integer >= 1000, so a GUI "Save Confi
 would reintroduce them; the writer now strips them (routes/config.ts), and this
 check guards the committed files against any other source (hand edits, other tools).
 
-Scans daq-server/config/*.toml. Quote- and comment-aware so a string value like
+Scans daq-server/config/*.toml and every TOML under config/profiles/ (each profile is a
+directory: profiles/<name>/config.toml is what a session deploys). Quote- and comment-aware so a string value like
 "weird_1_2_name" is not flagged. Exit 1 (with file:line) on any violation.
 
 Run:  python3 test/check_toml_no_underscore_ints.py   (from daq-server/ or repo root)
@@ -60,15 +61,20 @@ def main() -> int:
     here = os.path.dirname(os.path.abspath(__file__))
     daq_root = os.path.dirname(here)  # daq-server/
     config_dir = os.path.join(daq_root, "config")
-    # config/*.toml plus the committed config profiles (config/profiles/*.toml — the source of truth;
-    # config.toml itself is a git-ignored generated artifact).
-    files = sorted(
-        glob.glob(os.path.join(config_dir, "*.toml"))
-        + glob.glob(os.path.join(config_dir, "profiles", "*.toml"))
+    # config/*.toml plus the committed config profiles, the source of truth (config.toml itself is
+    # a git-ignored generated artifact). Profiles are directories: this used to glob
+    # profiles/*.toml, matched nothing, and so never checked a config the stand loads (C2-2).
+    profiles = sorted(
+        set(glob.glob(os.path.join(config_dir, "profiles", "**", "*.toml"), recursive=True))
     )
-    if not files:
-        print(f"[check_toml] no TOML files found in {config_dir}", flush=True)
-        return 0
+    files = sorted(glob.glob(os.path.join(config_dir, "*.toml"))) + profiles
+    if not profiles:
+        print(
+            f"[check_toml] no profile TOML found under {os.path.join(config_dir, 'profiles')}: "
+            "the check would pass on nothing",
+            flush=True,
+        )
+        return 1
 
     total = 0
     for path in files:

@@ -99,8 +99,15 @@ int main(int argc, char* argv[]) {
                       << "'. Refusing to start as a 0-board no-op. For a simulated run the backend "
                       << "generates config/sim_config.toml at session start; for hardware it is "
                       << "config/config.toml (generated from config/profiles/*.toml)." << std::endl;
-            return 1;
+            return fsw::config::kExitConfig;
         }
+    }
+    // Fail fast (STYLE S11): every problem in the file, listed once, before any socket opens.
+    // Exit 78 so systemd stops restarting into the same refusal.
+    {
+        fsw::config::Config startup_cfg;
+        if (const int rc = fsw::config::load_at_startup(config_path, "[DAQ Bridge]", startup_cfg))
+            return rc;
     }
 
     signal(SIGINT, signal_handler);
@@ -122,9 +129,9 @@ int main(int argc, char* argv[]) {
         load_board_map_from_config(config_path, board_map, &board_by_octet, db_host, db_port,
                                    &config_sensor_port, &config_bind_ip, &hb_config, &time_sync_cfg,
                                    &log_backend_port);
-    } catch (const std::invalid_argument& error) {
-        std::cerr << "FATAL: " << error.what() << std::endl;
-        return 1;
+    } catch (const fsw::config::ConfigError& error) {
+        // The file changed between the check above and this read.
+        return fsw::config::report_refused(error, "[DAQ Bridge]");
     }
     std::cout << "[TimeSync] mode="
               << (time_sync_cfg.mode == fsw::time::TimeSyncConfig::Mode::BoardClock ? "board-clock"

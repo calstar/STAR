@@ -112,12 +112,17 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    const fsw::config::Config cfg = fsw::config::load_from_string(config_text);
+    fsw::config::Config cfg;
+    try {
+        cfg = fsw::config::load_from_string(config_text);
+    } catch (const fsw::config::ConfigError& e) {
+        std::cerr << "config refused: " << config_path << "\n";
+        for (const auto& p : e.problems())
+            std::cerr << "  " << p << "\n";
+        return 2;
+    }
     if (cfg.states.empty()) {
-        // load_from_string swallows a TOML parse error and hands back a default Config, so "no
-        // states" is indistinguishable here from "the file did not parse". Either way the answer
-        // the operator needs is the same: this config cannot be checked against.
-        std::cerr << "config declares no [[states]] (or failed to parse): " << config_path << "\n";
+        std::cerr << "config declares no [[states]]: " << config_path << "\n";
         return 2;
     }
 

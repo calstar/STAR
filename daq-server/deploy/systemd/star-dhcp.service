@@ -25,6 +25,8 @@ ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/star-dhcp/star
 # the pool. `systemctl reload star-dhcp` after regenerating.
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
+# 78 (EX_CONFIG) means the service refused its config; restarting cannot fix that.
+RestartPreventExitStatus=78
 RestartSec=2
 
 [Install]

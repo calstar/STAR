@@ -19,12 +19,41 @@ interface Transition {
 }
 
 
+/**
+ * Rows whose cell count differs from the header's, as "line N: <name> has X cells, the header
+ * has Y". A short row used to be read left-aligned, so every cell after a missing one landed on
+ * the wrong column: ten rows of the shipped table put a 1 under Fire and none under Emergency
+ * Abort (C2-8). The sequencer refuses such a file too.
+ */
+export function raggedTransitionRows(csvContent: string): string[] {
+  const lines = csvContent.trim().split('\n');
+  if (lines.length < 1) return [];
+  const width = lines[0].split(',').length;
+  const out: string[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim() === '') continue;
+    const row = lines[i].split(',');
+    if (row.length !== width) {
+      out.push(`line ${i + 1}: "${row[0].trim()}" has ${row.length} cells, the header has ${width}`);
+    }
+  }
+  return out;
+}
+
 export function parseStateTransitionsCSV(csvPath: string): Transition[] {
   try {
     const csvContent = readFileSync(csvPath, 'utf-8');
     const lines = csvContent.trim().split('\n');
 
     if (lines.length < 2) {
+      return [];
+    }
+
+    const ragged = raggedTransitionRows(csvContent);
+    if (ragged.length > 0) {
+      console.error(
+        `❌ Refusing ${csvPath}: every row needs one cell per header column.\n  ${ragged.join('\n  ')}`,
+      );
       return [];
     }
 
@@ -35,6 +64,7 @@ export function parseStateTransitionsCSV(csvPath: string): Transition[] {
 
     // Parse each row (skip header)
     for (let i = 1; i < lines.length; i++) {
+      if (lines[i].trim() === '') continue;
       const row = lines[i].split(',');
       const fromStateName = row[0].trim();
       const fromState = stateMap[fromStateName];
@@ -99,6 +129,12 @@ export function getStateTransitions(): Transition[] {
     try {
       if (!existsSync(path)) {
         continue;
+      }
+      // A file that is there but malformed is refused outright, not passed over for the next
+      // candidate: falling back would put a table nobody configured in front of the operator.
+      if (raggedTransitionRows(readFileSync(path, 'utf-8')).length > 0) {
+        parseStateTransitionsCSV(path); // logs the rows
+        return [];
       }
       const transitions = parseStateTransitionsCSV(path);
       if (transitions.length > 0) {

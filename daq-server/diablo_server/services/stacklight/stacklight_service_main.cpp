@@ -24,6 +24,7 @@
 
 #include "DiabloPacketUtils.h"
 #include "DiabloPackets.h"
+#include "config/Config.hpp"
 #include "control/StateMachine.hpp"
 #include "daq-protocol.h"
 #include "elodin/DatabaseConfig.hpp"
@@ -221,6 +222,15 @@ int main(int argc, char* argv[]) {
             ss << f.rdbuf();
             config_content = ss.str();
         }
+    }
+
+    // Fail fast (STYLE S11): the shared loader's checks, exit 78 before any socket opens. A missing
+    // or unparseable file used to leave this service on its placeholder defaults (C2-4).
+    {
+        fsw::config::Config startup_cfg;
+        if (const int rc =
+                fsw::config::load_at_startup(config_path, "[StacklightService]", startup_cfg))
+            return rc;
     }
 
     if (!config_content.empty()) {
