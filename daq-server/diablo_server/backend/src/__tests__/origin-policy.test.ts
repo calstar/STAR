@@ -102,6 +102,15 @@ describe('HTTP API CORS', () => {
     expect(JSON.parse(r.body)).toEqual({ error: 'Origin not allowed' });
     expect(r.headers['access-control-allow-origin']).toBeUndefined();
   });
+  it.each([
+    ['POST', '/api/ball_valve_current'],
+    ['POST', '/api/ota-flash'],
+    ['POST', '/api/config'],
+  ])('refuses a foreign %s %s before the route (and its operator gate) runs', async (m, p) => {
+    const r = await get(p, m, { Origin: 'https://evil.example' });
+    expect(r.status).toBe(403);
+    expect(JSON.parse(r.body)).toEqual({ error: 'Origin not allowed' });
+  });
   it('refuses a foreign preflight too', async () => {
     const r = await get('/api/config', 'OPTIONS', { Origin: 'https://evil.example' });
     expect(r.status).toBe(403);
