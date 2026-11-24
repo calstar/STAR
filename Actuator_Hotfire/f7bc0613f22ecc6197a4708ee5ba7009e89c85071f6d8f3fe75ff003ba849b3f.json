@@ -1,0 +1,20 @@
+{
+  "board": "Actuator_Hotfire",
+  "built_by": "ci",
+  "commits": [
+    "a79a20da3162750c29c7f498befeccf00486e69f"
+  ],
+  "esptool": "tool-esptoolpy @ 2.41100.260830",
+  "file_sha256": "4a590a2f3b347a1b6743bf36bf633f191efd2af547ba87444525f619a344b799",
+  "first_seen_commit_at": "2026-11-23T19:13:54-08:00",
+  "framework": "framework-arduinoespressif32 @ 4.20017.260907+sha.dcc1105b",
+  "image_digest": "f7bc0613f22ecc6197a4708ee5ba7009e89c85071f6d8f3fe75ff003ba849b3f",
+  "image_len": 330448,
+  "pio_env": "adafruit_feather_esp32s3",
+  "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
+  "run_attempt": "1",
+  "run_id": "45318036473",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/45318036473",
+  "subject": "Merge remote-tracking branch 'origin/main' into daq/ball-valve-current-cal",
+  "toolchains": "toolchain-riscv32-esp @ 8.4.0+2021r2-patch5,toolchain-riscv32-esp @ 8.4.0+2021r2-patch5) toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5,toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5)"
+}
