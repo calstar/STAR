@@ -508,15 +508,15 @@ bool DatabaseConfig::register_firmware_tables(ElodinClient& client,
         });
 
         uint64_t entity_id = 0x1000 + board_id;
-        if (!send_msg(client, VTableMsg{.id = {0x11, board_id}, .vtable = vt})) {
+        if (!send_msg(client, VTableMsg{.id = {0x11, board_id}, .vtable = vt}, kEncodeFailed)) {
             std::cerr << "[DatabaseConfig] ❌ Firmware VTable failed: " << entity << std::endl;
             continue;
         }
 
-        send_msg(client, set_component_name(prefix + "firmware_seen_ns"));
-        send_msg(client, set_component_name(prefix + "firmware_board_id"));
-        send_msg(client, set_component_name(prefix + "firmware_digest"));
-        send_msg(client, set_entity_name(entity_id, entity));
+        send_msg(client, set_component_name(prefix + "firmware_seen_ns"), kEncodeFailed);
+        send_msg(client, set_component_name(prefix + "firmware_board_id"), kEncodeFailed);
+        send_msg(client, set_component_name(prefix + "firmware_digest"), kEncodeFailed);
+        send_msg(client, set_entity_name(entity_id, entity), kEncodeFailed);
         registered++;
     }
 

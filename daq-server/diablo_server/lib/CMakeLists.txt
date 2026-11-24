@@ -296,14 +296,7 @@ set_tests_properties(hold_rules PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
 add_executable(test_valve_plan
     test/test_valve_plan.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_valve_plan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
