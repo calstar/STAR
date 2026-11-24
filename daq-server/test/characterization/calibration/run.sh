@@ -1,6 +1,6 @@
 #!/bin/bash
 # Calibration characterization, the halves ctest does not run:
-#   ts     backend calibration TypeScript (calibration.ts, calibration-handler.ts, lc-tare.ts,
+#   ts     backend calibration TypeScript (calibration-handler.ts, lc-tare.ts,
 #          ball-valve-cal.ts, routes/calibration-profiles.ts) via npx tsx -> golden/ts.txt
 #   stack  build/bin/calibration_service against a stand-in Elodin on 127.0.0.1, fed a scripted
 #          raw-sample and command stream -> golden/stack.txt

@@ -58,7 +58,6 @@ EOJ
   ln -s "$BACKEND/node_modules" "$SRV/diablo_server/backend/node_modules"
   ln -s "$FX/scripts/calibration/calibrations" "$SRV/scripts/calibration/calibrations"
   [ -n "${CHAR_BUILD_DIR:-}" ] && ln -s "$CHAR_BUILD_DIR" "$SRV/build"
-  cp "$ROOT/calibration/calibration_2026-02-25T03-44-09.json" "$SRV/calibration/"
   local CFG="$FX/config/config.toml"
   (cd "$FX/char/backend" && exec env -u USE_SIM -u RUNNING_CONFIG_PATH -u COUNTDOWN_STATE_PATH \
     -u SESSION_STATE_PATH -u VIDEO_CONFIG_PATH -u VIDEO_SECRETS_PATH -u REPLAY_MODE -u ELODIN_DEBUG \

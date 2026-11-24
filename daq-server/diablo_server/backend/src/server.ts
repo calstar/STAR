@@ -24,14 +24,15 @@
 import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 // ── Bare imports (WP6 step 1, R1a; kept through step 2, D49(8)) ─────────────
-// These fifteen modules were value-imported by the original server.ts and are now used only
+// These fourteen modules were value-imported by the original server.ts and are now used only
 // from src/server/*. tsc, tsx/esbuild and vitest elide an import with no value specifier, which
 // would move each one's first evaluation to wherever src/server/* first imports it; a bare
 // import is never elided, so each stays at today's position in the evaluation order
-// (test/remaster-checks/wp6-module-order.sh diffs that order against the base). Fourteen pin
+// (test/remaster-checks/wp6-module-order.sh diffs that order against the base). Thirteen pin
 // order only; one has an import-time effect: state-csv/state-actuators builds three config maps
-// at import and can warn (state-actuators.ts:79-81). The fifteenth, countdown-state, sits with
-// its original line further down. Never add, delete, reorder or rewrite any of them.
+// at import and can warn (state-actuators.ts:79-81). The fourteenth, countdown-state, sits with
+// its original line further down. Never add, delete, reorder or rewrite any of them (the
+// fifteenth, calibration.js, went with that module when the legacy PT store was deleted, C3-2).
 import './elodin-client.js';
 import './elodin-protocol.js';
 import './lc-tare.js';
@@ -58,7 +59,6 @@ import './history-cache.js';
 import { startGuiStaticServer } from './static-gui.js';
 import { startDhcpStatusPoller, getBoardDhcpStatus } from './dhcp-status.js';
 import { publishClearAllTares, handleCalibrationCommand, publishCalibrationReload, type CalibrationHost } from './calibration-handler.js';
-import './calibration.js';
 import { MessageType, SystemState } from '../../shared/types.js';
 import { isOperator } from './operators.js';
 import type { NotificationPayload } from '../../shared/types.js';

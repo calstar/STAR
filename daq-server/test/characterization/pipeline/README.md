@@ -64,12 +64,12 @@ at all, which would freeze a dead pipeline.
 - `srv/` — **the backend runs from a copy of its own source** (`srv/diablo_server/backend/src`,
   `package.json`, `shared/`; `node_modules` and the build dir symlinked), laid out like
   `daq-server/`. Everything the backend resolves relative to its own file then lands in the
-  fixture, not the checkout: its PT calibration (`calibration.ts`: `srv/calibration/*.json`, the
-  newest by mtime), `/api/cubic_calibration` (`srv/scripts/calibration/calibrations`, the
-  fixture's store), the state-CSV loaders (`srv/../config` — the fixture's), the
+  fixture, not the checkout: the state-CSV loaders (`srv/../config` — the fixture's), the
   state-script checker (`srv/build`). The source is copied unchanged at every run, so an edit to
-  `diablo_server/backend/src` is what runs. pt and boards put exactly one file in
-  `srv/calibration/` (`calibration_2026-02-25T03-44-09.json`, chosen by name); nocal puts none.
+  `diablo_server/backend/src` is what runs. `/api/cubic_calibration` reads the fixture's store
+  through `DAQ_CALIBRATIONS_DIR`. The backend's legacy PT store (`calibration.ts`,
+  `daq-server/calibration/*.json`) was deleted (C3-2); pt and nocal now start the backend the
+  same way, and nocal is kept as the session with no PT calibration anywhere.
 - `char/backend/` — the backend's cwd; its CSV loaders also look in `<cwd>/../../config`.
 - `firmware/Hotfire_Code/` — a fixed PlatformIO tree. The OTA project search
   (`ota-build.ts discoverProjects`) walks up from the backend's cwd to the first
@@ -89,14 +89,9 @@ OTA 26414. daq_bridge also hard-codes UDP 5008, which is why the lock matters.
 
 ### Platform neutrality (macOS and Linux must produce the same goldens)
 
-- **Backend PT calibration.** `calibration.ts loadPTCalibration` takes the newest
-  `daq-server/calibration/calibration*.json` **by mtime**, and all 13 are committed. A checkout or
-  `git archive` gives them one mtime, so the pick was directory order: macOS got
-  `calibration_2026-02-25T03-44-09.json`, a Linux export a file with no coefficients
-  (`calibrationFilePath: null`). The backend honours no override for this path, so the fixture
-  gives it its own copy of the source and a calibration directory it controls (above). The
-  file-present case is the pt session, the file-absent case the nocal session. The search itself
-  is a defect: the calibration a backend loads depends on filesystem order.
+- **Backend PT calibration.** Gone: `calibration.ts loadPTCalibration` used to take the newest
+  `daq-server/calibration/calibration*.json` by mtime, so the pick depended on filesystem order
+  (C3-3). It was dead (nothing converted with it) and was deleted with its 13 files (C3-2).
 - **Self-test results.** The simulator sends each board's SELF_TEST once, at start; the backend
   subscribes to the self-test tables over several request-id-capped passes, and a result
   published before its pass is lost. `run.sh` starts the simulator one pass (5 s) after the first
@@ -587,8 +582,6 @@ Each applied to the backend source, run, reverted (none committed):
 - `debug_mode` produces two identical `state_update`s (the TCP-reply path and the Elodin path).
 - The state-CSV loaders `join()` `[state_machine]` paths onto fixed directories, so an
   absolute path in config is never found (`get_state_transitions` → `[]`, no commanded snapshot).
-- `/api/cubic_calibration` ignores `DAQ_CALIBRATIONS_DIR`; the backend's own PT calibration and
-  `calibration_status.calibrationFilePath` come from `daq-server/calibration/*.json` via `__dirname`.
 - `GET /api/state-script?name=<missing>` is 200 with an empty source; `PUT /api/video/config` with
   no `revision` is 409 "changed since you opened Edit".
 - `sensor-backend.service` runs `npm run dev`, i.e. `tsx watch`, in production.

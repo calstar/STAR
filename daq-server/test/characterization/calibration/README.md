@@ -6,7 +6,8 @@ Freezes what the calibration code computes so the remaster can prove it changed 
 |---|---|---|
 | `golden/lib.txt` | `char_calibration_lib` (ctest, label `characterization`) | `lib/src/calibration` and `lib/src/t7` through their public API: PT cubics and their inverse, the PT/sensor managers' loaders, RTD Callendar-Van Dusen, type K, the 4-20 mA shunt code, PT smoothing, ball-valve position, command dedupe, the capture window, the cubic store (fits, captures, load/save bytes, orphans, unit mismatch), the LC tare store, Allan variance, the robust learner, the T7 conversions and channel map |
 | `golden/stack.txt` | `run.sh` → `service_run.py` | the built `calibration_service` against a stand-in Elodin on 127.0.0.1: every frame it publishes for a scripted raw-sample and command stream, and every file it writes (cubic store, tares, abort thresholds, robust adjustments), through captures, tares, zeros, clears, a profile swap, SIGTERM and a restart |
-| `golden/ts.txt` | `run.sh` → `ts_harness.mts` (`npx tsx`) | backend `calibration.ts`, `calibration-handler.ts`, `lc-tare.ts`, `ball-valve-cal.ts`, `routes/calibration-profiles.ts` |
+| `golden/abort_codes.txt`, `golden/abort_codes_boundary.txt` | ctests `char_calibration_abort_codes`, `char_calibration_abort_codes_boundary` (x86-64 only) → `abort_codes.py` | the abort-threshold ADC codes the built `calibration_service` writes to `abort_thresholds.txt` for ten `blend` PTs: round-number targets, and targets that sit exactly on a fused/unfused rounding edge (see "Abort codes and FMA" below) |
+| `golden/ts.txt` | `run.sh` → `ts_harness.mts` (`npx tsx`) | backend `calibration-handler.ts`, `lc-tare.ts`, `ball-valve-cal.ts`, `routes/calibration-profiles.ts` |
 
 `calibration_main.cpp` is reached only through the built service: the refactor splits that file,
 so nothing here compiles it. Fixtures are copied into a temp dir before use; nothing touches the
@@ -54,7 +55,6 @@ Mutations of the default 4-ULP rule (each applied, seen red, reverted):
   the default 4 ULP, e.g. 17 ULP).
 - `LcTareStore` offset sign flipped: lib red (integer 25 → -25 exact, 15 floats), stack red
   against the final tolerances (16 values, `tare-near-zero`).
-- `calculatePressure` in `calibration.ts`, `C·x` × (1+1e-12): ts red (86 values).
 
 The same function's result × (1+4.4e-16), about 2 ULP, now passes everything. Earlier (rel 1e-7
 on the robust parameters) it turned the robust family red; the parameters moved 1.4e-5 rel
@@ -69,9 +69,41 @@ versions). The stack golden prints every file snapshot in full rather than as di
 moves in its last bits on one platform and not another would change the hunks.
 
 Not covered: `IMUCalibration.cpp` (commented out of the build; does not compile on main),
-`T7Stream` (the LabJack socket layer), `save_coefficients` in `calibration-handler.ts` (writes into
-the checkout's `daq-server/calibration/`).
+`T7Stream` (the LabJack socket layer).
 
 Normalised in the stack golden: wall-clock timestamps within an hour of now, and the robust
 preview curve's `fitCurve[].psi` (the robust bias is propagated by wall-clock dt between
 predictions, so those values are not a function of the inputs).
+
+## Abort codes and FMA (D-WP9-FMA)
+
+`calibration_service` is built with `-ffp-contract=off` (`services/CMakeLists.txt`): no
+`a*b+c` in `calibration_main.cpp` is fused into a multiply-add. Before, gcc's default
+(`-ffp-contract=fast`) fused them wherever the target had FMA, and how many it fused in
+`invert_abort_psi_to_adc` changed with unrelated edits to the file (LEDGER D111-D113). The only
+contractible arithmetic on the abort path inside this target is the `blend` mix in
+`select_pt_psi`, `0.75 * robust + 0.25 * cubic`.
+
+`golden/abort_codes.txt` and `golden/abort_codes_boundary.txt` (`abort_codes.py --part control|boundary`) hold the codes
+for ten `blend` PTs. The control targets are round numbers. The boundary targets were found by
+`abort_search.py`: each is, to the bit, the unfused forward value at some code, and fused
+arithmetic lands one ULP on the other side, so a fused build answers one count higher or lower
+for every one of them. Evidence, on x86-64 gcc 13 (Release), building the same
+`calibration_main.cpp` against the same shared libraries:
+
+| build of calibration_main.cpp | fused ops in the binary | the two goldens |
+|---|---|---|
+| CMake (`-ffp-contract=off`) | 0 | matches |
+| no flag (x86-64 has no FMA by default; code identical to the line above) | 0 | matches |
+| `-ffp-contract=off -mfma` | 0 | matches |
+| `-ffp-contract=fast -mfma` (what arm64 gets without the flag) | 15 | red: all 6 boundary codes move by one count, the 10 controls do not |
+
+To redo the search: compile `calibration_main.cpp` with the flags from
+`build/diablo_server/services/CMakeFiles/calibration_service.dir/flags.make` minus
+`-ffp-contract=off`, plus `-ffp-contract=fast -mfma`, link it as `link.txt` does, and run
+`abort_search.py --unfused build/bin/calibration_service --fused <that binary>`.
+
+Limit: the calibration library (`fsw_daq_lib`: the cubic and robust evaluation) is not built with
+the flag, so on an architecture with FMA it still contracts there. That does not depend on edits
+to `calibration_main.cpp`, but it does move the unfused result itself, so the boundary half is
+registered with ctest on x86-64 only; the controls run everywhere.

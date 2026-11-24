@@ -28,9 +28,9 @@ vi.mock('../routes/calibration-profiles.js', () => ({
 const { expandWithTare, loadTareMap, tareOffsetKg, clearTareFile, resetTareState, setRunDir, currentTares } =
   await import('../lc-tare.js');
 
-function writeTares(entries: Array<{ entity: string; uid?: number; adc?: number; kg: number }>): void {
+function writeTares(entries: Array<{ entity: string; uid?: unknown; adc?: number; kg: number }>): void {
   const tares = entries.map((e) => ({
-    uid: e.uid ?? 4201,
+    uid: 'uid' in e ? e.uid : 4201,
     entity: e.entity,
     adc_at_tare: e.adc ?? 1000,
     offset_kg: e.kg,
@@ -289,5 +289,24 @@ describe('the run record', () => {
     expect(() => loadTareMap()).not.toThrow();
     expect(tareOffsetKg('LC2_Cal.CH1')).toBe(20);
     expect(fs.readdirSync(TMP).filter((f) => f.endsWith('.jsonl'))).toEqual([]);
+  });
+});
+
+// C3-4: LcTareStore::load (C++) skips a record whose uid is 0 or missing; the TS reader used to
+// apply it anyway (uid coerced to 0), so the GUI showed a tare the service did not hold.
+describe('a tare record without a valid uid', () => {
+  it('is skipped, as the C++ loader skips it; valid neighbours still load', () => {
+    writeTares([
+      { entity: 'LC2_Cal.CH1', uid: 4201, kg: 20 },
+      { entity: 'LC2_Cal.CH2', uid: 0, kg: 5 },
+      { entity: 'LC2_Cal.CH3', uid: undefined, kg: 5 },
+      { entity: 'LC2_Cal.CH4', uid: 'x', kg: 5 },
+      { entity: 'LC2_Cal.CH5', uid: -4205, kg: 5 },
+      { entity: 'LC2_Cal.CH6', uid: 70000, kg: 5 },
+    ]);
+    expect([...loadTareMap().keys()]).toEqual(['LC2_Cal.CH1']);
+    expect(tareOffsetKg('LC2_Cal.CH1')).toBe(20);
+    expect(tareOffsetKg('LC2_Cal.CH2')).toBe(0);
+    expect(tareOffsetKg('LC2_Cal.CH4')).toBe(0);
   });
 });

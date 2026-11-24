@@ -268,11 +268,9 @@ export interface CalibrationStatusPayload {
     channels: CalibrationChannelStatus[];
     phase2Enabled: boolean;
     timestamp: number;
-    /** Absolute path of the calibration file that was loaded at startup, or null if none. */
-    calibrationFilePath?: string | null;
 }
 /** Commands the frontend sends to drive the calibration engine */
-export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'save_coefficients' | 'clear_calibration' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration' | 'tare_lc' | 'clear_tare_lc';
+export type CalibrationCommandType = 'capture_reference' | 'fit_channel' | 'reset_channel' | 'enable_phase2' | 'disable_phase2' | 'zero_all' | 'capture_cubic_point' | 'clear_cubic_channel' | 'capture_point' | 'new_calibration' | 'tare_lc' | 'clear_tare_lc';
 export interface CalibrationCommand {
     commandType: CalibrationCommandType;
     sensorId?: number;

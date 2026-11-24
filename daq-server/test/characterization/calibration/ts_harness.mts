@@ -3,12 +3,12 @@
  *
  *   cd diablo_server/backend && npx tsx ../../test/characterization/calibration/ts_harness.mts <fixtures>
  *
- * Freezes calibration.ts, calibration-handler.ts, lc-tare.ts, ball-valve-cal.ts and
- * routes/calibration-profiles.ts. Every file they read or write is under a private temp dir
- * (DAQ_CALIBRATIONS_DIR, RUNNING_CONFIG_PATH); nothing touches the live calibration store. The
- * clock and Math.random are pinned, so the output is a function of the inputs alone. One path is
- * not driven on purpose: handleCalibrationCommand('save_coefficients') writes into the checkout's
- * daq-server/calibration/ directory, which is not hermetic.
+ * Freezes calibration-handler.ts, lc-tare.ts, ball-valve-cal.ts and routes/calibration-profiles.ts.
+ * Every file they read or write is under a private temp dir (DAQ_CALIBRATIONS_DIR,
+ * RUNNING_CONFIG_PATH); nothing touches the live calibration store. The clock and Math.random are
+ * pinned, so the output is a function of the inputs alone. (calibration.ts, the backend's legacy PT
+ * coefficient store, was deleted with save_coefficients / clear_calibration: C3-2; its section here
+ * went with it, since there is nothing left to characterize.)
  */
 import * as fs from 'fs';
 import * as os from 'os';
@@ -23,7 +23,7 @@ fs.copyFileSync(path.join(FIX, 'stack_config.toml'), path.join(TMP, 'config.toml
 fs.copyFileSync(path.join(FIX, 'ts_config_noboards.toml'), path.join(TMP, 'noboards.toml'));
 process.env.RUNNING_CONFIG_PATH = path.join(TMP, 'config.toml');
 
-// Pinned clock and a seeded generator (xorshift32) for calibration.ts's agreeing-channel fill.
+// Pinned clock and a seeded generator (xorshift32), so nothing here can depend on either.
 const FIXED_NOW = 1757000000123;
 Date.now = () => FIXED_NOW;
 let seed = 0x2545f491;
@@ -88,68 +88,16 @@ const dumpFile = (label: string, file: string) => {
   out.push(`--- end ${label} ---`);
 };
 
-const cal = await import('../../../diablo_server/backend/src/calibration.ts');
 const handler = await import('../../../diablo_server/backend/src/calibration-handler.ts');
 const tare = await import('../../../diablo_server/backend/src/lc-tare.ts');
 const bv = await import('../../../diablo_server/backend/src/ball-valve-cal.ts');
 const prof = await import('../../../diablo_server/backend/src/routes/calibration-profiles.ts');
-
-// ── calibration.ts ──────────────────────────────────────────────────────────────────────────────
-section('calibration.ts validateCalibrationCoefficients / calculatePressure');
-const coeffSets: Record<string, any> = {
-  zero: { A: 0, B: 0, C: 0, D: 0 },
-  linearRaw: { A: 0, B: 0, C: 1e-6, D: -214.75 },
-  cubicRaw: { A: 1e-27, B: -2e-18, C: 5.8e-7, D: -124 },
-  bigA: { A: 2e-11, B: 0, C: 0, D: 0 },
-  diverges: { A: 1e-12, B: 0, C: 0, D: 0 },
-  normCubic: { A: -5, B: 30, C: 1100, D: -120, adcNormMin: 2e8, adcNormScale: 9e8 },
-  normZeroScale: { A: 0, B: 0, C: 1e-6, D: 0, adcNormMin: 0, adcNormScale: 0 },
-  polyNorm: { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [-120, 1100, 30, -5], adcNormMin: 2e8, adcNormScale: 9e8 },
-  polyNormWild: { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [0, 30000], adcNormMin: 0, adcNormScale: 1 },
-  polyRaw: { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [-100, 1e-6] },
-  polyNaN: { A: 0, B: 0, C: 0, D: 0, polyCoeffs: [NaN, 1] },
-  polyEmpty: { A: 0, B: 0, C: 1e-6, D: 1, polyCoeffs: [] },
-  nonFinite: { A: 0, B: 0, C: Infinity, D: 0 },
-  negOut: { A: 0, B: 0, C: -1e-5, D: 0 },
-};
-const adcs = [0, 1, -1, 214748365, 1e6, 16777216, 4e8, 1073741824, 2147483647, 4e9, 4.3e9, -2147483648, NaN, Infinity];
-for (const [name, c] of Object.entries(coeffSets)) {
-  p(`${name} valid(default)`, cal.validateCalibrationCoefficients(c));
-  p(`${name} valid([0,16777216])`, cal.validateCalibrationCoefficients(c, [0, 16777216]));
-  p(`${name} psi`, adcs.map((a) => cal.calculatePressure(a, c)));
-}
-section('calibration.ts inversePressureToAdc');
-const invSets: Record<string, any> = {
-  linear24: { A: 0, B: 0, C: 1e-4, D: -100 },
-  cubic24: { A: 1e-20, B: -1e-12, C: 6e-5, D: -50 },
-  decreasing: { A: 0, B: 0, C: -1e-4, D: 1600 },
-  flat: { A: 0, B: 0, C: 0, D: 5 },
-  rawCubic: { A: 1e-27, B: -2e-18, C: 5.8e-7, D: -124 },
-};
-for (const [name, c] of Object.entries(invSets))
-  p(`${name} inv`, [-1e6, -100, 0, 0.4, 5, 100, 400, 1000, 1577.7216, 1e9, NaN].map((t) => cal.inversePressureToAdc(t, c)));
-
-section('calibration.ts loadPTCalibration');
-// Only files that load something: an empty map makes loadPTCalibration scan the checkout's own
-// calibration directories, which is neither hermetic nor stable.
-for (const f of ['ts_fill.json', 'gui_pt_calibration.json', 'profiles/restored-sep05.json']) {
-  const copy = path.join(TMP, 'pt_' + path.basename(f));
-  fs.copyFileSync(path.join(FIX, f), copy);
-  const r = cal.loadPTCalibration(copy);
-  p(`${f} filePath`, rel(String(r.filePath)));
-  p(`${f} map`, [...r.map.entries()].sort((a, b) => a[0] - b[0]));
-  for (const [id, c] of [...r.map.entries()].sort((a, b) => a[0] - b[0]))
-    p(`  ${f} ch ${id} psi`, [214748365, 644245094, 1073741824].map((a) => cal.calculatePressure(a, c)));
-}
 
 // ── calibration-handler.ts ──────────────────────────────────────────────────────────────────────
 section('calibration-handler.ts');
 function fakeHost(withElodin: boolean, extra: Record<string, unknown> = {}) {
   const log: string[] = [];
   const host: any = {
-    ptCalibration: new Map<number, any>([[2101, { A: 0, B: 0, C: 1e-6, D: 0 }]]),
-    ptCalibrationFilePath: null,
-    calibrationPoints: new Map<number, any>([[2101, [{ adc: 1, pressure: 2 }]]]),
     lastRawAdc: new Map<number, number>([[2101, 5]]),
     send: (_ws: unknown, m: unknown) => log.push(`send ${show(m)}`),
     broadcast: (m: unknown) => log.push(`broadcast ${show(m)}`),
@@ -184,6 +132,8 @@ const cmds: Array<[string, any]> = [
   ['disable_phase2', { commandType: 'disable_phase2' }],
   ['reset_channel', { commandType: 'reset_channel' }],
   ['zero_all', { commandType: 'zero_all' }],
+  // The legacy store's two commands are gone (C3-2): both are now the unknown-command path.
+  ['save_coefficients', { commandType: 'save_coefficients' }],
   ['clear_calibration', { commandType: 'clear_calibration' }],
   ['unknown', { commandType: 'bogus' }],
   ['null payload', null],
@@ -194,7 +144,7 @@ for (const withElodin of [true, false]) {
     handler.handleCalibrationCommand(host, {} as any, payload);
     p(`${withElodin ? 'elodin' : 'no-elodin'} ${label}`, log);
     if (label === 'clear_calibration')
-      p('  host after clear_calibration', { pt: host.ptCalibration, points: host.calibrationPoints, raw: host.lastRawAdc });
+      p('  host after clear_calibration', { raw: host.lastRawAdc });
   }
 }
 {

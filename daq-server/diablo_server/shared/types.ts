@@ -317,8 +317,6 @@ export interface CalibrationStatusPayload {
   channels: CalibrationChannelStatus[];
   phase2Enabled: boolean;
   timestamp: number;
-  /** Absolute path of the calibration file that was loaded at startup, or null if none. */
-  calibrationFilePath?: string | null;
 }
 
 /** Commands the frontend sends to drive the calibration engine */
@@ -329,8 +327,6 @@ export type CalibrationCommandType =
   | 'enable_phase2'
   | 'disable_phase2'
   | 'zero_all'            // capture a 0 psi reference point on every cubic/robust PT (shared fit)
-  | 'save_coefficients'   // persist current coefficients to disk
-  | 'clear_calibration'   // clear all state and start from scratch
   | 'capture_cubic_point' // add one (current ADC, ref PSI) point to a channel's cubic fit
   | 'clear_cubic_channel' // drop a channel's cubic points and revert to the factory cubic
   | 'capture_point'       // unified: add one (current ADC, ref PSI) point; service routes by config model
