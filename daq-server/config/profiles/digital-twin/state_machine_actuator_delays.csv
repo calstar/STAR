@@ -1,9 +1,10 @@
 ,Idle,Armed,Press Standby,Dome Press,COPV Fill,Fuel Press,LOX Press,Vent,Dome Vent,High Press Vent,Fuel Tank Vent,Ready,Fire,Flow Test,Dynamic Test
 Fuel Upstream,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 High Press CTRL,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-Dome CTRL,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Dome CTRL GSE,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 Fuel Main,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0
 fuel vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+Dome CTRL R,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 lox vent,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 Ox Upstream,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 Fuel Fill Press,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
