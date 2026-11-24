@@ -408,8 +408,8 @@ Subteams → Budget is.
 | `get_outreach_dashboard` | The /outreach Today page: deals needing attention by urgency, season pipeline and committed dollars, campaign deadlines, recent touches | admins only; read |
 | `list_sponsors` / `get_sponsor` | Sponsor deals (season, stage, needs-attention filters); one deal with its touch history and other seasons | admins only; read |
 | `save_sponsor` | Create a deal (org by name or id, created if new) or change its fields; stage changes are noted | admins only; write |
-| `save_outreach_org` | Create or edit an org: kind, website, and whether requests go by email or a web form (`formUrl`) | admins only; write |
-| `log_outreach_touch` | Record an email sent, reply, form submitted, call, meeting or note; on a deal it moves the stage and resets the follow-up | admins only; write |
+| `save_outreach_org` | Create or edit an org: kind, website, and whether requests go by email or a web form (`formUrl`); links must be http(s) | admins only; write |
+| `log_outreach_touch` | Record an email sent, reply, form submitted, call, meeting or note; on a deal it moves the stage and resets the follow-up; `threadUrl` must be http(s) | admins only; write |
 | `delete_outreach_touch` / `delete_outreach_contacts` | Remove a mis-logged touch; delete people with their history | admins only; destructive |
 | `schedule_sponsor_follow_up` | Remind in N days, or clear | admins only; idempotent |
 | `add_sponsor_task` | The sponsor page's + Task: a "Correspondence - <org>" task in the board project you pass (`projectId`, optional `subteamId`), assigned to you; returns the open one there if it exists | admins only; write |
@@ -422,7 +422,7 @@ Subteams → Budget is.
 | `delete_sponsor` / `delete_outreach_org` / `delete_outreach_list` | Remove a season's deal (and its touches) / an org with all its deals / a saved list | admins only; destructive |
 | `set_outreach_perk_status` | Perk checklist: none / pending / sent | admins only; idempotent |
 | `get_outreach_merge` | Render a template for a list, sponsors by stage, a deal or a person: subject, body, missing fields and a Gmail compose link per recipient. Sends nothing | admins only; read |
-| `list_outreach_campaigns` / `get_outreach_campaign` / `save_outreach_campaign` / `delete_outreach_campaign` | Campaigns with totals; one with gifts and perk status; create or edit; delete (with its gifts) | admins only |
+| `list_outreach_campaigns` / `get_outreach_campaign` / `save_outreach_campaign` / `delete_outreach_campaign` | Campaigns with totals; one with gifts and perk status; create or edit (`url` must be http(s)); delete (with its gifts) | admins only |
 | `import_outreach_sheet` | Import TSV/CSV text (contacts, member list, ScaleFunder export, Current Sponsors sheet); `dryRun` (default) previews | admins only; write |
 
 Modules append their tools here as they land.

@@ -1,14 +1,16 @@
 import { z } from "zod";
 
 import { addAdmin, removeAdmin } from "@/lib/actions/admins";
-import { isAdmin, listAdmins, SEED_ADMIN_EMAILS } from "@/lib/admins";
+import { isAdmin, listAdmins, requireAdmin, SEED_ADMIN_EMAILS } from "@/lib/admins";
 import { getCurrentDbUser } from "@/lib/user";
 
-import { DESTRUCTIVE, READ, WRITE, defineTool, type ToolModule } from "./_shared";
+import { DESTRUCTIVE, READ, WRITE, defineTool, guardedDefine, type ToolModule } from "./_shared";
 
 // The admin allowlist (Workspace setup → Admins). Admins gate the destructive
 // actions (delete task/project/subteam) and the list itself; everyone can read
-// it. The actions enforce "admins only" themselves (requireAdmin).
+// it. The actions enforce "admins only" themselves (requireAdmin); the two
+// writes are guarded here as well, so a future change to the actions cannot
+// quietly open the roster to every token.
 
 export type AdminRow = { email: string; seed: boolean };
 
@@ -30,6 +32,7 @@ async function adminList() {
 }
 
 export const adminTools: ToolModule = (server) => {
+  const adminOnly = guardedDefine(server, requireAdmin);
   defineTool(
     server,
     "list_admins",
@@ -43,8 +46,7 @@ export const adminTools: ToolModule = (server) => {
     async () => adminList(),
   );
 
-  defineTool(
-    server,
+  adminOnly(
     "add_admin",
     {
       description:
@@ -59,8 +61,7 @@ export const adminTools: ToolModule = (server) => {
     },
   );
 
-  defineTool(
-    server,
+  adminOnly(
     "remove_admin",
     {
       description:

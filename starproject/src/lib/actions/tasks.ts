@@ -155,12 +155,14 @@ export async function updateTask(formData: FormData) {
   if (formData.has("title")) {
     data.title = z.string().trim().min(1).max(300).parse(formData.get("title"));
   }
+  // Same caps as taskCreateSchema and the MCP update_task tool; an edit must not
+  // store what a create refuses.
   if (formData.has("description")) {
-    const v = String(formData.get("description") ?? "").trim();
+    const v = z.string().trim().max(5000).parse(formData.get("description") ?? "");
     data.description = v === "" ? null : v;
   }
   if (formData.has("blockedNote")) {
-    const v = String(formData.get("blockedNote") ?? "").trim();
+    const v = z.string().trim().max(5000).parse(formData.get("blockedNote") ?? "");
     data.blockedNote = v === "" ? null : v;
   }
   if (formData.has("status")) {

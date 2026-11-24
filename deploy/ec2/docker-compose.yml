@@ -32,6 +32,10 @@ services:
       SCHEME: ${SCHEME:-http}
       BASE_DOMAIN: ${BASE_DOMAIN:-starberkeley.org}
       AUTH_UPSTREAM: auth:5000
+      # Stamped as X-Auth-Gate on STARProject requests that passed forward_auth
+      # (only that upstream sees it); the same value goes to starproject below.
+      # Optional; see the Caddyfile.
+      AUTH_GATE_SECRET: ${STARPROJECT_AUTH_GATE_SECRET:-}
     volumes:
       - ./caddy:/etc/caddy:ro
       # Bluetooth switch web client (switch.* site), served straight from the
@@ -62,7 +66,14 @@ services:
       # Email via SES: sends only when SES_FROM is set (else the app just logs).
       # On EC2 the AWS SDK uses the instance IAM role, so no access keys here.
       SES_FROM: ${STARPROJECT_SES_FROM:-}
+      # Gates /api/cron/*. Unset means those routes refuse everyone (fail closed),
+      # so the sidecar's scheduled emails stop until it is set.
       CRON_SECRET: ${STARPROJECT_CRON_SECRET:-}
+      # When set (same value as caddy's AUTH_GATE_SECRET), X-Auth-Email is trusted
+      # only on requests Caddy stamped with X-Auth-Gate, so no other container on
+      # this network can act as a user by talking to :3000 directly. Unset: the
+      # headers are trusted as before.
+      AUTH_GATE_SECRET: ${STARPROJECT_AUTH_GATE_SECRET:-}
       # Lets the analytics hub read the admin list (/api/internal/admins). Unset
       # means the route refuses everyone, and so analytics admits nobody.
       INTERNAL_API_SECRET: ${STARPROJECT_INTERNAL_SECRET:-}

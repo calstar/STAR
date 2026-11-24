@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import { headers } from "next/headers";
 
+import { internalSecretOk } from "@/lib/internalAuth";
+
 export type CurrentUser = { email: string; name: string };
 
 // An identity set programmatically for the duration of one async call tree.
@@ -14,12 +16,43 @@ export function runAsIdentity<T>(user: CurrentUser, fn: () => Promise<T>): Promi
   return injected.run(user, fn);
 }
 
+type AuthEnv = {
+  NODE_ENV?: string;
+  DEV_AUTH_EMAIL?: string;
+  DEV_AUTH_NAME?: string;
+  AUTH_GATE_SECRET?: string;
+};
+
+/**
+ * The identity in the request headers, or null when there is none to trust.
+ *
+ * With AUTH_GATE_SECRET set, X-Auth-Email counts only when the request also
+ * carries X-Auth-Gate equal to it. Caddy adds that header after forward_auth
+ * passes (deploy/ec2/caddy/Caddyfile) and nothing else knows the value, so a
+ * container that reaches starproject:3000 directly on the compose network cannot
+ * name a user. Unset (the default) trusts the headers as before.
+ *
+ * The DEV_AUTH_* fallback is for a machine with no Caddy. A production build
+ * never honours it: a stray variable on the server must not become an identity
+ * for every request that arrives with no header.
+ */
+export function identityFromHeaders(get: (name: string) => string | null, env: AuthEnv): CurrentUser | null {
+  const gate = env.AUTH_GATE_SECRET;
+  const trusted = !gate || internalSecretOk(get("x-auth-gate"), gate);
+  const dev = env.NODE_ENV !== "production";
+  const email = (trusted ? get("x-auth-email") : null) ?? (dev ? env.DEV_AUTH_EMAIL : undefined) ?? null;
+  if (!email) return null;
+  const name = (trusted ? get("x-auth-user") : null) ?? (dev ? env.DEV_AUTH_NAME : undefined) ?? "Dev User";
+  return { email, name };
+}
+
 /**
  * The single identity seam for the whole app.
  *
  * Provider A (our deployment): Caddy's forward_auth gate validates the session
  * cookie and injects `X-Auth-Email` / `X-Auth-User` upstream, so we just read
- * those request headers — no JWT work here.
+ * those request headers — no JWT work here (see identityFromHeaders for the
+ * optional X-Auth-Gate check).
  *
  * Provider B: a bearer token on the MCP endpoint, resolved to a user and set
  * with `runAsIdentity` (checked first, so a token can never be overridden by a
@@ -32,11 +65,8 @@ export async function getCurrentUser(): Promise<CurrentUser> {
   if (fromToken) return fromToken;
 
   const h = await headers();
-  const email = h.get("x-auth-email") ?? process.env.DEV_AUTH_EMAIL ?? null;
-  const name =
-    h.get("x-auth-user") ?? process.env.DEV_AUTH_NAME ?? "Dev User";
-
-  if (email) return { email, name };
+  const user = identityFromHeaders((name) => h.get(name), process.env);
+  if (user) return user;
 
   throw new Error(
     "Unauthorized: no X-Auth-Email header (Caddy) and no DEV_AUTH_EMAIL fallback",

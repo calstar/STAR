@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 
 import { prisma } from "@/lib/db";
+import { DIGEST_KINDS } from "@/lib/digest";
 import { getSettings } from "@/lib/settings";
 import { getCurrentDbUser } from "@/lib/user";
 
@@ -70,6 +71,9 @@ export async function toggleDigestSubteam(subteamId: string) {
 }
 
 export async function setDigestKind(kind: string, on: boolean) {
+  // Only a kind the digest knows; the MCP tool enums these, the UI's checkboxes
+  // send them, and nothing else belongs in the column.
+  if (!DIGEST_KINDS.some(([k]) => k === kind)) throw new Error(`Unknown digest kind: ${kind}`);
   const user = await getCurrentDbUser();
   const s = await getSettings(user.id);
   const set = new Set(s.digestKinds);
