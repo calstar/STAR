@@ -410,6 +410,30 @@ int do_encode() {
             return create_sensor_data_packet(ch, 0, kTs, p, n);
         },
         64);
+    {
+        auto short_ch = sample_chunks();
+        short_ch[1].datapoints.pop_back();
+        enc_err(
+            o, "sensor_data chunk[1] has 2 of 3 datapoints",
+            [&](uint8_t* p, size_t n) {
+                return create_sensor_data_packet(short_ch, 3, kTs, p, n);
+            },
+            64);
+    }
+    for (size_t count : {static_cast<size_t>(255), static_cast<size_t>(256)}) {
+        std::vector<SensorDataChunkCollection> many;
+        for (size_t c = 0; c < count; ++c) {
+            SensorDataChunkCollection col(static_cast<uint32_t>(c), 1);
+            col.add_datapoint(1, static_cast<uint32_t>(c));
+            many.push_back(col);
+        }
+        enc_err(
+            o, "sensor_data " + std::to_string(count) + " chunks x 1 sensor",
+            [&](uint8_t* p, size_t n) {
+                return create_sensor_data_packet(many, 1, kTs, p, n);
+            },
+            8 + count * 9);
+    }
     enc_err(
         o, "abort_done buffer=5",
         [&](uint8_t* p, size_t n) {

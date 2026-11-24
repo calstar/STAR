@@ -46,6 +46,20 @@ size_t create_sensor_data_packet(const std::vector<SensorDataChunkCollection> &c
 
   const size_t num_chunks = chunks.size();
 
+  // The wire carries num_chunks in one byte: more than 255 cannot be described.
+  if (num_chunks > 255) {
+    return 0;
+  }
+
+  // Every chunk must carry exactly num_sensors datapoints. The body below copies
+  // num_sensors datapoints from each chunk, so a shorter chunk would be read past
+  // its end, and a longer one would be silently truncated.
+  for (size_t i = 0; i < num_chunks; ++i) {
+    if (chunks[i].datapoints.size() != num_sensors) {
+      return 0;
+    }
+  }
+
   // Compute total size: header + body + per-chunk (timestamp + datapoints)
   const size_t per_chunk_size = sizeof(SensorDataChunk) + (static_cast<size_t>(num_sensors) * sizeof(SensorDatapoint));
   const size_t total_size = header_size + body_header_size + (num_chunks * per_chunk_size);
@@ -67,20 +81,20 @@ size_t create_sensor_data_packet(const std::vector<SensorDataChunkCollection> &c
 
   // Write body header
   SensorDataPacket body;
-  body.num_chunks = num_chunks;
+  body.num_chunks = static_cast<uint8_t>(num_chunks);
   body.num_sensors = num_sensors;
   memcpy(ptr, &body, body_header_size);
   ptr += body_header_size;
 
   // Write chunks and datapoints
-  for (uint8_t i = 0; i < num_chunks; ++i) {
+  for (size_t i = 0; i < num_chunks; ++i) {
     // Chunk header (timestamp)
     SensorDataChunk chunk_hdr;
     chunk_hdr.timestamp = chunks[i].timestamp;
     memcpy(ptr, &chunk_hdr, sizeof(SensorDataChunk));
     ptr += sizeof(SensorDataChunk);
 
-    // Datapoints (assume exactly num_sensors datapoints are present)
+    // Datapoints (exactly num_sensors, checked above)
     const SensorDatapoint *dp = chunks[i].datapoints.data();
     size_t datapoints_total_size = static_cast<size_t>(num_sensors) * sizeof(SensorDatapoint);
     memcpy(ptr, dp, datapoints_total_size);
@@ -103,7 +117,7 @@ size_t create_abort_done_packet(uint32_t timestamp_ms,
   // Create the packet header
   PacketHeader header;
   header.packet_type = PacketType::ABORT_DONE;
-  header.version = 1; // Current protocol version
+  header.version = DIABLO_COMMS_VERSION; // Current protocol version
   header.timestamp = timestamp_ms;
   
   // Copy header to buffer
