@@ -256,6 +256,7 @@ body {
 /* Sits after the toggles, so it needs its own separation — without it the note runs
    straight on from the preceding checkbox label and reads as part of it. */
 .tabs-note { align-self: center; margin-left: -10px; color: var(--color-text-muted); font: var(--text-2xs)/1 var(--font-mono); white-space: nowrap; }
+.tabs-note-warn { color: var(--color-sim); } /* amber = caution: a copy that is not the whole run */
 
 /* Config tab — the run's config snapshot, verbatim */
 .cfg { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 12px; }

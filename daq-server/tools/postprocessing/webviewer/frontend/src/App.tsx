@@ -442,6 +442,20 @@ export default function App() {
                       · {index.n_reanchored} channels re-anchored
                     </span>
                   )}
+                  {index?.partial && (
+                    <span
+                      className="tabs-note tabs-note-warn"
+                      title={
+                        'This copy was exported while the run was still recording, so it ends ' +
+                        'where the export did. ' +
+                        (index.recording
+                          ? 'The run is still being written; reopen it after it stops for the whole run.'
+                          : 'The run has stopped; reload to re-export the whole run.')
+                      }
+                    >
+                      · {index.recording ? 'still recording — showing a partial copy' : 'partial copy — reload for the whole run'}
+                    </span>
+                  )}
                   {index && !dbClock && index.n_db_only > 0 && (
                     <span className="tabs-note" title="No per-row timestamp at all, so these keep elodin-db's write time.">
                       · {index.n_db_only} on DB time

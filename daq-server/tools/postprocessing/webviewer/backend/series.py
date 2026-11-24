@@ -107,7 +107,7 @@ def _epoch_seconds(col) -> np.ndarray:
 @lru_cache(maxsize=256)
 def sensor_clock(run_id: str, entity: str) -> tuple[np.ndarray, str] | None:
     """The entity's own per-row time in epoch seconds and which kind of clock it was, or
-    None when it has no timestamp column at all. Cached — immutable runs."""
+    None when it has no timestamp column at all. Cached per export (cleared on re-export)."""
     p = export_cache.cache_dir(run_id) / f"{entity}.timestamp_ns.parquet"
     if not p.exists():
         return None
@@ -148,7 +148,7 @@ def _parquet_path(run_id: str, component: str) -> Path:
 def load_series(
     run_id: str, component: str, time_source: str = "sensor"
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (t_seconds, values) sorted by time. Cached in-process (immutable runs).
+    """Return (t_seconds, values) sorted by time. Cached in-process per export (see on_reexport).
 
     With time_source="sensor" the x-axis is the row's own sample time where the publisher
     stamps a real clock, falling back to the DB's write time where it does not."""
@@ -183,6 +183,13 @@ def load_series(
         # (write latency), which shifts where the step lands by less than one sample.
         v = lc_tare.apply(run_id, entity, t, v)
     return t, v
+
+
+# Both caches above hold one export's arrays. A run re-exported because it kept recording
+# after it was first opened must not go on serving the shorter copy from memory, which is
+# what made the re-export of daq_20261123_181135 still stop at 413 s until a restart.
+export_cache.on_reexport(load_series.cache_clear)
+export_cache.on_reexport(sensor_clock.cache_clear)
 
 
 def _slice(t: np.ndarray, v: np.ndarray, start, end) -> tuple[np.ndarray, np.ndarray]:
