@@ -1,0 +1,32 @@
+# Which physical board is which: Ethernet MAC -> board ID.
+#
+# The board-LAN DHCP server (deploy/dhcp/generate_dhcp_config.py) reserves
+# 192.168.2.<board_id> for every MAC listed here, and a board takes its ID from
+# the address it is given -- so this file alone is enough to give a board its
+# address and identity. It is a fact about hardware, not a profile setting:
+# there is one copy, and profiles do not override it.
+#
+# Sensor settings (type, connectors, calibration) still live in the config's
+# [boards.*] entries. A board listed here needs no config entry to get its
+# address; add one when the board is ready to stream.
+#
+# A [boards.*] entry may also carry a `mac =` line. If it names the same board
+# ID with the same MAC, that is one reservation. With a different MAC, the
+# generator refuses the whole set and keeps serving the previous list.
+#
+# One [[board]] block per board:
+#   mac      = Ethernet MAC, lowercase, colon-separated (what the DHCP request carries)
+#   board_id = 1-254; the board is served 192.168.2.<board_id>
+#   type     = optional, for people reading this; not used for addressing
+# Say where each MAC came from in a comment above it.
+
+# Source: chip MAC 34:85:18:6f:ce:54 read over USB (USB serial number) on
+# 2026-11-23 while flashing PT_Hotfire. The firmware uses ESP_MAC_ETH, which on
+# the ESP32-S3 is base + 1 with the locally administered bit set -- the same
+# derivation read off the Prop Receiver v2 on 2026-11-20 (chip base MAC
+# 20:6e:f1:e0:70:fc, DHCP requests from 22:6e:f1:e0:70:fd).
+# UNCONFIRMED: check /var/lib/misc/star-dhcp.leases the first time it is on the LAN.
+[[board]]
+mac = "36:85:18:6f:ce:55"
+board_id = 23
+type = "PT"
