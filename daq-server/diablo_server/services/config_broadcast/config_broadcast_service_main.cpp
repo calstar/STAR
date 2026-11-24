@@ -18,6 +18,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 // These packets are byte-packed: a u32 lands at offset 2, and the actuator entries step by 7, so
@@ -36,7 +37,10 @@ static inline void store_u32(uint8_t* dst, uint32_t v) {
 #include <string>
 #include <vector>
 
+#include "DiabloPacketUtils.h"
+#include "calibration/ValveCommandCurrent.hpp"
 #include "config/Config.hpp"
+#include "daq-protocol.h"
 #include "config/SensorTables.hpp"
 #include "net/DaqInterface.hpp"
 
@@ -50,6 +54,8 @@ void signalHandler(int /*sig*/) {
 
 constexpr uint8_t SENSOR_CONFIG = 5;
 constexpr uint8_t ACTUATOR_CONFIG = 6;
+constexpr uint8_t VALVE_CURRENT_CONFIG = 16;
+constexpr uint8_t VALVE_TEST_CURRENT = 17;
 constexpr uint16_t DEFAULT_LISTEN_PORT = 5005;
 
 std::string trim(const std::string& s) {
@@ -162,6 +168,60 @@ std::map<uint16_t, std::pair<double, uint32_t>> readAbortThresholds() {
         }
         break;  // first found wins
     }
+    return out;
+}
+
+// Each ball valve's closed/open command current, set on the Calibration page and written by the
+// backend (backend/src/ball-valve-current.ts). Read every cycle like abort_thresholds.txt, so a
+// change reaches the board within one interval. DAQ_CALIBRATIONS_DIR wins, as in the backend; a
+// missing file is every valve at 4 / 20 mA. Problems are logged once while they persist.
+// The first of DAQ_CALIBRATIONS_DIR and the usual relative calibrations dirs holding `name`.
+std::string findCalibrationFile(const std::string& name) {
+    std::vector<std::string> dirs;
+    if (const char* dir = std::getenv("DAQ_CALIBRATIONS_DIR"))
+        dirs.push_back(dir);
+    for (const char* d : {"scripts/calibration/calibrations", "../scripts/calibration/calibrations",
+                          "../../scripts/calibration/calibrations"})
+        dirs.push_back(d);
+    for (const auto& d : dirs) {
+        const std::string p = d + "/" + name;
+        if (std::ifstream(p).is_open())
+            return p;
+    }
+    return "";
+}
+
+// Log each distinct warning once while it persists.
+void logOnce(std::set<std::string>& last, const std::vector<std::string>& warnings) {
+    const std::set<std::string> now(warnings.begin(), warnings.end());
+    for (const auto& w : now)
+        if (!last.count(w))
+            std::cerr << "⚠️  " << w << std::endl;
+    last = now;
+}
+
+std::map<std::string, fsw::calibration::valve_current::Currents> readValveCurrents() {
+    static std::set<std::string> s_last;
+    std::vector<std::string> warnings;
+    const std::string path = findCalibrationFile("ball_valve_currents.json");
+    auto out = path.empty() ? std::map<std::string, fsw::calibration::valve_current::Currents>{}
+                            : fsw::calibration::valve_current::load_file(path, &warnings);
+    logOnce(s_last, warnings);
+    return out;
+}
+
+// Trial currents still running (the Calibration page's "Drive"), entity -> mA. Expiry is epoch
+// ms, written by the backend's Date.now().
+std::map<std::string, double> readValveTrials() {
+    static std::set<std::string> s_last;
+    std::vector<std::string> warnings;
+    const std::string path = findCalibrationFile("ball_valve_trials.json");
+    const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count();
+    auto out = path.empty() ? std::map<std::string, double>{}
+                            : fsw::calibration::valve_current::load_trials_file(path, now, &warnings);
+    logOnce(s_last, warnings);
     return out;
 }
 
@@ -423,6 +483,8 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         return buf;
     };
 
+    const auto valve_currents = readValveCurrents();
+    const auto valve_trials = readValveTrials();
     std::vector<ConfigPacket> packets;
     for (const auto& b : boards) {
         if (!b.enabled)
@@ -438,6 +500,27 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
             auto pkt = build_actuator_config(0, b.enable_serial_printing);
             if (!pkt.empty())
                 packets.push_back({ACTUATOR_CONFIG, pkt, b.ip, b.listen_port});
+            // Its closed/open command currents, every valve every cycle (4 / 20 if uncalibrated).
+            const int slot = (b.id % 10 == 0) ? 10 : b.id % 10;
+            const auto entries = fsw::calibration::valve_current::entries_for_board(
+                slot, b.active_connectors, valve_currents);
+            std::vector<uint8_t> cur(MAX_PACKET_SIZE);
+            const size_t n =
+                daq::create_valve_current_config_packet(entries, 0, cur.data(), cur.size());
+            if (n > 0) {
+                cur.resize(n);
+                packets.push_back({VALVE_CURRENT_CONFIG, cur, b.ip, b.listen_port});
+            }
+            // Trial currents: every valve every cycle, 0 where none is running.
+            const auto trial_entries = fsw::calibration::valve_current::trial_entries_for_board(
+                slot, b.active_connectors, valve_trials);
+            std::vector<uint8_t> tr(MAX_PACKET_SIZE);
+            const size_t tn =
+                daq::create_valve_test_current_packet(trial_entries, 0, tr.data(), tr.size());
+            if (tn > 0) {
+                tr.resize(tn);
+                packets.push_back({VALVE_TEST_CURRENT, tr, b.ip, b.listen_port});
+            }
         } else if (b.type == "PT" || b.type == "TC" || b.type == "RTD" || b.type == "LC" ||
                    b.type == "ENCODER") {
             auto pkt = build_sensor_config(b);

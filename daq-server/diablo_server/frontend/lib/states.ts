@@ -138,6 +138,15 @@ export interface FlowConfig {
   returnTarget: string;
   durationMs: number | null;
   maxMs: number | null;
+  /** [flow].gate_actuator — the valve the requested duration is measured on, or null if the stand
+   *  configures none (then the window is the STATE's, as it was before gating existed). */
+  gateActuator?: string | null;
+  /** Every valve the flow state's column OPENS, with the stagger the delays CSV gives it on the
+   *  way in (`delayMs`) and in the return state's column on the way out (`closeDelayMs`). The
+   *  server joins the two CSVs so the client and the sequencer answer "which valves does a
+   *  characterization run move, and when" from the same two files. Empty when neither is
+   *  readable. */
+  valves?: { role: string; delayMs: number; closeDelayMs: number }[];
 }
 
 let flowConfig: FlowConfig | null = null;

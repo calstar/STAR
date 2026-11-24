@@ -52,6 +52,17 @@ export function ballValveCalPath(): string {
   return path.join(getCalibrationsDir(), 'ball_valve_endpoints.json');
 }
 
+/** Ball valve closed/open command currents (ball-valve-current.ts), read by config_broadcast
+ *  (lib ValveCommandCurrent.hpp) every cycle. Not session-scoped, like the endpoints. */
+export function ballValveCurrentPath(): string {
+  return path.join(getCalibrationsDir(), 'ball_valve_currents.json');
+}
+
+/** Running trial currents (ball-valve-current.ts), read by config_broadcast every cycle. */
+export function ballValveTrialsPath(): string {
+  return path.join(getCalibrationsDir(), 'ball_valve_trials.json');
+}
+
 export function livePath(): string {
   return path.join(getCalibrationsDir(), 'cubic_calibration.json');
 }

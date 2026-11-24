@@ -323,4 +323,47 @@ struct __attribute__((packed)) StacklightCommandPacket {
   uint8_t buzzer;
 };
 
+//==============================================================================
+// Valve Current Config (ball valve boards)
+//==============================================================================
+
+/**
+ * @brief Body header of a VALVE_CURRENT_CONFIG packet (after PacketHeader),
+ * followed by num_valves ValveCurrentEntry.
+ *
+ * Server -> ball valve board. The command-loop current each valve is driven at
+ * for ACTUATOR_COMMAND state 0 (closed) and state 1 (open), in place of the
+ * ideal 4 / 20 mA. Sent every config-broadcast cycle, calibrated or not, so a
+ * cleared calibration reaches the board as 4 / 20.
+ */
+struct __attribute__((packed)) ValveCurrentConfigPacket {
+  uint8_t num_valves;
+};
+
+/** One valve's command currents, in microamps (4 mA = 4000). */
+struct __attribute__((packed)) ValveCurrentEntry {
+  uint8_t actuator_id;  // ACTUATOR_COMMAND id (1-based)
+  uint16_t closed_ua;   // state 0
+  uint16_t open_ua;     // state 1
+};
+
+/**
+ * @brief Body header of a VALVE_TEST_CURRENT packet (after PacketHeader),
+ * followed by num_valves ValveTestCurrentEntry.
+ *
+ * Server -> ball valve board, while an operator is calibrating: drive this
+ * valve at `ua` now, whatever it is commanded, so its open or closed current
+ * can be found by watching the position. 0 ends the trial. Repeated every
+ * config-broadcast cycle while it lasts; the board drops a trial that is not
+ * repeated, and any ACTUATOR_COMMAND to that valve ends it.
+ */
+struct __attribute__((packed)) ValveTestCurrentPacket {
+  uint8_t num_valves;
+};
+
+struct __attribute__((packed)) ValveTestCurrentEntry {
+  uint8_t actuator_id;  // ACTUATOR_COMMAND id (1-based)
+  uint16_t ua;          // trial current in microamps; 0 = no trial
+};
+
 } // namespace daq

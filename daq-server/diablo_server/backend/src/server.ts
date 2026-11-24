@@ -26,11 +26,13 @@ import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ElodinClient } from './elodin-client.js';
 import { parseElodinPacket } from './elodin-protocol.js';
+import { recordFirmware } from './firmware-log.js';
 import { expandWithTare, resetTareState, setRunDir } from './lc-tare.js';
 import { applyValveCalibration } from './ball-valve-cal.js';
 import { loadSensorRoleMap, hpBoardNumbers, t7CalFields } from './sensor-config.js';
 import { registerVTables, clearSubscriptionState, noteSubscriptionRejected, notePairDelivered } from './elodin-vtable-registry.js';
 import { refusalText } from './refusal-text.js';
+import { valvePlanSuffix } from './valve-plan.js';
 import { parseScriptStatus } from './script-status.js';
 import { createAPIHandler } from './api-server.js';
 import { VideoService } from './video/service.js';
@@ -561,6 +563,30 @@ function updateBoard(low: number, payload: Buffer): void {
       console.log(`[ThinServer] Board ${boardId} (${typeStr}) connected`);
     }
   }
+}
+
+/**
+ * Record the firmware image a board reports running: shown live on the Boards pane and pinned to
+ * the run in `<dbDir>/firmware.jsonl`.
+ *
+ * Payload is BoardFirmwareElodinMessage (see comms/messages/board/BoardFirmwareMessage.hpp):
+ *   u64 timestamp_ns (0) | u8 board_id (8) | u8[32] firmware_digest (9)
+ */
+function updateBoardFirmware(low: number, payload: Buffer): void {
+  if (payload.length < 41) return;
+  const digest = payload.subarray(9, 41).toString('hex');
+  const status = boardsStatus.get(low);
+  if (!status) return; // heartbeat creates the entry; firmware only annotates it
+  if (status.firmwareDigest === digest) return;
+
+  const previous = status.firmwareDigest;
+  status.firmwareDigest = digest;
+  status.firmwareSeenMs = Date.now();
+  console.log(
+    `[ThinServer] Board ${low} (${status.type}) firmware ${previous ? 'changed to ' : ''}${digest.slice(0, 16)}…`,
+  );
+  recordFirmware(low, digest, status.type);
+  broadcastBoardStatus();
 }
 
 /**
@@ -1317,10 +1343,26 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
         }
         holdSuffix = `:${holdMs}`;
       }
+      // Optional per-run valve plan: valves held shut for this entry, or opened on their own delay
+      // instead of the delays CSV's. Appended only when it is well formed, so a malformed plan
+      // never reaches the wire and a frame without one is byte-for-byte what it always was.
+      //
+      // Like the hold above, this check is convenience and not safety: the sequencer validates
+      // independently and is the authority on which states accept a plan at all (never the burn),
+      // which valves it may name, and whether a delay fits in the window. See valve-plan.ts.
+      let valveSuffix = '';
+      if (command.data.valvePlan !== undefined) {
+        const built = valvePlanSuffix(command.data.valvePlan);
+        if ('error' in built) {
+          send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Invalid valve plan: ${built.error}` } });
+          break;
+        }
+        valveSuffix = built.suffix;
+      }
       // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
       // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
-      sendToActuatorService(`TRANSITION:${csvName}${holdSuffix}\n`).then(({ ok, reply }) => {
-        console.log(`[ThinServer] State transition ${stateName} → ${csvName}${holdSuffix}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
+      sendToActuatorService(`TRANSITION:${csvName}${holdSuffix}${valveSuffix}\n`).then(({ ok, reply }) => {
+        console.log(`[ThinServer] State transition ${stateName} → ${csvName}${holdSuffix}${valveSuffix}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (!ok) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${refusalText(reply)}` } });
         }
@@ -1645,6 +1687,14 @@ elodin.on('packet', (header: any, payload: Buffer) => {
     if (high === 0x10) {
       countHeartbeat(low);
       updateBoard(low, payload);
+      return;
+    }
+
+    // ── Board firmware digest [0x11, board_id] ──────────────────────────────
+    // daq_bridge publishes this only when a board's firmware changes, so this
+    // arrives once per board per boot or reflash, not per heartbeat.
+    if (high === 0x11) {
+      updateBoardFirmware(low, payload);
       return;
     }
 

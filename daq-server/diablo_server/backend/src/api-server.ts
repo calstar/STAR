@@ -39,10 +39,11 @@ import { ElodinQueryClient, QueryOptions } from './elodin-query.js';
 import { getBoardLogHistory, getBoardLogStats } from './board-logs.js';
 import type { SensorUpdate } from './shared-types.js';
 import { currentTares } from './lc-tare.js';
-import { t7Channels } from '../../shared/config-validation.js';
+import { t7Channels, parseCsvGrid } from '../../shared/config-validation.js';
 import { handleVideoRequest } from './video/routes.js';
 import type { VideoService } from './video/service.js';
 import { captureEndpoint, clearEndpoints, valveCalibrationSnapshot } from './ball-valve-cal.js';
+import { clearCurrents, currentsSnapshot, endTrial, saveTrialAs, setCurrents, startTrial } from './ball-valve-current.js';
 
 // ── Sensor config helpers ──────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
   const boards = (config.boards || {}) as Record<string, any>;
   const sensors: SensorConfigEntry[] = [];
 
+  const manyPtBoards = enabledBoardCount(boards, 'PT') > 1;
   for (const [boardKey, boardRaw] of Object.entries(boards)) {
     const board = boardRaw as Record<string, any>;
     if (board.type !== 'PT') continue;
@@ -126,6 +128,7 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
 
     // Every PT board uses its own [sensor_roles_<boardKey>] section — HP boards included
     // (no separate sensor_roles_pt2 section).
+    const named = new Set<number>();
     for (const [roleName, channelIdRaw] of Object.entries(rolesSection)) {
       const channelId = typeof channelIdRaw === 'number' ? channelIdRaw : Number(channelIdRaw);
       if (!isFinite(channelId)) continue;
@@ -143,6 +146,31 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
         inCalibrationSequence: true,
         entity: `PT${boardNumber}.CH${channelId}`,
         calEntity: `PT${boardNumber}_Cal.CH${channelId}`,
+      });
+      named.add(channelId);
+    }
+
+    // A connector in active_connectors that no role names is still sampled and streamed (the
+    // board sends every active connector), so list it under a generated name, as RTD and LC
+    // boards do. Without this the Sensor Info tab showed only named PTs and an unnamed but
+    // active channel was invisible. It stays out of the calibration sequence: with no role it
+    // has no [calibration_model_<board>] entry for a fit to apply to.
+    const active: number[] = Array.isArray(board.active_connectors) ? board.active_connectors : [];
+    for (const raw of active) {
+      const ch = typeof raw === 'number' ? raw : Number(raw);
+      if (!isFinite(ch) || named.has(ch)) continue;
+      named.add(ch);
+      const boardNumber = elodinSlotFromBoardId(boardId);
+      sensors.push({
+        type: 'PT',
+        id: ch,
+        role: generatedRole('PT', boardId, ch, manyPtBoards),
+        boardId,
+        boardIp,
+        isHpPt: isHpBoard,
+        inCalibrationSequence: false,
+        entity: `PT${boardNumber}.CH${ch}`,
+        calEntity: `PT${boardNumber}_Cal.CH${ch}`,
       });
     }
   }
@@ -548,11 +576,60 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           // request. null when the stand has no flow hold configured, which is the client's cue to
           // disable the control rather than offer one that the sequencer will refuse.
           const rawFlow = (cfg as any)?.flow;
+          // The valves the flow state opens, with the stagger its delays column gives each one.
+          // Resolved HERE rather than in the browser: the client would otherwise have to fetch and
+          // join two CSVs to find out which valves a characterization run moves, and the answer
+          // has to agree with the sequencer's, which reads the same two files.
+          const flowValves = (() => {
+            const flowState = raw.find((e: any) => e?.is_flow === true);
+            if (!flowState || typeof flowState.name !== 'string') return [];
+            try {
+              const positions = parseCsvGrid(readStateCsv('actuators'));
+              const delays = parseCsvGrid(readStateCsv('delays'));
+              const col = positions.states.indexOf(flowState.name);
+              if (col < 0) return [];
+              const dcol = delays.states.indexOf(flowState.name);
+              return positions.rows
+                // Only the valves it OPENS. A plan may not retime a valve the state shuts — that
+                // would hold one open inside a state whose column closes it — so offering those
+                // would be offering a control the sequencer refuses.
+                .filter((r) => (r.cells[col] ?? '').trim().toUpperCase() === 'OPEN')
+                .map((r) => {
+                  const cell = (col2: number) =>
+                    col2 < 0 ? NaN : Number((delays.rows.find((d) => d.key === r.key)?.cells[col2] ?? '').trim());
+                  const secs = cell(dcol);
+                  // The same valve's delay in the RETURN state's column. It does not close at the
+                  // expiry transition either — it closes that much after it — so the client needs
+                  // both to work out the window the sequencer will run, which is the number the
+                  // operator is actually setting.
+                  const rcol = typeof rawFlow?.return_target === 'string'
+                    ? delays.states.indexOf(rawFlow.return_target)
+                    : -1;
+                  const retSecs = cell(rcol);
+                  return {
+                    role: r.key,
+                    delayMs: Number.isFinite(secs) ? Math.round(secs * 1000) : 0,
+                    closeDelayMs: Number.isFinite(retSecs) ? Math.round(retSecs * 1000) : 0,
+                  };
+                });
+            } catch {
+              // No CSV, or an unreadable one. An empty list disables the per-valve controls rather
+              // than offering valves that may not exist.
+              return [];
+            }
+          })();
           const flow = rawFlow && typeof rawFlow.return_target === 'string' && rawFlow.return_target
             ? {
               returnTarget: rawFlow.return_target as string,
               durationMs: typeof rawFlow.duration_ms === 'number' ? rawFlow.duration_ms : null,
               maxMs: typeof rawFlow.max_ms === 'number' ? rawFlow.max_ms : null,
+              // The valve the hold is measured on, per [flow].gate_actuator: the requested
+              // duration is how long IT is open, not how long the state lasts. The client shows
+              // which one that is, because it is the number the operator is setting.
+              gateActuator: typeof rawFlow.gate_actuator === 'string' && rawFlow.gate_actuator
+                ? (rawFlow.gate_actuator as string)
+                : null,
+              valves: flowValves,
             }
             : null;
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -983,6 +1060,39 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'action must be closed, open or clear' }));
         }
+      } else if (url.pathname === '/api/ball_valve_current' && req.method === 'GET') {
+        // Each ball valve channel's closed/open command current (unlisted: 4 / 20 mA).
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(currentsSnapshot()));
+      } else if (url.pathname === '/api/ball_valve_current' && req.method === 'POST') {
+        // { entity: "BV1_Cal.CH1", closed_ma: 4.1, open_ma: 19.6 } | { entity, action: "clear" }
+        // Moves hardware: config_broadcast sends it within one interval and the board applies it
+        // at once, to a valve sitting in that state too. Operators only.
+        if (!isConfigWriteAuthorized(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Not an approved operator' }));
+          return true;
+        }
+        //   { entity, action: "trial", ma }          drive the valve at ma now (trial)
+        //   { entity, action: "end_trial" }          back to its commanded state's current
+        //   { entity, action: "save", as: "open" | "closed" }  the trial becomes that state's current
+        //   { entity, action: "clear" }              back to 4 / 20, trial ended
+        //   { entity, closed_ma, open_ma }           set both directly
+        const body = await readJsonBody(req);
+        const entity = String(body?.entity ?? '');
+        const action = body?.action;
+        let r: { ok: true } | { ok: false; error: string };
+        if (action === 'clear') { clearCurrents(entity); r = { ok: true }; }
+        else if (action === 'trial') r = startTrial(entity, Number(body?.ma));
+        else if (action === 'end_trial') { endTrial(entity); r = { ok: true }; }
+        else if (action === 'save') {
+          r = body?.as === 'open' || body?.as === 'closed'
+            ? saveTrialAs(entity, body.as)
+            : { ok: false, error: 'as must be open or closed' };
+        } else if (action === undefined) r = setCurrents(entity, Number(body?.closed_ma), Number(body?.open_ma));
+        else r = { ok: false, error: 'action must be trial, end_trial, save or clear' };
+        res.writeHead(r.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(r.ok ? currentsSnapshot() : { error: r.error }));
       } else if (url.pathname === '/api/lc_tare' && req.method === 'GET') {
         // The live load-cell tares, for the UI to badge tared channels and show their offsets.
         //

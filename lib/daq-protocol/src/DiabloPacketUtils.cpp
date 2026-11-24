@@ -251,6 +251,106 @@ size_t create_stacklight_command_packet(const StacklightCommandPacket &data,
   return total_size;
 }
 
+size_t create_valve_current_config_packet(const std::vector<ValveCurrentEntry> &entries,
+                                          uint32_t timestamp_ms,
+                                          uint8_t *buffer, size_t buffer_size) {
+  if (entries.size() > MAX_ACTUATORS_PER_BOARD) return 0;
+  const size_t header_size = sizeof(PacketHeader);
+  const size_t body_size = sizeof(ValveCurrentConfigPacket);
+  const size_t entries_size = entries.size() * sizeof(ValveCurrentEntry);
+  const size_t total_size = header_size + body_size + entries_size;
+  if (!buffer || buffer_size < total_size) return 0;
+
+  PacketHeader header;
+  header.packet_type = PacketType::VALVE_CURRENT_CONFIG;
+  header.version = DIABLO_COMMS_VERSION;
+  header.timestamp = timestamp_ms;
+
+  ValveCurrentConfigPacket body;
+  body.num_valves = static_cast<uint8_t>(entries.size());
+
+  uint8_t *ptr = buffer;
+  memcpy(ptr, &header, header_size);
+  ptr += header_size;
+  memcpy(ptr, &body, body_size);
+  ptr += body_size;
+  if (entries_size) memcpy(ptr, entries.data(), entries_size);
+  return total_size;
+}
+
+bool parse_valve_current_config_packet(const uint8_t *buffer, size_t buffer_size,
+                                       PacketHeader &header_out,
+                                       std::vector<ValveCurrentEntry> &entries_out) {
+  const size_t header_size = sizeof(PacketHeader);
+  const size_t body_size = sizeof(ValveCurrentConfigPacket);
+  if (!buffer || buffer_size < header_size + body_size) return false;
+
+  PacketHeader hdr;
+  memcpy(&hdr, buffer, header_size);
+  if (hdr.packet_type != PacketType::VALVE_CURRENT_CONFIG) return false;
+
+  ValveCurrentConfigPacket body;
+  memcpy(&body, buffer + header_size, body_size);
+  if (body.num_valves > MAX_ACTUATORS_PER_BOARD) return false;
+  const size_t entries_size = static_cast<size_t>(body.num_valves) * sizeof(ValveCurrentEntry);
+  if (buffer_size < header_size + body_size + entries_size) return false;
+
+  entries_out.resize(body.num_valves);
+  if (entries_size) memcpy(entries_out.data(), buffer + header_size + body_size, entries_size);
+  header_out = hdr;
+  return true;
+}
+
+size_t create_valve_test_current_packet(const std::vector<ValveTestCurrentEntry> &entries,
+                                          uint32_t timestamp_ms,
+                                          uint8_t *buffer, size_t buffer_size) {
+  if (entries.size() > MAX_ACTUATORS_PER_BOARD) return 0;
+  const size_t header_size = sizeof(PacketHeader);
+  const size_t body_size = sizeof(ValveTestCurrentPacket);
+  const size_t entries_size = entries.size() * sizeof(ValveTestCurrentEntry);
+  const size_t total_size = header_size + body_size + entries_size;
+  if (!buffer || buffer_size < total_size) return 0;
+
+  PacketHeader header;
+  header.packet_type = PacketType::VALVE_TEST_CURRENT;
+  header.version = DIABLO_COMMS_VERSION;
+  header.timestamp = timestamp_ms;
+
+  ValveTestCurrentPacket body;
+  body.num_valves = static_cast<uint8_t>(entries.size());
+
+  uint8_t *ptr = buffer;
+  memcpy(ptr, &header, header_size);
+  ptr += header_size;
+  memcpy(ptr, &body, body_size);
+  ptr += body_size;
+  if (entries_size) memcpy(ptr, entries.data(), entries_size);
+  return total_size;
+}
+
+bool parse_valve_test_current_packet(const uint8_t *buffer, size_t buffer_size,
+                                       PacketHeader &header_out,
+                                       std::vector<ValveTestCurrentEntry> &entries_out) {
+  const size_t header_size = sizeof(PacketHeader);
+  const size_t body_size = sizeof(ValveTestCurrentPacket);
+  if (!buffer || buffer_size < header_size + body_size) return false;
+
+  PacketHeader hdr;
+  memcpy(&hdr, buffer, header_size);
+  if (hdr.packet_type != PacketType::VALVE_TEST_CURRENT) return false;
+
+  ValveTestCurrentPacket body;
+  memcpy(&body, buffer + header_size, body_size);
+  if (body.num_valves > MAX_ACTUATORS_PER_BOARD) return false;
+  const size_t entries_size = static_cast<size_t>(body.num_valves) * sizeof(ValveTestCurrentEntry);
+  if (buffer_size < header_size + body_size + entries_size) return false;
+
+  entries_out.resize(body.num_valves);
+  if (entries_size) memcpy(entries_out.data(), buffer + header_size + body_size, entries_size);
+  header_out = hdr;
+  return true;
+}
+
 bool parse_board_heartbeat_packet(const uint8_t *buffer, size_t buffer_size,
                                   PacketHeader &header_out,
                                   BoardHeartbeatPacket &data_out) {

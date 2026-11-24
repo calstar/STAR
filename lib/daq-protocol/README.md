@@ -54,6 +54,9 @@ Sizing limits live in `DAQv2-Comms.h`: up to `MAX_SENSORS_PER_BOARD` (10) and
 | 12 | `SELF_TEST` | board → server | startup self-test results (ADC, per-sensor) |
 | 13 | `ENVIRONMENTAL_DATA` | board → server | temperature / environmental telemetry |
 | 14 | `STACKLIGHT_COMMAND` | server → board | stacklight (status tower) control |
+| 15 | `LOGS` | board → server | buffered, newline-delimited board log text |
+| 16 | `VALVE_CURRENT_CONFIG` | server → ball valve board | per-valve closed/open command current (µA), replacing the ideal 4 / 20 mA |
+| 17 | `VALVE_TEST_CURRENT` | server → ball valve board | drive a valve at a trial current (µA, 0 = end) while it is calibrated |
 
 State enums travel inside several of these packets:
 

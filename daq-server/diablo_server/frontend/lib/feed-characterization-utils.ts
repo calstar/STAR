@@ -269,3 +269,155 @@ export function upstreamSlopePsiPerSec(
   return num / den;
 }
 
+
+// ── Per-run valve plans ───────────────────────────────────────────────────────────────────────
+//
+// The feed-characterization tab retimes the flow state's valves one run at a time: trimming the
+// lead between the two mains until they open together, and holding one side shut to characterize
+// one tank at a time. The functions below are the whole of that arithmetic, kept out of the
+// component because two of them have to agree EXACTLY with the sequencer
+// (SequencerService::holdReferenceFor and the plan validation beside it). A card that showed a
+// different window from the one the sequencer runs would be worse than showing none.
+
+/** One valve the flow state opens, as the server resolves it from the two state-machine CSVs. */
+export interface FlowValve {
+  role: string;
+  /** Its stagger on the way in, from the flow state's delays column, in ms. */
+  delayMs: number;
+  /** The same valve's stagger in the RETURN state's column: it closes that much after the expiry
+   *  transition, not at it. */
+  closeDelayMs: number;
+}
+
+/** What the operator has asked of one valve for the next run. */
+export interface ValveSetting {
+  shut: boolean;
+  delayMs: number;
+}
+
+/** The setting in force for `role`: the operator's if they set one, the config's otherwise. */
+export function valveSettingFor(
+  valves: FlowValve[],
+  settings: Record<string, ValveSetting>,
+  role: string,
+): ValveSetting {
+  return settings[role] ?? { shut: false, delayMs: valves.find((v) => v.role === role)?.delayMs ?? 0 };
+}
+
+/** Entry delay as the run will actually use it. A valve held shut waits for nothing. */
+export function valveOpenDelayMs(
+  valves: FlowValve[],
+  settings: Record<string, ValveSetting>,
+  role: string,
+): number {
+  const s = valveSettingFor(valves, settings, role);
+  return s.shut ? 0 : Math.max(0, Math.round(s.delayMs));
+}
+
+/**
+ * The plan to send: only what differs from the config.
+ *
+ * An untouched card produces `{}`, and the caller omits the field entirely — so a stand nobody has
+ * retimed puts exactly the frame on the wire it put there before plans existed, and the sequencer
+ * takes exactly the path it took before. An explicit 0 against a configured stagger IS a
+ * difference and is sent; a 0 against a config that already says 0 is not.
+ */
+export function buildValvePlan(
+  valves: FlowValve[],
+  settings: Record<string, ValveSetting>,
+): Record<string, { shut?: boolean; delayMs?: number }> {
+  const plan: Record<string, { shut?: boolean; delayMs?: number }> = {};
+  for (const v of valves) {
+    const s = valveSettingFor(valves, settings, v.role);
+    if (s.shut) plan[v.role] = { shut: true };
+    else {
+      const d = Math.max(0, Math.round(s.delayMs));
+      if (d !== v.delayMs) plan[v.role] = { delayMs: d };
+    }
+  }
+  return plan;
+}
+
+/**
+ * The valve the requested duration is measured on.
+ *
+ * Normally the configured gate ([flow].gate_actuator). When the gate is held shut — which is what
+ * characterizing the other side alone does — the window moves to the first valve that DOES open,
+ * because a window measured on a valve that never opened is not a window. Ties break on the name
+ * only to be deterministic. null when no valve opens, or when the stand configures no gate at all
+ * (then the window is the state's own, as it was before gating existed).
+ */
+export function referenceValve(
+  valves: FlowValve[],
+  settings: Record<string, ValveSetting>,
+  gateActuator: string | null | undefined,
+): string | null {
+  const opening = valves.filter((v) => !valveSettingFor(valves, settings, v.role).shut);
+  if (gateActuator && opening.some((v) => v.role === gateActuator)) return gateActuator;
+  if (!gateActuator || opening.length === 0) return null;
+  return [...opening].sort(
+    (a, b) =>
+      valveOpenDelayMs(valves, settings, a.role) - valveOpenDelayMs(valves, settings, b.role) ||
+      a.role.localeCompare(b.role),
+  )[0]!.role;
+}
+
+/**
+ * How long the sequencer will hold the state: requested + the reference's open stagger − its
+ * stagger in the return state. Clamped at 1 ms, which is what the sequencer does rather than let
+ * the subtraction underflow.
+ */
+export function plannedHoldMs(
+  requestedMs: number,
+  valves: FlowValve[],
+  settings: Record<string, ValveSetting>,
+  gateActuator: string | null | undefined,
+): number {
+  const ref = referenceValve(valves, settings, gateActuator);
+  if (!ref) return Math.max(1, Math.round(requestedMs));
+  const close = valves.find((v) => v.role === ref)?.closeDelayMs ?? 0;
+  return Math.max(1, Math.round(requestedMs) + valveOpenDelayMs(valves, settings, ref) - close);
+}
+
+/**
+ * Why the sequencer would refuse this plan, in a sentence, or null.
+ *
+ * Said in the browser so the operator reads it before pressing rather than as a refusal after the
+ * baseline has been taken. The sequencer enforces all of it independently — this is a courtesy,
+ * never the gate.
+ */
+export function valvePlanProblem(
+  requestedMs: number,
+  valves: FlowValve[],
+  settings: Record<string, ValveSetting>,
+  gateActuator: string | null | undefined,
+): string | null {
+  if (valves.length === 0) return null;
+  const opening = valves.filter((v) => !valveSettingFor(valves, settings, v.role).shut);
+  if (opening.length === 0)
+    return 'Every valve is held shut — nothing would flow. Let at least one through.';
+  const hold = plannedHoldMs(requestedMs, valves, settings, gateActuator);
+  const late = opening.find((v) => valveOpenDelayMs(valves, settings, v.role) >= hold);
+  if (late)
+    return `"${late.role}" opens at +${valveOpenDelayMs(valves, settings, late.role)} ms, at or after the ${hold} ms window ends — it would never open at all.`;
+  return null;
+}
+
+/** One line for the run record: what the valves did, in the operator's own terms. */
+export function valvePlanSummary(
+  requestedMs: number,
+  valves: FlowValve[],
+  settings: Record<string, ValveSetting>,
+  gateActuator: string | null | undefined,
+): string | null {
+  if (valves.length === 0) return null;
+  const parts = valves.map((v) => {
+    const s = valveSettingFor(valves, settings, v.role);
+    if (s.shut) return `${v.role} held shut`;
+    const d = valveOpenDelayMs(valves, settings, v.role);
+    return `${v.role} +${d} ms${d === v.delayMs ? '' : ` (config ${v.delayMs} ms)`}`;
+  });
+  const ref = referenceValve(valves, settings, gateActuator);
+  const hold = plannedHoldMs(requestedMs, valves, settings, gateActuator);
+  return `${parts.join(' · ')}; window on ${ref ?? 'the state'}, held ${hold} ms`;
+}

@@ -13,7 +13,7 @@ import {
 import { useSensorConfig, SensorConfig } from '@/lib/sensor-config';
 import { getApiBaseUrl } from '@/lib/websocket';
 import { CalibrationChart, PhysicsParams, LcPhysicsParams, CURVE_COLORS } from '@/components/calibration/CalibrationChart';
-import { BallValveCalPanel } from '@/components/calibration/BallValveCalPanel';
+import { BallValveCalPanel, BallValveList } from '@/components/calibration/BallValveCalPanel';
 
 type Model = 'cubic' | 'robust' | 'physics' | 'linear';
 type Kind = 'PT' | 'LC';
@@ -137,7 +137,12 @@ export default function CalibrationPage() {
   const [calStatus, setCalStatus] = useState<CalibrationStatusPayload | null>(null);
   const [selectedBoardId, setSelectedBoardId] = useState<number | 'all'>('all');
   const [cubicState, setCubicState] = useState<Record<string, CubicCalibrationChannel>>({});
-  const [selectedUid, setSelectedUid] = useState<number | null>(null);
+  const [selectedUid, setSelectedUidRaw] = useState<number | null>(null);
+  // A ball valve picked in the sidebar opens in the center pane instead of a sensor; picking one
+  // clears the other.
+  const [selectedValve, setSelectedValveRaw] = useState<string | null>(null);
+  const setSelectedUid = useCallback((uid: number | null) => { setSelectedUidRaw(uid); setSelectedValveRaw(null); }, []);
+  const setSelectedValve = useCallback((entity: string | null) => { setSelectedValveRaw(entity); setSelectedUidRaw(null); }, []);
   const [overlay, setOverlay] = useState<{ cubic: boolean; linear: boolean; robust: boolean; physics: boolean }>({ cubic: true, linear: true, robust: true, physics: true });
   const [refInput, setRefInput] = useState('');
   // Group capture: PTs ticked in the sidebar take one reference pressure together.
@@ -555,8 +560,8 @@ export default function CalibrationPage() {
           </div>
         )}
 
-        {/* Ball valves — two-point (fully closed / fully open), stored by the backend */}
-        <BallValveCalPanel config={cfgRoot} sessionActive={sessionActive} />
+        {/* Ball valves — click one to open its command-current calibration in the center pane */}
+        <BallValveList config={cfgRoot} selected={selectedValve} onSelect={setSelectedValve} />
 
         {/* Global action: Zero all — captures a 0 reference point on every cubic/robust PT + LC
             sensor. It's a real point (feeds the shared fit + persists), NOT a tare.
@@ -674,7 +679,9 @@ export default function CalibrationPage() {
             </div>
           </div>
         )}
-        {(!selectedChannel || !selectedModel) && groupChannels.length > 0 ? null : !selectedChannel || !selectedModel ? (
+        {selectedValve ? (
+          <BallValveCalPanel config={cfgRoot} entity={selectedValve} sessionActive={sessionActive} />
+        ) : (!selectedChannel || !selectedModel) && groupChannels.length > 0 ? null : !selectedChannel || !selectedModel ? (
           <div className="h-full flex flex-col items-center justify-center text-text-muted gap-2">
             <div className="text-lg">Select a sensor to view its calibration</div>
             <div className="text-sm text-gray-600">Live pressure, captured points, and curve previews appear here.</div>

@@ -204,6 +204,21 @@ export interface CommandPayload {
      * start a hold. Omit to use the state's configured default.
      */
     holdMs?: number;
+    /**
+     * state_transition: what this ONE entry does with individual valves — hold a valve shut, or
+     * open it on its own delay instead of the delays CSV's. Keyed by actuator role name.
+     *
+     * Two jobs on the feed-characterization bench, both of which the CSVs cannot do because config
+     * is frozen for the life of a run: trimming the lead between the two mains until they open
+     * together, and running one tank at a time by holding the other side shut.
+     *
+     * Same authority and the same gate as holdMs: the SEQUENCER decides, it accepts a plan only
+     * for a state whose hold is client-settable (never the burn), only for valves that state's
+     * column OPENS, and it refuses WITHOUT TRANSITIONING — so a frame replayed after a reconnect
+     * cannot retime anything. `delayMs` is counted from state entry, and an explicit 0 is how a
+     * configured stagger is cancelled; omit a valve entirely to leave it on the CSV's timing.
+     */
+    valvePlan?: Record<string, { shut?: boolean; delayMs?: number }>;
   };
 }
 
@@ -450,6 +465,17 @@ export interface BoardStatus {
   heartbeatTimes?: number[];
   /** Board-LAN DHCP status for this board's IP; absent when star-dhcp is not installed. */
   dhcp?: BoardDhcpStatus;
+  /**
+   * Lowercase hex SHA-256 of the firmware image the board reports running, from
+   * its heartbeat. This is the digest ESP-IDF appends to the app image, not
+   * sha256(firmware.bin); resolve it to a commit with
+   * firmware/tools/which_firmware.py. Absent until the board reports one; all
+   * zeros means the board could not compute it (its image does not verify) and
+   * is also what the board simulator sends.
+   */
+  firmwareDigest?: string;
+  /** Epoch ms when this digest was first seen, for display. */
+  firmwareSeenMs?: number;
 }
 
 /** What star-dhcp (dnsmasq) says about one board address. See backend/src/dhcp-status.ts. */

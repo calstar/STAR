@@ -1,4 +1,50 @@
 {
   "version": 1,
-  "streams": []
+  "streams": [
+    {
+      "id": "star-3",
+      "label": "STAR 3",
+      "kind": "rtsp",
+      "url": "rtsp://192.168.2.70:554/h264Preview_01_main",
+      "record": true,
+      "fill": true
+    },
+    {
+      "id": "star-4",
+      "label": "STAR 4",
+      "kind": "rtsp",
+      "url": "rtsp://192.168.2.80:554/h264Preview_01_main",
+      "record": true
+    },
+    {
+      "id": "star-2",
+      "label": "STAR 2",
+      "kind": "rtsp",
+      "url": "rtsp://192.168.2.60:554/h264Preview_01_main",
+      "record": true
+    },
+    {
+      "id": "star-1",
+      "label": "STAR 1",
+      "kind": "rtsp",
+      "url": "rtsp://192.168.2.50:554/h264Preview_01_main",
+      "record": true
+    },
+    {
+      "id": "live",
+      "label": "LIVE",
+      "kind": "udp",
+      "port": 5600,
+      "record": true
+    }
+  ],
+  "layout": {
+    "preset": "2x2",
+    "slots": [
+      "star-1",
+      "star-2",
+      "star-3",
+      "star-4"
+    ]
+  }
 }

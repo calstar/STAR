@@ -30,6 +30,7 @@ set(FSW_SOURCES
     src/calibration/PTCalibration.cpp
     src/calibration/CubicCalibrationStore.cpp
     src/calibration/LcTareStore.cpp
+    src/calibration/ValveCommandCurrent.cpp
     src/calibration/CaptureWindow.cpp
     src/calibration/SensorCalibration.cpp
     src/calibration/TypeK.cpp
@@ -85,6 +86,10 @@ add_test(NAME subscription_tracker COMMAND test_subscription_tracker)
 add_executable(test_ball_valve_position test/test_ball_valve_position.cpp)
 target_link_libraries(test_ball_valve_position fsw_daq_lib)
 add_test(NAME ball_valve_position COMMAND test_ball_valve_position)
+
+add_executable(test_ball_valve_current test/test_ball_valve_current.cpp)
+target_link_libraries(test_ball_valve_current fsw_daq_lib)
+add_test(NAME ball_valve_current COMMAND test_ball_valve_current)
 
 add_executable(test_robust_ddp test/test_robust_ddp.cpp)
 target_include_directories(test_robust_ddp PRIVATE
@@ -296,6 +301,28 @@ add_test(NAME hold_rules COMMAND test_hold_rules)
 # loaded box pushes it straight past them. It binds a fixed UDP port too.
 set_tests_properties(hold_rules PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
+add_executable(test_valve_plan
+    test/test_valve_plan.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+)
+target_include_directories(test_valve_plan PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
+)
+target_link_libraries(test_valve_plan
+    fsw_daq_lib daq_comms_lib daqv2_comms Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME valve_plan COMMAND test_valve_plan)
+# RUN_SERIAL for the same two reasons as hold_rules: millisecond bounds on real hold windows, and a
+# fixed UDP port.
+set_tests_properties(valve_plan PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
+
 add_executable(test_script_states
     test/test_script_states.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
@@ -357,6 +384,9 @@ add_executable(test_rtd_board test/test_rtd_board.cpp)
 target_link_libraries(test_rtd_board fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME rtd_board COMMAND test_rtd_board)
 
+add_executable(test_resubscribe_backoff test/test_resubscribe_backoff.cpp)
+target_link_libraries(test_resubscribe_backoff fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
+add_test(NAME resubscribe_backoff COMMAND test_resubscribe_backoff)
 
 # test_robust_ddp has been built on every configure since it was added but was never registered
 # with CTest and is not invoked by CI either, so its assertions have never gated anything.

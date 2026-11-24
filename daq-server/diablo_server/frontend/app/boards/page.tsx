@@ -89,6 +89,40 @@ const CARD_ACCENTS = [
   'border-l-cyan-500/70 bg-cyan-950/10',
 ] as const;
 
+/**
+ * The firmware image a board says it is running. The digest is what the board puts in its
+ * heartbeat -- the SHA-256 ESP-IDF appends to the app image, not sha256(firmware.bin) -- so
+ * `firmware/tools/which_firmware.py <digest>` turns it into a commit. Shown short; the full
+ * 64 characters are in the tooltip and are what you select to copy.
+ */
+function FirmwareValue({ digest }: { digest?: string }) {
+  if (!digest) {
+    return (
+      <span className="text-gray-500" data-testid="boards-firmware" title="No digest reported yet">
+        —
+      </span>
+    );
+  }
+  // All zeros is a real report: esp_partition_get_sha256() failed, so the image on the board
+  // does not verify. The board simulator also sends zeros.
+  if (/^0+$/.test(digest)) {
+    return (
+      <span
+        className="text-amber-400"
+        data-testid="boards-firmware"
+        title="Board reported an all-zero digest: it could not hash its own image, which means the image does not verify (the simulator also sends zeros)."
+      >
+        not reported
+      </span>
+    );
+  }
+  return (
+    <span className="text-text select-all" data-testid="boards-firmware" title={digest}>
+      {digest.slice(0, 12)}
+    </span>
+  );
+}
+
 export default function BoardsPage() {
   const updateBoards = useSensorStore((s) => s.updateBoards);
   const boardsMap = useSensorStore((s) => s.boards as Record<number, BoardStatus>);
@@ -388,6 +422,9 @@ export default function BoardsPage() {
                           Logs: <span className="text-text">{boardLogStats[b.id]?.truncated ?? 0}</span>
                           <span className="text-gray-500">/{boardLogStats[b.id]?.received ?? 0}</span>
                           <span className="text-xs text-gray-500 ml-1.5">trunc / recv</span>
+                        </div>
+                        <div className="text-base text-text-muted font-mono mb-2">
+                          Firmware: <FirmwareValue digest={b.firmwareDigest} />
                         </div>
                         <div className="flex items-center justify-between gap-2 mt-auto pt-3">
                           <span className="text-sm text-gray-500 font-mono truncate" title={b.ip}>
