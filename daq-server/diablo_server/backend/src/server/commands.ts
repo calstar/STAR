@@ -38,9 +38,26 @@ import { sendHistoricalData } from './history.js';
 import { calibrationHost } from './calibration-state.js';
 import { broadcastConnectionStatus } from './elodin-link.js';
 
-// Command types that actuate/transition the engine — gated by the operator
-// unlock. Read-only queries and countdown display are not.
-const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend']);
+// Command types that actuate/transition the engine or change what every operator sees —
+// gated by the operator unlock. Read-only queries are not. set_countdown_target is persisted
+// and broadcast to every client, so it is a control action (SEC-8).
+const CONTROL_COMMAND_TYPES = new Set(['state_transition', 'actuator', 'extend_fire', 'debug_mode', 'session_start', 'session_stop', 'session_extend', 'set_countdown_target']);
+
+// CALIBRATION_COMMAND types that change calibration: they publish to calibration_service (which
+// refits and persists), write the store, or clear it. Gated by the same operator unlock as the
+// engine commands (SEC-5). Anything else (enable_phase2/disable_phase2/reset_channel and unknown
+// types) changes nothing and stays open.
+const CALIBRATION_WRITE_TYPES = new Set([
+  'capture_reference', 'capture_cubic_point', 'clear_cubic_channel', 'tare_lc', 'clear_tare_lc',
+  'capture_point', 'new_calibration', 'zero_all', 'save_coefficients', 'clear_calibration',
+]);
+
+function sendControlLocked(ws: WebSocket): void {
+  send(ws, {
+    type: MessageType.ERROR, timestamp: Date.now(),
+    payload: { message: 'Control locked: unlock as an approved operator first.' },
+  });
+}
 
 // ── Message handling ─────────────────────────────────────────────────────────
 
@@ -63,6 +80,10 @@ export function handleMessage(ws: WebSocket, message: any): void {
       void sendHistoricalData(ws, message.payload as QueryHistoricalRequest | undefined);
       break;
     case MessageType.CALIBRATION_COMMAND:
+      if (CALIBRATION_WRITE_TYPES.has(message.payload?.commandType) && !(ws as WsWithControl).__daqControlAuthorized) {
+        sendControlLocked(ws);
+        break;
+      }
       handleCalibrationCommand(calibrationHost, ws, message.payload);
       break;
     case 'get_state_transitions':
@@ -77,10 +98,7 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
   // The real, unbypassable gate: engine-control commands require an armed
   // (approved-operator) connection, regardless of what the UI shows.
   if (CONTROL_COMMAND_TYPES.has(command.commandType) && !(ws as WsWithControl).__daqControlAuthorized) {
-    send(ws, {
-      type: MessageType.ERROR, timestamp: Date.now(),
-      payload: { message: 'Control locked: unlock as an approved operator first.' },
-    });
+    sendControlLocked(ws);
     return;
   }
   switch (command.commandType) {

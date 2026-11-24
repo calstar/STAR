@@ -133,7 +133,9 @@ static void runControlServer(fsw::control::ControllerService* svc, uint16_t port
 
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
+    // Loopback only (SEC-4): the sequencer is the one client ([controller_service].host,
+    // 127.0.0.1). FIRE_START/FIRE_STOP must not be reachable from the LAN.
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
     addr.sin_port = htons(port);
     if (bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
         std::cerr << "[ControllerService] ❌ Control bind(" << port

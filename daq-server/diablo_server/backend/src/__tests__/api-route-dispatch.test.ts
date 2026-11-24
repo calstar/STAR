@@ -10,8 +10,7 @@
  * is not in the operator roster), with `{}` where the route reads a body, and asserts the status
  * the route gives today — never the router's `404 {"error":"Not found"}`, which is what a branch
  * that is no longer reached would answer. Viewer identity makes every gated write a 403 with no
- * side effect; the two ungated OTA routes answer as themselves (SEC-2 stays visible: flash-all
- * is 200, not 403).
+ * side effect, the two OTA routes included (SEC-2: they are gated like every other write).
  *
  * Hermetic: CONFIG_PATH, DAQ_CALIBRATIONS_DIR, SESSION_STATE_PATH and DAQ_OPERATORS_FILE point at
  * a temp directory; the handler is served on an ephemeral loopback port, as
@@ -164,10 +163,9 @@ const CASES: Case[] = [
   ['PUT', '/api/feed-char/results', '{}', 409],
   ['GET', '/api/gui-config', null, 200],
   ['GET', '/api/lc_tare', null, 200],
-  // Ungated (SEC-2): `{}` is "Missing or invalid ip"; an empty body would be a 500 from
-  // JSON.parse('') — also not 404, but the asserted answer must be the one the route gives.
-  ['POST', '/api/ota-flash', '{}', 400],
-  ['POST', '/api/ota-flash/flash-all', '{}', 200],
+  // Gated (SEC-2): the viewer is refused before the body is read.
+  ['POST', '/api/ota-flash', '{}', 403],
+  ['POST', '/api/ota-flash/flash-all', '{}', 403],
   ['GET', '/api/ota-flash/projects', null, 200],
   ['GET', '/api/pressure-limits', null, 200],
   ['GET', '/api/query', null, 503],         // no query client is ever passed (D-API1)
@@ -245,16 +243,22 @@ describe('every route is dispatched (as the viewer)', () => {
     expect(await res.json()).toMatchObject({ streams: [], errors: [] });
   });
 
-  it('POST /api/ota-flash with {} is the route\'s own 400', async () => {
-    const res = await send('POST', '/api/ota-flash', '{}');
+  it('POST /api/ota-flash with {} and no X-Auth-Email is the route\'s own 400', async () => {
+    const res = await send('POST', '/api/ota-flash', '{}', {});
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Missing or invalid ip' });
   });
 });
 
 describe('POST /api/ota-flash/flash-all with no enabled boards (H8\'s viewer case, D72)', () => {
-  it('answers the viewer 200 {"success":false,"message":"No enabled boards in config"} — no gate (SEC-2, kept)', async () => {
+  it('refuses the viewer 403 before looking at the boards (SEC-2)', async () => {
     const res = await send('POST', '/api/ota-flash/flash-all', '{}');
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'Not an approved operator' });
+  });
+
+  it('answers an operator 200 {"success":false,"message":"No enabled boards in config"}', async () => {
+    const res = await send('POST', '/api/ota-flash/flash-all', '{}', { 'X-Auth-Email': 'operator@example.com' });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/json');
     expect(await res.text()).toBe(JSON.stringify({ success: false, message: 'No enabled boards in config' }));

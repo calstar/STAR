@@ -415,7 +415,9 @@ int main(int argc, char* argv[]) {
     {
         struct sockaddr_in addr{};
         addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = INADDR_ANY;
+        // Loopback only (SEC-4): the backend is the one client (ota-service-cmd.ts, 127.0.0.1).
+        // OTA_BUILD_FLASH runs `pio run` in the directory it is given, so it must not face the LAN.
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = htons(listen_port);
         if (bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
             std::cerr << "[OTAService] bind() failed on port " << listen_port << std::endl;

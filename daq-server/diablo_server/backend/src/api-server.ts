@@ -26,6 +26,7 @@ import { handleDebugRequest } from './api/debug.js';
 import { handleCalibrationRequest } from './api/calibration.js';
 import { handleFeedCharRequest } from './api/feed-char.js';
 import { handleOtaRequest } from './api/ota.js';
+import { isAllowedOrigin } from './origin-policy.js';
 
 /**
  * Create an HTTP request handler for all /api/* routes.
@@ -39,8 +40,19 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
     if (!urlPath.startsWith('/api/')) return false;
 
-    // CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // CORS (SEC-6): only the GUI's own origins (origin-policy.ts). A request from any other
+    // page is refused before it reaches a route; an allowed one gets its origin echoed back,
+    // never `*`. No Origin (a non-browser client, a same-origin GET) gets no Allow-Origin.
+    const origin = req.headers.origin;
+    if (!isAllowedOrigin(origin)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Origin not allowed' }));
+      return true;
+    }
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+    }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 

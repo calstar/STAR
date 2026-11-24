@@ -4,10 +4,12 @@
  * Owns: the OTA temp directories for the duration of one request; `MAX_BODY` and the SSE closure
  * live inside the bodies, unchanged. Must not know about: `server/*`, sessions, `api-server.ts`.
  * Talks to `ota_service` through `ota-service-cmd.ts`. Contract: `lifecycle/golden/ota.txt`
- * (6 cases, including `POST /api/ota-flash` as the viewer → 200), `http.txt` (400s); `flash-all`
- * as the viewer against a config with no enabled boards is H9's vitest (D72). Kept verbatim,
- * bodies byte for byte: no operator gate on either POST route (D-OTA / SEC-2); `projectPath`
- * reaches `pio run` as the caller sent it (SEC-3); a throw after the SSE headers leaves the
+ * (including `POST /api/ota-flash` as the viewer → 403), `http.txt` (400s); `flash-all` as the
+ * viewer is a 403 in H9's vitest (D72). Both POST routes are behind the operator gate
+ * (`isConfigWriteAuthorized`, SEC-2; no `X-Auth-Email` stays allowed, as on every gated route).
+ * A build names its project by `project`, a name from `GET /api/ota-flash/projects`, which the
+ * server resolves to a directory; a client path (`projectPath`) is refused, because `pio run`
+ * executes the project's `extra_scripts` (SEC-3). Kept: a throw after the SSE headers leaves the
  * response open (D-API3). Import-time effects: none.
  */
 
@@ -15,9 +17,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { IncomingMessage, ServerResponse } from 'http';
-import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, BOARD_TYPE_TO_PROJECT } from '../ota-build.js';
+import { discoverProjects, getEnabledBoardsForFlash, getOtaWorkspaceRoot, resolveProjectByName, BOARD_TYPE_TO_PROJECT } from '../ota-build.js';
 import { otaBuildFlash, otaFlashFirmwareFile } from '../ota-service-cmd.js';
+import { isConfigWriteAuthorized } from './http.js';
 import type { APIHandlerOptions } from './http.js';
+
+function refuseNonOperator(res: ServerResponse): true {
+  res.writeHead(403, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not an approved operator' }));
+  return true;
+}
 
 export async function handleOtaRequest(req: IncomingMessage, res: ServerResponse, url: URL, opts: APIHandlerOptions): Promise<boolean> {
   if (url.pathname === '/api/ota-flash/projects' && req.method === 'GET') {
@@ -27,6 +36,7 @@ export async function handleOtaRequest(req: IncomingMessage, res: ServerResponse
     return true;
   }
   if (url.pathname === '/api/ota-flash/flash-all' && req.method === 'POST') {
+    if (!isConfigWriteAuthorized(req)) return refuseNonOperator(res);
     const boards = getEnabledBoardsForFlash();
     if (boards.length === 0) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -97,6 +107,7 @@ export async function handleOtaRequest(req: IncomingMessage, res: ServerResponse
     return true;
   }
   if (url.pathname === '/api/ota-flash' && req.method === 'POST') {
+    if (!isConfigWriteAuthorized(req)) return refuseNonOperator(res);
     const chunks: Buffer[] = [];
     let totalLen = 0;
     const MAX_BODY = 4 * 1024 * 1024; // 4MB (firmware ~2MB base64)
@@ -112,7 +123,7 @@ export async function handleOtaRequest(req: IncomingMessage, res: ServerResponse
           return;
         }
         const body = Buffer.concat(chunks).toString('utf8');
-        const { ip, port = 3232, firmwareBase64, projectPath, boardId } = JSON.parse(body);
+        const { ip, port = 3232, firmwareBase64, project, projectPath, boardId } = JSON.parse(body);
         if (!ip || typeof ip !== 'string') {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Missing or invalid ip' }));
@@ -121,16 +132,23 @@ export async function handleOtaRequest(req: IncomingMessage, res: ServerResponse
         const portNum = typeof port === 'number' ? port : parseInt(String(port), 10) || 3232;
 
         const t0 = Date.now();
-        if (projectPath && typeof projectPath === 'string') {
+        if (projectPath !== undefined) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'projectPath is not accepted; send project, a name from GET /api/ota-flash/projects' }));
+          return;
+        }
+        if (project !== undefined) {
           if (portNum !== 3232) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'ota_service uses board OTA port 3232' }));
             return;
           }
-          const root = getOtaWorkspaceRoot();
-          const absProj = path.isAbsolute(projectPath)
-            ? projectPath
-            : path.join(root, projectPath);
+          const absProj = typeof project === 'string' ? resolveProjectByName(project) : null;
+          if (!absProj) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: `Unknown firmware project: ${JSON.stringify(project)}` }));
+            return;
+          }
           const bid =
             typeof boardId === 'number' && boardId >= 0 && boardId <= 254 ? boardId : 0;
           const { ok, reply } = await otaBuildFlash(ip, absProj, bid);
@@ -176,7 +194,7 @@ export async function handleOtaRequest(req: IncomingMessage, res: ServerResponse
           return;
         }
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Provide firmwareBase64 or projectPath' }));
+        res.end(JSON.stringify({ error: 'Provide firmwareBase64 or project' }));
         return;
       } catch (err: any) {
         console.error('❌ OTA flash error:', err);

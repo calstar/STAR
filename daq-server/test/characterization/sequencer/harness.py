@@ -15,6 +15,7 @@ import shutil
 import socket
 import struct
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -268,6 +269,33 @@ def missing_aliases(ids: set[int]) -> list[str]:
 
 
 # ── processes ──────────────────────────────────────────────────────────────────────────────────
+
+
+def off_host_address() -> str:
+    """An address of this machine that is not 127.0.0.1: the primary NIC's (a UDP connect sends
+    nothing), else 127.0.0.2 on Linux, where all of 127/8 is on lo. A socket bound to INADDR_ANY
+    accepts on it; one bound to 127.0.0.1 does not (SEC-4). Refuses, never skips, without one."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("192.0.2.1", 9))
+        addr = s.getsockname()[0]
+    except OSError:
+        addr = ""
+    finally:
+        s.close()
+    if addr and not addr.startswith("127."):
+        return addr
+    if sys.platform.startswith("linux"):
+        return "127.0.0.2"
+    raise RuntimeError("no non-loopback address to test the command-port bind (SEC-4) against")
+
+
+def accepts_on(addr: str, port: int) -> bool:
+    try:
+        socket.create_connection((addr, port), timeout=1.0).close()
+        return True
+    except OSError:
+        return False
 
 
 def _wait_port(port: int, proc: subprocess.Popen, timeout: float = 10.0) -> None:

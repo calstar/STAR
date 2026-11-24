@@ -1011,8 +1011,13 @@ def s_clients(run, profile="default"):
     s.note(f"the {CLIENT_CAP} idle connections closed", record=False)
     s.client = H.Client(H.SEQ_PORT)
     s.step("DEBUG_MODE:0", 0.05)
+    off_host = H.accepts_on(H.off_host_address(), H.SEQ_PORT)
     text = s.finish()
-    return text + "\n".join(_busy_log_lines(s.seq.log_text())) + "\n"
+    return (
+        text
+        + "\n".join(_busy_log_lines(s.seq.log_text()))
+        + f"\n-- accepts a connection on a non-loopback address (SEC-4): {off_host}\n"
+    )
 
 
 def s_controller_clients(run):
@@ -1039,8 +1044,13 @@ def s_controller_clients(run):
     time.sleep(1.0)
     s.note(f"the {CLIENT_CAP} idle connections closed", record=False)
     s.ctl_cmd(b"FIRE_STOP\n", f"FIRE_STOP (connection {CLIENT_CAP + 2})", 0.2)
+    off_host = H.accepts_on(H.off_host_address(), H.CTL_PORT)
     text = s.finish()
-    return text + "\n".join(_busy_log_lines(s.ctl.log_text())) + "\n"
+    return (
+        text
+        + "\n".join(_busy_log_lines(s.ctl.log_text()))
+        + f"\n-- accepts a connection on a non-loopback address (SEC-4): {off_host}\n"
+    )
 
 
 def s_flow(run):

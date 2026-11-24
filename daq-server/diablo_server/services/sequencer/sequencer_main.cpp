@@ -287,7 +287,9 @@ int main(int argc, char* argv[]) {
     {
         struct sockaddr_in addr{};
         addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = INADDR_ANY;
+        // Loopback only (SEC-4): the backend is the one client and dials 127.0.0.1. Nothing off
+        // the host may send TRANSITION/ACTUATOR lines; the operator gate lives in the backend.
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
         addr.sin_port = htons(listen_port);
         if (bind(listen_fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
             std::cerr << "[Sequencer] bind() failed on port " << listen_port << std::endl;
