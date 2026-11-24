@@ -430,9 +430,14 @@ void ActuatorCommander::applyForState(State state, bool is_transition, const Val
                     return;  // superseded by a newer transition
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
-            if (schedule_gen_.load() != gen)
-                return;
-            emit(staged[delay_s], delay_s);
+            {
+                // The check and the send under one lock, so cancelPendingStages() cannot land
+                // between them and let a superseded stage go out after an abort's batch.
+                std::lock_guard<std::mutex> lk(stage_emit_mutex_);
+                if (schedule_gen_.load() != gen)
+                    return;
+                emit(staged[delay_s], delay_s);
+            }
             {
                 std::lock_guard<std::mutex> lk(pending_roles_mutex_);
                 for (const auto& r : roles_by_delay[delay_s])
@@ -440,6 +445,15 @@ void ActuatorCommander::applyForState(State state, bool is_transition, const Val
             }
         }
     }).detach();
+}
+
+void ActuatorCommander::cancelPendingStages() {
+    {
+        std::lock_guard<std::mutex> lk(stage_emit_mutex_);
+        ++schedule_gen_;
+    }
+    std::lock_guard<std::mutex> lk(pending_roles_mutex_);
+    pending_roles_.clear();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

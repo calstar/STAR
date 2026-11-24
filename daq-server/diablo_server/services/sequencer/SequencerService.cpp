@@ -13,6 +13,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <thread>
 
@@ -415,20 +416,29 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     //
     // Deliberately NOT gated on debug_mode_. Debug mode relaxes which transitions are allowed; it
     // does not conjure a script that failed to parse. There is nothing for the sequencer to run.
+    //
+    // The reason is copied out under config_mutex_ and the refusal is handled after the lock is
+    // released. publishState() takes config_mutex_ itself, and a std::mutex cannot be locked twice
+    // by one thread: calling it inside this block wedged the command worker for good, so every
+    // later command (aborts included) timed out after 10 s and SIGTERM could not stop the process.
+    // Nothing that takes config_mutex_ may be called while this function holds it.
+    std::optional<std::string> refused_why;
     {
         std::lock_guard<std::mutex> lk(config_mutex_);
         const auto it = refused_states_.find(to);
-        if (it != refused_states_.end()) {
-            std::cerr << "[SequencerService] Refused entry to " << StateMachine::name(to) << ": "
-                      << it->second << std::endl;
-            // The stored reason, not a generic one. The caller's copy is what reaches the
-            // operator's notification, and "state script rejected at load" told them nothing
-            // they could act on while the specific fault sat here unused.
-            if (refusal_reason)
-                *refusal_reason = it->second;
-            publishState();
-            return false;
-        }
+        if (it != refused_states_.end())
+            refused_why = it->second;
+    }
+    if (refused_why) {
+        std::cerr << "[SequencerService] Refused entry to " << StateMachine::name(to) << ": "
+                  << *refused_why << std::endl;
+        // The stored reason, not a generic one. The caller's copy is what reaches the
+        // operator's notification, and "state script rejected at load" told them nothing
+        // they could act on while the specific fault sat here unused.
+        if (refusal_reason)
+            *refusal_reason = *refused_why;
+        publishState();
+        return false;
     }
 
     // A script that reads a sensor is checked for a fresh, calibrated reading BEFORE the
@@ -492,9 +502,29 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     //
     // triggerAbort() sends immediately and schedules ABORT_DONE on its own thread, so this does
     // not block the transition either.
+    //
+    // Once per abort, here and nowhere else. It used to be called a second time near the end of
+    // this function, so every abort sent two ABORT bursts, and the second call joined the first's
+    // ABORT_DONE thread, which held the abort state's publish back by up to one 50 ms step.
+    //
+    // abort -> abort (an escalation such as Engine Abort -> GSE Abort, or a self-transition) sends
+    // no second burst and leaves the pending ABORT_DONE alone: the boards are already aborted. The
+    // new state's column is still applied below. abort_latched_ clears on entry to any non-abort
+    // state, so the next abort after that broadcasts again.
     const bool entering_abort = isAbortState(to);
-    if (entering_abort)
+    if (entering_abort && !abort_latched_) {
         abort_broadcaster_.triggerAbort();
+        abort_latched_ = true;
+    } else if (!entering_abort) {
+        abort_latched_ = false;
+    }
+
+    // Then cancel whatever the state being left still had staged. The abort's column goes out with
+    // is_transition=false, which does not supersede a pending schedule by itself: without this a
+    // stage of the previous state landed after the abort's batch (a valve moving the pre-abort way
+    // after the abort), and the abort's batch skipped every role that stage was still holding.
+    if (entering_abort)
+        actuator_commander_.cancelPendingStages();
 
     // Silence the strongest writer first.
     //
@@ -619,23 +649,23 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
     // Update current state
     current_state_ = to;
 
-    // Abort lifecycle. The burn/flow lifecycle is not here: both are hold rules now, armed by the
-    // hold_timer_.start() above, so the fire window no longer needs a branch of its own.
-    if (isAbortState(to)) {
-        abort_broadcaster_.triggerAbort();
-    }
-
     // The script starts AFTER current_state_ = to, and that ordering is load-bearing. A script
     // whose first statement is transition_to(X) posts that move immediately; doTransitionTo then
     // validates it with isAllowed(from, X), and if current_state_ were still the PREVIOUS state,
     // it would be checking a transition from somewhere the rig is no longer. Starting here also
     // makes elapsed() measure from actual state entry rather than from part-way through one.
+    //
+    // Copied out and started after config_mutex_ is released: ScriptRunner::start() stops (joins)
+    // any run still in flight, and nothing that can block belongs under config_mutex_.
+    std::optional<DynamicState> script;
     {
         std::lock_guard<std::mutex> lk(config_mutex_);
         const auto it = dynamic_states_.find(to);
         if (it != dynamic_states_.end())
-            script_runner_.start(it->second, makeScriptEnv(it->second));
+            script = it->second;
     }
+    if (script)
+        script_runner_.start(*script, makeScriptEnv(*script));
 
     // Elodin publishing
     publishStateTransition(from, to);

@@ -85,6 +85,7 @@ int main() {
 
     std::atomic<bool> got_abort{false};
     std::atomic<long long> abort_at_ms{-1};
+    std::atomic<int> abort_datagrams{0};
     std::atomic<bool> listening{true};
     const auto t0 = Clock::now();
     std::thread listener([&]() {
@@ -93,6 +94,8 @@ int main() {
             setsockopt(udp, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             uint8_t buf[64];
             ssize_t n = recv(udp, buf, sizeof(buf), 0);
+            if (n > 0 && buf[0] == kAbortPacketType)
+                abort_datagrams++;
             if (n > 0 && buf[0] == kAbortPacketType && !got_abort.exchange(true)) {
                 abort_at_ms =
                     std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0)
@@ -152,6 +155,29 @@ int main() {
         check(latency >= 0 && latency < 200,
               "ABORT went out ahead of the controller notification and the actuator batch");
     }
+
+    // One burst per abort (C1-10). triggerAbort() used to run twice per abort entry, so the boards
+    // got 8 ABORT datagrams (2 x kBroadcastRepeats) instead of 4.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const int first_burst = abort_datagrams.load();
+    check(first_burst == 4,
+          "one ABORT burst (4 repeats) per abort entry, got " + std::to_string(first_burst));
+
+    // abort -> abort is not a second abort: no burst for the escalation or the self-transition.
+    svc.transitionTo(std::string("GSE Abort"));
+    svc.transitionTo(std::string("GSE Abort"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    check(abort_datagrams.load() == first_burst,
+          "abort -> abort sends no further ABORT (got " +
+              std::to_string(abort_datagrams.load() - first_burst) + " more)");
+
+    // Leaving the aborts re-arms the broadcast: the next abort sends exactly one burst again.
+    svc.transitionTo(std::string("Idle"));
+    svc.transitionTo(std::string("Engine Abort"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    check(abort_datagrams.load() == first_burst + 4,
+          "an abort after leaving the aborts broadcasts one burst (got " +
+              std::to_string(abort_datagrams.load() - first_burst) + ")");
 
     listening = false;
     listener.join();

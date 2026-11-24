@@ -212,6 +212,48 @@ int main() {
                   std::to_string(slow_open) + " ms, want ~" + std::to_string(target) + ")");
     }
 
+    // ── 4. An abort entry cancels the pending stage and commands the role it was holding ──────
+    // An abort applies its column with is_transition=false (no stagger), which does not supersede
+    // a pending schedule by itself. SequencerService calls cancelPendingStages() first (C4-3).
+    // Without it, Armed's Slow Valve stage still opened the valve ~1.4 s in, after the abort's
+    // batch, and the abort's batch and republish skipped Slow Valve as "still waiting on its
+    // delay", so the abort never commanded it closed. Idle stands in for the abort column here:
+    // it has no delays and closes both valves.
+    {
+        BoardListener listener(port);
+        if (!listener.start()) {
+            std::cerr << "could not re-bind UDP " << port << std::endl;
+            return 1;
+        }
+
+        ActuatorCommander ac;
+        ac.load(cfg, (dir / "state_machine_actuators.csv").string());
+
+        ac.applyForState(State::ARMED, /*is_transition=*/true);
+        ac.startContinuousLoop(State::ARMED, /*allow_delays=*/false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        // The abort entry's sequence, as doTransitionTo runs it.
+        ac.cancelPendingStages();
+        ac.stopContinuousLoop();
+        ac.applyForState(State::IDLE, /*is_transition=*/false);
+        ac.startContinuousLoop(State::IDLE, /*allow_delays=*/false);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(2200));
+        ac.stopContinuousLoop();
+        listener.stop();
+
+        const auto b = listener.bursts();
+        // Slow Valve CLOSE is hw 0 (NC). It must be in the abort's own batch, right after 300 ms.
+        const long long slow_closed = daqtest::firstCommand(b, /*ch=*/2, /*hw=*/0, /*after=*/250);
+        check(slow_closed >= 250 && slow_closed < 600,
+              "the abort's batch commands the role whose stage was pending (at " +
+                  std::to_string(slow_closed) + " ms, want ~300)");
+        const long long stale_open = daqtest::firstCommand(b, /*ch=*/2, /*hw=*/1, /*after=*/250);
+        check(stale_open < 0, "the previous state's stage never fires after the abort (fired at " +
+                                  std::to_string(stale_open) + " ms)");
+    }
+
     fs::remove_all(dir);
     std::cout << (g_failures == 0 ? "\nPASSED" : "\nFAILED") << std::endl;
     return g_failures == 0 ? 0 : 1;

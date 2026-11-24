@@ -3,6 +3,7 @@
 #include <netinet/in.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -65,6 +66,10 @@ private:
     // reachable from any TCP client thread and from the fire-expiry thread, so it needs its own
     // lock regardless of what serializes the state machine above it.
     std::mutex done_thread_mutex_;
+    /** What waitAndSendAbortDone() waits on, so a cancel wakes it at once. Separate from
+     *  done_thread_mutex_, which the canceller holds while it joins the waiter. */
+    std::mutex done_wait_mutex_;
+    std::condition_variable done_wait_cv_;
 
     /** How many times each broadcast is repeated, and the gap between repeats. A single UDP
      *  datagram is not a delivery guarantee: one dropped frame on a congested field network and
@@ -76,6 +81,8 @@ private:
 
     void sendPacket(uint8_t packet_type);
     void waitAndSendAbortDone();
+    /** Cancel and reap a scheduled ABORT_DONE. Caller holds done_thread_mutex_. */
+    void cancelDoneLocked();
 };
 
 }  // namespace sequencer

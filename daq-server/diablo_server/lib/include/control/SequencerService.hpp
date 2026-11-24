@@ -266,9 +266,14 @@ private:
     std::atomic<State> current_state_{State::IDLE};
     std::atomic<bool> debug_mode_{false};
 
-    /** Holdable states, by target. Rebuilt on every config load; read on the transition path.
-     *  RELOAD_CONFIG runs on a TCP handler thread while a transition may be running on another,
-     *  hence the mutex. */
+    /** The ABORT broadcast for the current abort has gone out. Set when an abort state is entered
+     *  from a non-abort one, cleared on entry to any non-abort state; while it is set, abort ->
+     *  abort sends no second burst. Worker thread only (doTransitionTo). */
+    bool abort_latched_{false};
+
+    /** Holdable states, by target. Written once by init() (there is no RELOAD_CONFIG: config is
+     *  applied once per session); read on the transition path and by publishState(). Guarded by
+     *  config_mutex_. */
     std::map<State, HoldRule> hold_rules_;
 
     /** Dynamic states whose scripts loaded and validated. Guarded by config_mutex_. */

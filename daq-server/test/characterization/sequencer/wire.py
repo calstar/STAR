@@ -42,10 +42,11 @@ TICK_AGE_NS = (
 BOUNDARY_LOOKAHEAD_NS = (
     60_000_000  # N5: entry sends precede the transition publish by < 60 ms
 )
-# N5: an abort entry's publish waits one more step. doTransitionTo's second triggerAbort() runs
-# after the column is sent and before publishStateTransition(), and joins the ABORT_DONE thread the
-# first one started; AbortBroadcaster::waitAndSendAbortDone only sees the cancel after its current
-# 50 ms sleep_for step. So an abort entry's sends precede its publish by < 60 ms + one 50 ms step.
+# N5: an abort entry's lookahead is one 50 ms step longer. It was measured for main, where
+# doTransitionTo's second triggerAbort() joined the first one's ABORT_DONE thread, which only saw
+# the cancel after its current 50 ms sleep_for step, before the transition was published (C1-10).
+# triggerAbort() now runs once and the ABORT_DONE wait wakes on cancel, so an abort entry publishes
+# as promptly as any other; the extra step is kept as slack, not as a property of the code.
 ABORT_DONE_STEP_NS = 50_000_000
 
 
