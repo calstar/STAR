@@ -145,7 +145,7 @@ private:
     /**
      * Send a PWM actuator command over UDP.
      * Packet format matches combined_gui.py exactly:
-     *   Header  <BBI>: packet_type=10, version=0, timestamp_ms(u32)
+     *   Header  <BBI>: packet_type=10, version=DIABLO_COMMS_VERSION, timestamp_ms(u32)
      *   Body    <B>  : num_commands
      *   Per-cmd <BIff>: actuator_id, duration_ms, duty_cycle, frequency
      */
