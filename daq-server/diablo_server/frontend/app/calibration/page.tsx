@@ -307,20 +307,6 @@ export default function CalibrationPage() {
     return () => { u2(); u3(); u4(); };
   }, [ws]);
 
-  useEffect(() => {
-    const poll = async () => {
-      try {
-        const res = await fetch(`${getApiBaseUrl()}/api/calibration_status`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data && !data.error) setCalStatus(data as CalibrationStatusPayload);
-      } catch { /* ignore */ }
-    };
-    poll();
-    const id = setInterval(poll, 2000);
-    return () => clearInterval(id);
-  }, []);
-
   const fetchCubic = useCallback(async () => {
     try {
       const res = await fetch(`${getApiBaseUrl()}/api/cubic_calibration`);

@@ -19,7 +19,6 @@
 
 import { IncomingMessage } from 'http';
 import { isOperator } from '../operators.js';
-import type { ElodinQueryClient } from '../elodin-query.js';
 import type { VideoService } from '../video/service.js';
 
 /**
@@ -40,7 +39,6 @@ export interface DebugInfo {
 }
 
 export interface APIHandlerOptions {
-  getQueryClient?: () => ElodinQueryClient | null;
   getDebugInfo?: () => DebugInfo | null;
   onConfigUpdated?: () => void;
   /** A state-machine CSV was saved and deployed: rebuild the maps the always-on backend derives

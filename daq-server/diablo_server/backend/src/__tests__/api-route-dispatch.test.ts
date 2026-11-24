@@ -96,10 +96,7 @@ POST /api/ota-flash
 POST /api/ota-flash/flash-all
 GET /api/ota-flash/projects
 GET /api/pressure-limits
-GET /api/query
 GET /api/sensor-config
-GET /api/sensors
-GET /api/sensors/*
 GET /api/state-csv
 POST /api/state-csv
 GET /api/state-script
@@ -170,10 +167,7 @@ const CASES: Case[] = [
   ['POST', '/api/ota-flash/flash-all', '{}', 200],
   ['GET', '/api/ota-flash/projects', null, 200],
   ['GET', '/api/pressure-limits', null, 200],
-  ['GET', '/api/query', null, 503],         // no query client is ever passed (D-API1)
   ['GET', '/api/sensor-config', null, 200],
-  ['GET', '/api/sensors', null, 503],       // D-API1
-  ['GET', '/api/sensors/PT1_Cal.CH1', null, 200],
   ['GET', '/api/state-csv', null, 400],     // no ?name → Unknown CSV ""
   ['POST', '/api/state-csv', '{}', 403],
   ['GET', '/api/state-script', null, 200],
@@ -249,6 +243,15 @@ describe('every route is dispatched (as the viewer)', () => {
     const res = await send('POST', '/api/ota-flash', '{}');
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'Missing or invalid ip' });
+  });
+});
+
+describe('the dead history routes are gone (D-API1)', () => {
+  // /api/query and /api/sensors answered 503 forever: server.ts never passed a query client.
+  it.each([['/api/query'], ['/api/sensors'], ['/api/sensors/PT1_Cal.CH1']])('GET %s is the router\'s 404', async (path) => {
+    const res = await send('GET', path, null);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'Not found' });
   });
 });
 

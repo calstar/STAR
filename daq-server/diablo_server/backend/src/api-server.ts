@@ -19,7 +19,6 @@ export { buildSensorConfig, type SensorConfigEntry } from './sensor-config.js';
 import { handleConfigRequest } from './api/config.js';
 import { handleStatesRequest } from './api/states.js';
 import { handleProfilesRequest } from './api/profiles.js';
-import { handleHistoryRequest } from './api/history.js';
 import { handleGuiConfigRequest } from './api/gui-config.js';
 import { handleBoardLogsRequest } from './api/board-logs.js';
 import { handleDebugRequest } from './api/debug.js';
@@ -33,7 +32,7 @@ import { handleOtaRequest } from './api/ota.js';
  * Returns true if the request was handled, false if not (so the caller can fall through).
  */
 export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMessage, res: ServerResponse) => Promise<boolean> {
-  const { getQueryClient, getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload, video } = opts;
+  const { getDebugInfo, onConfigUpdated, onStateCsvUpdated, getEngineState, getCalibrationStatus, onCalibrationReload, video } = opts;
 
   return async (req: IncomingMessage, res: ServerResponse): Promise<boolean> => {
     const urlPath = (req.url ?? '').split('?')[0] ?? '';
@@ -61,7 +60,6 @@ export function createAPIHandler(opts: APIHandlerOptions = {}): (req: IncomingMe
       if (await handleConfigRequest(req, res, url, opts)) return true;
       if (await handleStatesRequest(req, res, url, opts)) return true;
       if (await handleProfilesRequest(req, res, url, opts)) return true;
-      if (await handleHistoryRequest(req, res, url, opts)) return true;
       if (await handleGuiConfigRequest(req, res, url, opts)) return true;
       if (await handleBoardLogsRequest(req, res, url, opts)) return true;
       if (await handleDebugRequest(req, res, url, opts)) return true;
