@@ -122,8 +122,11 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
     const uint8_t num_sensors = dataChunks[0].num_sensors;
     size_t packetSize = daq::create_sensor_data_packet(
         dataChunks, num_sensors, millis(), packetBuffer, sizeof(packetBuffer));
-    if (packetSize == 0)
+    if (packetSize == 0) {
+        // Drop the batch: kept, it fails the same way every time.
+        dataChunks.clear();
         return;
+    }
     coreState.udp.beginPacket(dest_ip, dest_port);
     coreState.udp.write(packetBuffer, packetSize);
     coreState.udp.endPacket();

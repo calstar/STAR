@@ -137,6 +137,8 @@ static void send_chunks_to_impl(IPAddress dest_ip, int dest_port,
         HF_VERBOSE(", buf=");
         HF_VERBOSE(SENSOR_HOTFIRE_MAX_PACKET_SIZE);
         HF_VERBOSELN(")");
+        // Drop the batch: kept, it fails the same way every time.
+        dataChunks.clear();
         return;
     }
     coreState.udp.beginPacket(dest_ip, dest_port);
