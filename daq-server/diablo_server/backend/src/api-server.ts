@@ -105,6 +105,7 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
   const boards = (config.boards || {}) as Record<string, any>;
   const sensors: SensorConfigEntry[] = [];
 
+  const manyPtBoards = enabledBoardCount(boards, 'PT') > 1;
   for (const [boardKey, boardRaw] of Object.entries(boards)) {
     const board = boardRaw as Record<string, any>;
     if (board.type !== 'PT') continue;
@@ -127,6 +128,7 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
 
     // Every PT board uses its own [sensor_roles_<boardKey>] section — HP boards included
     // (no separate sensor_roles_pt2 section).
+    const named = new Set<number>();
     for (const [roleName, channelIdRaw] of Object.entries(rolesSection)) {
       const channelId = typeof channelIdRaw === 'number' ? channelIdRaw : Number(channelIdRaw);
       if (!isFinite(channelId)) continue;
@@ -144,6 +146,31 @@ export function buildSensorConfig(config: any = readConfig()): SensorConfigEntry
         inCalibrationSequence: true,
         entity: `PT${boardNumber}.CH${channelId}`,
         calEntity: `PT${boardNumber}_Cal.CH${channelId}`,
+      });
+      named.add(channelId);
+    }
+
+    // A connector in active_connectors that no role names is still sampled and streamed (the
+    // board sends every active connector), so list it under a generated name, as RTD and LC
+    // boards do. Without this the Sensor Info tab showed only named PTs and an unnamed but
+    // active channel was invisible. It stays out of the calibration sequence: with no role it
+    // has no [calibration_model_<board>] entry for a fit to apply to.
+    const active: number[] = Array.isArray(board.active_connectors) ? board.active_connectors : [];
+    for (const raw of active) {
+      const ch = typeof raw === 'number' ? raw : Number(raw);
+      if (!isFinite(ch) || named.has(ch)) continue;
+      named.add(ch);
+      const boardNumber = elodinSlotFromBoardId(boardId);
+      sensors.push({
+        type: 'PT',
+        id: ch,
+        role: generatedRole('PT', boardId, ch, manyPtBoards),
+        boardId,
+        boardIp,
+        isHpPt: isHpBoard,
+        inCalibrationSequence: false,
+        entity: `PT${boardNumber}.CH${ch}`,
+        calEntity: `PT${boardNumber}_Cal.CH${ch}`,
       });
     }
   }
