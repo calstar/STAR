@@ -261,6 +261,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // Loopback copy of each heartbeat for the backend, which raises an operator alert when they
+    // stop (C6-3). Its own unbound socket: the broadcast one may be pinned to the board NIC.
+    // Best effort — a failure here never touches the boards' heartbeat.
+    const uint16_t monitor_port = cfg.server_heartbeat.monitor_port;
+    int monitor_sock = monitor_port != 0 ? socket(AF_INET, SOCK_DGRAM, 0) : -1;
+    struct sockaddr_in monitor_dest;
+    memset(&monitor_dest, 0, sizeof(monitor_dest));
+    monitor_dest.sin_family = AF_INET;
+    monitor_dest.sin_port = htons(monitor_port);
+    monitor_dest.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
     std::cout << "[HeartbeatService] Started — interval=" << interval_ms
               << "ms broadcast=" << broadcast_ip << ":" << broadcast_port << std::endl;
     std::cout << "[HeartbeatService] State from Elodin at " << elodin_host << ":" << elodin_port
@@ -277,8 +288,12 @@ int main(int argc, char* argv[]) {
         auto pkt = buildHeartbeatPacket(engine_state);
         ssize_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
                               reinterpret_cast<struct sockaddr*>(&dest), sizeof(dest));
-        if (sent == static_cast<ssize_t>(pkt.size()))
+        if (sent == static_cast<ssize_t>(pkt.size())) {
             count++;
+            if (monitor_sock >= 0)
+                sendto(monitor_sock, pkt.data(), pkt.size(), 0,
+                       reinterpret_cast<struct sockaddr*>(&monitor_dest), sizeof(monitor_dest));
+        }
 
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration<double>(now - last_log).count() >= 10.0) {
@@ -292,6 +307,8 @@ int main(int argc, char* argv[]) {
     }
 
     close(sock);
+    if (monitor_sock >= 0)
+        close(monitor_sock);
     elodin_thread.join();
     std::cout << "[HeartbeatService] Stopped." << std::endl;
     return 0;

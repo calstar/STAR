@@ -42,6 +42,7 @@ struct ServerHeartbeatConfig {
     uint16_t broadcast_port = 5005;
     std::string broadcast_ip = "255.255.255.255";
     bool send_from_daq_bridge = true;  // false when heartbeat_service is used
+    uint16_t monitor_port = 8093;      // loopback copy for the backend's watch (C6-3); 0 = off
 };
 
 // Loopback fallback routing (integration test only): the simulator binds 127.0.0.<host-octet> per

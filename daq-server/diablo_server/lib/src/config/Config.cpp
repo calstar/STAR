@@ -157,6 +157,8 @@ Config from_table(const toml::table& t) {
         static_cast<uint16_t>(i_or(t["server_heartbeat"]["broadcast_port"], 5005));
     c.server_heartbeat.broadcast_ip =
         s_or(t["server_heartbeat"]["broadcast_ip"], c.server_heartbeat.broadcast_ip);
+    c.server_heartbeat.monitor_port = static_cast<uint16_t>(
+        i_or(t["server_heartbeat"]["monitor_port"], c.server_heartbeat.monitor_port));
 
     c.heartbeat_service.enabled = b_or(t["heartbeat_service"]["enabled"], false);
     c.heartbeat_service.interval_ms =

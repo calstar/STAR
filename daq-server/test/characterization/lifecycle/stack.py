@@ -130,6 +130,7 @@ def build_config(
         elif head.startswith("[server_heartbeat]"):
             sec = _set_key(sec, "broadcast_ip", '"127.0.0.1"')
             sec = _set_key(sec, "broadcast_port", str(p["P_HB_BRIDGE"]))
+            sec = _set_key(sec, "monitor_port", str(p["P_HB_MON"]))
         elif head.startswith("[heartbeat_service]"):
             sec = _set_key(
                 sec, "enabled", "true" if heartbeat_service_enabled else "false"
