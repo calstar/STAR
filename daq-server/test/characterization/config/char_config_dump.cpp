@@ -290,6 +290,8 @@ void dump_config(const std::string& p, const fsw::config::Config& c) {
     OUT << p << "controller.thrust_curve_path = " << q(ct.thrust_curve_path) << "\n";
     OUT << p << "actuator_service.port = " << c.actuator_service.port << "\n";
     OUT << p << "actuator_service.bind_address = " << q(c.actuator_service.bind_address) << "\n";
+    OUT << p << "sequencer.command_deadline_ms = " << c.sequencer.command_deadline_ms << "\n";
+    OUT << p << "sequencer.wedge_threshold_ms = " << c.sequencer.wedge_threshold_ms << "\n";
     const auto& cal = c.calibration;
     OUT << p << "calibration.tc_adc_ref_voltage = " << num(cal.tc_adc_ref_voltage) << "\n";
     OUT << p << "calibration.rtd_adc_ref_voltage = " << num(cal.rtd_adc_ref_voltage) << "\n";

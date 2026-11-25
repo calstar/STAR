@@ -16,6 +16,7 @@
 #include "config/Config.hpp"
 #include "control/AbortBroadcaster.hpp"
 #include "control/ActuatorCommander.hpp"
+#include "control/CommandQueue.hpp"
 #include "control/HoldTimer.hpp"
 #include "control/PressureFeed.hpp"
 #include "control/ScriptRunner.hpp"
@@ -123,7 +124,7 @@ public:
      * Enable or disable debug mode.
      * Debug mode: all state transitions allowed, manual actuator commands accepted.
      */
-    bool setDebugMode(bool enabled);
+    bool setDebugMode(bool enabled, std::string* refusal_reason = nullptr);
 
     /**
      * Debug mode only: manual OPEN/CLOSE for one role. Overrides persist until a state
@@ -143,7 +144,21 @@ public:
     /**
      * Extend the FIRE window (only valid while in FIRE state).
      */
-    bool extendFire();
+    bool extendFire(std::string* refusal_reason = nullptr);
+
+    /**
+     * The command worker's health, for the :9998 HEALTH query. Answered from atomics on the
+     * calling thread, never through the queue, so it still answers while the worker is wedged.
+     */
+    CommandQueue::Health workerHealth() const {
+        return cmd_queue_.health();
+    }
+
+    /**
+     * Whether `state_name` names an abort state. Read on a connection thread: the state table is
+     * written once by init(), before the worker or the TCP server start, and never again.
+     */
+    bool isAbortStateName(const std::string& state_name) const;
 
     /**
      * What this process made of its dynamic states at startup, as newline-terminated text.
@@ -168,34 +183,23 @@ public:
 
 private:
     // ── Command queue ─────────────────────────────────────────────────────────
-    struct Command {
-        std::function<bool()> fn;
-        // Null for a detached (fire-and-forget) command. shared_ptr so the worker can still
-        // fulfil the promise after a caller has given up waiting on its future.
-        std::shared_ptr<std::promise<bool>> result;
-    };
+    /** The worker, its queue and the watchdog. Every command lifecycle rule (Queued / Running /
+     *  Cancelled, the deadline, the wedge threshold) lives there; see CommandQueue.hpp. */
+    CommandQueue cmd_queue_;
+    /** [sequencer].command_deadline_ms / wedge_threshold_ms, read by applyConfig(). */
+    CommandQueue::Options queue_options_;
 
-    std::deque<Command> cmd_queue_;
-    std::mutex cmd_mutex_;
-    std::condition_variable cmd_cv_;
-    std::thread cmd_thread_;
-    std::atomic<bool> cmd_stop_{false};
-
-    /** How long a caller waits for its command to run before giving up and reporting failure.
-     *  Generous: the point is that a wedged worker cannot pin every TCP thread forever, not to
-     *  impose a deadline on normal work (a transition is milliseconds). */
-    static constexpr int kCommandTimeoutSeconds = 10;
-
-    void commandLoop();
-    /** Post work and block until the worker has run it. Returns false if the service is shutting
-     *  down or the worker did not get to it within kCommandTimeoutSeconds. */
-    bool enqueueAndWait(std::function<bool()> fn);
+    /** Post work and wait for its outcome (CommandQueue::submit). On anything but a finished
+     *  command it returns false and sets *refusal_reason to why there is no result. `cancellable`
+     *  is false only for an abort. */
+    bool enqueueAndWait(CommandQueue::Body fn, std::string* refusal_reason = nullptr,
+                        bool cancellable = true);
     /** Post work and return immediately. Used by the fire-expiry callback: waiting there would
      *  reintroduce the join deadlock described above. */
-    void enqueueDetached(std::function<bool()> fn);
+    void enqueueDetached(CommandQueue::Body fn);
 
-    // Worker-thread bodies. These hold the real logic and must only ever run on cmd_thread_ —
-    // they assume single-threaded access to the state machine and the actuator tables.
+    // Worker-thread bodies. These hold the real logic and must only ever run on the queue's worker
+    // — they assume single-threaded access to the state machine and the actuator tables.
     bool doTransitionTo(State to, uint32_t requested_hold_ms = 0,
                         std::string* refusal_reason = nullptr, const ValvePlan* plan = nullptr);
     bool doSetDebugMode(bool enabled);

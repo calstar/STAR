@@ -430,6 +430,14 @@ target_include_directories(test_controller_pwm_roles PRIVATE
 target_link_libraries(test_controller_pwm_roles fsw_daq_lib Threads::Threads pthread ${RT_LIBRARY})
 add_test(NAME controller_pwm_roles COMMAND test_controller_pwm_roles)
 
+# The sequencer's command lifecycle (D-LATE) and watchdog. Pure: links only the queue, so it needs
+# no working directory. CI also runs it under ThreadSanitizer (the exactly-one-winner case).
+add_executable(test_command_queue test/test_command_queue.cpp ${SEQ_SRC_DIR}/CommandQueue.cpp)
+target_include_directories(test_command_queue PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_command_queue Threads::Threads)
+add_test(NAME command_queue COMMAND test_command_queue)
+set_tests_properties(command_queue PROPERTIES TIMEOUT 60)
+
 # Concurrency + abort ordering. Both drive a real SequencerService, so they need the same sources
 # test_sequencer_elodin links. They resolve config/ and the state CSVs relative to the working
 # directory (cwd, ../, ../../), which is why they run from the build dir under CTest.
