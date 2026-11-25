@@ -23,3 +23,4 @@
 {"payload": {"component": "actuator_state_commanded", "entity": "ACT_CMD.B4.CH3", "timestamp": "<ts>", "value": 0}, "timestamp": "<ts>", "type": "sensor_update"}
 {"payload": {"component": "actuator_state_commanded", "entity": "ACT_CMD.B4.CH4", "timestamp": "<ts>", "value": 0}, "timestamp": "<ts>", "type": "sensor_update"}
 <self-test replay: see ws_streams.txt self-test section (P12)>
+{"payload": {"category": "error", "key": "table_id_collision", "message": "Config error: 2 Elodin table id(s) shared by two boards — [0x20,0x21]: PT2.CH1 ([boards.pt_board_2]) / PT10.CH1 ([boards.integration_startup]); [0x20,0x31]: PT2_Cal.CH1 ([boards.pt_board_2]) / PT10_Cal.CH1 ([boards.integration_startup]). Those channels may be lost or mislabelled. Fix the board_id (slot = board_id % 10, 1-8, distinct).", "ongoing": true, "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
