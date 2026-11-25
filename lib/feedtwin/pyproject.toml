@@ -39,7 +39,7 @@ dependencies = [
     "scipy>=1.11",
     # Real-gas properties. Helmholtz-energy equations of state; the tabular
     # backends are what make a transient solve finish this year (Phase 01).
-    "CoolProp>=7.0",
+    "CoolProp>=7.0,<8",  # 8.x raises on TQ above critical and two-phase viscosity
     # Friction factors, 244 fitting correlations (Crane TP-410, Hooper 2K,
     # Darby 3K), IEC 60534 valve sizing, ISO 5167 meters, two-phase.
     "fluids>=1.0",
