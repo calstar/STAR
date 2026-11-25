@@ -22,10 +22,9 @@ cwd), with a fixture config whose board IP is 127.0.0.21 and an Elodin port noth
 It writes abort_thresholds.txt at startup, before it dials Elodin; this reads that file and stops
 the service. Binds nothing, so it needs no stack lock.
 
-The boundary half is exact only where the calibration library itself does not contract either
-(x86-64 without -mfma: CI and the dev boxes). On other architectures the library's own cubic and
-robust evaluation may be fused, which moves the unfused service result itself, so the boundary
-half (--part boundary, golden/abort_codes_boundary.txt) is registered with ctest on x86-64 only.
+The library's calibration sources (the cubic and robust evaluation) are built -ffp-contract=off
+too (lib/CMakeLists.txt), so nothing on the abort path is fused on any architecture and the
+boundary half (--part boundary, golden/abort_codes_boundary.txt) must match on arm64 as on x86-64.
 """
 
 from __future__ import annotations
@@ -179,7 +178,6 @@ def main() -> int:
         for r in CONTROL:
             print(f"{r} {CONTROL[r]!r} psi -> {got.get(r, 'none')}")
         return 0
-    # Registered by CMake on x86-64 only (see the module docstring).
     print("== boundary: targets on a fused/unfused rounding edge (unfused is the contract)")
     got = run_service(a.cal, BOUNDARY)
     for r in BOUNDARY:

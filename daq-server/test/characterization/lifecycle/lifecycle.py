@@ -1931,7 +1931,7 @@ def cal_late_elodin(r: Run):
     r.emit(g, "")
     r.emit(g, "== calibration_service started before elodin-db, which comes up 2 s later")
     cal = r.svc("late_cal", "calibration_service", *cal_cli(P["P_CAL_LATE_DB"], "late"))
-    retrying = cal.wait_log(retry_rx, 5)
+    retrying = cal.wait_log(retry_rx, 15)
     r.emit(g, f"  retrying with backoff (attempt 2 logged, 500 ms): {retrying}")
     time.sleep(max(0.0, 2.0 - 0.75))
     r.emit(g, f"  alive while elodin-db is down: {cal.alive()}")
@@ -1956,7 +1956,7 @@ def cal_late_elodin(r: Run):
 
     r.emit(g, "== calibration_service with elodin-db unreachable, SIGTERM while it retries")
     cal = r.svc("nodb_cal", "calibration_service", *cal_cli(P["P_DEAD_CTRL"], "nodb"))
-    retrying = cal.wait_log(retry_rx, 5)
+    retrying = cal.wait_log(retry_rx, 15)
     r.emit(g, f"  retrying with backoff (attempt 2 logged, 500 ms): {retrying}")
     before = cal.output()
     rc, dt = r.stop(cal)

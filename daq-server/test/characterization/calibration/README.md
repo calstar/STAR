@@ -6,7 +6,7 @@ Freezes what the calibration code computes so the remaster can prove it changed 
 |---|---|---|
 | `golden/lib.txt` | `char_calibration_lib` (ctest, label `characterization`) | `lib/src/calibration` and `lib/src/t7` through their public API: PT cubics and their inverse, the PT/sensor managers' loaders, RTD Callendar-Van Dusen, type K, the 4-20 mA shunt code, PT smoothing, ball-valve position, command dedupe, the capture window, the cubic store (fits, captures, load/save bytes, orphans, unit mismatch), the LC tare store, Allan variance, the robust learner, the T7 conversions and channel map |
 | `golden/stack.txt` | `run.sh` → `service_run.py` | the built `calibration_service` against a stand-in Elodin on 127.0.0.1: every frame it publishes for a scripted raw-sample and command stream, and every file it writes (cubic store, tares, abort thresholds, robust adjustments), through captures, tares, zeros, clears, a profile swap, SIGTERM and a restart |
-| `golden/abort_codes.txt`, `golden/abort_codes_boundary.txt` | ctests `char_calibration_abort_codes`, `char_calibration_abort_codes_boundary` (x86-64 only) → `abort_codes.py` | the abort-threshold ADC codes the built `calibration_service` writes to `abort_thresholds.txt` for ten `blend` PTs: round-number targets, and targets that sit exactly on a fused/unfused rounding edge (see "Abort codes and FMA" below) |
+| `golden/abort_codes.txt`, `golden/abort_codes_boundary.txt` | ctests `char_calibration_abort_codes`, `char_calibration_abort_codes_boundary` → `abort_codes.py` | the abort-threshold ADC codes the built `calibration_service` writes to `abort_thresholds.txt` for ten `blend` PTs: round-number targets, and targets that sit exactly on a fused/unfused rounding edge (see "Abort codes and FMA" below) |
 | `golden/ts.txt` | `run.sh` → `ts_harness.mts` (`npx tsx`) | backend `calibration-handler.ts`, `lc-tare.ts`, `ball-valve-cal.ts`, `routes/calibration-profiles.ts` |
 
 `calibration_main.cpp` is reached only through the built service: the refactor splits that file,
@@ -103,7 +103,7 @@ To redo the search: compile `calibration_main.cpp` with the flags from
 `-ffp-contract=off`, plus `-ffp-contract=fast -mfma`, link it as `link.txt` does, and run
 `abort_search.py --unfused build/bin/calibration_service --fused <that binary>`.
 
-Limit: the calibration library (`fsw_daq_lib`: the cubic and robust evaluation) is not built with
-the flag, so on an architecture with FMA it still contracts there. That does not depend on edits
-to `calibration_main.cpp`, but it does move the unfused result itself, so the boundary half is
-registered with ctest on x86-64 only; the controls run everywhere.
+The library's calibration sources (`fsw_daq_lib`'s `src/calibration/*.cpp`: the cubic and robust
+evaluation the bisection calls) are built `-ffp-contract=off` as well (`lib/CMakeLists.txt`,
+scoped to those translation units; the DAQ team's call, 2026-11-24), so nothing on the abort path
+is fused on any architecture and both goldens must match on arm64 (the Jetson) as on x86-64.

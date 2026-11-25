@@ -33,15 +33,14 @@ if(Python3_Interpreter_FOUND)
                 --cal $<TARGET_FILE:calibration_service> --part control)
     set_tests_properties(char_calibration_abort_codes PROPERTIES
         LABELS characterization TIMEOUT 120)
-    # The boundary targets are exact only where the calibration library does not contract
-    # either: x86-64 without -mfma (abort_codes.py, README.md "Abort codes and FMA").
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
-        add_test(NAME char_calibration_abort_codes_boundary
-            COMMAND bash ${CHAR_CAL_DIR}/check_golden.sh
-                    ${CHAR_CAL_DIR}/golden/abort_codes_boundary.txt
-                    ${Python3_EXECUTABLE} ${CHAR_CAL_DIR}/abort_codes.py
-                    --cal $<TARGET_FILE:calibration_service> --part boundary)
-        set_tests_properties(char_calibration_abort_codes_boundary PROPERTIES
-            LABELS characterization TIMEOUT 120)
-    endif()
+    # The boundary targets sit on a fused/unfused rounding edge. Both calibration_service and the
+    # library's calibration sources are built -ffp-contract=off, so they must answer the same
+    # codes on every architecture (abort_codes.py, README.md "Abort codes and FMA").
+    add_test(NAME char_calibration_abort_codes_boundary
+        COMMAND bash ${CHAR_CAL_DIR}/check_golden.sh
+                ${CHAR_CAL_DIR}/golden/abort_codes_boundary.txt
+                ${Python3_EXECUTABLE} ${CHAR_CAL_DIR}/abort_codes.py
+                --cal $<TARGET_FILE:calibration_service> --part boundary)
+    set_tests_properties(char_calibration_abort_codes_boundary PROPERTIES
+        LABELS characterization TIMEOUT 120)
 endif()
