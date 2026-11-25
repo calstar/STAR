@@ -6,7 +6,7 @@
 ## sensor_data len=46
   ret=1 hdr{type=3 ver=0 ts=0x12345678} chunks=2 [ {ts=0x01020304 num_sensors=3 dps=1:0xa0b0c001,2:0xa0b0c002,3:0xa0b0c003,} {ts=0x01020314 num_sensors=3 dps=5:0xa0b0c101,6:0xa0b0c102,7:0xa0b0c103,} ]
 ## abort_done len=6
-  ret=1 hdr{type=8 ver=1 ts=0x12345678}
+  ret=1 hdr{type=8 ver=0 ts=0x12345678}
 ## actuator_command len=13
   ret=1 hdr{type=4 ver=0 ts=0x12345678} cmds=3 [ 1:1 5:0 10:1 ]
 ## self_test len=14

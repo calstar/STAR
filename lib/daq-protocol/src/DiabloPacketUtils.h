@@ -47,7 +47,10 @@ size_t create_board_heartbeat_packet(const BoardHeartbeatPacket &data,
  * @param timestamp_ms Value for PacketHeader.timestamp.
  * @param buffer The output buffer to write the final packet into.
  * @param buffer_size The total size of the output buffer.
- * @return The total number of bytes written to the buffer, or 0 on error.
+ * @return The total number of bytes written to the buffer, or 0 on error: the
+ * buffer is too small, there are more than 255 chunks, or a chunk does not
+ * carry exactly num_sensors datapoints. Nothing is sent on 0, so a caller that
+ * keeps its chunks on failure will fail the same way next time.
  */
 size_t
 create_sensor_data_packet(const std::vector<SensorDataChunkCollection> &chunks, const uint8_t num_sensors,

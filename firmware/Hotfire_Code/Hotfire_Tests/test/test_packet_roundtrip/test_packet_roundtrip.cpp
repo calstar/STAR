@@ -149,6 +149,81 @@ void test_sensor_data_buffer_too_small() {
         0, daq::create_sensor_data_packet(chunks, 2, 0u, buf, sizeof(buf)));
 }
 
+// num_chunks is one byte on the wire. 256 chunks cannot be described, and
+// with a uint8_t loop counter the encoder looped forever past the buffer.
+static std::vector<daq::SensorDataChunkCollection> one_sensor_chunks(
+    size_t count) {
+    std::vector<daq::SensorDataChunkCollection> chunks;
+    for (size_t i = 0; i < count; ++i) {
+        daq::SensorDataChunkCollection c(static_cast<uint32_t>(i), 1);
+        c.add_datapoint(1, static_cast<uint32_t>(i));
+        chunks.push_back(c);
+    }
+    return chunks;
+}
+
+void test_sensor_data_256_chunks_rejected() {
+    const auto chunks = one_sensor_chunks(256);
+    // Room for all 256: only the chunk count can make this fail.
+    std::vector<uint8_t> buf(8 + 256 * 9 + 64, 0xEE);
+    TEST_ASSERT_EQUAL(0, daq::create_sensor_data_packet(
+                             chunks, 1, 0u, buf.data(), buf.size()));
+    for (size_t i = 0; i < buf.size(); ++i)
+        TEST_ASSERT_EQUAL_HEX8(0xEE, buf[i]);
+}
+
+void test_sensor_data_255_chunks_roundtrip() {
+    const auto chunks = one_sensor_chunks(255);
+    std::vector<uint8_t> buf(8 + 255 * 9);
+    size_t n =
+        daq::create_sensor_data_packet(chunks, 1, 7u, buf.data(), buf.size());
+    TEST_ASSERT_EQUAL(buf.size(), n);
+
+    daq::PacketHeader hdr_out;
+    std::vector<daq::SensorDataChunkCollection> chunks_out;
+    TEST_ASSERT_TRUE(
+        daq::parse_sensor_data_packet(buf.data(), n, hdr_out, chunks_out));
+    TEST_ASSERT_EQUAL(255, chunks_out.size());
+    TEST_ASSERT_EQUAL(254, chunks_out[254].timestamp);
+    TEST_ASSERT_EQUAL(254, chunks_out[254].datapoints[0].data);
+}
+
+// A chunk must carry exactly num_sensors datapoints. Fewer used to be
+// memcpy'd past the end of the chunk's vector onto the wire.
+void test_sensor_data_short_chunk_rejected() {
+    std::vector<daq::SensorDataChunkCollection> chunks;
+    daq::SensorDataChunkCollection full(1000, 3);
+    full.add_datapoint(1, 100);
+    full.add_datapoint(2, 200);
+    full.add_datapoint(3, 300);
+    chunks.push_back(full);
+    daq::SensorDataChunkCollection shortc(2000, 3);
+    shortc.add_datapoint(1, 100);
+    shortc.add_datapoint(2, 200);
+    chunks.push_back(shortc);
+
+    uint8_t buf[512];
+    memset(buf, 0xEE, sizeof(buf));
+    TEST_ASSERT_EQUAL(
+        0, daq::create_sensor_data_packet(chunks, 3, 0u, buf, sizeof(buf)));
+    for (size_t i = 0; i < sizeof(buf); ++i)
+        TEST_ASSERT_EQUAL_HEX8(0xEE, buf[i]);
+}
+
+void test_sensor_data_long_chunk_rejected() {
+    std::vector<daq::SensorDataChunkCollection> chunks;
+    daq::SensorDataChunkCollection c(1000, 4);
+    c.add_datapoint(1, 100);
+    c.add_datapoint(2, 200);
+    c.add_datapoint(3, 300);
+    c.add_datapoint(4, 400);
+    chunks.push_back(c);
+
+    uint8_t buf[512];
+    TEST_ASSERT_EQUAL(
+        0, daq::create_sensor_data_packet(chunks, 3, 0u, buf, sizeof(buf)));
+}
+
 // ---------------------------------------------------------------------------
 // Actuator Command
 // ---------------------------------------------------------------------------
@@ -427,6 +502,19 @@ void test_abort_done_roundtrip() {
     TEST_ASSERT_EQUAL(ts, hdr_out.timestamp);
 }
 
+// ABORT_DONE carries the same version byte as every other encoder.
+void test_abort_done_version_matches_other_encoders() {
+    uint8_t done[64];
+    TEST_ASSERT_EQUAL(sizeof(daq::PacketHeader),
+                      daq::create_abort_done_packet(1u, done, sizeof(done)));
+    daq::BoardHeartbeatPacket hb{};
+    uint8_t beat[64];
+    TEST_ASSERT_GREATER_THAN(
+        0, daq::create_board_heartbeat_packet(hb, 1u, beat, sizeof(beat)));
+    TEST_ASSERT_EQUAL_HEX8(DIABLO_COMMS_VERSION, done[1]);
+    TEST_ASSERT_EQUAL_HEX8(beat[1], done[1]);
+}
+
 void test_abort_done_buffer_too_small() {
     uint8_t buf[2];
     TEST_ASSERT_EQUAL(0, daq::create_abort_done_packet(0u, buf, sizeof(buf)));
@@ -603,6 +691,10 @@ int main(int argc, char** argv) {
     // Sensor Data
     RUN_TEST(test_sensor_data_roundtrip);
     RUN_TEST(test_sensor_data_buffer_too_small);
+    RUN_TEST(test_sensor_data_256_chunks_rejected);
+    RUN_TEST(test_sensor_data_255_chunks_roundtrip);
+    RUN_TEST(test_sensor_data_short_chunk_rejected);
+    RUN_TEST(test_sensor_data_long_chunk_rejected);
 
     // Actuator Command
     RUN_TEST(test_actuator_command_roundtrip);
@@ -626,6 +718,7 @@ int main(int argc, char** argv) {
 
     // Abort Done
     RUN_TEST(test_abort_done_roundtrip);
+    RUN_TEST(test_abort_done_version_matches_other_encoders);
     RUN_TEST(test_abort_done_buffer_too_small);
 
     RUN_TEST(test_log_packet_layout);

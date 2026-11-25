@@ -29,7 +29,7 @@
   chunk[1].dp[2].data @42   +4  : 03 c1 b0 a0
 ## create_abort_done_packet len=6
   header.packet_type @0    +1  : 08
-  header.version @1    +1  : 01
+  header.version @1    +1  : 00
   header.timestamp @2    +4  : 78 56 34 12
 ## create_actuator_command_packet (3 commands) len=13
   header.packet_type @0    +1  : 04
@@ -144,7 +144,10 @@
   board_heartbeat buffer=41 (exact): ret=41 bytes_changed=41
   sensor_data buffer=37 (one short): ret=0 bytes_changed=0
   sensor_data 0 chunks: ret=8 bytes_changed=8
-  sensor_data num_sensors=0 with 2 chunks: ret=16 bytes_changed=16
+  sensor_data num_sensors=0 with 2 chunks: ret=0 bytes_changed=0
+  sensor_data chunk[1] has 2 of 3 datapoints: ret=0 bytes_changed=0
+  sensor_data 255 chunks x 1 sensor: ret=2303 bytes_changed=2301
+  sensor_data 256 chunks x 1 sensor: ret=0 bytes_changed=0
   abort_done buffer=5: ret=0 bytes_changed=0
   actuator_command 0 commands: ret=0 bytes_changed=0
   actuator_command 256 commands: ret=0 bytes_changed=0

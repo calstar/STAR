@@ -15,6 +15,7 @@
 #include "comms/messages/sensor/SensorMessages.hpp"
 #include "control/ControllerService.hpp"
 #include "control/RobustDDPController.hpp"
+#include "daq-protocol.h"
 #include "db.hpp"
 #include "elodin/ElodinClient.hpp"
 #include "elodin/SendMsg.hpp"
@@ -30,7 +31,7 @@ namespace control {
 //  PWM Packet Format (matches combined_gui.py EXACTLY)
 //
 //  Header:  packet_type (u8) = 10
-//           version     (u8) = 0
+//           version     (u8) = DIABLO_COMMS_VERSION
 //           timestamp   (u32 LE) = ms since epoch & 0xFFFFFFFF
 //  Body:    num_commands (u8)
 //  Per-cmd: actuator_id  (u8)
@@ -42,7 +43,6 @@ namespace control {
 // ═══════════════════════════════════════════════════════════════════════
 
 static constexpr uint8_t PACKET_TYPE_PWM = 10;
-static constexpr uint8_t COMMS_VERSION = 0;
 static constexpr size_t HEADER_SIZE = 6;  // <BBI>
 static constexpr size_t BODY_SIZE = 1;    // <B> num_commands
 static constexpr size_t CMD_SIZE = 13;    // <BIff>
@@ -67,7 +67,7 @@ bool ControllerService::sendPWMCommand(const PWMTarget& target, float duty_cycle
 
     // ── Header: <BBI> ──────────────────────────────────────────────────
     packet[offset++] = PACKET_TYPE_PWM;  // packet_type = 10
-    packet[offset++] = COMMS_VERSION;    // version = 0
+    packet[offset++] = DIABLO_COMMS_VERSION;
 
     // Timestamp: milliseconds since epoch, truncated to uint32
     auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -138,7 +138,7 @@ bool ControllerService::sendPWMCommands(const PWMTarget& t1, float duty1, const 
     size_t offset = 0;
 
     packet[offset++] = PACKET_TYPE_PWM;
-    packet[offset++] = COMMS_VERSION;
+    packet[offset++] = DIABLO_COMMS_VERSION;
     auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::system_clock::now().time_since_epoch())
                       .count();

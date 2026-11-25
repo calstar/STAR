@@ -138,8 +138,8 @@
   type=99: ret=0 hdr{type=171 ver=171 ts=0xabababab}
   type=9: ret=0 hdr{type=171 ver=171 ts=0xabababab}
   version=7: ret=1 hdr{type=8 ver=7 ts=0x12345678}
-  trailing+3: ret=1 hdr{type=8 ver=1 ts=0x12345678}
-  oversize(600): ret=1 hdr{type=8 ver=1 ts=0x12345678}
+  trailing+3: ret=1 hdr{type=8 ver=0 ts=0x12345678}
+  oversize(600): ret=1 hdr{type=8 ver=0 ts=0x12345678}
 ## actuator_command (valid len=13)
   null buffer: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
   trunc 0: ret=0 hdr{type=171 ver=171 ts=0xabababab} cmds=1 [ 238:238 ]
