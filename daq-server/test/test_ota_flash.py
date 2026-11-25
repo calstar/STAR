@@ -268,8 +268,16 @@ def main() -> int:
     finally:
         probe.close()
 
+    # ota_service refuses to start without a config it can read (exit 78, fail-fast config); it
+    # used to run on built-in defaults when config/config.toml was missing. This test wants
+    # exactly those defaults, so it says so with a config that sets nothing.
+    cfg_dir = tempfile.mkdtemp(prefix="ota-test-config-")
+    cfg_path = os.path.join(cfg_dir, "config.toml")
+    with open(cfg_path, "w") as f:
+        f.write("# test_ota_flash: every key at its default\n")
+
     proc = subprocess.Popen(
-        [bin_path, "--port", str(ota_port)],
+        [bin_path, "--port", str(ota_port), "--config", cfg_path],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

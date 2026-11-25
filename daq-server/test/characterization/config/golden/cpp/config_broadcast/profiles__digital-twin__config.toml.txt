@@ -32,6 +32,7 @@ packet[8] type=5 dest=192.168.2.51:5005 len=14
   0000: 05 00 00 00 00 00 04 02 03 04 05 00 00 02
 
 === captured stdout
+[ConfigBroadcast] vent/abort positions from config/state_machine_actuators.csv
 
 === captured stderr
 ⚠️  [ConfigBroadcast] abort_pts "Fuel Upstream": model "cubic" cannot be inverted for a board trip — set calibration_model = "physics", or this sensor has NO trip

@@ -43,6 +43,7 @@
 #include <thread>
 #include <vector>
 
+#include "config/Config.hpp"
 #include "control/HoldParse.hpp"
 #include "control/SequencerService.hpp"
 #include "control/ValvePlan.hpp"
@@ -269,9 +270,15 @@ int main(int argc, char* argv[]) {
         fsw::service::Sigpipe::kIgnore);  // don't crash on broken TCP connections
 
     sequencer::SequencerService svc;
-    if (!svc.init(config_path)) {
-        std::cerr << "[Sequencer] Initialization failed" << std::endl;
-        return 1;
+    try {
+        // init() reads and checks the whole config before it starts a thread or opens a socket,
+        // so a refused config leaves nothing running behind this return (STYLE S11).
+        if (!svc.init(config_path)) {
+            std::cerr << "[Sequencer] Initialization failed" << std::endl;
+            return 1;
+        }
+    } catch (const fsw::config::ConfigError& e) {
+        return fsw::config::report_refused(e, "[Sequencer]");
     }
 
     // TCP listen socket

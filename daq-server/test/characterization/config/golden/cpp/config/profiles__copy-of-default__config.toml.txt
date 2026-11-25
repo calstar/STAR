@@ -586,15 +586,15 @@ load(../../../config/profiles/copy-of-default/state_transitions.csv) = true isLo
 bootState = 1 "Idle"
 state 0 "Debug" isAbort=false fromName(name)=255 bitmask=0x00000000 allowedFrom=[]
 state 1 "Idle" isAbort=false fromName(name)=1 bitmask=0x000C0006 allowedFrom=[1, 2, 18, 19]
-state 2 "Armed" isAbort=false fromName(name)=2 bitmask=0x0016001E allowedFrom=[1, 2, 3, 4, 17, 18, 20]
-state 3 "Fuel Fill" isAbort=false fromName(name)=3 bitmask=0x0006000C allowedFrom=[2, 3, 17, 18]
-state 4 "Ox Fill" isAbort=false fromName(name)=4 bitmask=0x00060014 allowedFrom=[2, 4, 17, 18]
-state 5 "GN2 Low Press" isAbort=false fromName(name)=5 bitmask=0x00171560 allowedFrom=[5, 6, 8, 10, 12, 16, 17, 18, 20]
-state 6 "GN2 Low Vent" isAbort=false fromName(name)=6 bitmask=0x00171560 allowedFrom=[5, 6, 8, 10, 12, 16, 17, 18, 20]
-state 7 "Fuel Press" isAbort=false fromName(name)=7 bitmask=0x001715C0 allowedFrom=[6, 7, 8, 10, 12, 16, 17, 18, 20]
-state 8 "Fuel Vent" isAbort=false fromName(name)=8 bitmask=0x00171540 allowedFrom=[6, 8, 10, 12, 16, 17, 18, 20]
-state 9 "Ox Press" isAbort=false fromName(name)=9 bitmask=0x00171740 allowedFrom=[6, 8, 9, 10, 12, 16, 17, 18, 20]
-state 10 "Ox Vent" isAbort=false fromName(name)=10 bitmask=0x00171540 allowedFrom=[6, 8, 10, 12, 16, 17, 18, 20]
+state 2 "Armed" isAbort=false fromName(name)=2 bitmask=0x001E001E allowedFrom=[1, 2, 3, 4, 17, 18, 19, 20]
+state 3 "Fuel Fill" isAbort=false fromName(name)=3 bitmask=0x000E000C allowedFrom=[2, 3, 17, 18, 19]
+state 4 "Ox Fill" isAbort=false fromName(name)=4 bitmask=0x000E0014 allowedFrom=[2, 4, 17, 18, 19]
+state 5 "GN2 Low Press" isAbort=false fromName(name)=5 bitmask=0x001E3560 allowedFrom=[5, 6, 8, 10, 12, 13, 17, 18, 19, 20]
+state 6 "GN2 Low Vent" isAbort=false fromName(name)=6 bitmask=0x001E3560 allowedFrom=[5, 6, 8, 10, 12, 13, 17, 18, 19, 20]
+state 7 "Fuel Press" isAbort=false fromName(name)=7 bitmask=0x001E35C0 allowedFrom=[6, 7, 8, 10, 12, 13, 17, 18, 19, 20]
+state 8 "Fuel Vent" isAbort=false fromName(name)=8 bitmask=0x001E3540 allowedFrom=[6, 8, 10, 12, 13, 17, 18, 19, 20]
+state 9 "Ox Press" isAbort=false fromName(name)=9 bitmask=0x001E3740 allowedFrom=[6, 8, 9, 10, 12, 13, 17, 18, 19, 20]
+state 10 "Ox Vent" isAbort=false fromName(name)=10 bitmask=0x001E3540 allowedFrom=[6, 8, 10, 12, 13, 17, 18, 19, 20]
 state 11 "GN2 High Press" isAbort=false fromName(name)=11 bitmask=0x001C7D40 allowedFrom=[6, 8, 10, 11, 12, 13, 14, 18, 19, 20]
 state 12 "GN2 High Vent" isAbort=false fromName(name)=12 bitmask=0x001C3D40 allowedFrom=[6, 8, 10, 11, 12, 13, 18, 19, 20]
 state 13 "Vent" isAbort=false fromName(name)=13 bitmask=0x001E2004 allowedFrom=[2, 13, 17, 18, 19, 20]
@@ -604,7 +604,7 @@ state 16 "Fire" isAbort=false fromName(name)=16 bitmask=0x000D0006 allowedFrom=[
 state 17 "Engine Abort" isAbort=true fromName(name)=17 bitmask=0x000E0000 allowedFrom=[17, 18, 19]
 state 18 "GSE Abort" isAbort=true fromName(name)=18 bitmask=0x001C2006 allowedFrom=[1, 2, 13, 18, 19, 20]
 state 19 "Emergency Abort" isAbort=true fromName(name)=19 bitmask=0x00080002 allowedFrom=[1, 19]
-state 20 "Press Standby" isAbort=false fromName(name)=20 bitmask=0x00171FE0 allowedFrom=[5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 20]
+state 20 "Press Standby" isAbort=false fromName(name)=20 bitmask=0x001E3FE0 allowedFrom=[5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 18, 19, 20]
 fromName("Abort") = 255
 fromName("Quick Fire") = 255
 fromName("GN2 Press") = 255

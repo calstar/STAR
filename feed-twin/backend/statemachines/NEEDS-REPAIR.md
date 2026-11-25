@@ -1,52 +1,44 @@
-# `diablo_transitions.csv` — rows one cell short, and the stand reads them anyway
+# `diablo_transitions.csv` — the short rows, repaired (pending DAQ team confirmation)
 
-This file was byte-identical to the DAQ's `state_transitions.csv`
-(`daq-server/config/profiles/default/` and `profiles/server/`) until the twin-side
-edits listed at the end of this note. The header declares 21 columns (a label plus
-20 states). In the DAQ's copy these 10 rows carry 20:
+The header declares 21 columns (a label plus 20 states). Until 2026-11-23 ten rows of
+the DAQ's `state_transitions.csv` (`daq-server/config/profiles/default/` and
+`profiles/server/`) carried 20, and nine of this copy did (`Press Standby` had already
+been rewritten here, below):
 
     Armed, Fuel Fill, Ox Fill, Press Standby, GN2 Low Press,
     GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent
 
-In the twin's copy, 9: `Press Standby` was rewritten with 21 cells here (below). The
-DAQ's copy still has all 10 (checked 2026-10-08).
+## What the short rows did
 
-## How the stand reads them
+Both of the stand's parsers (the sequencer's `StateMachine::load` and the backend's
+`state-csv/state-transitions.ts`) mapped `row[j]` onto `headers[j-1]` and stopped at the
+end of the row: a short row was read **left-aligned**. Read that way, seven rows put a
+`1` under **Fire** -- an ignition path that bypasses `Ready` -- and all ten said
+nothing about `Emergency Abort`, so the stand refused an emergency abort from them. The
+twin read the rows the same way, on purpose, and warned on each path.
 
-The DAQ's parser (`daq-server/diablo_server/backend/src/legacy/state-transitions.ts`)
-maps `row[j]` onto `headers[j-1]` and stops at the end of the row. A short row is
-therefore read **left-aligned**: it never says anything about `Emergency Abort`, and
-every cell before that lands on the column its position names.
+## The repair (daq-server PR "Fail-fast config", #40 / C2-8)
 
-The twin reads the rows the same way, on purpose. An operator rehearsing here must find
-the same doors open and shut as on the pad. `load_machine()` names the short rows in
-its warnings.
+Each short row was missing the `0` under `Fire`: every well-formed row except `Ready`
+and `Fire` has one there, and inserting it puts the row's last three cells under
+`Vent`, `GSE Abort` and `Emergency Abort` like every other press/vent row. That `0` was
+inserted in all ten rows of the DAQ's copy and in the nine here. The DAQ team confirmed
+the repair (2026-11-24) and asked that every abort state stay reachable, so each repaired
+row also allows `Engine Abort`, `GSE Abort` and `Emergency Abort`. Per row: the `Fire`
+bypass goes, `Vent` comes in (press/vent rows), and `Emergency Abort` comes in;
+`Engine Abort` and `GSE Abort` stay allowed.
 
-## What that alignment permits — and why it is flagged, not hidden
+Both of the stand's parsers now refuse a table with any row whose cell count differs
+from the header's, so a short row cannot be read left-aligned again. This copy's
+`load_machine()` still reads and warns rather than refuses; with no short rows left it
+has nothing to warn about.
 
-Read left-aligned, seven rows of the DAQ's copy put a `1` under **Fire**:
+This copy differs from the DAQ's in exactly the four operator rows listed under
+"Twin-side edits" below. Those were not copied over the DAQ's file; they describe how
+the stand is run and are for the DAQ team to adopt or not.
 
-    Press Standby, GN2 Low Press, GN2 Low Vent, Fuel Press, Fuel Vent, Ox Press, Ox Vent
-
-Each is an ignition path that bypasses `Ready` -- on the stand, all seven. In the
-twin's copy six remain (`Press Standby` no longer bypasses). The twin **permits** each
-one, because the stand does, and emits one warning per path so the operator sees it on
-the console and so whoever owns the CSV knows exactly which rows to fix. Faithfulness is the safety
-property here: a twin that refused a move the stand allows would train an operator to
-trust an interlock that is not there.
-
-Absent rows are a different case and still fail closed — a state the table never
-mentions constrains nothing, and "constrains nothing" is not "allows everything".
-
-## How to repair
-
-Rewrite the 10 rows with 21 cells each **in the DAQ's copy** (`Press Standby` as
-the twin's below), then copy it here (or
-better, have the twin read the DAQ's file). Almost certainly each row is missing a `0`
-in the `Fire` column — every well-formed row except `Ready` and `Fire` has one — but
-that is an inference, and the fix belongs in the file the stand reads, with the DAQ
-team's eyes on it. `pytest tests/test_statemachine.py` asserts the flagged paths exist
-today and will need its expectations updated when they are gone; that is the point.
+Absent rows still fail closed — a state the table never mentions constrains nothing,
+and "constrains nothing" is not "allows everything".
 
 ## The actuator table has its own problems
 
@@ -82,15 +74,14 @@ twin cannot tell which; the DAQ team can.
 
 ## Twin-side edits (operator, 2026-09-11)
 
-Four rows in the twin's copy now differ from the DAQ's file, at the operator's direction.
+Four rows in the twin's copy differ from the DAQ's file, at the operator's direction.
 They describe how the stand is actually run and belong in the DAQ's file too:
 
 | row | change |
 |---|---|
-| `Press Standby` | rewritten with 21 cells: adds `Ready` and `Emergency Abort`, drops the left-aligned `1` under `Fire` (the ignition bypass) |
+| `Press Standby` | against the repaired DAQ row: adds `Ready` and `Engine Abort` |
 | `Ready` | adds `Calibrate` |
 | `Calibrate` | adds `Fire` |
 | `Fire` | adds `Vent` -- the twin goes there on its own at burnout (`Session._burnout_check`, `Setup.auto_vent`) |
 
-The intended path is `Press Standby -> Ready -> Calibrate -> Fire -> Vent`. The other six
-ragged rows are untouched and still carry the stand's bypass, flagged as above.
+The intended path is `Press Standby -> Ready -> Calibrate -> Fire -> Vent`.

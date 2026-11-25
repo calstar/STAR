@@ -1,14 +1,7 @@
-db_host = "127.0.0.1"
-db_port = 2240
-sensor_port = 5006
-bind_ip = "0.0.0.0"
-log_port = 8092
-hb = {interval_ms=1000 broadcast_port=5005 broadcast_ip="255.255.255.255" send_from_daq_bridge=true}
-time_sync = {mode=BoardClock window_seconds=10 max_plausible_gap_s=60 max_batch_age_s=5 resync_threshold_ms=1000 log_interval_s=10}
-resolve("10.9.8.7") = null
+EXCEPTION [Config] fixtures/bad/fire_flow_bad.toml refused: line 29: [[states]] #4 id = 300 is out of range (0 to 255); line 38: [[states]] #6 name "Idle" is already the name of [[states]] #1; state names must be unique
 
 === captured stdout
 
 === captured stderr
 
-=== exit 0
+=== exit 1

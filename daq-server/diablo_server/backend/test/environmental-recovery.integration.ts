@@ -50,7 +50,7 @@ async function until(check: () => boolean, label: string, timeout = 20000) {
 }
 
 try {
-  const [dbPort, wsPort, udpPort] = await Promise.all([freePort(), freePort(), freePort()]);
+  const [dbPort, wsPort, udpPort, logPort] = await Promise.all([freePort(), freePort(), freePort(), freePort()]);
   const config = join(work, 'config.toml');
   writeFileSync(config, `
 [database]
@@ -62,7 +62,8 @@ sensor_port = ${udpPort}
 [heartbeat_service]
 enabled = true
 [logs]
-backend_udp_port = 0
+# A free port nobody listens on: board logs go nowhere. 0 is refused as a port (C2-5).
+backend_udp_port = ${logPort}
 [boards.environmental_board]
 type = "ENVIRONMENTAL"
 ip = "127.0.0.1"
@@ -84,7 +85,8 @@ active_connectors = [1]
     const invalidConfig = join(work, `invalid-${name}.toml`);
     writeFileSync(invalidConfig, text);
     const rejected = spawnSync(bridgeBinary!, [invalidConfig], { encoding: 'utf8', timeout: 3000 });
-    assert.equal(rejected.status, 1, `Bridge must refuse ${name} config before connecting`);
+    // 78 = EX_CONFIG: refused config, which systemd does not restart (STYLE S11, C2-12).
+    assert.equal(rejected.status, 78, `Bridge must refuse ${name} config before connecting`);
     assert(rejected.stderr.includes(message), rejected.stderr);
   }
   const db = start(dbBinary!, ['run', `127.0.0.1:${dbPort}`, join(work, 'db')]);

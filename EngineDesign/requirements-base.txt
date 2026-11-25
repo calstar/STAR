@@ -25,7 +25,7 @@ rocketpy
 plotly
 ezdxf
 cma
-CoolProp
+CoolProp>=7.0,<8
 
 # JIT accelerator for the Layer-1 optimizer inner loop (engine/accel). Without
 # it the physics kernels fall back to pure Python, which is ~25-30x slower per

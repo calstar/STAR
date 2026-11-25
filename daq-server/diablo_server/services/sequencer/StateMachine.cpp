@@ -274,9 +274,25 @@ bool StateMachine::load(const std::string& csv_path) {
         }
     }
 
+    // Every row carries one cell per header column. A short row used to be read left-aligned, so
+    // every cell after a missing one landed under the wrong state: ten rows of the shipped table
+    // put a 1 under Fire and nothing under Emergency Abort (C2-8). The file is refused whole.
+    // Cells are counted the way the backend counts them (split on ','), so the two agree.
+    auto count_cells = [](const std::string& l) {
+        std::string s = l;
+        while (!s.empty() && (s.back() == '\r' || s.back() == '\n'))
+            s.pop_back();
+        return static_cast<size_t>(std::count(s.begin(), s.end(), ',')) + 1;
+    };
+    const size_t width = count_cells(line);
+
     transitions_.clear();
+    std::map<State, std::set<State>> parsed;
+    std::vector<std::string> ragged;
     int rows = 0;
+    int line_no = 1;
     while (std::getline(f, line)) {
+        ++line_no;
         std::vector<std::string> cells;
         std::istringstream iss(line);
         std::string cell;
@@ -284,6 +300,12 @@ bool StateMachine::load(const std::string& csv_path) {
             cells.push_back(trimCell(cell));
         if (cells.empty() || cells[0].empty())
             continue;
+        if (const size_t n = count_cells(line); n != width) {
+            ragged.push_back("line " + std::to_string(line_no) + ": \"" + cells[0] + "\" has " +
+                             std::to_string(n) + " cells, the header has " +
+                             std::to_string(width));
+            continue;
+        }
 
         State from = fromName(cells[0]);
         if (from == State::UNKNOWN)
@@ -293,12 +315,20 @@ bool StateMachine::load(const std::string& csv_path) {
             if (cells[col] == "1") {
                 State to = column_states[col - 1];
                 if (to != State::UNKNOWN)
-                    transitions_[from].insert(to);
+                    parsed[from].insert(to);
             }
         }
         ++rows;
     }
+    if (!ragged.empty()) {
+        std::cerr << "[StateMachine] Refusing " << used_path
+                  << ": every row needs one cell per header column" << std::endl;
+        for (const auto& r : ragged)
+            std::cerr << "[StateMachine]   " << r << std::endl;
+        return false;
+    }
 
+    transitions_ = std::move(parsed);
     loaded_ = true;
     std::cout << "[StateMachine] Loaded " << rows << " states from " << used_path << std::endl;
     return true;

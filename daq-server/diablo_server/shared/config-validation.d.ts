@@ -35,6 +35,9 @@ export interface ConfigIssue {
     level: ConfigIssueLevel;
     /** Plain text — rendered by the editor and by the session page, so no markup. */
     message: string;
+    /** false: reported, but session start does not stop for it, even on the first press. Absent
+     *  means it blocks, which is every issue but the few that say otherwise. */
+    blocks?: boolean;
 }
 /** The three state-machine CSVs, as raw file text. An absent file is ''. */
 export interface StateCsvSet {
@@ -149,7 +152,36 @@ export declare function t7RoleClashes(config: any): Array<{
  * firmware/tools/ota_upload.py and deploy/dhcp/generate_dhcp_config.py. Null for a malformed MAC.
  */
 export declare function recoveryAddress(mac: string): string | null;
-export declare function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): ConfigIssue[];
+/** What the calibration service last emitted to abort_thresholds.txt: uid -> target PSI. */
+export type AbortThresholds = Map<number, number>;
+/** Parse abort_thresholds.txt ("uid target_psi raw_adc" per line, # comments), as
+ *  config_broadcast's readAbortThresholds does. */
+export declare function parseAbortThresholds(text: string): AbortThresholds;
+/**
+ * Names a dynamic-state script cannot refer to. Mirrors fsw::script::build_slug_tables: one table
+ * each for [actuator_roles], PT roles and [[states]]; a name whose slug is not an identifier, or
+ * two names in one table with one slug, is refused, and with it every dynamic state on the rig.
+ */
+export declare function slugTableIssues(config: any): {
+    page: ConfigPageId;
+    message: string;
+}[];
+/**
+ * [abort_pts] entries config_broadcast cannot give a board-side trip. Mirrors buildPackets'
+ * abort-threshold walk: the name must be a PT role on an ESP32 PT board (a T7 cannot trip), on a
+ * channel 1-255, and only a ratiometric (0.5-4.5 V) sensor on the "physics" model is inverted.
+ * For any other model config_broadcast uses the calibration service's threshold when that service
+ * has emitted one for the sensor, which it does only after an operator cubic capture. Until then
+ * the board has no trip for it: a warning that does not block a run (DAQ team, 2026-11-24), since
+ * a stand is routinely brought up before its cubics are captured. Every other case is an error.
+ */
+export interface AbortTripIssue {
+    level: ConfigIssueLevel;
+    message: string;
+    blocks?: boolean;
+}
+export declare function abortTripIssues(config: any, thresholds?: AbortThresholds): AbortTripIssue[];
+export declare function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>, abortThresholds?: AbortThresholds): ConfigIssue[];
 /** Group issues by the editor page that fixes them, preserving rule order within a page. */
 export declare function groupIssuesByPage(issues: ConfigIssue[]): {
     page: ConfigPageId;

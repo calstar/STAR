@@ -230,7 +230,7 @@ int main(int argc, char* argv[]) {
                 }
             }
             if (!f.is_open()) {
-                std::cerr << "❌ No config.toml found. Using defaults." << std::endl;
+                std::cerr << "❌ No config.toml found." << std::endl;
             }
         }
         if (f.is_open()) {
@@ -241,7 +241,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    const fsw::config::Config cfg = fsw::config::load(config_path);
+    // Fail fast (STYLE S11): every problem listed, exit 78, before any socket opens. A missing
+    // file is one of them; this used to start the controller on built-in defaults (C2-4).
+    fsw::config::Config cfg;
+    if (const int rc = fsw::config::load_at_startup(config_path, "[controller_service]", cfg))
+        return rc;
 
     // Populate the config-declared [[states]] in THIS process before any name→id resolution below.
     // The controller is a separate process from the sequencer and never called this; without it,

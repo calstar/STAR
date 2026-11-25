@@ -392,8 +392,11 @@ int main(int argc, char* argv[]) {
     }
 
     {
-        const auto nic =
-            fsw::net::resolveDaqBindAddress(fsw::config::load(config_path), "OTAService");
+        // Fail fast (STYLE S11): every problem listed, exit 78, before any socket opens.
+        fsw::config::Config cfg;
+        if (const int rc = fsw::config::load_at_startup(config_path, "[OTAService]", cfg))
+            return rc;
+        const auto nic = fsw::net::resolveDaqBindAddress(cfg, "OTAService");
         if (!nic.ok)
             return 1;
         g_bind_address = nic.address;

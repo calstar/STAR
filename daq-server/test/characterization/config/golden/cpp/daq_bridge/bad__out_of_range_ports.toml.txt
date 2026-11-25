@@ -1,18 +1,7 @@
-db_host = "127.0.0.1"
-db_port = 0
-sensor_port = 4464
-bind_ip = "0.0.0.0"
-log_port = 57444
-hb = {interval_ms=1000 broadcast_port=5005 broadcast_ip="255.255.255.255" send_from_daq_bridge=true}
-time_sync = {mode=BoardClock window_seconds=10 max_plausible_gap_s=60 max_batch_age_s=5 resync_threshold_ms=1000 log_interval_s=10}
-board_map["192.168.2.21"] = {type=PT ip="192.168.2.21" active_channels=4 enabled=true board_id=21 wire_u8=1}
-board_by_octet[21] = {type=PT ip="192.168.2.21" active_channels=4 enabled=true board_id=21 wire_u8=1}
-resolve("192.168.2.21") = {type=PT ip="192.168.2.21" active_channels=4 enabled=true board_id=21 wire_u8=1}
-resolve("127.0.0.21") = {type=PT ip="192.168.2.21" active_channels=4 enabled=true board_id=21 wire_u8=1}
-resolve("10.9.8.7") = null
+EXCEPTION [Config] fixtures/bad/out_of_range_ports.toml refused: line 2: [network].sensor_port = 70000 is out of range (1 to 65535); line 3: [network].actuator_cmd_port = -1 is out of range (1 to 65535); line 6: [database].port = 65536 is out of range (1 to 65535); line 15: [logs].backend_udp_port = -8092 is out of range (1 to 65535); line 22: [boards.pt_board].send_port = -5 is out of range (1 to 65535); line 21: [boards.pt_board].listen_port = 65537 is out of range (1 to 65535); line 23: [boards.pt_board].active_connectors[0] = 0 is out of range (1 to 255); line 23: [boards.pt_board].active_connectors[1] = 256 is out of range (1 to 255); line 23: [boards.pt_board].active_connectors[2] = -1 is out of range (1 to 255); line 23: [boards.pt_board].active_connectors[3] = 300 is out of range (1 to 255); line 9: [controller_service].port = 0 is out of range (1 to 65535); line 12: [actuator_service].port = 99999 is out of range (1 to 65535)
 
 === captured stdout
 
 === captured stderr
 
-=== exit 0
+=== exit 1

@@ -314,7 +314,11 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    const fsw::config::Config cfg = fsw::config::load(opt.config_path);
+    // Fail fast (STYLE S11): a file the shared loader refuses exits 78. The T7-specific problems
+    // below keep their own exit 2.
+    fsw::config::Config cfg;
+    if (const int rc = fsw::config::load_at_startup(opt.config_path, "[t7_bridge]", cfg))
+        return rc;
     if (!cfg.t7_errors.empty()) {
         std::cerr << "[t7_bridge] refusing to start, the T7 config has problems:" << std::endl;
         for (const auto& e : cfg.t7_errors)

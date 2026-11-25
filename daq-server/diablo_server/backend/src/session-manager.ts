@@ -287,7 +287,12 @@ class SessionManager {
     // committed config_base → sim_config overlay and never touch the profile, so gating them would
     // be gating on config that is not in effect for the run.
     if (!simulated && !force) {
-      const { issues, profile } = validateActiveProfile();
+      const { issues: found, profile } = validateActiveProfile();
+      // A few warnings are reported without stopping the run (an issue with blocks: false, e.g.
+      // an abort sensor still waiting for its operator cubic). They are logged, not gated.
+      for (const i of found.filter((x) => x.blocks === false))
+        console.warn(`⚠️  config profile "${profile}": [${i.page}/${i.level}] ${i.message}`);
+      const issues = found.filter((x) => x.blocks !== false);
       if (issues.length > 0) {
         console.warn(
           `⛔ Session start refused: config profile "${profile}" has ${issues.length} issue(s):\n` +

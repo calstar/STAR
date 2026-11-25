@@ -657,7 +657,10 @@ int main(int argc, char* argv[]) {
     std::signal(SIGTERM, signalHandler);
 
     // Parse config once (paths + [calibration.*] params + per-sensor models) before the loaders.
-    const fsw::config::Config cal_cfg = fsw::config::load(config_path);
+    // Fail fast (STYLE S11): every problem listed, exit 78, before any socket opens.
+    fsw::config::Config cal_cfg;
+    if (const int rc = fsw::config::load_at_startup(config_path, "[Calibration]", cal_cfg))
+        return rc;
     auto or_default = [](const std::string& v, const char* d) {
         return v.empty() ? d : v;
     };

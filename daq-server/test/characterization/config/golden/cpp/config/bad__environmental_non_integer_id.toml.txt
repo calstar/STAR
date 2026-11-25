@@ -1,16 +1,16 @@
 input fixtures/bad/environmental_non_integer_id.toml readable=true bytes=93
 
 === config::load
-EXCEPTION std::invalid_argument: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+EXCEPTION std::invalid_argument: [Config] fixtures/bad/environmental_non_integer_id.toml refused: [boards.env_board] environmental board ID must be an integer from 1 to 255
 
 === config::load_from_string
-EXCEPTION std::invalid_argument: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+EXCEPTION std::invalid_argument: [Config] config text refused: [boards.env_board] environmental board ID must be an integer from 1 to 255
 
 === StateMachine
-EXCEPTION std::invalid_argument: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+EXCEPTION std::invalid_argument: [Config] config text refused: [boards.env_board] environmental board ID must be an integer from 1 to 255
 
 === ActuatorCommander
-EXCEPTION std::invalid_argument: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+EXCEPTION std::invalid_argument: [Config] config text refused: [boards.env_board] environmental board ID must be an integer from 1 to 255
 
 === load_dynamic_states
 

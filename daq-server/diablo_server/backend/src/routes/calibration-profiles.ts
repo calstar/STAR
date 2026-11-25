@@ -28,7 +28,7 @@ export function assertValidProfileName(name: string): void {
 }
 
 /** Locate scripts/calibration/calibrations, covering dev (tsx) and dist layouts + cwd variants. */
-function getCalibrationsDir(): string {
+export function getCalibrationsDir(): string {
   // An explicit directory wins — the hermetic tests point this at a temp dir so they can never
   // touch the real live store (which the integration harness has already lost once).
   if (process.env.DAQ_CALIBRATIONS_DIR) return process.env.DAQ_CALIBRATIONS_DIR;

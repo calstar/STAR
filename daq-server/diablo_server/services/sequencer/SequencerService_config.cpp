@@ -55,12 +55,14 @@ bool SequencerService::loadConfig(const std::string& path) {
         }
     }
 
+    // A sequencer on built-in defaults commands valves from a stand nobody configured (C2-4).
+    // init() lets this reach main, which exits 78 before any socket opens.
     if (config_content_.empty())
-        std::cerr << "[SequencerService] config.toml not found; using defaults" << std::endl;
-    else
-        std::cout << "[SequencerService] Loaded config: " << config_path_ << std::endl;
+        throw fsw::config::ConfigError(path, {"config.toml not found or empty (also tried "
+                                              "config/, ../config/ and ../../config/)"});
+    std::cout << "[SequencerService] Loaded config: " << config_path_ << std::endl;
 
-    return true;  // non-fatal: service can start without config
+    return true;
 }
 
 std::string SequencerService::configDir() const {
@@ -110,7 +112,9 @@ bool SequencerService::applyConfig(const fsw::config::Config& cfg) {
         std::cerr
             << "[SequencerService] Failed to load state_transitions.csv (tried relative to cwd: "
             << sm_csv << ")" << std::endl;
-        return false;
+        // A missing or malformed transition table is config, not a transient: exit 78 (S11).
+        throw fsw::config::ConfigError(
+            sm_csv, {"[state_machine].transitions_csv cannot be used (the reason is printed above)"});
     }
 
     // Actuator commander — path from config.toml (canonical: daq-server/config/).

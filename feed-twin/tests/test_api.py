@@ -258,13 +258,15 @@ def test_the_machine_binds_to_the_drawings_valves() -> None:
     assert machine["bound"]["Fuel Main"] == "MVF"
 
 
-def test_a_ragged_transition_table_is_reported_not_absorbed() -> None:
-    """The DAQ's own CSV has short rows. Zipping them against the header shifts
-    every column past the gap, which can silently delete an abort path."""
+def test_the_shipped_transition_table_has_no_short_rows() -> None:
+    """The DAQ's CSV had ten short rows, read left-aligned: an ignition path
+    that bypassed Ready and no emergency abort from any of them. They were
+    repaired (daq-server PR "Fail-fast config", C2-8, NEEDS-REPAIR.md), and
+    the stand now refuses a ragged table, so the twin has nothing to report."""
     machine = client.get(f"/api/statemachine?diagram={diagram_id()}").json()
     joined = " ".join(machine["warnings"])
-    assert "wrong number of columns" in joined
-    assert "Armed" in joined
+    assert "wrong number of columns" not in joined
+    assert "Fuel Press -> Fire" not in joined
 
 
 # -------------------------------------------------------------------- firing

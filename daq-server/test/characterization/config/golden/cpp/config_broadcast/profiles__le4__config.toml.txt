@@ -37,6 +37,7 @@ packet[7] type=5 dest=192.168.2.22:5005 len=13
   0000: 05 00 00 00 00 00 03 01 03 04 00 00 02
 
 === captured stdout
+[ConfigBroadcast] vent/abort positions from config/state_machine_actuators.csv
 
 === captured stderr
 ⚠️  [ConfigBroadcast] abort_pts "Ox Upstream": no PT sensor_role declares this name — NO board trip

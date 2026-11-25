@@ -17,9 +17,9 @@ EnvironmentFile=-%h/.config/daq/pipeline.env
 ExecStart=/bin/bash -c 'if [ -x ./build/bin/t7_bridge ]; then FAKE=""; [ "$${USE_SIM:-0}" = "1" ] && mkdir -p /tmp/star-t7-fake && FAKE="--fake --fake-state /tmp/star-t7-fake"; exec ./build/bin/t7_bridge --config ${DAQ_CONFIG} $$FAKE; else echo "t7_bridge not found — run: cd build && cmake .. && make t7_bridge"; exit 1; fi'
 # on-failure, not always: with no enabled T7 in config, t7_bridge exits 0 and should stay down.
 # Exit 2 (T7 config errors, listed in the journal) and 3 (built without LJM) will not fix
-# themselves by retrying.
+# themselves by retrying, and neither will 78 (the shared config loader refused the file).
 Restart=on-failure
-RestartPreventExitStatus=2 3
+RestartPreventExitStatus=2 3 78
 RestartSec=5
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

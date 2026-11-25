@@ -35,5 +35,6 @@ packets.count = 0
 === captured stdout
 
 === captured stderr
+[ConfigBroadcast] config re-read refused, keeping the last good packets: [Config] config/config.toml refused: line 2: [network].bind_ip must be a string, got an integer; line 3: [network].sensor_port must be an integer, got a string; line 4: [network].actuator_cmd_port must be an integer, got a float; line 8: [database].port must be an integer, got a boolean; line 11: [heartbeat_service].enabled must be true or false, got a string; line 17: [boards.pt_board].enabled must be true or false, got an integer; line 16: [boards.pt_board].board_id must be an integer, got a float; line 18: [boards.pt_board].active_connectors[0] must be an integer, got a string; line 18: [boards.pt_board].active_connectors[2] must be an integer, got a float; line 31: [[states]] #1 id must be an integer, got a string; line 36: [[states]] #2 name must be a string, got an integer; line 37: [[states]] #2 is_boot must be true or false, got a string; line 23: [sensor_roles_pt_board]."Fuel Upstream" (channel) must be an integer, got a string; line 24: [sensor_roles_pt_board]."Ox Upstream" (channel) must be an integer, got a float; line 28: [abort_pts]."COPV" must be a number, got a string
 
 === exit 0

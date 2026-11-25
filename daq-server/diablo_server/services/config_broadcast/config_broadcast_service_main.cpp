@@ -32,6 +32,7 @@ static inline void store_u32(uint8_t* dst, uint32_t v) {
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -60,16 +61,42 @@ std::string trim(const std::string& s) {
     return (a == std::string::npos) ? "" : s.substr(a, b - a + 1);
 }
 
-uint32_t ipToU32Le(const std::string& ip) {
-    int a = 0, b = 0, c = 0, d = 0;
-    if (sscanf(ip.c_str(), "%d.%d.%d.%d", &a, &b, &c, &d) != 4)
-        return 0;
-    return (static_cast<uint32_t>(a) << 24) | (static_cast<uint32_t>(b) << 16) |
-           (static_cast<uint32_t>(c) << 8) | static_cast<uint32_t>(d);
+// An address that does not parse is an error the caller reports, never 0.0.0.0 on the wire
+// (C1-8): sscanf("%d.%d.%d.%d") used to turn "not-an-ip" into 0 and "1.2.3.999" into garbage.
+std::optional<uint32_t> ipToU32Le(const std::string& ip) {
+    in_addr a{};
+    if (inet_pton(AF_INET, ip.c_str(), &a) != 1)
+        return std::nullopt;
+    return ntohl(a.s_addr);
 }
 
-uint32_t ipToU32Be(const std::string& ip) {
+std::optional<uint32_t> ipToU32Be(const std::string& ip) {
     return ipToU32Le(ip);
+}
+
+// Log a line once while it keeps recurring, and again only after it has stopped and come back:
+// buildPackets runs every cycle.
+void logOnce(std::string& last, const std::string& line, bool is_error) {
+    if (line == last)
+        return;
+    last = line;
+    if (line.empty())
+        return;
+    (is_error ? std::cerr : std::cout) << line << std::endl;
+}
+
+// [state_machine].actuator_csv, as configured (C2-7). A relative path is tried from the cwd and
+// then from ../ and ../../ (a run from build/ or build/bin/), the way the sequencer resolves it,
+// so both services read one file. Returns the path that opened, or the configured one.
+std::string resolveActuatorCsv(const std::string& configured) {
+    if (configured.empty() || configured[0] == '/')
+        return configured;
+    for (const char* pfx : {"", "../", "../../"}) {
+        const std::string candidate = std::string(pfx) + configured;
+        if (std::ifstream(candidate).good())
+            return candidate;
+    }
+    return configured;
 }
 
 struct BoardInfo {
@@ -239,7 +266,21 @@ std::map<std::string, double> readValveTrials() {
 // edit, which is a third apply point and worse than either option. See
 // docs/CONFIGURATION_GUIDE.md.
 std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
-    const fsw::config::Config cfg = fsw::config::load(config_path);
+    // A re-read that fails is rejected and the last-good set kept (STYLE S11a); a bad id saved
+    // mid-run used to abort the running service (C2-12). main() refuses the same file at startup.
+    static std::string s_last_refusal;
+    fsw::config::Config cfg;
+    try {
+        cfg = fsw::config::load(config_path);
+    } catch (const fsw::config::ConfigError& e) {
+        logOnce(s_last_refusal,
+                std::string("[ConfigBroadcast] config re-read refused, keeping the last good "
+                            "packets: ") +
+                    e.what(),
+                true);
+        return {};
+    }
+    logOnce(s_last_refusal, "", true);
 
     // Map typed boards -> local BoardInfo (expand active_connectors, synthesize ip like the old
     // parser).
@@ -276,20 +317,35 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
             board_id_to_ip[b.id] = b.ip;
 
     std::map<std::string, int> vent_map, abort_map;
-    std::string csv_path = cfg.state_machine.actuator_csv;
-    const char* csv_fbs[] = {
-        "config/state_machine_actuators.csv",
-        "../config/state_machine_actuators.csv",
-        "../../config/state_machine_actuators.csv",
-    };
-    for (const char* fb : csv_fbs) {
-        std::ifstream t(fb);
-        if (t.is_open()) {
-            csv_path = fb;
-            break;
-        }
+    const std::string csv_path = resolveActuatorCsv(cfg.state_machine.actuator_csv);
+    {
+        static std::string s_last_csv;
+        const bool readable = std::ifstream(csv_path).good();
+        logOnce(s_last_csv,
+                readable ? "[ConfigBroadcast] vent/abort positions from " + csv_path
+                         : "[ConfigBroadcast] ERROR: cannot open [state_machine].actuator_csv " +
+                               csv_path + "; every actuator's vent/abort position will be 0",
+                !readable);
     }
     parseVentAbortFromCsv(csv_path, vent_map, abort_map);
+
+    // Every address that goes into a packet, checked before any packet is built. config::load
+    // has already refused a bad [boards.*].ip; this catches a synthesized one.
+    {
+        static std::string s_last_bad_ip;
+        std::string bad;
+        if (!ipToU32Le(designated_ip))
+            bad = designated_ip;
+        for (const auto& b : boards)
+            if (b.enabled && !ipToU32Le(b.ip))
+                bad = b.ip;
+        logOnce(s_last_bad_ip,
+                bad.empty() ? "" : "[ConfigBroadcast] ERROR: board address \"" + bad +
+                                       "\" is not IPv4; keeping the last good packets",
+                true);
+        if (!bad.empty())
+            return {};
+    }
 
     const std::map<std::string, double>& abort_pts = cfg.abort_pts;
 
@@ -350,8 +406,8 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         {
             auto cit = cal_thresholds.find(uid);
             if (cit != cal_thresholds.end() && std::abs(cit->second.first - threshold_psi) < 0.5) {
-                abort_pt_list.push_back(
-                    {ipToU32Le(b.ip), static_cast<uint8_t>(channel), cit->second.second});
+                abort_pt_list.push_back({ipToU32Le(b.ip).value_or(0),
+                                         static_cast<uint8_t>(channel), cit->second.second});
                 continue;
             }
         }
@@ -387,8 +443,8 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         // 0.5-4.5 V at 5 V excitation: 10 % of full code at zero, 90 % at full scale.
         double adc =
             std::clamp((0.1 + 0.8 * (threshold_psi / full_scale)) * ADC_MAX, 0.0, ADC_MAX - 1.0);
-        abort_pt_list.push_back(
-            {ipToU32Le(b.ip), static_cast<uint8_t>(channel), static_cast<uint32_t>(llround(adc))});
+        abort_pt_list.push_back({ipToU32Le(b.ip).value_or(0), static_cast<uint8_t>(channel),
+                                 static_cast<uint32_t>(llround(adc))});
     }
     // Log each distinct abort-threshold problem once while it persists, and note recovery — never
     // spam the every-cycle rebuild. Dropping resolved entries lets a re-break warn again.
@@ -410,7 +466,8 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
             std::string ip = board_id_to_ip.count(bid) ? board_id_to_ip[bid] : designated_ip;
             uint8_t vent = static_cast<uint8_t>(vent_map.count(name) ? vent_map[name] : 0);
             uint8_t abort = static_cast<uint8_t>(abort_map.count(name) ? abort_map[name] : 0);
-            abort_actuators.push_back({ipToU32Le(ip), static_cast<uint8_t>(ch), vent, abort});
+            abort_actuators.push_back(
+                {ipToU32Le(ip).value_or(0), static_cast<uint8_t>(ch), vent, abort});
         }
 
         size_t N = std::min(abort_actuators.size(), size_t(255));
@@ -468,7 +525,7 @@ std::vector<ConfigPacket> buildPackets(const std::string& config_path) {
         buf[off++] = static_cast<uint8_t>(std::min(2, std::max(0, b.voltage_reference)));
         buf[off++] = b.necessary_for_abort ? 1 : 0;
         if (b.necessary_for_abort) {
-            uint32_t ip_be = ipToU32Be(designated_ip);
+            uint32_t ip_be = ipToU32Be(designated_ip).value_or(0);
             buf[off] = (ip_be >> 24) & 0xFF;
             buf[off + 1] = (ip_be >> 16) & 0xFF;
             buf[off + 2] = (ip_be >> 8) & 0xFF;
@@ -563,16 +620,21 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Fail fast (STYLE S11): a config this service cannot use is refused here, with every
+    // problem listed, before any socket opens. A missing or empty file is one of them (C2-4).
+    fsw::config::Config startup_cfg;
     if (config_content.empty()) {
         std::cerr << "[ConfigBroadcast] No config loaded" << std::endl;
-        return 1;
+        return fsw::config::report_refused(
+            fsw::config::ConfigError(config_path, {"the file is missing or empty"}),
+            "[ConfigBroadcast]");
     }
+    if (const int rc = fsw::config::load_at_startup(config_path, "[ConfigBroadcast]", startup_cfg))
+        return rc;
 
     // Precedence: defaults < config < CLI (--interval-ms). Config value clamped to >=500 ms.
-    if (interval_ms < 0) {
-        const fsw::config::Config cfg = fsw::config::load(config_path);
-        interval_ms = std::max(500, static_cast<int>(cfg.config_broadcast_interval_ms));
-    }
+    if (interval_ms < 0)
+        interval_ms = std::max(500, static_cast<int>(startup_cfg.config_broadcast_interval_ms));
 
     fsw::service::installStopHandlers(fsw::service::ShutdownNotice::kPrintThenStop,
                                       "\n[ConfigBroadcast] Shutting down...",
@@ -597,8 +659,7 @@ int main(int argc, char* argv[]) {
     // host with several. Resolved from the config as loaded at startup: the send loop re-reads
     // config.toml every cycle for board edits, and a NIC change mid-run is not a board edit.
     {
-        const auto nic =
-            fsw::net::resolveDaqBindAddress(fsw::config::load(config_path), "ConfigBroadcast");
+        const auto nic = fsw::net::resolveDaqBindAddress(startup_cfg, "ConfigBroadcast");
         if (!nic.ok) {
             close(sock);
             return 1;

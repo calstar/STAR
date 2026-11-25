@@ -210,7 +210,10 @@ int main(int argc, char* argv[]) {
 
     // Precedence: defaults < config file < CLI flags. (broadcast_ip/port fall back to
     // [server_heartbeat] inside the parser.)
-    const fsw::config::Config cfg = fsw::config::load(config_path);
+    // Fail fast (STYLE S11): every problem listed, exit 78, before any socket opens.
+    fsw::config::Config cfg;
+    if (const int rc = fsw::config::load_at_startup(config_path, "[HeartbeatService]", cfg))
+        return rc;
     std::string elodin_host = cli_elodin_host.value_or(cfg.heartbeat_service.elodin_host);
     uint16_t elodin_port = cli_elodin_port ? static_cast<uint16_t>(*cli_elodin_port)
                                            : cfg.heartbeat_service.elodin_port;

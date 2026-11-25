@@ -94,6 +94,22 @@ add_executable(test_environmental_config test/test_environmental_config.cpp)
 target_link_libraries(test_environmental_config fsw_daq_lib)
 add_test(NAME environmental_config COMMAND test_environmental_config)
 
+# Fail-fast config (STYLE S11): each startup refusal, and every shipped profile still loading.
+# Builds StateMachine.cpp in for the transition-table width check.
+add_executable(test_config_fail_fast
+    test/test_config_fail_fast.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
+)
+target_compile_definitions(test_config_fail_fast PRIVATE
+    DAQ_SERVER_DIR="${CMAKE_SOURCE_DIR}")
+target_link_libraries(test_config_fail_fast fsw_daq_lib)
+add_test(NAME config_fail_fast COMMAND test_config_fail_fast)
+
+# config_broadcast's file-static config handling, its main.cpp #included with main renamed.
+add_executable(test_config_broadcast_config test/test_config_broadcast_config.cpp)
+target_link_libraries(test_config_broadcast_config fsw_daq_lib)
+add_test(NAME config_broadcast_config COMMAND test_config_broadcast_config)
+
 add_executable(test_ball_valve_config test/test_ball_valve_config.cpp)
 target_link_libraries(test_ball_valve_config fsw_daq_lib)
 add_test(NAME ball_valve_config COMMAND test_ball_valve_config)

@@ -7,6 +7,8 @@ Type=simple
 WorkingDirectory=%h/sensor_system/diablo_server/backend
 ExecStart=/usr/bin/npm run dev
 Restart=always
+# 78 (EX_CONFIG) means the service refused its config; restarting cannot fix that.
+RestartPreventExitStatus=78
 RestartSec=5
 # Backend subscribes directly to Elodin DB (127.0.0.1:2240 by default).
 Environment=USE_CALIBRATION_SERVICE_CALIBRATED=false

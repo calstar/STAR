@@ -24,7 +24,11 @@
  */
 
 import { validateControllerPwmActuators } from './types.js';
-import { isValidScriptFilename } from './state-script-names.js';
+import { isValidScriptFilename, slugify, isValidSlug } from './state-script-names.js';
+
+/** The Actuators-table columns config_broadcast's parseVentAbortFromCsv reads; it reads nothing
+ *  unless both are present. */
+const VENT_ABORT_COLUMNS = ['Vent', 'Engine Abort'];
 
 /** Ceiling on a dynamic state's script timeout. Mirrors sequencer::kMaxScriptTimeoutMs. */
 const MAX_SCRIPT_TIMEOUT_MS = 600000;
@@ -55,6 +59,9 @@ export interface ConfigIssue {
   level: ConfigIssueLevel;
   /** Plain text — rendered by the editor and by the session page, so no markup. */
   message: string;
+  /** false: reported, but session start does not stop for it, even on the first press. Absent
+   *  means it blocks, which is every issue but the few that say otherwise. */
+  blocks?: boolean;
 }
 
 /** The three state-machine CSVs, as raw file text. An absent file is ''. */
@@ -488,7 +495,162 @@ export function recoveryAddress(mac: string): string | null {
   return `169.254.${1 + (b[4] % 254)}.${b[5]}`;
 }
 
-export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): ConfigIssue[] {
+/** What the calibration service last emitted to abort_thresholds.txt: uid -> target PSI. */
+export type AbortThresholds = Map<number, number>;
+
+/** Parse abort_thresholds.txt ("uid target_psi raw_adc" per line, # comments), as
+ *  config_broadcast's readAbortThresholds does. */
+export function parseAbortThresholds(text: string): AbortThresholds {
+  const out: AbortThresholds = new Map();
+  for (const line of text.split('\n')) {
+    if (!line.trim() || line.startsWith('#')) continue;
+    const [uid, psi, adc] = line.trim().split(/\s+/).map(Number);
+    if (Number.isFinite(uid) && Number.isFinite(psi) && Number.isFinite(adc)) out.set(uid, psi);
+  }
+  return out;
+}
+
+// ── PT roles, as the C++ resolves them ─────────────────────────────────────────
+// Mirrors fsw::config::pt_role_tables / find_pt_role (SensorTables.cpp): a PT role lives on an
+// enabled PT board with board_id > 0, named in [sensor_roles_<board>] (falling back to a non-empty
+// legacy [sensor_roles]), or on an enabled LabJack T7's PT channel.
+interface PtRole {
+  role: string;
+  boardKey: string;
+  board: any;
+  channel: number;
+  t7: boolean;
+}
+
+function ptRoles(config: any): PtRole[] {
+  const boards: Record<string, any> = (config?.boards && typeof config.boards === 'object')
+    ? config.boards : {};
+  const out: PtRole[] = [];
+  const legacy = config?.sensor_roles;
+  for (const [key, b] of Object.entries<any>(boards)) {
+    if (String(b?.type ?? '') !== 'PT' || b?.enabled === false) continue;
+    if (!(Number(b?.board_id ?? b?.id ?? -1) > 0)) continue;
+    let roles = config?.[`sensor_roles_${key}`];
+    if (!roles || typeof roles !== 'object' || Object.keys(roles).length === 0) roles = legacy;
+    if (!roles || typeof roles !== 'object') continue;
+    for (const [role, ch] of Object.entries<any>(roles))
+      out.push({ role, boardKey: key, board: b, channel: Number(ch), t7: false });
+  }
+  for (const [key, b] of Object.entries<any>(boards)) {
+    if (String(b?.type ?? '') !== 'T7' || b?.enabled === false) continue;
+    if (!(Number(b?.board_id ?? -1) > 0)) continue;
+    for (const c of Array.isArray(b?.channels) ? b.channels : [])
+      if (c?.kind === 'PT' && typeof c?.role === 'string' && c.role)
+        out.push({ role: c.role, boardKey: key, board: b, channel: Number(c.ain), t7: true });
+  }
+  return out;
+}
+
+/**
+ * Names a dynamic-state script cannot refer to. Mirrors fsw::script::build_slug_tables: one table
+ * each for [actuator_roles], PT roles and [[states]]; a name whose slug is not an identifier, or
+ * two names in one table with one slug, is refused, and with it every dynamic state on the rig.
+ */
+export function slugTableIssues(config: any): { page: ConfigPageId; message: string }[] {
+  const out: { page: ConfigPageId; message: string }[] = [];
+  const tables: [string, ConfigPageId, string[]][] = [
+    ['actuator', 'roles', Object.keys((config?.actuator_roles ?? {}) as Record<string, any>)],
+    ['sensor', 'roles', ptRoles(config).map((r) => r.role)],
+    ['state', 'state', (Array.isArray(config?.states) ? config.states : [])
+      .map((s: any) => (typeof s?.name === 'string' ? s.name : ''))],
+  ];
+  for (const [where, page, names] of tables) {
+    const seen = new Map<string, string>();
+    for (const name of names) {
+      if (!name) continue;
+      const slug = slugify(name);
+      if (!isValidSlug(slug)) {
+        out.push({ page, message:
+          `The ${where} name "${name}" cannot be used in a state script (its script name would be ` +
+          `"${slug}"; only letters, digits, spaces and underscores, starting with a letter). The ` +
+          'sequencer refuses every dynamic state while any name is unusable. Rename it.' });
+        continue;
+      }
+      const other = seen.get(slug);
+      if (other !== undefined && other !== name)
+        out.push({ page, message:
+          `The ${where}s "${other}" and "${name}" both become ${slug} in a state script, so a ` +
+          'script cannot tell them apart. The sequencer refuses every dynamic state until one is renamed.' });
+      else seen.set(slug, name);
+    }
+  }
+  return out;
+}
+
+/**
+ * [abort_pts] entries config_broadcast cannot give a board-side trip. Mirrors buildPackets'
+ * abort-threshold walk: the name must be a PT role on an ESP32 PT board (a T7 cannot trip), on a
+ * channel 1-255, and only a ratiometric (0.5-4.5 V) sensor on the "physics" model is inverted.
+ * For any other model config_broadcast uses the calibration service's threshold when that service
+ * has emitted one for the sensor, which it does only after an operator cubic capture. Until then
+ * the board has no trip for it: a warning that does not block a run (DAQ team, 2026-11-24), since
+ * a stand is routinely brought up before its cubics are captured. Every other case is an error.
+ */
+export interface AbortTripIssue {
+  level: ConfigIssueLevel;
+  message: string;
+  blocks?: boolean;
+}
+
+export function abortTripIssues(config: any, thresholds?: AbortThresholds): AbortTripIssue[] {
+  const abort = config?.abort_pts;
+  if (!abort || typeof abort !== 'object') return [];
+  const roles = ptRoles(config);
+  const found: AbortTripIssue[] = [];
+  const out = { push: (message: string) => found.push({ level: 'error', message }) };
+  for (const [name, raw] of Object.entries<any>(abort)) {
+    const tag = `abort_pts "${name}"`;
+    const ref = roles.find((r) => r.role === name);
+    if (!ref) {
+      out.push(`${tag}: no PT sensor role has this name, so no board trips on it. Name a PT role ` +
+        'from Roles, or remove the entry.');
+      continue;
+    }
+    if (ref.t7) {
+      out.push(`${tag} is a LabJack T7 input; no board can trip on it. Move the abort to a PT board sensor.`);
+      continue;
+    }
+    if (!(ref.channel >= 1 && ref.channel <= 255)) {
+      out.push(`${tag}: its channel ${ref.channel} is out of range, so no board trips on it.`);
+      continue;
+    }
+    const b = ref.board ?? {};
+    const loop = 'hp_pt_connectors' in b || 'hp_pt_full_scale_psi' in b ||
+      b.pt_type === '4-20 mA absolute';
+    const models = config?.[`calibration_model_${ref.boardKey}`];
+    const model = (models && typeof models[name] === 'string') ? models[name] : (loop ? 'physics' : 'cubic');
+    if (model !== 'physics' || loop) {
+      // Only the backend can see what the calibration service has emitted; the editor cannot, so
+      // without that list this case is left to the session-start gate.
+      if (thresholds === undefined) continue;
+      const uid = Number(b.board_id ?? b.id) * 100 + ref.channel;
+      const emitted = thresholds.get(uid);
+      if (emitted !== undefined && Math.abs(emitted - Number(raw)) < 0.5) continue;
+      found.push({ level: 'warn', blocks: false, message:
+        `${tag}: model "${model}"${loop ? ' (4-20 mA)' : ''} cannot be turned into a board ` +
+        'trip threshold, so the board has no overpressure trip for it until the calibration service ' +
+        'computes one from an operator calibration. Set its calibration model to "physics" for a ' +
+        'ratiometric sensor, or calibrate it before the run.' });
+      continue;
+    }
+    const scales = config?.[`calibration_full_scale_${ref.boardKey}`];
+    const fs = (scales && Number(scales[name]) > 0) ? Number(scales[name]) : 1000;
+    if (!(fs > 0) || !(Number(raw) > 0))
+      out.push(`${tag}: a non-positive full scale or threshold gives the board no trip.`);
+  }
+  return found;
+}
+
+export function validateConfigForRun(
+  config: any,
+  csv?: Partial<StateCsvSet>,
+  abortThresholds?: AbortThresholds,
+): ConfigIssue[] {
   const issues: ConfigIssue[] = [];
   const add = (page: ConfigPageId, level: ConfigIssueLevel, message: string) =>
     issues.push({ page, level, message });
@@ -644,6 +806,21 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
     }
   }
 
+  // ── Script names ──────────────────────────────────────────────────────────
+  // The sequencer builds one slug table per namespace (actuators, PT sensors, states) before it
+  // loads any dynamic state (fsw::script::build_slug_tables). A name that cannot become a slug, or
+  // two names that collide, refuses EVERY dynamic state on the rig, and until now only the
+  // sequencer's own log said so.
+  for (const m of slugTableIssues(config)) add(m.page, 'error', m.message);
+
+  // ── Board abort trips ─────────────────────────────────────────────────────
+  // config_broadcast turns each [abort_pts] entry into a raw ADC threshold the PT board trips on
+  // by itself. An entry it cannot turn into one leaves that sensor with no board-side overpressure
+  // abort, and until now only config_broadcast's log said so (once, at runtime).
+  for (const m of abortTripIssues(config, abortThresholds))
+    issues.push({ page: 'roles', level: m.level, message: m.message,
+      ...(m.blocks === false ? { blocks: false } : {}) });
+
   // ── Controller PWM assignment ─────────────────────────────────────────────
   // The only statement of which hardware the controller drives. Unresolved means the controller
   // comes up with its fire gate disabled, which an operator otherwise discovers mid-countdown.
@@ -656,6 +833,26 @@ export function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>): C
   const gActuators = grid(csv?.actuators);
   const gDelays = grid(csv?.delays);
   const gTransitions = grid(csv?.transitions);
+
+  // ── Board-side vent and abort positions ───────────────────────────────────
+  // config_broadcast reads each actuator's vent and abort position from the Actuators table's
+  // "Vent" and "Engine Abort" columns (parseVentAbortFromCsv) and ships them in ACTUATOR_CONFIG:
+  // what the survivor board drives every valve to when it aborts on its own. Without either
+  // column it reads nothing and sends 0 (closed) for every valve, including one the table opens
+  // in Vent, and until now nothing said so.
+  // Only a rig with a designated survivor gets ACTUATOR_CONFIG at all (buildPackets returns
+  // nothing without one), so only there do the positions matter.
+  const survivor = Object.values(boards).some((b: any) =>
+    String(b?.type ?? '').toUpperCase() === 'ACTUATOR' && b?.enabled !== false &&
+    b?.designated_survivor === true);
+  if (gActuators && survivor) {
+    const missing = VENT_ABORT_COLUMNS.filter((c) => !gActuators.states.includes(c));
+    if (missing.length > 0)
+      add('state', 'error',
+        `The Actuators table has no ${missing.map((c) => `"${c}"`).join(' or ')} column, so the ` +
+        'boards are sent no vent or abort positions: every valve is configured closed for a ' +
+        'board-side abort, whatever the table says. Add the column(s).');
+  }
 
   if (stateList.length > 0) {
     // Ids and names are both lookup keys: ids are what past runs stored, names are what the CSV

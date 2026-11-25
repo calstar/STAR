@@ -11,6 +11,8 @@ Environment=DAQ_CONFIG=config/config.toml
 EnvironmentFile=-%h/.config/daq/pipeline.env
 ExecStart=/bin/bash -c 'if [ -x ./build/bin/heartbeat_service ]; then exec ./build/bin/heartbeat_service --config ${DAQ_CONFIG}; else exec python3 archive/legacy/python-services/heartbeat_service.py --config ${DAQ_CONFIG}; fi'
 Restart=always
+# 78 (EX_CONFIG) means the service refused its config; restarting cannot fix that.
+RestartPreventExitStatus=78
 RestartSec=5
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 

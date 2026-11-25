@@ -371,9 +371,10 @@ class TestHandControl:
 
 
 class TestIgnitionPathsTheTableAllows:
-    def test_fire_straight_from_ox_press_lights_because_the_table_lets_it(self) -> None:
-        """One of the seven bypasses. The twin allows it, warns, and it burns
-        -- the stand would do the same, which is the point of the warning."""
+    def test_fire_straight_from_fuel_press_is_refused(self) -> None:
+        """This was one of the seven bypasses the short rows opened; the twin
+        allowed it because the stand did. With the rows repaired neither does:
+        Fire from a press state is refused and nothing lights."""
         session = stand(engine=True)
         loaded(session)
         charged(session)
@@ -382,10 +383,12 @@ class TestIgnitionPathsTheTableAllows:
         go(session, "Press Standby")
         go(session, "Fuel Press")
         run(session, 3.0)
-        assert "Fuel Press -> Fire is permitted" in "\n".join(session.machine.warnings)
-        go(session, "Fire")
-        run(session, 2.0)
-        assert chamber_psi(session) > 200.0
+        assert not session.machine.can_go("Fuel Press", "Fire")
+        with pytest.raises(PermissionError):
+            session.command_state("Fire")
+        assert session.state == "Fuel Press"
+        run(session, 1.0)
+        assert chamber_psi(session) < 50.0
 
     def test_fire_with_unpressed_tanks_is_a_weak_start(self) -> None:
         session = stand(engine=True)
