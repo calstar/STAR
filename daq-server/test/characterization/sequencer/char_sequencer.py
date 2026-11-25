@@ -1075,14 +1075,20 @@ def s_aborts(run):
     s.start(cfg)
     time.sleep(0.4)
     s.nav("Press Standby")
-    # A delayed stage of the state being left is not cancelled by an abort's entry (abort entries
-    # use is_transition=false, which does not bump the schedule generation): freeze it.
+    # An abort's entry cancels a delayed stage of the state being left (C4-3): no Fuel Press
+    # +0.2 s stage after Engine Abort, and Engine Abort's own column commands Fuel Press too (it
+    # used to skip a role whose stage was pending). One ABORT burst per abort (C1-10).
     s.step("TRANSITION:Fuel Press", 0.05)  # its +0.2 s stage is still pending
     s.step("TRANSITION:Engine Abort", 0.5)
-    s.step("TRANSITION:GSE Abort")  # the second abort cancels the first's ABORT_DONE
+    # abort -> abort: the new column, no second burst, the first abort's ABORT_DONE kept
+    s.step("TRANSITION:GSE Abort")
     s.settle(until_type=8)
     s.step("TRANSITION:Emergency Abort", 0.3)
-    s.step("TRANSITION:Emergency Abort")  # a self-transition re-broadcasts
+    s.step("TRANSITION:Emergency Abort")  # a self-transition: no burst either
+    s.settle(min_wait=1.2)
+    s.step("TRANSITION:Idle")  # leaving the aborts clears the latch...
+    s.settle()
+    s.step("TRANSITION:Emergency Abort")  # ...so the next abort broadcasts, once
     s.settle(until_type=8)
     return s.finish()
 
@@ -1100,10 +1106,12 @@ def _twin_scripts_cfg(s: Session, overrides=None) -> Path:
 def s_scripts_load(run):
     """What the sequencer made of every dynamic state at load, and what entering one costs.
 
-    Entering a state refused at load deadlocks the command worker whenever Elodin is connected:
-    doTransitionTo() holds config_mutex_ across publishState(), which takes it again. Every later
-    command then waits out kCommandTimeoutSeconds (10 s) and fails. Frozen as found (main's
-    behaviour), once here. Each refusal's reason is the SCRIPTS line (the reply quotes it).
+    Entering a state refused at load used to deadlock the command worker whenever Elodin is
+    connected (C4-1): doTransitionTo() held config_mutex_ across publishState(), which takes it
+    again, and every later command waited out kCommandTimeoutSeconds (10 s) and failed. The
+    refusal is now prompt and the worker keeps serving: the TRANSITION:Armed after it is OK (debug
+    mode is on). (This profile has no abort state; default/aborts covers aborts.) Each refusal's
+    reason is the SCRIPTS line (the reply quotes it).
     """
     s = Session(run, "digital-twin/scripts-load")
     cfg = _twin_scripts_cfg(s)
@@ -1116,10 +1124,18 @@ def s_scripts_load(run):
     s.step(
         "TRANSITION:Script Missing", 0.05
     )  # debug mode does not make it enterable...
+    t0 = time.monotonic()
     s.step(
         "TRANSITION:Armed", 0.05
-    )  # ...and the worker is now wedged: 10 s, then refused
-    s.step("DEBUG_MODE:0", 0.05)  # replies OK without waiting on anything
+    )  # ...and the worker is still serving: a prompt OK, not 10 s and then ERR
+    took = time.monotonic() - t0
+    # The worker's command timeout is 10 s; a served command takes milliseconds.
+    if took > 5.0:
+        raise AssertionError(
+            f"TRANSITION:Armed after a refused state took {took:.1f} s:"
+            " the command worker is wedged (C4-1)"
+        )
+    s.step("DEBUG_MODE:0", 0.05)
     return s.finish()
 
 

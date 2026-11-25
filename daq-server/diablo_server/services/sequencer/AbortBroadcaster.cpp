@@ -7,6 +7,7 @@
 
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -66,9 +67,23 @@ bool AbortBroadcaster::configure(const std::string& broadcast_ip, uint16_t port,
 
 AbortBroadcaster::~AbortBroadcaster() {
     std::lock_guard<std::mutex> lk(done_thread_mutex_);
-    done_thread_running_ = false;
-    if (done_thread_.joinable())
-        done_thread_.join();
+    cancelDoneLocked();
+}
+
+void AbortBroadcaster::cancelDoneLocked() {
+    // Wake the waiter rather than let it notice on its next poll. It used to sleep in 50 ms steps,
+    // so cancelling it (and joining it) cost the caller up to one step.
+    {
+        std::lock_guard<std::mutex> wl(done_wait_mutex_);
+        done_thread_running_ = false;
+    }
+    done_wait_cv_.notify_all();
+    if (done_thread_.joinable()) {
+        if (done_thread_.get_id() == std::this_thread::get_id())
+            done_thread_.detach();  // cannot join self; it is returning anyway
+        else
+            done_thread_.join();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,13 +160,7 @@ void AbortBroadcaster::triggerAbort() {
     // would move onto a joinable thread and terminate the process.
     std::lock_guard<std::mutex> lk(done_thread_mutex_);
 
-    done_thread_running_ = false;
-    if (done_thread_.joinable()) {
-        if (done_thread_.get_id() == std::this_thread::get_id())
-            done_thread_.detach();  // cannot join self; it is returning anyway
-        else
-            done_thread_.join();
-    }
+    cancelDoneLocked();
 
     // Schedule ABORT_DONE
     done_thread_running_ = true;
@@ -162,14 +171,14 @@ void AbortBroadcaster::triggerAbort() {
 
 void AbortBroadcaster::waitAndSendAbortDone() {
     const auto delay = std::chrono::milliseconds(abort_done_delay_ms_);
-    const auto step = std::chrono::milliseconds(50);
-    auto elapsed = std::chrono::milliseconds(0);
-
-    while (done_thread_running_ && elapsed < delay) {
-        std::this_thread::sleep_for(step);
-        elapsed += step;
+    bool cancelled = false;
+    {
+        std::unique_lock<std::mutex> wl(done_wait_mutex_);
+        cancelled = done_wait_cv_.wait_for(wl, delay, [this]() {
+            return !done_thread_running_.load();
+        });
     }
-    if (done_thread_running_)
+    if (!cancelled)
         sendPacket(static_cast<uint8_t>(daq::PacketType::ABORT_DONE));
 }
 

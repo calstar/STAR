@@ -33,7 +33,7 @@ asked for that specific action**:
 
 - `build/bin/sequencer_service` — commands valves over UDP the moment it starts
 - `build/bin/controller_service` — drives the PWM ignition gate
-- Any `TRANSITION:`, `ACTUATOR:`, `DEBUG_MODE:`, `EXTEND_FIRE`, `RELOAD_CONFIG` sent to TCP `:9998`
+- Any `TRANSITION:`, `ACTUATOR:`, `DEBUG_MODE:`, `EXTEND_FIRE` sent to TCP `:9998`
 - `FIRE_START` / `FIRE_STOP` to TCP `:9999`
 - `systemctl --user start|restart|stop` of `sensor-actuator`, `sensor-controller`, `sensor-daq`,
   `sensor-elodin`, `sensor-calibration`, `sensor-simulator`

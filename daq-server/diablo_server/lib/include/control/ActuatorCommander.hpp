@@ -169,6 +169,20 @@ public:
     /** Drop every script position. Called on any transition, beside clearAllManualOverrides. */
     void clearScriptPositions();
 
+    /**
+     * Abandon every delayed stage still waiting to fire, and forget which roles were waiting.
+     *
+     * Called on abort entry. An abort applies its column with is_transition=false, which does not
+     * bump the stage generation, so without this a delayed stage armed by the state being left
+     * still landed after the abort's batch and moved a valve the way the pre-abort state wanted.
+     * Clearing pending_roles_ matters as much: a role still waiting on its delay was skipped by
+     * the abort's batch and by its republish, so the abort never commanded it at all.
+     *
+     * When this returns, no stage of an earlier schedule is mid-send and none can start: a stage
+     * checks the generation and sends under stage_emit_mutex_, which this takes to bump it.
+     */
+    void cancelPendingStages();
+
     /** Set the Elodin client for publishing commanded state [0x32, ch] to the DB. */
     /**
      * Which state hands PWM actuators to controller_service. During it this commander stops
@@ -217,6 +231,10 @@ private:
      *  and any delay longer than the republish period could never be observed. */
     std::set<std::string> pending_roles_;
     std::mutex pending_roles_mutex_;
+    /** Held by a delayed stage across its generation check and its send, and by
+     *  cancelPendingStages() while it bumps the generation, so a cancel cannot slip between a
+     *  stage's check and its send. Never held by anything else. */
+    std::mutex stage_emit_mutex_;
     // CSV: state_name → { actuator_name → logical_pos (0 or 1) }
     std::map<std::string, std::map<std::string, int>> state_actuators_;
 

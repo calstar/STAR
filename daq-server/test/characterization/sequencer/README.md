@@ -49,7 +49,7 @@ seconds, and chosen so no state's actuator loop ends near a republish tick (N5).
 | `<p>/actuators` | `ACTUATOR:` for every role, open and close; refusal without debug; aliases, case, unknown role, bad values; overrides riding the republish; cleared by `DEBUG_MODE:0` and by a transition. |
 | `<p>/debug` | what `DEBUG_MODE` unlocks (an illegal transition) and does not (a refused dynamic state); bad values. |
 | `default/malformed` | `RELOAD_CONFIG` (there is none: `ERR:unknown command`), unknown commands, bad holds, blank lines, CRLF, two commands per write, oversize line, `SCRIPTS`. |
-| `default/holds`, `default/aborts` | hold-duration refusals, `EXTEND_FIRE` in and out of Fire; abort ordering, a stale stage landing after an abort, abort-from-abort cancelling ABORT_DONE. |
+| `default/holds`, `default/aborts` | hold-duration refusals, `EXTEND_FIRE` in and out of Fire; abort ordering, an abort cancelling a pending stage, abort-from-abort sending no second burst, a fresh abort after leaving the aborts. |
 | `default/fire-*` | Ready → Fire with the controller up, up with a test duty (PWM stream), up with its gate disabled, down (the retry path; in `default/entry/Fire`), and with `sequencer_owns_valves`. |
 | `controller/*` | `FIRE_START` / `FIRE_STOP` / junk straight to controller_service's port: shipped config, test duty, gate disabled, unresolved PWM roles. |
 | `default/clients`, `controller/clients` | the concurrent-client cap of each command port (`kMaxClients` / `kMaxControlClients`, 64; DESIGN-WP8 §7.2 gap 5): 64 idle connections held, the 65th gets `ERR:too many connections\n` and is closed, the busy log line's exact bytes (`[Sequencer] client limit (64) reached — refusing connection`; `[ControllerService] ⚠️  client limit (64) reached — refusing connection`, U+26A0 U+FE0F then two spaces, em dash U+2014), and a 66th is served once the 64 close. Both busy lines are harness-read from here on (STYLE S15). |
@@ -78,8 +78,8 @@ the rules below were changed for those mechanisms, never to fit one golden.
   N is frozen (3 for an actuator batch, 4 for an abort broadcast, 1 for PWM).
 - **N3a** The same send again within 150 ms is one line with `(xK sends)`: a state entry is always
   the staged apply *and* the continuous loop's first pass, identical bytes, normally ~3 ms apart but
-  measured up to ~60 ms on this loaded machine; an abort sends its broadcast twice (top and bottom of
-  `doTransitionTo`). K is frozen.
+  measured up to ~60 ms on this loaded machine (an abort used to send its broadcast twice, top and
+  bottom of `doTransitionTo`, until C1-10 was fixed). K is frozen.
 - **N3b** Lines with the same time bucket are printed in canonical order (packet type, then
   bytes), never arrival order: the loop's first pass, a +1 ms stage, the second abort broadcast and
   the controller's PWM answer race each other inside a few tens of ms. The one ordering the code
@@ -115,10 +115,10 @@ the rules below were changed for those mechanisms, never to fit one golden.
   clear of the next tick. The tail must exceed the 60 ms boundary lookahead: at 50 ms, on Linux
   under load, the next command's transition publish arrived within 60 ms of the tick, the tick was
   taken for that state's entry, and it showed up as an extra `+4s` command with `every` lost.
-  **An abort entry's lookahead is 110 ms** (`wire.ABORT_DONE_STEP_NS`): after the column is sent,
-  `doTransitionTo`'s second `triggerAbort()` joins the ABORT_DONE thread the first one started,
-  which only sees the cancel at the end of its current 50 ms `sleep_for` step
-  (`AbortBroadcaster::waitAndSendAbortDone`), and only then is the transition published. Measured
+  **An abort entry's lookahead is 110 ms** (`wire.ABORT_DONE_STEP_NS`). On main, after the column
+  was sent, `doTransitionTo`'s second `triggerAbort()` joined the ABORT_DONE thread the first one
+  started, which only saw the cancel at the end of its current 50 ms `sleep_for` step, and only then
+  was the transition published (C1-10; fixed, the extra 50 ms is now slack). Measured on main
   first-entry-send to publish: non-abort entries <= 17 ms, abort entries 37-76 ms at 1x+ load (the
   sequencer instrumented, 140 abort entries). At 60 ms, under load, `GSE Abort -> Emergency Abort`'s
   entry (same per-board column sizes as GSE Abort's, 4 s into GSE Abort's loop) was taken for two
@@ -158,15 +158,23 @@ returned and been reaped within 1.0 s, so the 66th connection meets a count of 0
 Goldens are recorded on macOS (darwin-arm64). N4/N5 are chosen so Linux timing should land in the
 same buckets, but that has not been verified.
 
-## Found while characterizing (frozen as found, not fixed)
+## Found while characterizing (fixed since)
 
-- Entering a dynamic state that was refused at load **deadlocks the sequencer's command worker**
-  whenever Elodin is connected (always, on the stand): `doTransitionTo` holds `config_mutex_` while
-  calling `publishState()`, which locks it again. Every later command (aborts included) waits the
-  10 s command timeout and fails. `digital-twin__scripts-load` freezes it.
-- An abort entry applies its column with `is_transition=false`, which does not bump the stage
-  generation: a delayed stage of the state being left still lands after the abort's batch
-  (`default__aborts`, Fuel Press +0.2 s after Engine Abort).
+- C4-1 (#231): entering a dynamic state that was refused at load **deadlocked the sequencer's
+  command worker** whenever Elodin was connected: `doTransitionTo` held `config_mutex_` while
+  calling `publishState()`, which locks it again, and every later command (aborts included) waited
+  the 10 s command timeout and failed. `digital-twin__scripts-load` now shows the refusal followed
+  by a prompt `OK` (the transition's column goes out), and fails outright if that `OK` takes
+  longer than 5 s.
+- C4-3 (#232): an abort entry applied its column with `is_transition=false`, which did not bump the
+  stage generation: a delayed stage of the state being left still landed after the abort's batch,
+  and the batch skipped the role that stage was holding. `default__aborts` now shows Engine Abort's
+  column carrying Fuel Press and no stage after it.
+- C1-10: every abort sent two ABORT bursts (8 datagrams), and abort -> abort broadcast again. Now
+  one burst per abort; abort -> abort (escalation or self-transition) sends none and keeps the
+  pending ABORT_DONE; leaving the aborts re-arms it (`default__aborts`, `packets/service_abort`).
+
+## Found while characterizing (frozen as found, not fixed)
 - With `sequencer_owns_valves = true` the Fire column still skips the PWM-assigned roles, so nobody
   commands them during the burn (`default__fire-sequencer-owns-valves`).
 - controller_service does not strip `\r`: `FIRE_START\r\n` is `ERR` (the sequencer trims it). With
