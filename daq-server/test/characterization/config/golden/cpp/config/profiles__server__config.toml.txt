@@ -1,4 +1,4 @@
-input ../../../config/profiles/server/config.toml readable=true bytes=19317
+input ../../../config/profiles/server/config.toml readable=true bytes=19283
 
 === config::load
 network.bind_ip = "0.0.0.0"

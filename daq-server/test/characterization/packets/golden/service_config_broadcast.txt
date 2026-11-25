@@ -4,7 +4,7 @@
 # unless the case says so.
 ipToU32Le(127.0.0.11) = 0x7f00000b
 ipToU32Le(not-an-ip) = 0x00000000
-## config_base: 9 packets
+## config_base: 11 packets
 # -> 127.0.0.12:5005 type=6 len=122
   header.packet_type @0    +1  : 06
   header.version @1    +1  : 00
@@ -269,6 +269,16 @@ ipToU32Le(not-an-ip) = 0x00000000
     abort_actuator[13].ip as LE u32 = 0x7f00000c
     abort_actuator[14].ip as LE u32 = 0x7f00000c
     abort_actuator[15].ip as LE u32 = 0x7f00000c
+# -> 127.0.0.71:5005 type=16 len=17
+  header.packet_type @0    +1  : 10
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +11 : 02 01 a0 0f 20 4e 02 a0 0f 20 4e
+# -> 127.0.0.71:5005 type=17 len=13
+  header.packet_type @0    +1  : 11
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +7  : 02 01 00 00 02 00 00
 # -> 127.0.0.61:5005 type=5 len=12
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -345,7 +355,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   reference_voltage @11   +1  : 00
   necessary_for_abort @12   +1  : 00
   enable_serial_printing @13   +1  : 01
-## config_base+thresholds: 9 packets
+## config_base+thresholds: 11 packets
 # -> 127.0.0.12:5005 type=6 len=140
   header.packet_type @0    +1  : 06
   header.version @1    +1  : 00
@@ -628,6 +638,16 @@ ipToU32Le(not-an-ip) = 0x00000000
     abort_actuator[13].ip as LE u32 = 0x7f00000c
     abort_actuator[14].ip as LE u32 = 0x7f00000c
     abort_actuator[15].ip as LE u32 = 0x7f00000c
+# -> 127.0.0.71:5005 type=16 len=17
+  header.packet_type @0    +1  : 10
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +11 : 02 01 a0 0f 20 4e 02 a0 0f 20 4e
+# -> 127.0.0.71:5005 type=17 len=13
+  header.packet_type @0    +1  : 11
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +7  : 02 01 00 00 02 00 00
 # -> 127.0.0.61:5005 type=5 len=12
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -704,7 +724,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   reference_voltage @11   +1  : 00
   necessary_for_abort @12   +1  : 00
   enable_serial_printing @13   +1  : 01
-## config_base+stale_threshold: 9 packets
+## config_base+stale_threshold: 11 packets
 # -> 127.0.0.12:5005 type=6 len=122
   header.packet_type @0    +1  : 06
   header.version @1    +1  : 00
@@ -969,6 +989,16 @@ ipToU32Le(not-an-ip) = 0x00000000
     abort_actuator[13].ip as LE u32 = 0x7f00000c
     abort_actuator[14].ip as LE u32 = 0x7f00000c
     abort_actuator[15].ip as LE u32 = 0x7f00000c
+# -> 127.0.0.71:5005 type=16 len=17
+  header.packet_type @0    +1  : 10
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +11 : 02 01 a0 0f 20 4e 02 a0 0f 20 4e
+# -> 127.0.0.71:5005 type=17 len=13
+  header.packet_type @0    +1  : 11
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +7  : 02 01 00 00 02 00 00
 # -> 127.0.0.61:5005 type=5 len=12
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -1045,7 +1075,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   reference_voltage @11   +1  : 00
   necessary_for_abort @12   +1  : 00
   enable_serial_printing @13   +1  : 01
-## config_base+physics_fuel_upstream: 9 packets
+## config_base+physics_fuel_upstream: 11 packets
 # -> 127.0.0.12:5005 type=6 len=131
   header.packet_type @0    +1  : 06
   header.version @1    +1  : 00
@@ -1319,6 +1349,16 @@ ipToU32Le(not-an-ip) = 0x00000000
     abort_actuator[13].ip as LE u32 = 0x7f00000c
     abort_actuator[14].ip as LE u32 = 0x7f00000c
     abort_actuator[15].ip as LE u32 = 0x7f00000c
+# -> 127.0.0.71:5005 type=16 len=17
+  header.packet_type @0    +1  : 10
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +11 : 02 01 a0 0f 20 4e 02 a0 0f 20 4e
+# -> 127.0.0.71:5005 type=17 len=13
+  header.packet_type @0    +1  : 11
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +7  : 02 01 00 00 02 00 00
 # -> 127.0.0.61:5005 type=5 len=12
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -1395,7 +1435,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   reference_voltage @11   +1  : 00
   necessary_for_abort @12   +1  : 00
   enable_serial_printing @13   +1  : 01
-## config_base_no_csv: 9 packets
+## config_base_no_csv: 11 packets
 # -> 127.0.0.12:5005 type=6 len=122
   header.packet_type @0    +1  : 06
   header.version @1    +1  : 00
@@ -1660,6 +1700,16 @@ ipToU32Le(not-an-ip) = 0x00000000
     abort_actuator[13].ip as LE u32 = 0x7f00000c
     abort_actuator[14].ip as LE u32 = 0x7f00000c
     abort_actuator[15].ip as LE u32 = 0x7f00000c
+# -> 127.0.0.71:5005 type=16 len=17
+  header.packet_type @0    +1  : 10
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +11 : 02 01 a0 0f 20 4e 02 a0 0f 20 4e
+# -> 127.0.0.71:5005 type=17 len=13
+  header.packet_type @0    +1  : 11
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +7  : 02 01 00 00 02 00 00
 # -> 127.0.0.61:5005 type=5 len=12
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -1991,152 +2041,162 @@ ipToU32Le(not-an-ip) = 0x00000000
   necessary_for_abort @12   +1  : 00
   enable_serial_printing @13   +1  : 01
 ## profile_digital-twin: 9 packets
-# -> 127.0.0.12:5005 type=6 len=101
+# -> 127.0.0.12:5005 type=6 len=108
   header.packet_type @0    +1  : 06
   header.version @1    +1  : 00
   header.timestamp @2    +4  : 00 00 00 00
   is_abort_controller @6    +1  : 01
-  num_abort_actuators @7    +1  : 0d
+  num_abort_actuators @7    +1  : 0e
   abort_actuator[0].ip_address @8    +4  : 0c 00 00 7f
   abort_actuator[0].actuator_id @12   +1  : 03
   abort_actuator[0].vent_state @13   +1  : 00
   abort_actuator[0].abort_state @14   +1  : 00
-  abort_actuator[1].ip_address @15   +4  : 0e 00 00 7f
-  abort_actuator[1].actuator_id @19   +1  : 0a
+  abort_actuator[1].ip_address @15   +4  : 0c 00 00 7f
+  abort_actuator[1].actuator_id @19   +1  : 08
   abort_actuator[1].vent_state @20   +1  : 00
   abort_actuator[1].abort_state @21   +1  : 00
   abort_actuator[2].ip_address @22   +4  : 0e 00 00 7f
-  abort_actuator[2].actuator_id @26   +1  : 02
+  abort_actuator[2].actuator_id @26   +1  : 0a
   abort_actuator[2].vent_state @27   +1  : 00
   abort_actuator[2].abort_state @28   +1  : 00
   abort_actuator[3].ip_address @29   +4  : 0e 00 00 7f
-  abort_actuator[3].actuator_id @33   +1  : 05
+  abort_actuator[3].actuator_id @33   +1  : 02
   abort_actuator[3].vent_state @34   +1  : 00
   abort_actuator[3].abort_state @35   +1  : 00
-  abort_actuator[4].ip_address @36   +4  : 0c 00 00 7f
-  abort_actuator[4].actuator_id @40   +1  : 06
+  abort_actuator[4].ip_address @36   +4  : 0e 00 00 7f
+  abort_actuator[4].actuator_id @40   +1  : 05
   abort_actuator[4].vent_state @41   +1  : 00
   abort_actuator[4].abort_state @42   +1  : 00
   abort_actuator[5].ip_address @43   +4  : 0c 00 00 7f
-  abort_actuator[5].actuator_id @47   +1  : 01
+  abort_actuator[5].actuator_id @47   +1  : 06
   abort_actuator[5].vent_state @48   +1  : 00
   abort_actuator[5].abort_state @49   +1  : 00
   abort_actuator[6].ip_address @50   +4  : 0c 00 00 7f
-  abort_actuator[6].actuator_id @54   +1  : 02
+  abort_actuator[6].actuator_id @54   +1  : 01
   abort_actuator[6].vent_state @55   +1  : 00
   abort_actuator[6].abort_state @56   +1  : 00
-  abort_actuator[7].ip_address @57   +4  : 0e 00 00 7f
-  abort_actuator[7].actuator_id @61   +1  : 03
+  abort_actuator[7].ip_address @57   +4  : 0c 00 00 7f
+  abort_actuator[7].actuator_id @61   +1  : 02
   abort_actuator[7].vent_state @62   +1  : 00
   abort_actuator[7].abort_state @63   +1  : 00
   abort_actuator[8].ip_address @64   +4  : 0e 00 00 7f
-  abort_actuator[8].actuator_id @68   +1  : 06
+  abort_actuator[8].actuator_id @68   +1  : 03
   abort_actuator[8].vent_state @69   +1  : 00
   abort_actuator[8].abort_state @70   +1  : 00
   abort_actuator[9].ip_address @71   +4  : 0e 00 00 7f
-  abort_actuator[9].actuator_id @75   +1  : 07
+  abort_actuator[9].actuator_id @75   +1  : 06
   abort_actuator[9].vent_state @76   +1  : 00
   abort_actuator[9].abort_state @77   +1  : 00
-  abort_actuator[10].ip_address @78   +4  : 0c 00 00 7f
-  abort_actuator[10].actuator_id @82   +1  : 0a
+  abort_actuator[10].ip_address @78   +4  : 0e 00 00 7f
+  abort_actuator[10].actuator_id @82   +1  : 07
   abort_actuator[10].vent_state @83   +1  : 00
   abort_actuator[10].abort_state @84   +1  : 00
   abort_actuator[11].ip_address @85   +4  : 0c 00 00 7f
-  abort_actuator[11].actuator_id @89   +1  : 07
+  abort_actuator[11].actuator_id @89   +1  : 0a
   abort_actuator[11].vent_state @90   +1  : 00
   abort_actuator[11].abort_state @91   +1  : 00
   abort_actuator[12].ip_address @92   +4  : 0c 00 00 7f
-  abort_actuator[12].actuator_id @96   +1  : 09
+  abort_actuator[12].actuator_id @96   +1  : 07
   abort_actuator[12].vent_state @97   +1  : 00
   abort_actuator[12].abort_state @98   +1  : 00
-  num_abort_pts @99   +1  : 00
-  enable_serial_printing @100  +1  : 01
+  abort_actuator[13].ip_address @99   +4  : 0c 00 00 7f
+  abort_actuator[13].actuator_id @103  +1  : 09
+  abort_actuator[13].vent_state @104  +1  : 00
+  abort_actuator[13].abort_state @105  +1  : 00
+  num_abort_pts @106  +1  : 00
+  enable_serial_printing @107  +1  : 02
     abort_actuator[0].ip as LE u32 = 0x7f00000c
-    abort_actuator[1].ip as LE u32 = 0x7f00000e
+    abort_actuator[1].ip as LE u32 = 0x7f00000c
     abort_actuator[2].ip as LE u32 = 0x7f00000e
     abort_actuator[3].ip as LE u32 = 0x7f00000e
-    abort_actuator[4].ip as LE u32 = 0x7f00000c
+    abort_actuator[4].ip as LE u32 = 0x7f00000e
     abort_actuator[5].ip as LE u32 = 0x7f00000c
     abort_actuator[6].ip as LE u32 = 0x7f00000c
-    abort_actuator[7].ip as LE u32 = 0x7f00000e
+    abort_actuator[7].ip as LE u32 = 0x7f00000c
     abort_actuator[8].ip as LE u32 = 0x7f00000e
     abort_actuator[9].ip as LE u32 = 0x7f00000e
-    abort_actuator[10].ip as LE u32 = 0x7f00000c
+    abort_actuator[10].ip as LE u32 = 0x7f00000e
     abort_actuator[11].ip as LE u32 = 0x7f00000c
     abort_actuator[12].ip as LE u32 = 0x7f00000c
-# -> 127.0.0.14:5005 type=6 len=101
+    abort_actuator[13].ip as LE u32 = 0x7f00000c
+# -> 127.0.0.14:5005 type=6 len=108
   header.packet_type @0    +1  : 06
   header.version @1    +1  : 00
   header.timestamp @2    +4  : 00 00 00 00
   is_abort_controller @6    +1  : 00
-  num_abort_actuators @7    +1  : 0d
+  num_abort_actuators @7    +1  : 0e
   abort_actuator[0].ip_address @8    +4  : 0c 00 00 7f
   abort_actuator[0].actuator_id @12   +1  : 03
   abort_actuator[0].vent_state @13   +1  : 00
   abort_actuator[0].abort_state @14   +1  : 00
-  abort_actuator[1].ip_address @15   +4  : 0e 00 00 7f
-  abort_actuator[1].actuator_id @19   +1  : 0a
+  abort_actuator[1].ip_address @15   +4  : 0c 00 00 7f
+  abort_actuator[1].actuator_id @19   +1  : 08
   abort_actuator[1].vent_state @20   +1  : 00
   abort_actuator[1].abort_state @21   +1  : 00
   abort_actuator[2].ip_address @22   +4  : 0e 00 00 7f
-  abort_actuator[2].actuator_id @26   +1  : 02
+  abort_actuator[2].actuator_id @26   +1  : 0a
   abort_actuator[2].vent_state @27   +1  : 00
   abort_actuator[2].abort_state @28   +1  : 00
   abort_actuator[3].ip_address @29   +4  : 0e 00 00 7f
-  abort_actuator[3].actuator_id @33   +1  : 05
+  abort_actuator[3].actuator_id @33   +1  : 02
   abort_actuator[3].vent_state @34   +1  : 00
   abort_actuator[3].abort_state @35   +1  : 00
-  abort_actuator[4].ip_address @36   +4  : 0c 00 00 7f
-  abort_actuator[4].actuator_id @40   +1  : 06
+  abort_actuator[4].ip_address @36   +4  : 0e 00 00 7f
+  abort_actuator[4].actuator_id @40   +1  : 05
   abort_actuator[4].vent_state @41   +1  : 00
   abort_actuator[4].abort_state @42   +1  : 00
   abort_actuator[5].ip_address @43   +4  : 0c 00 00 7f
-  abort_actuator[5].actuator_id @47   +1  : 01
+  abort_actuator[5].actuator_id @47   +1  : 06
   abort_actuator[5].vent_state @48   +1  : 00
   abort_actuator[5].abort_state @49   +1  : 00
   abort_actuator[6].ip_address @50   +4  : 0c 00 00 7f
-  abort_actuator[6].actuator_id @54   +1  : 02
+  abort_actuator[6].actuator_id @54   +1  : 01
   abort_actuator[6].vent_state @55   +1  : 00
   abort_actuator[6].abort_state @56   +1  : 00
-  abort_actuator[7].ip_address @57   +4  : 0e 00 00 7f
-  abort_actuator[7].actuator_id @61   +1  : 03
+  abort_actuator[7].ip_address @57   +4  : 0c 00 00 7f
+  abort_actuator[7].actuator_id @61   +1  : 02
   abort_actuator[7].vent_state @62   +1  : 00
   abort_actuator[7].abort_state @63   +1  : 00
   abort_actuator[8].ip_address @64   +4  : 0e 00 00 7f
-  abort_actuator[8].actuator_id @68   +1  : 06
+  abort_actuator[8].actuator_id @68   +1  : 03
   abort_actuator[8].vent_state @69   +1  : 00
   abort_actuator[8].abort_state @70   +1  : 00
   abort_actuator[9].ip_address @71   +4  : 0e 00 00 7f
-  abort_actuator[9].actuator_id @75   +1  : 07
+  abort_actuator[9].actuator_id @75   +1  : 06
   abort_actuator[9].vent_state @76   +1  : 00
   abort_actuator[9].abort_state @77   +1  : 00
-  abort_actuator[10].ip_address @78   +4  : 0c 00 00 7f
-  abort_actuator[10].actuator_id @82   +1  : 0a
+  abort_actuator[10].ip_address @78   +4  : 0e 00 00 7f
+  abort_actuator[10].actuator_id @82   +1  : 07
   abort_actuator[10].vent_state @83   +1  : 00
   abort_actuator[10].abort_state @84   +1  : 00
   abort_actuator[11].ip_address @85   +4  : 0c 00 00 7f
-  abort_actuator[11].actuator_id @89   +1  : 07
+  abort_actuator[11].actuator_id @89   +1  : 0a
   abort_actuator[11].vent_state @90   +1  : 00
   abort_actuator[11].abort_state @91   +1  : 00
   abort_actuator[12].ip_address @92   +4  : 0c 00 00 7f
-  abort_actuator[12].actuator_id @96   +1  : 09
+  abort_actuator[12].actuator_id @96   +1  : 07
   abort_actuator[12].vent_state @97   +1  : 00
   abort_actuator[12].abort_state @98   +1  : 00
-  num_abort_pts @99   +1  : 00
-  enable_serial_printing @100  +1  : 01
+  abort_actuator[13].ip_address @99   +4  : 0c 00 00 7f
+  abort_actuator[13].actuator_id @103  +1  : 09
+  abort_actuator[13].vent_state @104  +1  : 00
+  abort_actuator[13].abort_state @105  +1  : 00
+  num_abort_pts @106  +1  : 00
+  enable_serial_printing @107  +1  : 02
     abort_actuator[0].ip as LE u32 = 0x7f00000c
-    abort_actuator[1].ip as LE u32 = 0x7f00000e
+    abort_actuator[1].ip as LE u32 = 0x7f00000c
     abort_actuator[2].ip as LE u32 = 0x7f00000e
     abort_actuator[3].ip as LE u32 = 0x7f00000e
-    abort_actuator[4].ip as LE u32 = 0x7f00000c
+    abort_actuator[4].ip as LE u32 = 0x7f00000e
     abort_actuator[5].ip as LE u32 = 0x7f00000c
     abort_actuator[6].ip as LE u32 = 0x7f00000c
-    abort_actuator[7].ip as LE u32 = 0x7f00000e
+    abort_actuator[7].ip as LE u32 = 0x7f00000c
     abort_actuator[8].ip as LE u32 = 0x7f00000e
     abort_actuator[9].ip as LE u32 = 0x7f00000e
-    abort_actuator[10].ip as LE u32 = 0x7f00000c
+    abort_actuator[10].ip as LE u32 = 0x7f00000e
     abort_actuator[11].ip as LE u32 = 0x7f00000c
     abort_actuator[12].ip as LE u32 = 0x7f00000c
+    abort_actuator[13].ip as LE u32 = 0x7f00000c
 # -> 127.0.0.61:5005 type=5 len=12
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -2146,7 +2206,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   sensor_id[1] @8    +1  : 02
   reference_voltage @9    +1  : 01
   necessary_for_abort @10   +1  : 00
-  enable_serial_printing @11   +1  : 00
+  enable_serial_printing @11   +1  : 02
 # -> 127.0.0.41:5005 type=5 len=11
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -2155,7 +2215,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   sensor_id[0] @7    +1  : 01
   reference_voltage @8    +1  : 01
   necessary_for_abort @9    +1  : 00
-  enable_serial_printing @10   +1  : 01
+  enable_serial_printing @10   +1  : 02
 # -> 127.0.0.42:5005 type=5 len=11
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -2164,7 +2224,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   sensor_id[0] @7    +1  : 01
   reference_voltage @8    +1  : 00
   necessary_for_abort @9    +1  : 00
-  enable_serial_printing @10   +1  : 01
+  enable_serial_printing @10   +1  : 02
 # -> 127.0.0.21:5005 type=5 len=24
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -2183,7 +2243,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   reference_voltage @17   +1  : 01
   necessary_for_abort @18   +1  : 01
   controller_ip @19   +4  : 7f 00 00 0c
-  enable_serial_printing @23   +1  : 00
+  enable_serial_printing @23   +1  : 02
 # -> 127.0.0.22:5005 type=5 len=14
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -2195,7 +2255,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   sensor_id[3] @10   +1  : 04
   reference_voltage @11   +1  : 00
   necessary_for_abort @12   +1  : 00
-  enable_serial_printing @13   +1  : 01
+  enable_serial_printing @13   +1  : 02
 # -> 127.0.0.31:5005 type=5 len=14
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -2207,7 +2267,7 @@ ipToU32Le(not-an-ip) = 0x00000000
   sensor_id[3] @10   +1  : 04
   reference_voltage @11   +1  : 00
   necessary_for_abort @12   +1  : 00
-  enable_serial_printing @13   +1  : 01
+  enable_serial_printing @13   +1  : 02
 # -> 127.0.0.51:5005 type=5 len=14
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00
@@ -2219,8 +2279,8 @@ ipToU32Le(not-an-ip) = 0x00000000
   sensor_id[3] @10   +1  : 05
   reference_voltage @11   +1  : 00
   necessary_for_abort @12   +1  : 00
-  enable_serial_printing @13   +1  : 01
-## config_base+ip_probe: 9 packets
+  enable_serial_printing @13   +1  : 02
+## config_base+ip_probe: 11 packets
 # -> 127.0.0.12:5005 type=6 len=136
   header.packet_type @0    +1  : 06
   header.version @1    +1  : 00
@@ -2515,6 +2575,16 @@ ipToU32Le(not-an-ip) = 0x00000000
     abort_actuator[15].ip as LE u32 = 0x7f00000c
     abort_actuator[16].ip as LE u32 = 0x00000000
     abort_actuator[17].ip as LE u32 = 0x7f00000b
+# -> 127.0.0.71:5005 type=16 len=17
+  header.packet_type @0    +1  : 10
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +11 : 02 01 a0 0f 20 4e 02 a0 0f 20 4e
+# -> 127.0.0.71:5005 type=17 len=13
+  header.packet_type @0    +1  : 11
+  header.version @1    +1  : 00
+  header.timestamp @2    +4  : 00 00 00 00
+  <trailing> @6    +7  : 02 01 00 00 02 00 00
 # -> 127.0.0.61:5005 type=5 len=12
   header.packet_type @0    +1  : 05
   header.version @1    +1  : 00

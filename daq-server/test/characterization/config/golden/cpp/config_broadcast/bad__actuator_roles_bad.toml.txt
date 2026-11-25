@@ -30,7 +30,7 @@ abort["LOX Fill"] = 0
 abort["LOX Main"] = 1
 abort["LOX Press"] = 1
 abort["LOX Vent"] = 1
-packets.count = 2
+packets.count = 4
 packet[0] type=6 dest=192.168.2.12:5005 len=52
   0000: 06 00 00 00 00 00 01 06 0c 02 a8 c0 0b 00 00 0c
   0010: 02 a8 c0 02 00 00 0c 02 a8 c0 06 00 00 0c 02 a8
@@ -41,6 +41,10 @@ packet[1] type=6 dest=192.168.2.71:5005 len=52
   0010: 02 a8 c0 02 00 00 0c 02 a8 c0 06 00 00 0c 02 a8
   0020: c0 04 00 00 0c 02 a8 c0 05 00 00 0c 02 a8 c0 03
   0030: 00 00 00 00
+packet[2] type=16 dest=192.168.2.71:5005 len=7
+  0000: 10 00 00 00 00 00 00
+packet[3] type=17 dest=192.168.2.71:5005 len=7
+  0000: 11 00 00 00 00 00 00
 
 === captured stdout
 

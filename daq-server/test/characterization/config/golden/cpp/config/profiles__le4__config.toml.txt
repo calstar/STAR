@@ -1,0 +1,1052 @@
+input ../../../config/profiles/le4/config.toml readable=true bytes=14782
+
+=== config::load
+network.bind_ip = "0.0.0.0"
+network.sensor_port = 5006
+network.actuator_cmd_port = 5005
+database.host = "127.0.0.1"
+database.port = 2240
+server_heartbeat.interval_ms = 200
+server_heartbeat.broadcast_port = 5005
+server_heartbeat.broadcast_ip = "192.168.2.255"
+server_heartbeat.send_from_daq_bridge = false
+heartbeat_service.enabled = true
+heartbeat_service.interval_ms = 200
+heartbeat_service.broadcast_ip = "192.168.2.255"
+heartbeat_service.broadcast_port = 5005
+heartbeat_service.elodin_host = "127.0.0.1"
+heartbeat_service.elodin_port = 2240
+logs.backend_udp_port = 8092
+time_sync.mode = BoardClock
+time_sync.window_seconds = 10
+time_sync.max_plausible_gap_s = 60
+time_sync.max_batch_age_s = 5
+time_sync.resync_threshold_ms = 1000
+time_sync.log_interval_s = 10
+config_broadcast_interval_ms = 1000
+boards.count = 15
+boards[0].section = "boards.actuator_board"
+boards[0].type = "ACTUATOR"
+boards[0].ip = "192.168.2.11"
+boards[0].board_id = 11
+boards[0].slot() = 1
+boards[0].enabled = false
+boards[0].num_actuators = 10
+boards[0].send_port = 5005
+boards[0].listen_port = 5005
+boards[0].enable_serial_printing = 1
+boards[0].voltage_reference = 0
+boards[0].necessary_for_abort = false
+boards[0].designated_survivor = false
+boards[0].active_connectors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+boards[0].pt_type = ""
+boards[0].adc_ref_voltage = 2.5
+boards[0].has_hp_pt_keys = false
+boards[0].hp_pt_full_scale_psi = 5000
+boards[0].hp_pt_sense_resistor_ohms = 120
+boards[0].kind_of(type) = ACTUATOR
+boards[0].board_key_of = "actuator_board"
+boards[1].section = "boards.actuator_board_2"
+boards[1].type = "ACTUATOR"
+boards[1].ip = "192.168.2.12"
+boards[1].board_id = 12
+boards[1].slot() = 2
+boards[1].enabled = true
+boards[1].num_actuators = 10
+boards[1].send_port = 5005
+boards[1].listen_port = 5005
+boards[1].enable_serial_printing = 2
+boards[1].voltage_reference = 0
+boards[1].necessary_for_abort = false
+boards[1].designated_survivor = true
+boards[1].active_connectors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+boards[1].pt_type = ""
+boards[1].adc_ref_voltage = 2.5
+boards[1].has_hp_pt_keys = false
+boards[1].hp_pt_full_scale_psi = 5000
+boards[1].hp_pt_sense_resistor_ohms = 120
+boards[1].kind_of(type) = ACTUATOR
+boards[1].board_key_of = "actuator_board_2"
+boards[2].section = "boards.actuator_board_3"
+boards[2].type = "ACTUATOR"
+boards[2].ip = "192.168.2.13"
+boards[2].board_id = 13
+boards[2].slot() = 3
+boards[2].enabled = false
+boards[2].num_actuators = 10
+boards[2].send_port = 5005
+boards[2].listen_port = 5005
+boards[2].enable_serial_printing = 1
+boards[2].voltage_reference = 0
+boards[2].necessary_for_abort = false
+boards[2].designated_survivor = false
+boards[2].active_connectors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+boards[2].pt_type = ""
+boards[2].adc_ref_voltage = 2.5
+boards[2].has_hp_pt_keys = false
+boards[2].hp_pt_full_scale_psi = 5000
+boards[2].hp_pt_sense_resistor_ohms = 120
+boards[2].kind_of(type) = ACTUATOR
+boards[2].board_key_of = "actuator_board_3"
+boards[3].section = "boards.actuator_board_4"
+boards[3].type = "ACTUATOR"
+boards[3].ip = "192.168.2.14"
+boards[3].board_id = 14
+boards[3].slot() = 4
+boards[3].enabled = true
+boards[3].num_actuators = 10
+boards[3].send_port = 5005
+boards[3].listen_port = 5005
+boards[3].enable_serial_printing = 2
+boards[3].voltage_reference = 0
+boards[3].necessary_for_abort = false
+boards[3].designated_survivor = false
+boards[3].active_connectors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+boards[3].pt_type = ""
+boards[3].adc_ref_voltage = 2.5
+boards[3].has_hp_pt_keys = false
+boards[3].hp_pt_full_scale_psi = 5000
+boards[3].hp_pt_sense_resistor_ohms = 120
+boards[3].kind_of(type) = ACTUATOR
+boards[3].board_key_of = "actuator_board_4"
+boards[4].section = "boards.ball_valve_board"
+boards[4].type = "BALL_VALVE"
+boards[4].ip = "192.168.2.71"
+boards[4].board_id = 71
+boards[4].slot() = 1
+boards[4].enabled = true
+boards[4].num_actuators = 0
+boards[4].send_port = 5005
+boards[4].listen_port = 5005
+boards[4].enable_serial_printing = 3
+boards[4].voltage_reference = 0
+boards[4].necessary_for_abort = false
+boards[4].designated_survivor = false
+boards[4].active_connectors = [1, 2]
+boards[4].pt_type = ""
+boards[4].adc_ref_voltage = 2.5
+boards[4].has_hp_pt_keys = false
+boards[4].hp_pt_full_scale_psi = 5000
+boards[4].hp_pt_sense_resistor_ohms = 120
+boards[4].kind_of(type) = BALL_VALVE
+boards[4].board_key_of = "ball_valve_board"
+boards[5].section = "boards.encoder_board"
+boards[5].type = "ENCODER"
+boards[5].ip = "192.168.2.61"
+boards[5].board_id = 61
+boards[5].slot() = 1
+boards[5].enabled = false
+boards[5].num_actuators = 0
+boards[5].send_port = 5005
+boards[5].listen_port = 5005
+boards[5].enable_serial_printing = 2
+boards[5].voltage_reference = 1
+boards[5].necessary_for_abort = false
+boards[5].designated_survivor = false
+boards[5].active_connectors = [1, 2]
+boards[5].pt_type = ""
+boards[5].adc_ref_voltage = 2.5
+boards[5].has_hp_pt_keys = false
+boards[5].hp_pt_full_scale_psi = 5000
+boards[5].hp_pt_sense_resistor_ohms = 120
+boards[5].kind_of(type) = ENCODER
+boards[5].board_key_of = "encoder_board"
+boards[6].section = "boards.labjack_1"
+boards[6].type = "T7"
+boards[6].ip = "192.168.2.81"
+boards[6].board_id = 81
+boards[6].slot() = 1
+boards[6].enabled = false
+boards[6].num_actuators = 0
+boards[6].send_port = 5005
+boards[6].listen_port = 5005
+boards[6].enable_serial_printing = 0
+boards[6].voltage_reference = 0
+boards[6].necessary_for_abort = false
+boards[6].designated_survivor = false
+boards[6].active_connectors = []
+boards[6].pt_type = ""
+boards[6].adc_ref_voltage = 2.5
+boards[6].has_hp_pt_keys = false
+boards[6].hp_pt_full_scale_psi = 5000
+boards[6].hp_pt_sense_resistor_ohms = 120
+boards[6].kind_of(type) = UNKNOWN
+boards[6].board_key_of = "labjack_1"
+boards[7].section = "boards.lc_board"
+boards[7].type = "LC"
+boards[7].ip = "192.168.2.41"
+boards[7].board_id = 41
+boards[7].slot() = 1
+boards[7].enabled = false
+boards[7].num_actuators = 0
+boards[7].send_port = 5005
+boards[7].listen_port = 5005
+boards[7].enable_serial_printing = 2
+boards[7].voltage_reference = 1
+boards[7].necessary_for_abort = false
+boards[7].designated_survivor = false
+boards[7].active_connectors = [1, 6, 7]
+boards[7].pt_type = ""
+boards[7].adc_ref_voltage = 2.5
+boards[7].has_hp_pt_keys = false
+boards[7].hp_pt_full_scale_psi = 5000
+boards[7].hp_pt_sense_resistor_ohms = 120
+boards[7].kind_of(type) = LC
+boards[7].board_key_of = "lc_board"
+boards[8].section = "boards.lc_board_2"
+boards[8].type = "LC"
+boards[8].ip = "192.168.2.42"
+boards[8].board_id = 42
+boards[8].slot() = 2
+boards[8].enabled = true
+boards[8].num_actuators = 0
+boards[8].send_port = 5005
+boards[8].listen_port = 5005
+boards[8].enable_serial_printing = 2
+boards[8].voltage_reference = 0
+boards[8].necessary_for_abort = false
+boards[8].designated_survivor = false
+boards[8].active_connectors = [1, 2]
+boards[8].pt_type = ""
+boards[8].adc_ref_voltage = 2.5
+boards[8].has_hp_pt_keys = false
+boards[8].hp_pt_full_scale_psi = 5000
+boards[8].hp_pt_sense_resistor_ohms = 120
+boards[8].kind_of(type) = LC
+boards[8].board_key_of = "lc_board_2"
+boards[9].section = "boards.pt_board"
+boards[9].type = "PT"
+boards[9].ip = "192.168.2.21"
+boards[9].board_id = 21
+boards[9].slot() = 1
+boards[9].enabled = true
+boards[9].num_actuators = 0
+boards[9].send_port = 5005
+boards[9].listen_port = 5005
+boards[9].enable_serial_printing = 2
+boards[9].voltage_reference = 1
+boards[9].necessary_for_abort = true
+boards[9].designated_survivor = false
+boards[9].active_connectors = [1, 3, 4, 5, 6, 7, 8, 9, 10]
+boards[9].pt_type = "0-5V ratiometric"
+boards[9].adc_ref_voltage = 2.5
+boards[9].has_hp_pt_keys = false
+boards[9].hp_pt_full_scale_psi = 5000
+boards[9].hp_pt_sense_resistor_ohms = 120
+boards[9].kind_of(type) = PT
+boards[9].board_key_of = "pt_board"
+boards[10].section = "boards.pt_board_2"
+boards[10].type = "PT"
+boards[10].ip = "192.168.2.22"
+boards[10].board_id = 22
+boards[10].slot() = 2
+boards[10].enabled = true
+boards[10].num_actuators = 0
+boards[10].send_port = 5005
+boards[10].listen_port = 5005
+boards[10].enable_serial_printing = 2
+boards[10].voltage_reference = 0
+boards[10].necessary_for_abort = false
+boards[10].designated_survivor = false
+boards[10].active_connectors = [1, 3, 4]
+boards[10].pt_type = "4-20 mA absolute"
+boards[10].adc_ref_voltage = 2.5
+boards[10].has_hp_pt_keys = true
+boards[10].hp_pt_full_scale_psi = 5000
+boards[10].hp_pt_sense_resistor_ohms = 120
+boards[10].kind_of(type) = PT
+boards[10].board_key_of = "pt_board_2"
+boards[11].section = "boards.rtd_board"
+boards[11].type = "RTD"
+boards[11].ip = "192.168.2.31"
+boards[11].board_id = 31
+boards[11].slot() = 1
+boards[11].enabled = false
+boards[11].num_actuators = 0
+boards[11].send_port = 5005
+boards[11].listen_port = 5005
+boards[11].enable_serial_printing = 2
+boards[11].voltage_reference = 0
+boards[11].necessary_for_abort = false
+boards[11].designated_survivor = false
+boards[11].active_connectors = [1, 2, 3, 4]
+boards[11].pt_type = ""
+boards[11].adc_ref_voltage = 2.5
+boards[11].has_hp_pt_keys = false
+boards[11].hp_pt_full_scale_psi = 5000
+boards[11].hp_pt_sense_resistor_ohms = 120
+boards[11].kind_of(type) = RTD
+boards[11].board_key_of = "rtd_board"
+boards[12].section = "boards.rtd_board_2"
+boards[12].type = "RTD"
+boards[12].ip = "192.168.2.32"
+boards[12].board_id = 32
+boards[12].slot() = 2
+boards[12].enabled = false
+boards[12].num_actuators = 0
+boards[12].send_port = 5005
+boards[12].listen_port = 5005
+boards[12].enable_serial_printing = 1
+boards[12].voltage_reference = 0
+boards[12].necessary_for_abort = false
+boards[12].designated_survivor = false
+boards[12].active_connectors = [1, 2, 3, 4]
+boards[12].pt_type = ""
+boards[12].adc_ref_voltage = 2.5
+boards[12].has_hp_pt_keys = false
+boards[12].hp_pt_full_scale_psi = 5000
+boards[12].hp_pt_sense_resistor_ohms = 120
+boards[12].kind_of(type) = RTD
+boards[12].board_key_of = "rtd_board_2"
+boards[13].section = "boards.tc_board"
+boards[13].type = "TC"
+boards[13].ip = "192.168.2.51"
+boards[13].board_id = 51
+boards[13].slot() = 1
+boards[13].enabled = false
+boards[13].num_actuators = 0
+boards[13].send_port = 5005
+boards[13].listen_port = 5005
+boards[13].enable_serial_printing = 2
+boards[13].voltage_reference = 0
+boards[13].necessary_for_abort = false
+boards[13].designated_survivor = false
+boards[13].active_connectors = [2, 3, 4, 5]
+boards[13].pt_type = ""
+boards[13].adc_ref_voltage = 2.5
+boards[13].has_hp_pt_keys = false
+boards[13].hp_pt_full_scale_psi = 5000
+boards[13].hp_pt_sense_resistor_ohms = 120
+boards[13].kind_of(type) = TC
+boards[13].board_key_of = "tc_board"
+boards[14].section = "boards.tc_board_2"
+boards[14].type = "TC"
+boards[14].ip = "192.168.2.52"
+boards[14].board_id = 52
+boards[14].slot() = 2
+boards[14].enabled = false
+boards[14].num_actuators = 0
+boards[14].send_port = 5005
+boards[14].listen_port = 5005
+boards[14].enable_serial_printing = 1
+boards[14].voltage_reference = 0
+boards[14].necessary_for_abort = false
+boards[14].designated_survivor = false
+boards[14].active_connectors = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+boards[14].pt_type = ""
+boards[14].adc_ref_voltage = 2.5
+boards[14].has_hp_pt_keys = false
+boards[14].hp_pt_full_scale_psi = 5000
+boards[14].hp_pt_sense_resistor_ohms = 120
+boards[14].kind_of(type) = TC
+boards[14].board_key_of = "tc_board_2"
+t7_boards.count = 1
+t7_boards[0].section = "boards.labjack_1"
+t7_boards[0].ip = "192.168.2.81"
+t7_boards[0].mac = "90:2e:87:01:24:f1"
+t7_boards[0].serial = 0
+t7_boards[0].board_id = 81
+t7_boards[0].slot() = 1
+t7_boards[0].enabled = false
+t7_boards[0].scan_rate_hz = 100
+t7_boards[0].resolution_index = 0
+t7_boards[0].settling_us = 0
+t7_boards[0].scans_per_read = 0
+t7_boards[0].effective_scans_per_read() = 5
+t7_boards[0].cjc_offset_k = -3
+t7_boards[0].channels.count = 4
+t7_boards[0].channels[0].ain = 1
+t7_boards[0].channels[0].kind = "PT"
+t7_boards[0].channels[0].role = "T7 Tank PT"
+t7_boards[0].channels[0].range_v = 10
+t7_boards[0].channels[0].differential = false
+t7_boards[0].channels[0].negative_ch() = 199
+t7_boards[0].channels[0].tc_type = ""
+t7_boards[0].channels[0].full_scale = 1000
+t7_boards[0].channels[0].signal = "4-20mA"
+t7_boards[0].channels[0].shunt_ohms = 250
+t7_boards[0].channels[0].sensitivity_mv_per_v = 0
+t7_boards[0].channels[0].excitation_v = 0
+t7_boards[0].channels[0].r0_ohms = 0
+t7_boards[0].channels[0].ljtr_ohms = 0
+t7_boards[0].channels[0].vref_v = 2.5
+t7_boards[0].channels[1].ain = 2
+t7_boards[0].channels[1].kind = "TC"
+t7_boards[0].channels[1].role = "T7 Nozzle TC"
+t7_boards[0].channels[1].range_v = 0.1
+t7_boards[0].channels[1].differential = false
+t7_boards[0].channels[1].negative_ch() = 199
+t7_boards[0].channels[1].tc_type = "K"
+t7_boards[0].channels[1].full_scale = 0
+t7_boards[0].channels[1].signal = ""
+t7_boards[0].channels[1].shunt_ohms = 0
+t7_boards[0].channels[1].sensitivity_mv_per_v = 0
+t7_boards[0].channels[1].excitation_v = 0
+t7_boards[0].channels[1].r0_ohms = 0
+t7_boards[0].channels[1].ljtr_ohms = 0
+t7_boards[0].channels[1].vref_v = 2.5
+t7_boards[0].channels[2].ain = 3
+t7_boards[0].channels[2].kind = "RTD"
+t7_boards[0].channels[2].role = "T7 LOX RTD"
+t7_boards[0].channels[2].range_v = 10
+t7_boards[0].channels[2].differential = false
+t7_boards[0].channels[2].negative_ch() = 199
+t7_boards[0].channels[2].tc_type = ""
+t7_boards[0].channels[2].full_scale = 0
+t7_boards[0].channels[2].signal = ""
+t7_boards[0].channels[2].shunt_ohms = 0
+t7_boards[0].channels[2].sensitivity_mv_per_v = 0
+t7_boards[0].channels[2].excitation_v = 0
+t7_boards[0].channels[2].r0_ohms = 1000
+t7_boards[0].channels[2].ljtr_ohms = 1000
+t7_boards[0].channels[2].vref_v = 2.5
+t7_boards[0].channels[3].ain = 4
+t7_boards[0].channels[3].kind = "LC"
+t7_boards[0].channels[3].role = "T7 Thrust LC"
+t7_boards[0].channels[3].range_v = 0.1
+t7_boards[0].channels[3].differential = true
+t7_boards[0].channels[3].negative_ch() = 5
+t7_boards[0].channels[3].tc_type = ""
+t7_boards[0].channels[3].full_scale = 500
+t7_boards[0].channels[3].signal = ""
+t7_boards[0].channels[3].shunt_ohms = 0
+t7_boards[0].channels[3].sensitivity_mv_per_v = 2
+t7_boards[0].channels[3].excitation_v = 10
+t7_boards[0].channels[3].r0_ohms = 0
+t7_boards[0].channels[3].ljtr_ohms = 0
+t7_boards[0].channels[3].vref_v = 2.5
+t7_errors.count = 0
+actuator_roles.count = 15
+actuator_roles["Dome CTRL G"] = {kind="NC" is_no=false ball_valve=false channel=6 board_id=12 controller_role=""}
+actuator_roles["Dome CTRL R"] = {kind="NC" is_no=false ball_valve=false channel=1 board_id=12 controller_role=""}
+actuator_roles["Dome vent"] = {kind="NC" is_no=false ball_valve=false channel=3 board_id=14 controller_role=""}
+actuator_roles["Fuel main"] = {kind="NC" is_no=false ball_valve=false channel=6 board_id=14 controller_role=""}
+actuator_roles["Fuel upstream"] = {kind="NC" is_no=false ball_valve=false channel=2 board_id=12 controller_role=""}
+actuator_roles["Fuel vent"] = {kind="NC" is_no=false ball_valve=false channel=1 board_id=14 controller_role=""}
+actuator_roles["HPD vent"] = {kind="NC" is_no=false ball_valve=false channel=9 board_id=12 controller_role=""}
+actuator_roles["HPU vent"] = {kind="NC" is_no=false ball_valve=false channel=9 board_id=14 controller_role=""}
+actuator_roles["High press CTRL"] = {kind="NC" is_no=false ball_valve=false channel=7 board_id=12 controller_role=""}
+actuator_roles["Low press vent"] = {kind="NC" is_no=false ball_valve=false channel=2 board_id=14 controller_role=""}
+actuator_roles["Ox Fill"] = {kind="NC" is_no=false ball_valve=true channel=2 board_id=71 controller_role=""}
+actuator_roles["Ox Vent"] = {kind="NC" is_no=false ball_valve=true channel=1 board_id=71 controller_role=""}
+actuator_roles["Ox dump"] = {kind="NC" is_no=false ball_valve=false channel=7 board_id=14 controller_role=""}
+actuator_roles["Ox main"] = {kind="NC" is_no=false ball_valve=false channel=5 board_id=14 controller_role=""}
+actuator_roles["Ox upstream"] = {kind="NC" is_no=false ball_valve=false channel=3 board_id=12 controller_role=""}
+fire.state = ""
+fire.expiry_target = "Armed"
+fire.duration_ms = 1000
+fire.extended_ms = 1000
+fire.gate_actuator = "Fuel Main"
+flow.return_target = "Ready"
+flow.duration_ms = 1000
+flow.max_ms = 10000
+flow.gate_actuator = "Fuel Main"
+controller_service.port = 9999
+controller_service.host = "127.0.0.1"
+controller_service.fire_duration_ms = 6000
+controller_service.fire_extended_ms = 10000
+controller_service.sequencer_owns_valves = true
+controller.pwm_frequency_hz = 6
+controller.pwm_duration_ms = 2000
+controller.controller_loop_hz = 100
+controller.P_copv_min_pa = 0
+controller.fallback_fuel_duty_cycle = 0
+controller.fallback_ox_duty_cycle = 0
+controller.lut_path = "output/lut/controller_policy_fsw.bin"
+controller.thrust_curve_path = "output/lut/thrust_curve.csv"
+actuator_service.port = 9998
+actuator_service.bind_address = "0.0.0.0"
+calibration.tc_adc_ref_voltage = 2.5
+calibration.rtd_adc_ref_voltage = 2.5
+calibration.rtd_excitation_ua = 1000
+calibration.rtd_r0_ohm = 1000
+calibration.lc_sensitivity_mv_per_v = 2
+calibration.lc_pga_gain = 32
+calibration.lc_full_scale_value = 300
+calibration.tc_json_dir = "scripts/calibration/calibrations/tc"
+calibration.tc_csv_path = ""
+calibration.rtd_json_dir = "scripts/calibration/calibrations/rtd"
+calibration.rtd_csv_path = ""
+calibration.lc_json_dir = "scripts/calibration/calibrations/lc"
+calibration.lc_csv_path = ""
+state_machine.transitions_csv = "config/state_transitions.csv"
+state_machine.actuator_csv = "config/state_machine_actuators.csv"
+state_machine.actuator_delay_csv = "config/state_machine_actuator_delays.csv"
+states.count = 16
+states[0] = {id=1 name="Idle" is_abort=false is_boot=true is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[1] = {id=2 name="Armed" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[2] = {id=3 name="Press Standby" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[3] = {id=4 name="Dome Press" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[4] = {id=5 name="COPV Fill" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[5] = {id=6 name="Fuel Press" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[6] = {id=14 name="LOX Press" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[7] = {id=7 name="Vent" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[8] = {id=8 name="Dome Vent" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[9] = {id=9 name="High Press Vent" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[10] = {id=10 name="Fuel Tank Vent" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[11] = {id=16 name="LOX Tank Vent" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[12] = {id=11 name="Ready" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[13] = {id=12 name="Fire" is_abort=false is_boot=false is_flow=false script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[14] = {id=13 name="Flow Test" is_abort=false is_boot=false is_flow=true script_file="" script_timeout_ms=0 script_return_target="" script_timeout_target=""}
+states[15] = {id=15 name="Dynamic Test" is_abort=false is_boot=false is_flow=false script_file="dynamic_test.script" script_timeout_ms=10000 script_return_target="Press Standby" script_timeout_target="Press Standby"}
+sensor_roles["sensor_roles_encoder_board"]["Encoder 1"] = 1
+sensor_roles["sensor_roles_encoder_board"]["Encoder 2"] = 2
+sensor_roles["sensor_roles_lc_board"]["LC-1"] = 1
+sensor_roles["sensor_roles_lc_board"]["LC-2"] = 6
+sensor_roles["sensor_roles_lc_board"]["LC-3"] = 7
+sensor_roles["sensor_roles_lc_board_2"]["Fuel Scale"] = 2
+sensor_roles["sensor_roles_lc_board_2"]["LOX Scale"] = 1
+sensor_roles["sensor_roles_pt_board"]["DR-PT-G"] = 7
+sensor_roles["sensor_roles_pt_board"]["DR-PT-R"] = 3
+sensor_roles["sensor_roles_pt_board"]["FF-PT"] = 6
+sensor_roles["sensor_roles_pt_board"]["FT-PT-R"] = 9
+sensor_roles["sensor_roles_pt_board"]["LP-PT"] = 4
+sensor_roles["sensor_roles_pt_board"]["OF-PT"] = 5
+sensor_roles["sensor_roles_pt_board"]["OT-PT-R"] = 10
+sensor_roles["sensor_roles_pt_board"]["Upstream"] = 8
+sensor_roles["sensor_roles_pt_board_2"]["COPV-PT-R"] = 1
+sensor_roles["sensor_roles_pt_board_2"]["HPD-PT"] = 4
+sensor_roles["sensor_roles_pt_board_2"]["HPU-PT"] = 3
+sensor_roles["sensor_roles_rtd_board"]["COPV RTD"] = 1
+sensor_roles["sensor_roles_rtd_board"]["LOX Lower"] = 4
+sensor_roles["sensor_roles_rtd_board"]["LOX Mid"] = 3
+sensor_roles["sensor_roles_rtd_board"]["LOX Upper"] = 2
+sensor_roles["sensor_roles_tc_board"]["Chamber Mid TC 1"] = 2
+sensor_roles["sensor_roles_tc_board"]["Chamber Mid TC 2"] = 3
+sensor_roles["sensor_roles_tc_board"]["Chamber Throat TC 1"] = 4
+sensor_roles["sensor_roles_tc_board"]["Chamber Throat TC 2"] = 5
+abort_pts["Ox Upstream"] = 400
+calibration_models["calibration_model_labjack_1"]["T7 Tank PT"] = "physics"
+calibration_models["calibration_model_labjack_1"]["T7 Thrust LC"] = "physics"
+calibration_models["calibration_model_lc_board_2"]["Fuel Scale"] = "cubic"
+calibration_models["calibration_model_lc_board_2"]["LOX Scale"] = "cubic"
+calibration_models["calibration_model_pt_board"]["DR-PT-G"] = "cubic"
+calibration_models["calibration_model_pt_board"]["DR-PT-R"] = "cubic"
+calibration_models["calibration_model_pt_board"]["FF-PT"] = "cubic"
+calibration_models["calibration_model_pt_board"]["FT-PT-R"] = "cubic"
+calibration_models["calibration_model_pt_board"]["LP-PT"] = "cubic"
+calibration_models["calibration_model_pt_board"]["OF-PT"] = "cubic"
+calibration_models["calibration_model_pt_board"]["OT-PT-R"] = "cubic"
+calibration_models["calibration_model_pt_board"]["Upstream"] = "cubic"
+calibration_models["calibration_model_pt_board_2"]["COPV-PT-R"] = "physics"
+calibration_models["calibration_model_pt_board_2"]["HPD-PT"] = "physics"
+calibration_models["calibration_model_pt_board_2"]["HPU-PT"] = "physics"
+sensor_roles.sections = 7
+calibration_models.sections = 5
+calibration_full_scale.sections = 1
+calibration_sense_resistor.sections = 0
+calibration_sensitivity.sections = 0
+calibration_pga_gain.sections = 0
+sensor_roles_for(sensor_roles_actuator_board) = null
+calibration_model_for(actuator_board) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_actuator_board_2) = null
+calibration_model_for(actuator_board_2) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_actuator_board_3) = null
+calibration_model_for(actuator_board_3) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_actuator_board_4) = null
+calibration_model_for(actuator_board_4) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_ball_valve_board) = null
+calibration_model_for(ball_valve_board) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_encoder_board) = {"Encoder 1": 1, "Encoder 2": 2}
+calibration_model_for(encoder_board) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_labjack_1) = null
+calibration_model_for(labjack_1) = set; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_lc_board) = {"LC-1": 1, "LC-2": 6, "LC-3": 7}
+calibration_model_for(lc_board) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_lc_board_2) = {"Fuel Scale": 2, "LOX Scale": 1}
+calibration_model_for(lc_board_2) = set; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_pt_board) = {"DR-PT-G": 7, "DR-PT-R": 3, "FF-PT": 6, "FT-PT-R": 9, "LP-PT": 4, "OF-PT": 5, "OT-PT-R": 10, "Upstream": 8}
+calibration_model_for(pt_board) = set; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_pt_board_2) = {"COPV-PT-R": 1, "HPD-PT": 4, "HPU-PT": 3}
+calibration_model_for(pt_board_2) = set; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_rtd_board) = {"COPV RTD": 1, "LOX Lower": 4, "LOX Mid": 3, "LOX Upper": 2}
+calibration_model_for(rtd_board) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_rtd_board_2) = null
+calibration_model_for(rtd_board_2) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_tc_board) = {"Chamber Mid TC 1": 2, "Chamber Mid TC 2": 3, "Chamber Throat TC 1": 4, "Chamber Throat TC 2": 5}
+calibration_model_for(tc_board) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+sensor_roles_for(sensor_roles_tc_board_2) = null
+calibration_model_for(tc_board_2) = null; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
+
+=== config::load_from_string
+identical to config::load
+
+=== active_boards
+PT board_id=21 board_number=1 channels=[1, 3, 4, 5, 6, 7, 8, 9, 10]
+PT board_id=22 board_number=2 channels=[1, 3, 4]
+LC board_id=42 board_number=2 channels=[1, 2]
+ACTUATOR board_id=12 board_number=2 channels=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+ACTUATOR board_id=14 board_number=4 channels=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+BALL_VALVE board_id=71 board_number=1 channels=[1, 2]
+elodin.raw_sensor_tables (34) = 0x20:0x01 0x20:0x03 0x20:0x04 0x20:0x05 0x20:0x06 0x20:0x07 0x20:0x08 0x20:0x09 0x20:0x0A 0x20:0x21 0x20:0x23 0x20:0x24 0x30:0x21 0x30:0x22 0x30:0x23 0x30:0x24 0x30:0x25 0x30:0x26 0x30:0x27 0x30:0x28 0x30:0x29 0x30:0x2A 0x30:0x61 0x30:0x62 0x30:0x63 0x30:0x64 0x30:0x65 0x30:0x66 0x30:0x67 0x30:0x68 0x30:0x69 0x30:0x6A 0x23:0x21 0x23:0x22
+elodin.calibrated_sensor_tables (34) = 0x20:0x11 0x20:0x13 0x20:0x14 0x20:0x15 0x20:0x16 0x20:0x17 0x20:0x18 0x20:0x19 0x20:0x1A 0x20:0x31 0x20:0x33 0x20:0x34 0x23:0x31 0x23:0x32 0x31:0x31 0x31:0x32 0x31:0x33 0x31:0x34 0x31:0x35 0x31:0x36 0x31:0x37 0x31:0x38 0x31:0x39 0x31:0x3A 0x31:0x71 0x31:0x72 0x31:0x73 0x31:0x74 0x31:0x75 0x31:0x76 0x31:0x77 0x31:0x78 0x31:0x79 0x31:0x7A
+elodin.ball_valve_raw_tables (2) = 0x33:0x01 0x33:0x02
+elodin.ball_valve_calibrated_tables (2) = 0x34:0x11 0x34:0x12
+elodin.ball_valve_cmd_tables (2) = 0x35:0x01 0x35:0x02
+
+=== pt_boards
+slot 1 = {board_id=21 board_number=1 interface=RATIOMETRIC_0_5V is_current_loop=false full_scale_psi=5000 sense_resistor_ohms=120 adc_ref_voltage=2.5}
+slot 2 = {board_id=22 board_number=2 interface=CURRENT_LOOP_4_20MA is_current_loop=true full_scale_psi=5000 sense_resistor_ohms=120 adc_ref_voltage=2.5}
+
+=== pt_role_tables
+"DR-PT-G" board_key="pt_board" board="boards.pt_board" t7=null channel=7 board_number=1 table=0x20:0x17
+"DR-PT-R" board_key="pt_board" board="boards.pt_board" t7=null channel=3 board_number=1 table=0x20:0x13
+"FF-PT" board_key="pt_board" board="boards.pt_board" t7=null channel=6 board_number=1 table=0x20:0x16
+"FT-PT-R" board_key="pt_board" board="boards.pt_board" t7=null channel=9 board_number=1 table=0x20:0x19
+"LP-PT" board_key="pt_board" board="boards.pt_board" t7=null channel=4 board_number=1 table=0x20:0x14
+"OF-PT" board_key="pt_board" board="boards.pt_board" t7=null channel=5 board_number=1 table=0x20:0x15
+"OT-PT-R" board_key="pt_board" board="boards.pt_board" t7=null channel=10 board_number=1 table=0x20:0x1A
+"Upstream" board_key="pt_board" board="boards.pt_board" t7=null channel=8 board_number=1 table=0x20:0x18
+"COPV-PT-R" board_key="pt_board_2" board="boards.pt_board_2" t7=null channel=1 board_number=2 table=0x20:0x31
+"HPD-PT" board_key="pt_board_2" board="boards.pt_board_2" t7=null channel=4 board_number=2 table=0x20:0x34
+"HPU-PT" board_key="pt_board_2" board="boards.pt_board_2" t7=null channel=3 board_number=2 table=0x20:0x33
+find_pt_role("COPV RTD") = nullopt
+find_pt_role("COPV-PT-R") = "pt_board_2" ch=1 table=0x20:0x31
+find_pt_role("Chamber Mid TC 1") = nullopt
+find_pt_role("Chamber Mid TC 2") = nullopt
+find_pt_role("Chamber Throat TC 1") = nullopt
+find_pt_role("Chamber Throat TC 2") = nullopt
+find_pt_role("DR-PT-G") = "pt_board" ch=7 table=0x20:0x17
+find_pt_role("DR-PT-R") = "pt_board" ch=3 table=0x20:0x13
+find_pt_role("Encoder 1") = nullopt
+find_pt_role("Encoder 2") = nullopt
+find_pt_role("FF-PT") = "pt_board" ch=6 table=0x20:0x16
+find_pt_role("FT-PT-R") = "pt_board" ch=9 table=0x20:0x19
+find_pt_role("Fuel Scale") = nullopt
+find_pt_role("HPD-PT") = "pt_board_2" ch=4 table=0x20:0x34
+find_pt_role("HPU-PT") = "pt_board_2" ch=3 table=0x20:0x33
+find_pt_role("LC-1") = nullopt
+find_pt_role("LC-2") = nullopt
+find_pt_role("LC-3") = nullopt
+find_pt_role("LOX Lower") = nullopt
+find_pt_role("LOX Mid") = nullopt
+find_pt_role("LOX Scale") = nullopt
+find_pt_role("LOX Upper") = nullopt
+find_pt_role("LP-PT") = "pt_board" ch=4 table=0x20:0x14
+find_pt_role("OF-PT") = "pt_board" ch=5 table=0x20:0x15
+find_pt_role("OT-PT-R") = "pt_board" ch=10 table=0x20:0x1A
+find_pt_role("Upstream") = "pt_board" ch=8 table=0x20:0x18
+find_pt_role("__no_such_role__") = nullopt
+
+=== build_slug_tables
+ok = false
+actuator DOME_CTRL_G = "Dome CTRL G"
+actuator DOME_CTRL_R = "Dome CTRL R"
+actuator DOME_VENT = "Dome vent"
+actuator FUEL_MAIN = "Fuel main"
+actuator FUEL_UPSTREAM = "Fuel upstream"
+actuator FUEL_VENT = "Fuel vent"
+actuator HIGH_PRESS_CTRL = "High press CTRL"
+actuator HPD_VENT = "HPD vent"
+actuator HPU_VENT = "HPU vent"
+actuator LOW_PRESS_VENT = "Low press vent"
+actuator OX_DUMP = "Ox dump"
+actuator OX_FILL = "Ox Fill"
+actuator OX_MAIN = "Ox main"
+actuator OX_UPSTREAM = "Ox upstream"
+actuator OX_VENT = "Ox Vent"
+sensor UPSTREAM = "Upstream"
+state ARMED = "Armed"
+state COPV_FILL = "COPV Fill"
+state DOME_PRESS = "Dome Press"
+state DOME_VENT = "Dome Vent"
+state DYNAMIC_TEST = "Dynamic Test"
+state FIRE = "Fire"
+state FLOW_TEST = "Flow Test"
+state FUEL_PRESS = "Fuel Press"
+state FUEL_TANK_VENT = "Fuel Tank Vent"
+state HIGH_PRESS_VENT = "High Press Vent"
+state IDLE = "Idle"
+state LOX_PRESS = "LOX Press"
+state LOX_TANK_VENT = "LOX Tank Vent"
+state PRESS_STANDBY = "Press Standby"
+state READY = "Ready"
+state VENT = "Vent"
+bad sensor "DR-PT-G" -> "DR-PT-G"
+bad sensor "DR-PT-R" -> "DR-PT-R"
+bad sensor "FF-PT" -> "FF-PT"
+bad sensor "FT-PT-R" -> "FT-PT-R"
+bad sensor "LP-PT" -> "LP-PT"
+bad sensor "OF-PT" -> "OF-PT"
+bad sensor "OT-PT-R" -> "OT-PT-R"
+bad sensor "COPV-PT-R" -> "COPV-PT-R"
+bad sensor "HPD-PT" -> "HPD-PT"
+bad sensor "HPU-PT" -> "HPU-PT"
+
+=== resolvePWMTargets
+fuel = {board_ip="" channel=0 actuator_name="" resolved=false}
+ox = {board_ip="" channel=0 actuator_name="" resolved=false}
+ok = false
+issue "no [actuator_roles] entry is assigned \"pwm_fuel\" — no actuator serves this PWM output"
+issue "no [actuator_roles] entry is assigned \"pwm_ox\" — no actuator serves this PWM output"
+boardIpMap[11] = "192.168.2.11"
+boardIpMap[12] = "192.168.2.12"
+boardIpMap[13] = "192.168.2.13"
+boardIpMap[14] = "192.168.2.14"
+boardIpMap[21] = "192.168.2.21"
+boardIpMap[22] = "192.168.2.22"
+boardIpMap[31] = "192.168.2.31"
+boardIpMap[32] = "192.168.2.32"
+boardIpMap[41] = "192.168.2.41"
+boardIpMap[42] = "192.168.2.42"
+boardIpMap[51] = "192.168.2.51"
+boardIpMap[52] = "192.168.2.52"
+boardIpMap[61] = "192.168.2.61"
+boardIpMap[71] = "192.168.2.71"
+boardIpMap[81] = "192.168.2.81"
+
+=== StateMachine
+load(../../../config/profiles/le4/state_transitions.csv) = true isLoaded=true
+bootState = 1 "Idle"
+state 0 "Debug" isAbort=false fromName(name)=255 bitmask=0x00000000 allowedFrom=[]
+state 1 "Idle" isAbort=false fromName(name)=1 bitmask=0x00000006 allowedFrom=[1, 2]
+state 2 "Armed" isAbort=false fromName(name)=2 bitmask=0x0001078E allowedFrom=[1, 2, 3, 7, 8, 9, 10, 16]
+state 3 "Press Standby" isAbort=false fromName(name)=3 bitmask=0x0001CFFE allowedFrom=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15, 16]
+state 4 "Dome Press" isAbort=false fromName(name)=4 bitmask=0x00010798 allowedFrom=[3, 4, 7, 8, 9, 10, 16]
+state 5 "COPV Fill" isAbort=false fromName(name)=5 bitmask=0x000107A8 allowedFrom=[3, 5, 7, 8, 9, 10, 16]
+state 6 "Fuel Press" isAbort=false fromName(name)=6 bitmask=0x000107C8 allowedFrom=[3, 6, 7, 8, 9, 10, 16]
+state 7 "Vent" isAbort=false fromName(name)=7 bitmask=0x00010F88 allowedFrom=[3, 7, 8, 9, 10, 11, 16]
+state 8 "Dome Vent" isAbort=false fromName(name)=8 bitmask=0x00010788 allowedFrom=[3, 7, 8, 9, 10, 16]
+state 9 "High Press Vent" isAbort=false fromName(name)=9 bitmask=0x00010788 allowedFrom=[3, 7, 8, 9, 10, 16]
+state 10 "Fuel Tank Vent" isAbort=false fromName(name)=10 bitmask=0x00010788 allowedFrom=[3, 7, 8, 9, 10, 16]
+state 11 "Ready" isAbort=false fromName(name)=11 bitmask=0x00013F88 allowedFrom=[3, 7, 8, 9, 10, 11, 12, 13, 16]
+state 12 "Fire" isAbort=false fromName(name)=12 bitmask=0x00011784 allowedFrom=[2, 7, 8, 9, 10, 12, 16]
+state 13 "Flow Test" isAbort=false fromName(name)=13 bitmask=0x00002808 allowedFrom=[3, 11, 13]
+state 14 "LOX Press" isAbort=false fromName(name)=14 bitmask=0x00014788 allowedFrom=[3, 7, 8, 9, 10, 14, 16]
+state 15 "Dynamic Test" isAbort=false fromName(name)=15 bitmask=0x00008008 allowedFrom=[3, 15]
+state 16 "LOX Tank Vent" isAbort=false fromName(name)=16 bitmask=0x00010788 allowedFrom=[3, 7, 8, 9, 10, 16]
+state 17 "Engine Abort" isAbort=false fromName(name)=255 bitmask=0x00000000 allowedFrom=[]
+state 18 "GSE Abort" isAbort=false fromName(name)=255 bitmask=0x00000000 allowedFrom=[]
+state 19 "Emergency Abort" isAbort=false fromName(name)=255 bitmask=0x00000000 allowedFrom=[]
+state 20 "Press Standby" isAbort=false fromName(name)=3 bitmask=0x00000000 allowedFrom=[]
+fromName("Abort") = 255
+fromName("Quick Fire") = 255
+fromName("GN2 Press") = 255
+fromName("GN2 Vent") = 255
+fromName("High Press") = 255
+fromName("fire") = 255
+fromName("IDLE") = 255
+fromName("No Such State") = 255
+fromName("") = 255
+
+=== ActuatorCommander
+load = true isLoaded=true
+bind_addr_ = "0.0.0.0" explicit=false actuator_port_ = 5005
+role "Dome CTRL G" = {channel=6 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Dome CTRL R" = {channel=1 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Dome vent" = {channel=3 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Fuel main" = {channel=6 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Fuel upstream" = {channel=2 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Fuel vent" = {channel=1 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "HPD vent" = {channel=9 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "HPU vent" = {channel=9 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "High press CTRL" = {channel=7 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Low press vent" = {channel=2 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Ox Fill" = {channel=2 board_id=71 board_ip="192.168.2.71" is_no=false is_pwm=false cmd_table_hi=0x35}
+role "Ox Vent" = {channel=1 board_id=71 board_ip="192.168.2.71" is_no=false is_pwm=false cmd_table_hi=0x35}
+role "Ox dump" = {channel=7 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Ox main" = {channel=5 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Ox upstream" = {channel=3 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+positions "Armed" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "COPV Fill" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 1
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Dome Press" (15)
+  "Dome CTRL G" = 1
+  "Dome CTRL R" = 1
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Dome Vent" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 1
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Dynamic Test" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Fire" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 1
+  "Fuel upstream" = 1
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 1
+  "Ox upstream" = 1
+positions "Flow Test" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 1
+  "Fuel upstream" = 1
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 1
+  "Ox upstream" = 1
+positions "Fuel Press" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 1
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Fuel Tank Vent" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 1
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "High Press Vent" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 1
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Idle" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "LOX Press" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 1
+positions "LOX Tank Vent" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 1
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Press Standby" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Ready" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 0
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 0
+  "HPD vent" = 0
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 0
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positions "Vent" (15)
+  "Dome CTRL G" = 0
+  "Dome CTRL R" = 0
+  "Dome vent" = 1
+  "Fuel main" = 0
+  "Fuel upstream" = 0
+  "Fuel vent" = 1
+  "HPD vent" = 1
+  "HPU vent" = 0
+  "High press CTRL" = 0
+  "Low press vent" = 0
+  "Ox Fill" = 0
+  "Ox Vent" = 1
+  "Ox dump" = 0
+  "Ox main" = 0
+  "Ox upstream" = 0
+positionsForState("idle").size = 15
+positionsForState("armed").size = 15
+positionsForState("press standby").size = 15
+positionsForState("dome press").size = 15
+positionsForState("copv fill").size = 15
+positionsForState("fuel press").size = 15
+positionsForState("lox press").size = 15
+positionsForState("vent").size = 15
+positionsForState("dome vent").size = 15
+positionsForState("high press vent").size = 15
+positionsForState("fuel tank vent").size = 15
+positionsForState("lox tank vent").size = 15
+positionsForState("ready").size = 15
+positionsForState("fire").size = 15
+positionsForState("flow test").size = 15
+positionsForState("dynamic test").size = 15
+positionsForState("No Such State").size = 0
+
+=== load_dynamic_states
+refused 15 "Dynamic Test": "Dynamic Test: config cannot be resolved to script names — sensor \"DR-PT-G\" has no usable slug (got \"DR-PT-G\"); sensor \"DR-PT-R\" has no usable slug (got \"DR-PT-R\"); sensor \"FF-PT\" has no usable slug (got \"FF-PT\"); sensor \"FT-PT-R\" has no usable slug (got \"FT-PT-R\"); sensor \"LP-PT\" has no usable slug (got \"LP-PT\"); sensor \"OF-PT\" has no usable slug (got \"OF-PT\"); sensor \"OT-PT-R\" has no usable slug (got \"OT-PT-R\"); sensor \"COPV-PT-R\" has no usable slug (got \"COPV-PT-R\"); sensor \"HPD-PT\" has no usable slug (got \"HPD-PT\"); sensor \"HPU-PT\" has no usable slug (got \"HPU-PT\")"
+
+=== hold_rule_inputs
+fire_state = 255 "Unknown"
+fire_expiry = 2 "Armed"
+fire isAllowed(state, expiry) = false
+fire gate delays in/out = 0 / 0
+flow_state candidate 13 "Flow Test" return=11 "Ready" isAllowed=true
+flow gate delays in/out = 0 / 0
+parseHoldMs("1500") = true 1500
+parseHoldMs(" 250 ") = true 250
+parseHoldMs("0") = false 0
+parseHoldMs("1e3") = false 0
+parseHoldMs("-5") = false 0
+parseHoldMs("3600000") = true 3600000
+parseHoldMs("3600001") = false 0
+parseHoldMs("") = false 0
+parseHoldMs("12x") = false 0
+
+=== captured stdout
+[StateMachine] Loaded 16 state(s) from config
+[StateMachine] Loaded 16 states from ../../../config/profiles/le4/state_transitions.csv
+[ActuatorCommander] Loaded 15 actuator roles from config
+[ActuatorCommander] Loaded 16 states from ../../../config/profiles/le4/state_machine_actuators.csv
+
+=== captured stderr
+
+=== exit 0

@@ -1,4 +1,4 @@
-input ../../../config/profiles/digital-twin/config.toml readable=true bytes=14959
+input ../../../config/profiles/digital-twin/config.toml readable=true bytes=15070
 
 === config::load
 network.bind_ip = "0.0.0.0"
@@ -55,7 +55,7 @@ boards[1].enabled = true
 boards[1].num_actuators = 10
 boards[1].send_port = 5005
 boards[1].listen_port = 5005
-boards[1].enable_serial_printing = 1
+boards[1].enable_serial_printing = 2
 boards[1].voltage_reference = 0
 boards[1].necessary_for_abort = false
 boards[1].designated_survivor = true
@@ -97,7 +97,7 @@ boards[3].enabled = true
 boards[3].num_actuators = 10
 boards[3].send_port = 5005
 boards[3].listen_port = 5005
-boards[3].enable_serial_printing = 1
+boards[3].enable_serial_printing = 2
 boards[3].voltage_reference = 0
 boards[3].necessary_for_abort = false
 boards[3].designated_survivor = false
@@ -139,7 +139,7 @@ boards[5].enabled = true
 boards[5].num_actuators = 0
 boards[5].send_port = 5005
 boards[5].listen_port = 5005
-boards[5].enable_serial_printing = 0
+boards[5].enable_serial_printing = 2
 boards[5].voltage_reference = 1
 boards[5].necessary_for_abort = false
 boards[5].designated_survivor = false
@@ -160,7 +160,7 @@ boards[6].enabled = true
 boards[6].num_actuators = 0
 boards[6].send_port = 5005
 boards[6].listen_port = 5005
-boards[6].enable_serial_printing = 1
+boards[6].enable_serial_printing = 2
 boards[6].voltage_reference = 1
 boards[6].necessary_for_abort = false
 boards[6].designated_survivor = false
@@ -181,7 +181,7 @@ boards[7].enabled = true
 boards[7].num_actuators = 0
 boards[7].send_port = 5005
 boards[7].listen_port = 5005
-boards[7].enable_serial_printing = 1
+boards[7].enable_serial_printing = 2
 boards[7].voltage_reference = 0
 boards[7].necessary_for_abort = false
 boards[7].designated_survivor = false
@@ -202,7 +202,7 @@ boards[8].enabled = true
 boards[8].num_actuators = 0
 boards[8].send_port = 5005
 boards[8].listen_port = 5005
-boards[8].enable_serial_printing = 0
+boards[8].enable_serial_printing = 2
 boards[8].voltage_reference = 1
 boards[8].necessary_for_abort = true
 boards[8].designated_survivor = false
@@ -223,7 +223,7 @@ boards[9].enabled = true
 boards[9].num_actuators = 0
 boards[9].send_port = 5005
 boards[9].listen_port = 5005
-boards[9].enable_serial_printing = 1
+boards[9].enable_serial_printing = 2
 boards[9].voltage_reference = 0
 boards[9].necessary_for_abort = false
 boards[9].designated_survivor = false
@@ -244,7 +244,7 @@ boards[10].enabled = true
 boards[10].num_actuators = 0
 boards[10].send_port = 5005
 boards[10].listen_port = 5005
-boards[10].enable_serial_printing = 1
+boards[10].enable_serial_printing = 2
 boards[10].voltage_reference = 0
 boards[10].necessary_for_abort = false
 boards[10].designated_survivor = false
@@ -286,7 +286,7 @@ boards[12].enabled = true
 boards[12].num_actuators = 0
 boards[12].send_port = 5005
 boards[12].listen_port = 5005
-boards[12].enable_serial_printing = 1
+boards[12].enable_serial_printing = 2
 boards[12].voltage_reference = 0
 boards[12].necessary_for_abort = false
 boards[12].designated_survivor = false
@@ -321,8 +321,9 @@ boards[13].kind_of(type) = TC
 boards[13].board_key_of = "tc_board_2"
 t7_boards.count = 0
 t7_errors.count = 0
-actuator_roles.count = 13
-actuator_roles["Dome CTRL"] = {kind="NC" is_no=false ball_valve=false channel=3 board_id=12 controller_role=""}
+actuator_roles.count = 14
+actuator_roles["Dome CTRL GSE"] = {kind="NC" is_no=false ball_valve=false channel=3 board_id=12 controller_role=""}
+actuator_roles["Dome CTRL R"] = {kind="NC" is_no=false ball_valve=false channel=8 board_id=12 controller_role=""}
 actuator_roles["Dome CTRL Vent"] = {kind="NC" is_no=false ball_valve=false channel=10 board_id=14 controller_role=""}
 actuator_roles["Fuel Fill Press"] = {kind="NC" is_no=false ball_valve=false channel=2 board_id=14 controller_role=""}
 actuator_roles["Fuel Fill Vent"] = {kind="NC" is_no=false ball_valve=false channel=5 board_id=14 controller_role=""}
@@ -396,6 +397,7 @@ sensor_roles["sensor_roles_encoder_board"]["Encoder 2"] = 2
 sensor_roles["sensor_roles_lc_board"]["Fuel Scale"] = 1
 sensor_roles["sensor_roles_lc_board_2"]["LOX Scale"] = 1
 sensor_roles["sensor_roles_pt_board"]["Dome CTRL"] = 3
+sensor_roles["sensor_roles_pt_board"]["Dome CTRL R"] = 6
 sensor_roles["sensor_roles_pt_board"]["Fuel Fill Vent"] = 1
 sensor_roles["sensor_roles_pt_board"]["Fuel Upstream"] = 2
 sensor_roles["sensor_roles_pt_board"]["LOX Upstream"] = 5
@@ -417,6 +419,7 @@ abort_pts["Ox Upstream"] = 400
 calibration_models["calibration_model_lc_board"]["Fuel Scale"] = "cubic"
 calibration_models["calibration_model_lc_board_2"]["LOX Scale"] = "cubic"
 calibration_models["calibration_model_pt_board"]["Dome CTRL"] = "cubic"
+calibration_models["calibration_model_pt_board"]["Dome CTRL R"] = "cubic"
 calibration_models["calibration_model_pt_board"]["Fuel Fill Vent"] = "physics"
 calibration_models["calibration_model_pt_board"]["Fuel Upstream"] = "cubic"
 calibration_models["calibration_model_pt_board"]["LOX Upstream"] = "cubic"
@@ -451,7 +454,7 @@ sensor_roles_for(sensor_roles_lc_board) = {"Fuel Scale": 1}
 calibration_model_for(lc_board) = set; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
 sensor_roles_for(sensor_roles_lc_board_2) = {"LOX Scale": 1}
 calibration_model_for(lc_board_2) = set; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
-sensor_roles_for(sensor_roles_pt_board) = {"Dome CTRL": 3, "Fuel Fill Vent": 1, "Fuel Upstream": 2, "LOX Upstream": 5, "Low Press": 4}
+sensor_roles_for(sensor_roles_pt_board) = {"Dome CTRL": 3, "Dome CTRL R": 6, "Fuel Fill Vent": 1, "Fuel Upstream": 2, "LOX Upstream": 5, "Low Press": 4}
 calibration_model_for(pt_board) = set; full_scale_for = set; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
 sensor_roles_for(sensor_roles_pt_board_2) = {"Dome Mid": 3, "Excitation V": 2, "GN2 High": 1, "High Press": 4}
 calibration_model_for(pt_board_2) = set; full_scale_for = null; sense_resistor_for = null; sensitivity_for = null; pga_gain_for = null
@@ -489,6 +492,7 @@ slot 2 = {board_id=22 board_number=2 interface=CURRENT_LOOP_4_20MA is_current_lo
 
 === pt_role_tables
 "Dome CTRL" board_key="pt_board" board="boards.pt_board" t7=null channel=3 board_number=1 table=0x20:0x13
+"Dome CTRL R" board_key="pt_board" board="boards.pt_board" t7=null channel=6 board_number=1 table=0x20:0x16
 "Fuel Fill Vent" board_key="pt_board" board="boards.pt_board" t7=null channel=1 board_number=1 table=0x20:0x11
 "Fuel Upstream" board_key="pt_board" board="boards.pt_board" t7=null channel=2 board_number=1 table=0x20:0x12
 "LOX Upstream" board_key="pt_board" board="boards.pt_board" t7=null channel=5 board_number=1 table=0x20:0x15
@@ -503,6 +507,7 @@ find_pt_role("Chamber Mid TC 2") = nullopt
 find_pt_role("Chamber Throat TC 1") = nullopt
 find_pt_role("Chamber Throat TC 2") = nullopt
 find_pt_role("Dome CTRL") = "pt_board" ch=3 table=0x20:0x13
+find_pt_role("Dome CTRL R") = "pt_board" ch=6 table=0x20:0x16
 find_pt_role("Dome Mid") = "pt_board_2" ch=3 table=0x20:0x33
 find_pt_role("Encoder 1") = nullopt
 find_pt_role("Encoder 2") = nullopt
@@ -522,7 +527,8 @@ find_pt_role("__no_such_role__") = nullopt
 
 === build_slug_tables
 ok = true
-actuator DOME_CTRL = "Dome CTRL"
+actuator DOME_CTRL_GSE = "Dome CTRL GSE"
+actuator DOME_CTRL_R = "Dome CTRL R"
 actuator DOME_CTRL_VENT = "Dome CTRL Vent"
 actuator FUEL_FILL_PRESS = "Fuel Fill Press"
 actuator FUEL_FILL_VENT = "Fuel Fill Vent"
@@ -536,6 +542,7 @@ actuator LOX_VENT = "lox vent"
 actuator OX_MAIN = "Ox Main"
 actuator OX_UPSTREAM = "Ox Upstream"
 sensor DOME_CTRL = "Dome CTRL"
+sensor DOME_CTRL_R = "Dome CTRL R"
 sensor DOME_MID = "Dome Mid"
 sensor EXCITATION_V = "Excitation V"
 sensor FUEL_FILL_VENT = "Fuel Fill Vent"
@@ -618,7 +625,8 @@ fromName("") = 255
 === ActuatorCommander
 load = true isLoaded=true
 bind_addr_ = "0.0.0.0" explicit=false actuator_port_ = 5005
-role "Dome CTRL" = {channel=3 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Dome CTRL GSE" = {channel=3 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
+role "Dome CTRL R" = {channel=8 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
 role "Dome CTRL Vent" = {channel=10 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
 role "Fuel Fill Press" = {channel=2 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
 role "Fuel Fill Vent" = {channel=5 board_id=14 board_ip="192.168.2.14" is_no=false is_pwm=false cmd_table_hi=0x32}
@@ -631,8 +639,9 @@ role "Ox Main" = {channel=7 board_id=14 board_ip="192.168.2.14" is_no=false is_p
 role "Ox Upstream" = {channel=10 board_id=12 board_ip="192.168.2.12" is_no=false is_pwm=false cmd_table_hi=0x32}
 role "fuel vent" = {channel=7 board_id=12 board_ip="192.168.2.12" is_no=true is_pwm=false cmd_table_hi=0x32}
 role "lox vent" = {channel=9 board_id=12 board_ip="192.168.2.12" is_no=true is_pwm=false cmd_table_hi=0x32}
-positions "Armed" (13)
-  "Dome CTRL" = 0
+positions "Armed" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -645,8 +654,9 @@ positions "Armed" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "COPV Fill" (13)
-  "Dome CTRL" = 0
+positions "COPV Fill" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -659,8 +669,9 @@ positions "COPV Fill" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "Dome Press" (13)
-  "Dome CTRL" = 1
+positions "Dome Press" (14)
+  "Dome CTRL GSE" = 1
+  "Dome CTRL R" = 1
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -673,8 +684,9 @@ positions "Dome Press" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "Dome Vent" (13)
-  "Dome CTRL" = 0
+positions "Dome Vent" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 1
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -687,8 +699,9 @@ positions "Dome Vent" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "Dynamic Test" (13)
-  "Dome CTRL" = 0
+positions "Dynamic Test" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -701,8 +714,9 @@ positions "Dynamic Test" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "Fire" (13)
-  "Dome CTRL" = 0
+positions "Fire" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -715,8 +729,9 @@ positions "Fire" (13)
   "Ox Upstream" = 1
   "fuel vent" = 0
   "lox vent" = 0
-positions "Flow Test" (13)
-  "Dome CTRL" = 0
+positions "Flow Test" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -729,8 +744,9 @@ positions "Flow Test" (13)
   "Ox Upstream" = 1
   "fuel vent" = 0
   "lox vent" = 0
-positions "Fuel Press" (13)
-  "Dome CTRL" = 0
+positions "Fuel Press" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -743,8 +759,9 @@ positions "Fuel Press" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "Fuel Tank Vent" (13)
-  "Dome CTRL" = 0
+positions "Fuel Tank Vent" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -757,8 +774,9 @@ positions "Fuel Tank Vent" (13)
   "Ox Upstream" = 0
   "fuel vent" = 1
   "lox vent" = 0
-positions "High Press Vent" (13)
-  "Dome CTRL" = 0
+positions "High Press Vent" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -771,8 +789,9 @@ positions "High Press Vent" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "Idle" (13)
-  "Dome CTRL" = 0
+positions "Idle" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -785,8 +804,9 @@ positions "Idle" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "LOX Press" (13)
-  "Dome CTRL" = 0
+positions "LOX Press" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -799,8 +819,9 @@ positions "LOX Press" (13)
   "Ox Upstream" = 1
   "fuel vent" = 0
   "lox vent" = 0
-positions "Press Standby" (13)
-  "Dome CTRL" = 0
+positions "Press Standby" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -813,8 +834,9 @@ positions "Press Standby" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "Ready" (13)
-  "Dome CTRL" = 0
+positions "Ready" (14)
+  "Dome CTRL GSE" = 0
+  "Dome CTRL R" = 0
   "Dome CTRL Vent" = 0
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 0
@@ -827,8 +849,9 @@ positions "Ready" (13)
   "Ox Upstream" = 0
   "fuel vent" = 0
   "lox vent" = 0
-positions "Vent" (13)
-  "Dome CTRL" = 0
+positions "Vent" (14)
+  "Dome CTRL GSE" = 1
+  "Dome CTRL R" = 1
   "Dome CTRL Vent" = 1
   "Fuel Fill Press" = 0
   "Fuel Fill Vent" = 1
@@ -844,21 +867,21 @@ positions "Vent" (13)
 delay "Fire" "Fuel Main" = 1
 delay "Flow Test" "Fuel Main" = 1
 delay "Flow Test" "Ox Main" = 1
-positionsForState("idle").size = 13
-positionsForState("armed").size = 13
-positionsForState("press standby").size = 13
-positionsForState("dome press").size = 13
-positionsForState("copv fill").size = 13
-positionsForState("fuel press").size = 13
-positionsForState("lox press").size = 13
-positionsForState("vent").size = 13
-positionsForState("dome vent").size = 13
-positionsForState("high press vent").size = 13
-positionsForState("fuel tank vent").size = 13
-positionsForState("ready").size = 13
-positionsForState("fire").size = 13
-positionsForState("flow test").size = 13
-positionsForState("dynamic test").size = 13
+positionsForState("idle").size = 14
+positionsForState("armed").size = 14
+positionsForState("press standby").size = 14
+positionsForState("dome press").size = 14
+positionsForState("copv fill").size = 14
+positionsForState("fuel press").size = 14
+positionsForState("lox press").size = 14
+positionsForState("vent").size = 14
+positionsForState("dome vent").size = 14
+positionsForState("high press vent").size = 14
+positionsForState("fuel tank vent").size = 14
+positionsForState("ready").size = 14
+positionsForState("fire").size = 14
+positionsForState("flow test").size = 14
+positionsForState("dynamic test").size = 14
 positionsForState("No Such State").size = 0
 
 === load_dynamic_states
@@ -896,7 +919,7 @@ parseHoldMs("12x") = false 0
 === captured stdout
 [StateMachine] Loaded 15 state(s) from config
 [StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
-[ActuatorCommander] Loaded 13 actuator roles from config
+[ActuatorCommander] Loaded 14 actuator roles from config
 [ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
 [ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
 

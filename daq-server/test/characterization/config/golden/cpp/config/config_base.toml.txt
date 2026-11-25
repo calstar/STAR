@@ -1,4 +1,4 @@
-input ../../../config/config_base.toml readable=true bytes=19758
+input ../../../config/config_base.toml readable=true bytes=19811
 
 === config::load
 network.bind_ip = "0.0.0.0"
