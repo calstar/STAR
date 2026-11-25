@@ -188,12 +188,20 @@ export function checkTableIdCollisions(cfg?: unknown, now: number = Date.now()):
 /** Which process publishes a calibrated table: t7_bridge for a T7, calibration_service otherwise. */
 const publisherOf = (key: string) => (key.startsWith(`${0x26},`) ? 't7_bridge' : 'calibration_service');
 
-/** Calibrated entries that have a raw sibling, de-duplicated by key (first entity wins, as in the map). */
+/**
+ * Calibrated families that are registered but that nothing writes. calibration_service registers
+ * ENC1_Cal.* (0x24) and never publishes a row for it (calibration_main.cpp calibrates PT, TC, RTD,
+ * LC, ACT and ball valve only), so a silent ENC calibrated table is normal, not a dead stream.
+ */
+const UNPUBLISHED_CAL_HI = new Set([0x24]);
+
+/** Calibrated entries that have a raw sibling and a publisher, de-duplicated by key (first entity wins). */
 function calibratedWithSibling(entries: TableEntry[]): TableEntry[] {
   const seen = new Set<string>();
   const out: TableEntry[] = [];
   for (const e of entries) {
     if (e.kind !== 'cal' || !e.raw || seen.has(e.key)) continue;
+    if (UNPUBLISHED_CAL_HI.has(Number(e.key.split(',')[0]))) continue;
     seen.add(e.key);
     out.push(e);
   }

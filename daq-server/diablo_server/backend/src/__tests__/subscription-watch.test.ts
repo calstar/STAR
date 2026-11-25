@@ -137,6 +137,19 @@ describe('per-channel liveness (D-SUB)', () => {
     expect(watch.staleChannels()).toEqual([]);
   });
 
+  it('never flags an encoder\'s calibrated table: nothing publishes ENC*_Cal', async () => {
+    const encCfg = { boards: { pt_board_2: pt(22, [1, 2]), enc: { ...pt(31, [1]), type: 'ENCODER' } } };
+    const client = fakeClient();
+    await registry.registerVTables(client, encCfg);
+    for (const end = now + 30_000; now < end;) {
+      now += 1000;
+      deliver(RAW1, RAW2, CAL1, CAL2, [0x24, 0x01]); // ENC1.CH1 raw delivers; ENC1_Cal.CH1 never
+      watch.checkSubscriptionLiveness(client, now, encCfg);
+    }
+    expect(watch.staleChannels()).toEqual([]);
+    expect(client.disconnect).not.toHaveBeenCalled();
+  });
+
   it('flags a channel that delivered and then stopped while its raw goes on', async () => {
     const client = fakeClient();
     await registry.registerVTables(client, cfg);
