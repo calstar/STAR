@@ -35,6 +35,9 @@ export interface ConfigIssue {
     level: ConfigIssueLevel;
     /** Plain text — rendered by the editor and by the session page, so no markup. */
     message: string;
+    /** false: reported, but session start does not stop for it, even on the first press. Absent
+     *  means it blocks, which is every issue but the few that say otherwise. */
+    blocks?: boolean;
 }
 /** The three state-machine CSVs, as raw file text. An absent file is ''. */
 export interface StateCsvSet {
@@ -168,10 +171,16 @@ export declare function slugTableIssues(config: any): {
  * abort-threshold walk: the name must be a PT role on an ESP32 PT board (a T7 cannot trip), on a
  * channel 1-255, and only a ratiometric (0.5-4.5 V) sensor on the "physics" model is inverted.
  * For any other model config_broadcast uses the calibration service's threshold when that service
- * has emitted one for the sensor, which it does only after an operator cubic capture; until then
- * the board has no trip, so it is an error here.
+ * has emitted one for the sensor, which it does only after an operator cubic capture. Until then
+ * the board has no trip for it: a warning that does not block a run (DAQ team, 2026-11-24), since
+ * a stand is routinely brought up before its cubics are captured. Every other case is an error.
  */
-export declare function abortTripIssues(config: any, thresholds?: AbortThresholds): string[];
+export interface AbortTripIssue {
+    level: ConfigIssueLevel;
+    message: string;
+    blocks?: boolean;
+}
+export declare function abortTripIssues(config: any, thresholds?: AbortThresholds): AbortTripIssue[];
 export declare function validateConfigForRun(config: any, csv?: Partial<StateCsvSet>, abortThresholds?: AbortThresholds): ConfigIssue[];
 /** Group issues by the editor page that fixes them, preserving rule order within a page. */
 export declare function groupIssuesByPage(issues: ConfigIssue[]): {

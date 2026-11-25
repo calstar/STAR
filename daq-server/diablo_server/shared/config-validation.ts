@@ -59,6 +59,9 @@ export interface ConfigIssue {
   level: ConfigIssueLevel;
   /** Plain text — rendered by the editor and by the session page, so no markup. */
   message: string;
+  /** false: reported, but session start does not stop for it, even on the first press. Absent
+   *  means it blocks, which is every issue but the few that say otherwise. */
+  blocks?: boolean;
 }
 
 /** The three state-machine CSVs, as raw file text. An absent file is ''. */
@@ -584,14 +587,22 @@ export function slugTableIssues(config: any): { page: ConfigPageId; message: str
  * abort-threshold walk: the name must be a PT role on an ESP32 PT board (a T7 cannot trip), on a
  * channel 1-255, and only a ratiometric (0.5-4.5 V) sensor on the "physics" model is inverted.
  * For any other model config_broadcast uses the calibration service's threshold when that service
- * has emitted one for the sensor, which it does only after an operator cubic capture; until then
- * the board has no trip, so it is an error here.
+ * has emitted one for the sensor, which it does only after an operator cubic capture. Until then
+ * the board has no trip for it: a warning that does not block a run (DAQ team, 2026-11-24), since
+ * a stand is routinely brought up before its cubics are captured. Every other case is an error.
  */
-export function abortTripIssues(config: any, thresholds?: AbortThresholds): string[] {
+export interface AbortTripIssue {
+  level: ConfigIssueLevel;
+  message: string;
+  blocks?: boolean;
+}
+
+export function abortTripIssues(config: any, thresholds?: AbortThresholds): AbortTripIssue[] {
   const abort = config?.abort_pts;
   if (!abort || typeof abort !== 'object') return [];
   const roles = ptRoles(config);
-  const out: string[] = [];
+  const found: AbortTripIssue[] = [];
+  const out = { push: (message: string) => found.push({ level: 'error', message }) };
   for (const [name, raw] of Object.entries<any>(abort)) {
     const tag = `abort_pts "${name}"`;
     const ref = roles.find((r) => r.role === name);
@@ -620,10 +631,11 @@ export function abortTripIssues(config: any, thresholds?: AbortThresholds): stri
       const uid = Number(b.board_id ?? b.id) * 100 + ref.channel;
       const emitted = thresholds.get(uid);
       if (emitted !== undefined && Math.abs(emitted - Number(raw)) < 0.5) continue;
-      out.push(`${tag}: model "${model}"${loop ? ' (4-20 mA)' : ''} cannot be turned into a board ` +
+      found.push({ level: 'warn', blocks: false, message:
+        `${tag}: model "${model}"${loop ? ' (4-20 mA)' : ''} cannot be turned into a board ` +
         'trip threshold, so the board has no overpressure trip for it until the calibration service ' +
         'computes one from an operator calibration. Set its calibration model to "physics" for a ' +
-        'ratiometric sensor, or calibrate it before the run.');
+        'ratiometric sensor, or calibrate it before the run.' });
       continue;
     }
     const scales = config?.[`calibration_full_scale_${ref.boardKey}`];
@@ -631,7 +643,7 @@ export function abortTripIssues(config: any, thresholds?: AbortThresholds): stri
     if (!(fs > 0) || !(Number(raw) > 0))
       out.push(`${tag}: a non-positive full scale or threshold gives the board no trip.`);
   }
-  return out;
+  return found;
 }
 
 export function validateConfigForRun(
@@ -805,7 +817,9 @@ export function validateConfigForRun(
   // config_broadcast turns each [abort_pts] entry into a raw ADC threshold the PT board trips on
   // by itself. An entry it cannot turn into one leaves that sensor with no board-side overpressure
   // abort, and until now only config_broadcast's log said so (once, at runtime).
-  for (const m of abortTripIssues(config, abortThresholds)) add('roles', 'error', m);
+  for (const m of abortTripIssues(config, abortThresholds))
+    issues.push({ page: 'roles', level: m.level, message: m.message,
+      ...(m.blocks === false ? { blocks: false } : {}) });
 
   // ── Controller PWM assignment ─────────────────────────────────────────────
   // The only statement of which hardware the controller drives. Unresolved means the controller

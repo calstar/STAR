@@ -222,9 +222,16 @@ active_connectors = [1, 2]
   });
 
   it('a cubic abort sensor the calibration service has no threshold for (copy-of-default)', async () => {
+    // A warning, not an error, and it does not stop the run: a stand is routinely brought up
+    // before its cubics are captured (DAQ team, 2026-11-24).
     writeProfile(CLEAN_PROFILE + PT_BOARD + '\n[abort_pts]\n"Fuel Upstream" = 900\n');
-    expect(errorsMatching('abort_pts "Fuel Upstream": model "cubic"')).toHaveLength(1);
-    await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
+    expect(errorsMatching('abort_pts "Fuel Upstream": model "cubic"')).toHaveLength(0);
+    const cubic = validateActiveProfile().issues.filter((i) =>
+      i.message.includes('abort_pts "Fuel Upstream": model "cubic"'));
+    expect(cubic).toEqual([expect.objectContaining({ level: 'warn', blocks: false })]);
+    await sessionManager.start(false, 60_000);   // first press, no force
+    expect(sessionManager.getStatus().active).toBe(true);
+    await sessionManager.stop();
 
     // Once the calibration service has emitted a threshold for that sensor (uid 21*100+2) at that
     // PSI, the board has a trip and the profile starts, as config_broadcast would then send it.
