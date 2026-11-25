@@ -35,6 +35,6 @@ packets.count = 0
 === captured stdout
 
 === captured stderr
-[Config] TOML parse error in config/config.toml: Error while parsing table header: expected ']', saw '\n'
+[ConfigBroadcast] config re-read refused, keeping the last good packets: [Config] config/config.toml refused: line 2: not valid TOML: Error while parsing table header: expected ']', saw '\n'
 
 === exit 0

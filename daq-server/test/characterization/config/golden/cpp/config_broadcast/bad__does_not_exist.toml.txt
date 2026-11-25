@@ -35,6 +35,6 @@ packets.count = 0
 === captured stdout
 
 === captured stderr
-[Config] TOML parse error in config/config.toml: File could not be opened for reading
+[ConfigBroadcast] config re-read refused, keeping the last good packets: [Config] config/config.toml refused: cannot open the file (No such file or directory)
 
 === exit 0

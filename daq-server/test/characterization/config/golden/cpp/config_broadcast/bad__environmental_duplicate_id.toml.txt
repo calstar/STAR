@@ -30,10 +30,11 @@ abort["LOX Fill"] = 0
 abort["LOX Main"] = 1
 abort["LOX Press"] = 1
 abort["LOX Vent"] = 1
-EXCEPTION [Config] environmental board ID 90 is claimed by both [boards.env_a] and [boards.env_b]
+packets.count = 0
 
 === captured stdout
 
 === captured stderr
+[ConfigBroadcast] config re-read refused, keeping the last good packets: [Config] config/config.toml refused: environmental board ID 90 is claimed by both [boards.env_a] and [boards.env_b]
 
-=== exit 1
+=== exit 0

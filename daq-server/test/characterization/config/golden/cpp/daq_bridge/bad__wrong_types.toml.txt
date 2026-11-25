@@ -1,18 +1,7 @@
-db_host = "127.0.0.1"
-db_port = 1
-sensor_port = 5006
-bind_ip = "0.0.0.0"
-log_port = 8092
-hb = {interval_ms=1000 broadcast_port=5005 broadcast_ip="255.255.255.255" send_from_daq_bridge=true}
-time_sync = {mode=BoardClock window_seconds=10 max_plausible_gap_s=60 max_batch_age_s=5 resync_threshold_ms=1000 log_interval_s=10}
-board_map["192.168.2.21"] = {type=PT ip="192.168.2.21" active_channels=2 enabled=true board_id=21 wire_u8=1}
-board_by_octet[21] = {type=PT ip="192.168.2.21" active_channels=2 enabled=true board_id=21 wire_u8=1}
-resolve("192.168.2.21") = {type=PT ip="192.168.2.21" active_channels=2 enabled=true board_id=21 wire_u8=1}
-resolve("127.0.0.21") = {type=PT ip="192.168.2.21" active_channels=2 enabled=true board_id=21 wire_u8=1}
-resolve("10.9.8.7") = null
+EXCEPTION [Config] fixtures/bad/wrong_types.toml refused: line 2: [network].bind_ip must be a string, got an integer; line 3: [network].sensor_port must be an integer, got a string; line 4: [network].actuator_cmd_port must be an integer, got a float; line 8: [database].port must be an integer, got a boolean; line 11: [heartbeat_service].enabled must be true or false, got a string; line 17: [boards.pt_board].enabled must be true or false, got an integer; line 16: [boards.pt_board].board_id must be an integer, got a float; line 18: [boards.pt_board].active_connectors[0] must be an integer, got a string; line 18: [boards.pt_board].active_connectors[2] must be an integer, got a float; line 31: [[states]] #1 id must be an integer, got a string; line 36: [[states]] #2 name must be a string, got an integer; line 37: [[states]] #2 is_boot must be true or false, got a string; line 23: [sensor_roles_pt_board]."Fuel Upstream" (channel) must be an integer, got a string; line 24: [sensor_roles_pt_board]."Ox Upstream" (channel) must be an integer, got a float; line 28: [abort_pts]."COPV" must be a number, got a string
 
 === captured stdout
 
 === captured stderr
 
-=== exit 0
+=== exit 1

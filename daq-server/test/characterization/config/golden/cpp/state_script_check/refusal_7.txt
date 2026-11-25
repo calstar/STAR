@@ -1,6 +1,6 @@
 === args --config fixtures/bad/malformed.toml --state Idle ../../../config/profiles/digital-twin/scripts/dynamic_test.script
 === stdout
 === stderr
-[Config] TOML parse error (string): Error while parsing table header: expected ']', saw '\n'
-config declares no [[states]] (or failed to parse): fixtures/bad/malformed.toml
+config refused: fixtures/bad/malformed.toml
+  line 2: not valid TOML: Error while parsing table header: expected ']', saw '\n'
 === exit 2

@@ -35,5 +35,6 @@ packets.count = 0
 === captured stdout
 
 === captured stderr
+[ConfigBroadcast] config re-read refused, keeping the last good packets: [Config] config/config.toml refused: line 2: [network].sensor_port = 70000 is out of range (1 to 65535); line 3: [network].actuator_cmd_port = -1 is out of range (1 to 65535); line 6: [database].port = 65536 is out of range (1 to 65535); line 15: [logs].backend_udp_port = -8092 is out of range (1 to 65535); line 22: [boards.pt_board].send_port = -5 is out of range (1 to 65535); line 21: [boards.pt_board].listen_port = 65537 is out of range (1 to 65535); line 23: [boards.pt_board].active_connectors[0] = 0 is out of range (1 to 255); line 23: [boards.pt_board].active_connectors[1] = 256 is out of range (1 to 255); line 23: [boards.pt_board].active_connectors[2] = -1 is out of range (1 to 255); line 23: [boards.pt_board].active_connectors[3] = 300 is out of range (1 to 255); line 9: [controller_service].port = 0 is out of range (1 to 65535); line 12: [actuator_service].port = 99999 is out of range (1 to 65535)
 
 === exit 0

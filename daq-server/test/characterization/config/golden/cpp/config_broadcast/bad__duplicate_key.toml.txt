@@ -35,6 +35,6 @@ packets.count = 0
 === captured stdout
 
 === captured stderr
-[Config] TOML parse error in config/config.toml: Error while parsing key-value pair: cannot redefine existing integer 'sensor_port'
+[ConfigBroadcast] config re-read refused, keeping the last good packets: [Config] config/config.toml refused: line 3: not valid TOML: Error while parsing key-value pair: cannot redefine existing integer 'sensor_port'
 
 === exit 0

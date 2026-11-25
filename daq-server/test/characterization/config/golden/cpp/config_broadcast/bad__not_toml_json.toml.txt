@@ -35,6 +35,6 @@ packets.count = 0
 === captured stdout
 
 === captured stderr
-[Config] TOML parse error in config/config.toml: Error while parsing root table: expected keys, tables, whitespace or comments, saw '{'
+[ConfigBroadcast] config re-read refused, keeping the last good packets: [Config] config/config.toml refused: line 1: not valid TOML: Error while parsing root table: expected keys, tables, whitespace or comments, saw '{'
 
 === exit 0

@@ -1,6 +1,9 @@
 input fixtures/bad/does_not_exist.toml readable=false bytes=0
 
 === config::load
+EXCEPTION std::invalid_argument: [Config] fixtures/bad/does_not_exist.toml refused: cannot open the file (No such file or directory)
+
+=== config::load_from_string
 network.bind_ip = "0.0.0.0"
 network.sensor_port = 5006
 network.actuator_cmd_port = 5005
@@ -76,45 +79,20 @@ calibration_sense_resistor.sections = 0
 calibration_sensitivity.sections = 0
 calibration_pga_gain.sections = 0
 
-=== config::load_from_string
-identical to config::load
-
-=== active_boards
-elodin.raw_sensor_tables (0) =
-elodin.calibrated_sensor_tables (0) =
-elodin.ball_valve_raw_tables (0) =
-elodin.ball_valve_calibrated_tables (0) =
-elodin.ball_valve_cmd_tables (0) =
-
-=== pt_boards
-
-=== pt_role_tables
-find_pt_role("__no_such_role__") = nullopt
-
-=== build_slug_tables
-ok = true
-
-=== resolvePWMTargets
-fuel = {board_ip="" channel=0 actuator_name="" resolved=false}
-ox = {board_ip="" channel=0 actuator_name="" resolved=false}
-ok = false
-issue "no [actuator_roles] entry is assigned \"pwm_fuel\" — no actuator serves this PWM output"
-issue "no [actuator_roles] entry is assigned \"pwm_ox\" — no actuator serves this PWM output"
-
 === StateMachine
 load(../../../config/profiles/default/state_transitions.csv) = true isLoaded=true
 bootState = 1 "Idle"
 state 0 "Debug" isAbort=false fromName(name)=0 bitmask=0x00000000 allowedFrom=[]
 state 1 "Idle" isAbort=false fromName(name)=1 bitmask=0x000C0006 allowedFrom=[1, 2, 18, 19]
-state 2 "Armed" isAbort=false fromName(name)=2 bitmask=0x0016001E allowedFrom=[1, 2, 3, 4, 17, 18, 20]
-state 3 "Fuel Fill" isAbort=false fromName(name)=3 bitmask=0x0006000C allowedFrom=[2, 3, 17, 18]
-state 4 "Ox Fill" isAbort=false fromName(name)=4 bitmask=0x00060014 allowedFrom=[2, 4, 17, 18]
-state 5 "GN2 Low Press" isAbort=false fromName(name)=5 bitmask=0x00171560 allowedFrom=[5, 6, 8, 10, 12, 16, 17, 18, 20]
-state 6 "GN2 Low Vent" isAbort=false fromName(name)=6 bitmask=0x00171560 allowedFrom=[5, 6, 8, 10, 12, 16, 17, 18, 20]
-state 7 "Fuel Press" isAbort=false fromName(name)=7 bitmask=0x001715C0 allowedFrom=[6, 7, 8, 10, 12, 16, 17, 18, 20]
-state 8 "Fuel Vent" isAbort=false fromName(name)=8 bitmask=0x00171540 allowedFrom=[6, 8, 10, 12, 16, 17, 18, 20]
-state 9 "Ox Press" isAbort=false fromName(name)=9 bitmask=0x00171740 allowedFrom=[6, 8, 9, 10, 12, 16, 17, 18, 20]
-state 10 "Ox Vent" isAbort=false fromName(name)=10 bitmask=0x00171540 allowedFrom=[6, 8, 10, 12, 16, 17, 18, 20]
+state 2 "Armed" isAbort=false fromName(name)=2 bitmask=0x001E001E allowedFrom=[1, 2, 3, 4, 17, 18, 19, 20]
+state 3 "Fuel Fill" isAbort=false fromName(name)=3 bitmask=0x000E000C allowedFrom=[2, 3, 17, 18, 19]
+state 4 "Ox Fill" isAbort=false fromName(name)=4 bitmask=0x000E0014 allowedFrom=[2, 4, 17, 18, 19]
+state 5 "GN2 Low Press" isAbort=false fromName(name)=5 bitmask=0x001E3560 allowedFrom=[5, 6, 8, 10, 12, 13, 17, 18, 19, 20]
+state 6 "GN2 Low Vent" isAbort=false fromName(name)=6 bitmask=0x001E3560 allowedFrom=[5, 6, 8, 10, 12, 13, 17, 18, 19, 20]
+state 7 "Fuel Press" isAbort=false fromName(name)=7 bitmask=0x001E35C0 allowedFrom=[6, 7, 8, 10, 12, 13, 17, 18, 19, 20]
+state 8 "Fuel Vent" isAbort=false fromName(name)=8 bitmask=0x001E3540 allowedFrom=[6, 8, 10, 12, 13, 17, 18, 19, 20]
+state 9 "Ox Press" isAbort=false fromName(name)=9 bitmask=0x001E3740 allowedFrom=[6, 8, 9, 10, 12, 13, 17, 18, 19, 20]
+state 10 "Ox Vent" isAbort=false fromName(name)=10 bitmask=0x001E3540 allowedFrom=[6, 8, 10, 12, 13, 17, 18, 19, 20]
 state 11 "GN2 High Press" isAbort=false fromName(name)=11 bitmask=0x001C7D40 allowedFrom=[6, 8, 10, 11, 12, 13, 14, 18, 19, 20]
 state 12 "GN2 High Vent" isAbort=false fromName(name)=12 bitmask=0x001C3D40 allowedFrom=[6, 8, 10, 11, 12, 13, 18, 19, 20]
 state 13 "Vent" isAbort=false fromName(name)=13 bitmask=0x001E2004 allowedFrom=[2, 13, 17, 18, 19, 20]
@@ -124,7 +102,7 @@ state 16 "Fire" isAbort=false fromName(name)=16 bitmask=0x000D0006 allowedFrom=[
 state 17 "Engine Abort" isAbort=true fromName(name)=17 bitmask=0x000E0000 allowedFrom=[17, 18, 19]
 state 18 "GSE Abort" isAbort=true fromName(name)=18 bitmask=0x001C2006 allowedFrom=[1, 2, 13, 18, 19, 20]
 state 19 "Emergency Abort" isAbort=true fromName(name)=19 bitmask=0x00080002 allowedFrom=[1, 19]
-state 20 "Press Standby" isAbort=false fromName(name)=20 bitmask=0x00171FE0 allowedFrom=[5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 20]
+state 20 "Press Standby" isAbort=false fromName(name)=20 bitmask=0x001E3FE0 allowedFrom=[5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 18, 19, 20]
 fromName("Abort") = 19
 fromName("Quick Fire") = 15
 fromName("GN2 Press") = 5
@@ -539,6 +517,5 @@ parseHoldMs("12x") = false 0
 [ActuatorCommander] Loaded 20 states from ../../../config/profiles/default/state_machine_actuators.csv
 
 === captured stderr
-[Config] TOML parse error in fixtures/bad/does_not_exist.toml: File could not be opened for reading
 
-=== exit 0
+=== exit 1

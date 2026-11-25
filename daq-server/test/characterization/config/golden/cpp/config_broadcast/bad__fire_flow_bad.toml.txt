@@ -35,5 +35,6 @@ packets.count = 0
 === captured stdout
 
 === captured stderr
+[ConfigBroadcast] config re-read refused, keeping the last good packets: [Config] config/config.toml refused: line 29: [[states]] #4 id = 300 is out of range (0 to 255); line 38: [[states]] #6 name "Idle" is already the name of [[states]] #1; state names must be unique
 
 === exit 0
