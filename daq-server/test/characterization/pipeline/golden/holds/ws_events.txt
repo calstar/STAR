@@ -19,9 +19,10 @@
 
 ## sequencer_stalled
 > A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":20}}}
-< A {"payload": {"message": "State transition failed: timeout"}, "timestamp": "<ts>", "type": "error"}
+< A {"payload": {"category": "warning", "message": "State transition: no reply from the sequencer within 5 s — state unknown, resyncing from the published state", "timestampMs": "<ts>"}, "timestamp": "<ts>", "type": "notification"}
 < A {"payload": {"allowedBitmask": 3612640, "currentState": 20, "debugMode": false, "stateName": "Press Standby", "stateRefusalReasons": {}, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "state_update"}
-= timeout_reply_within_2800ms: yes
+= timeout_reply_within_5800ms: yes
+= late_transition_after_resume: no
 
 ## sequencer_down
 > A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":20}}}
