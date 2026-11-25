@@ -11,9 +11,13 @@
  * what session start is about to copy into place (deployActiveProfile), so validating config.toml
  * would be checking the *previous* run's config and passing a broken profile straight through.
  */
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import {
   validateConfigForRun,
   countByLevel,
+  parseAbortThresholds,
+  type AbortThresholds,
   type ConfigIssue,
 } from '../../shared/config-validation.js';
 import {
@@ -21,6 +25,18 @@ import {
   readStateCsv,
   getActiveProfileName,
 } from './routes/config-profiles.js';
+import { getCalibrationsDir } from './routes/calibration-profiles.js';
+
+/** The board trip thresholds the calibration service last emitted (empty when it has emitted none),
+ *  so the gate can tell a cubic abort sensor that has a trip from one that does not. */
+function readAbortThresholds(): AbortThresholds {
+  const path = join(getCalibrationsDir(), 'abort_thresholds.txt');
+  try {
+    return existsSync(path) ? parseAbortThresholds(readFileSync(path, 'utf-8')) : new Map();
+  } catch {
+    return new Map();
+  }
+}
 
 export type { ConfigIssue };
 
@@ -64,7 +80,7 @@ export function validateActiveProfile(): ConfigValidationResult {
       actuators: readStateCsv('actuators'),
       delays: readStateCsv('delays'),
       transitions: readStateCsv('transitions'),
-    });
+    }, readAbortThresholds());
     return { profile, issues, ...countByLevel(issues) };
   } catch (e) {
     const issues: ConfigIssue[] = [{

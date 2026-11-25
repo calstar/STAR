@@ -22,11 +22,11 @@ twin read the rows the same way, on purpose, and warned on each path.
 Each short row was missing the `0` under `Fire`: every well-formed row except `Ready`
 and `Fire` has one there, and inserting it puts the row's last three cells under
 `Vent`, `GSE Abort` and `Emergency Abort` like every other press/vent row. That `0` was
-inserted in all ten rows of the DAQ's copy and in the nine here. Per row the edges that
-change are: the `Fire` bypass and `Engine Abort` go (`Engine Abort` was the shifted
-`GSE Abort`/`Emergency Abort` pair), and `Vent` (press/vent rows only) and
-`Emergency Abort` come in. **This is still an inference, and the DAQ team is asked to
-confirm it on the PR.**
+inserted in all ten rows of the DAQ's copy and in the nine here. The DAQ team confirmed
+the repair (2026-11-24) and asked that every abort state stay reachable, so each repaired
+row also allows `Engine Abort`, `GSE Abort` and `Emergency Abort`. Per row: the `Fire`
+bypass goes, `Vent` comes in (press/vent rows), and `Emergency Abort` comes in;
+`Engine Abort` and `GSE Abort` stay allowed.
 
 Both of the stand's parsers now refuse a table with any row whose cell count differs
 from the header's, so a short row cannot be read left-aligned again. This copy's

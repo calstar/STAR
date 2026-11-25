@@ -99,20 +99,34 @@ def test_an_abort_is_reachable_from_anywhere() -> None:
         assert machine.can_go(source, "Engine Abort"), source
 
 
-def test_a_ragged_row_is_read_as_the_daq_reads_it() -> None:
-    """The DAQ's own transitions CSV has ten rows one cell short, and the DAQ's
-    own parser reads them left-aligned: row[j] goes to headers[j-1] and the
-    row simply never speaks about its last column. The twin reads them the
-    same way, so a rehearsal on it meets the same open and shut doors as the
-    stand -- and says so."""
+def test_the_shipped_table_has_no_short_rows() -> None:
+    """The DAQ's transitions CSV had ten rows one cell short (nine here), read
+    left-aligned. Each was missing the 0 under Fire; with it back, Armed's row
+    reaches the same fill and press states and now Emergency Abort too."""
     machine = load_machine()
+    joined = " ".join(machine.warnings)
+    assert "wrong number of columns" not in joined
+    assert machine.can_go("Armed", "Ox Fill")
+    assert machine.can_go("Armed", "Press Standby")
+    assert not machine.can_go("Armed", "Fire")
+
+
+def test_a_ragged_row_is_still_read_as_the_daq_used_to_read_it(tmp_path: Path) -> None:
+    """A short row is read left-aligned, row[j] onto headers[j-1], and named in
+    the warnings. (The stand's own loaders now refuse such a table outright.)"""
+    actuators = tmp_path / "t_actuators.csv"
+    actuators.write_text(
+        ",Idle,Armed,Fire\nLOX Main,CLOSE,CLOSE,OPEN\n", encoding="utf-8"
+    )
+    transitions = tmp_path / "t_transitions.csv"
+    transitions.write_text(
+        ",Idle,Armed,Fire\nIdle,1,1,0\nArmed,1,1\nFire,1,0,1\n", encoding="utf-8"
+    )
+    machine = load_machine(actuators=actuators, transitions=transitions)
     joined = " ".join(machine.warnings)
     assert "wrong number of columns" in joined
     assert "left-aligned" in joined
-    assert "Armed" in machine.allowed, "a short row is read, not dropped"
-    # Left-aligned, Armed's row says: Idle, Armed, Fuel Fill, Ox Fill, Press Standby.
-    assert machine.can_go("Armed", "Ox Fill")
-    assert machine.can_go("Armed", "Press Standby")
+    assert machine.can_go("Armed", "Idle")
     assert not machine.can_go("Armed", "Fire")
 
 
@@ -128,11 +142,11 @@ def test_a_well_formed_table_constrains_normally(tmp_path: Path) -> None:
     assert machine.can_go("Fire", "Idle")
 
 
-def test_the_stands_own_ignition_bypass_is_reproduced_and_flagged() -> None:
-    """Read left-aligned, seven press and vent rows put a 1 under Fire. That is
-    what the stand enforces today, so the twin permits it -- an operator who
-    finds the door shut here and open on the pad has been lied to -- and it
-    shouts about every such path in its warnings so somebody fixes the CSV."""
+def test_no_press_or_vent_state_reaches_fire() -> None:
+    """Read left-aligned, seven press and vent rows used to put a 1 under Fire:
+    an ignition path that bypassed Ready, on the stand and so here. With the
+    rows repaired, Fire is reached only through Ready (and, by the operator's
+    twin-side edit, Calibrate; NEEDS-REPAIR.md)."""
     machine = load_machine()
     bypass = [
         s
@@ -140,16 +154,16 @@ def test_the_stands_own_ignition_bypass_is_reproduced_and_flagged() -> None:
         if s not in ("Ready", "Calibrate", "Fire")
         and "Fire" in machine.allowed.get(s, ())
     ]
-    # Press Standby's row was rewritten with 21 cells at the operator's
-    # direction (NEEDS-REPAIR.md, "Twin-side edits"); the other six ragged
-    # rows still carry the stand's bypass.
-    assert "Press Standby" not in bypass
-    assert "GN2 Low Press" in bypass
-    for state in bypass:
-        assert machine.can_go(state, "Fire")
-        assert any(
-            f"{state} -> Fire" in w for w in machine.warnings
-        ), f"{state} -> Fire is permitted and nobody was told"
+    assert bypass == []
+    for state in (
+        "Press Standby",
+        "GN2 Low Press",
+        "Fuel Press",
+        "Ox Press",
+        "Ox Vent",
+    ):
+        assert not machine.can_go(state, "Fire"), state
+        assert not any(f"{state} -> Fire" in w for w in machine.warnings)
 
 
 def test_a_state_with_no_row_at_all_still_fails_closed(tmp_path: Path) -> None:

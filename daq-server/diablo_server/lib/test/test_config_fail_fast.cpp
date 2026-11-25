@@ -246,6 +246,14 @@ int main() {
             const auto from = sequencer::StateMachine::fromName(from_name);
             if (has_ea)
                 check(sm.isAllowed(from, ea), name + ": " + from_name + " -> Emergency Abort");
+            // The ten rows the C2-8 repair touched reach every abort state (DAQ team, 2026-11-24).
+            static const std::vector<std::string> kRepaired = {
+                "Armed",         "Fuel Fill",    "Ox Fill",    "Press Standby", "GN2 Low Press",
+                "GN2 Low Vent",  "Fuel Press",   "Fuel Vent",  "Ox Press",      "Ox Vent"};
+            if (has_ea && std::find(kRepaired.begin(), kRepaired.end(), from_name) != kRepaired.end())
+                for (const char* a : {"Engine Abort", "GSE Abort"})
+                    check(sm.isAllowed(from, sequencer::StateMachine::fromName(a)),
+                          name + ": " + from_name + " -> " + a);
             if (has_fire && from_name != "Ready" && from_name != "Fire" &&
                 from_name != "Calibrate")
                 check(!sm.isAllowed(from, fire), name + ": no " + from_name + " -> Fire bypass");

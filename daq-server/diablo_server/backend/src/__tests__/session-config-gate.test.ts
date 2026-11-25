@@ -42,6 +42,10 @@ process.env.CONFIG_PATH = join(configDir, 'config.toml');
 process.env.SESSION_SERVICE_MODE = 'mock';
 // Keep runs out of the real ~/.local/share/elodin.
 process.env.SESSION_STATE_PATH = join(root, 'session.json');
+// Where the gate looks for the calibration service's abort_thresholds.txt.
+const calibrationsDir = join(root, 'calibrations');
+mkdirSync(calibrationsDir, { recursive: true });
+process.env.DAQ_CALIBRATIONS_DIR = calibrationsDir;
 
 const CLEAN_PROFILE = `
 [boards.act_board]
@@ -70,11 +74,26 @@ is_abort = true
 [[states]]
 id = 3
 name = "Fire"
+
+[[states]]
+id = 4
+name = "Vent"
+
+[[states]]
+id = 5
+name = "Engine Abort"
 `;
 
-const ACTUATORS_CSV = ',Idle,Armed,Fire\nFuel Press,CLOSE,CLOSE,OPEN\nLOX Press,CLOSE,CLOSE,OPEN\n';
-const DELAYS_CSV = ',Idle,Armed,Fire\nFuel Press,0,0,0\nLOX Press,0,0,0\n';
-const TRANSITIONS_CSV = ',Idle,Armed,Fire\nIdle,1,1,0\nArmed,1,1,1\nFire,0,1,1\n';
+// Vent and Engine Abort are the columns config_broadcast reads the boards' vent and abort
+// positions from; a profile without them is refused (see "the gate reports what the services
+// would only log" below).
+const ACTUATORS_CSV =
+  ',Idle,Armed,Fire,Vent,Engine Abort\n' +
+  'Fuel Press,CLOSE,CLOSE,OPEN,CLOSE,CLOSE\nLOX Press,CLOSE,CLOSE,OPEN,CLOSE,CLOSE\n';
+const DELAYS_CSV = ',Idle,Armed,Fire,Vent,Engine Abort\nFuel Press,0,0,0,0,0\nLOX Press,0,0,0,0,0\n';
+const TRANSITIONS_CSV =
+  ',Idle,Armed,Fire,Vent,Engine Abort\nIdle,1,1,0,0,1\nArmed,1,1,1,1,1\nFire,0,1,1,1,1\n' +
+  'Vent,1,1,0,1,1\nEngine Abort,1,0,0,1,1\n';
 
 /** Write a profile (and its CSVs) as the active one, and reset what is deployed. */
 function writeProfile(configToml: string): void {
@@ -178,6 +197,74 @@ describe('the gate refuses a broken profile', () => {
     expect(sessionManager.getStatus().active).toBe(true);
     expect(deployed()).toBe('# deployed-marker\n');   // still untouched
     await sessionManager.stop();
+  });
+});
+
+// ── Problems that used to surface only in a service's log ────────────────────
+// le4 (main's profile) carries all three. Each was found only by the C++ at run time: the
+// sequencer's slug tables (every dynamic state refused) and config_broadcast's abort-threshold
+// walk (that sensor gets no board-side overpressure trip). They are session-start errors now.
+describe('the gate reports what the services would only log', () => {
+  // A PT board in the le4 shape: hyphenated role names, and abort_pts on a cubic sensor.
+  const PT_BOARD = `
+[boards.pt_board]
+type = "PT"
+board_id = 21
+ip = "192.0.2.21"
+enabled = true
+active_connectors = [1, 2]
+
+[sensor_roles_pt_board]
+"Fuel Upstream" = 2
+`;
+  const thresholds = join(calibrationsDir, 'abort_thresholds.txt');
+  const errorsMatching = (needle: string) =>
+    validateActiveProfile().issues.filter((i) => i.level === 'error' && i.message.includes(needle));
+
+  beforeEach(() => rmSync(thresholds, { force: true }));
+
+  it('a PT role name a state script cannot use (le4 "LP-PT")', async () => {
+    writeProfile(CLEAN_PROFILE + PT_BOARD.replace('"Fuel Upstream" = 2', '"LP-PT" = 1'));
+    expect(errorsMatching('"LP-PT" cannot be used in a state script')).toHaveLength(1);
+    await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
+    expect(deployed()).toBe('# deployed-marker\n');
+  });
+
+  it('an abort_pts entry that names no PT role (le4 "Ox Upstream")', async () => {
+    writeProfile(CLEAN_PROFILE + PT_BOARD + '\n[abort_pts]\n"Ox Upstream" = 900\n');
+    expect(errorsMatching('abort_pts "Ox Upstream": no PT sensor role')).toHaveLength(1);
+    await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
+  });
+
+  it('a cubic abort sensor the calibration service has no threshold for (copy-of-default)', async () => {
+    writeProfile(CLEAN_PROFILE + PT_BOARD + '\n[abort_pts]\n"Fuel Upstream" = 900\n');
+    expect(errorsMatching('abort_pts "Fuel Upstream": model "cubic"')).toHaveLength(1);
+    await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
+
+    // Once the calibration service has emitted a threshold for that sensor (uid 21*100+2) at that
+    // PSI, the board has a trip and the profile starts, as config_broadcast would then send it.
+    writeFileSync(thresholds, '# uid target_psi raw_adc\n2102 900 123456\n');
+    expect(validateActiveProfile().issues).toEqual([]);
+    await sessionManager.start(false, 60_000);
+    expect(sessionManager.getStatus().active).toBe(true);
+    await sessionManager.stop();
+  });
+
+  it('an Actuators table with no "Engine Abort" column (digital-twin, le4)', async () => {
+    // Without it config_broadcast reads no vent or abort positions and sends every valve closed.
+    writeProfile(CLEAN_PROFILE);
+    writeFileSync(join(profileDir, 'state_machine_actuators.csv'),
+      ',Idle,Armed,Fire,Vent\nFuel Press,CLOSE,CLOSE,OPEN,OPEN\nLOX Press,CLOSE,CLOSE,OPEN,OPEN\n');
+    expect(errorsMatching('no "Engine Abort" column')).toHaveLength(1);
+    await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
+    expect(deployed()).toBe('# deployed-marker\n');
+  });
+
+  it('a physics abort sensor needs no emitted threshold', () => {
+    writeProfile(CLEAN_PROFILE + PT_BOARD +
+      '\n[calibration_model_pt_board]\n"Fuel Upstream" = "physics"\n' +
+      '\n[abort_pts]\n"Fuel Upstream" = 900\n');
+    expect(validateActiveProfile().issues).toEqual([]);
   });
 });
 

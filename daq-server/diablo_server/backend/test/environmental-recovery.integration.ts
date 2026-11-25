@@ -84,7 +84,8 @@ active_connectors = [1]
     const invalidConfig = join(work, `invalid-${name}.toml`);
     writeFileSync(invalidConfig, text);
     const rejected = spawnSync(bridgeBinary!, [invalidConfig], { encoding: 'utf8', timeout: 3000 });
-    assert.equal(rejected.status, 1, `Bridge must refuse ${name} config before connecting`);
+    // 78 = EX_CONFIG: refused config, which systemd does not restart (STYLE S11, C2-12).
+    assert.equal(rejected.status, 78, `Bridge must refuse ${name} config before connecting`);
     assert(rejected.stderr.includes(message), rejected.stderr);
   }
   const db = start(dbBinary!, ['run', `127.0.0.1:${dbPort}`, join(work, 'db')]);
