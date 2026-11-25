@@ -1110,8 +1110,8 @@ def s_scripts_load(run):
     connected (C4-1): doTransitionTo() held config_mutex_ across publishState(), which takes it
     again, and every later command waited out kCommandTimeoutSeconds (10 s) and failed. The
     refusal is now prompt and the worker keeps serving: the TRANSITION:Armed after it is OK (debug
-    mode is on), and the abort after that goes out. Each refusal's reason is the SCRIPTS line (the
-    reply quotes it).
+    mode is on). (This profile has no abort state; default/aborts covers aborts.) Each refusal's
+    reason is the SCRIPTS line (the reply quotes it).
     """
     s = Session(run, "digital-twin/scripts-load")
     cfg = _twin_scripts_cfg(s)
@@ -1136,7 +1136,6 @@ def s_scripts_load(run):
             " the command worker is wedged (C4-1)"
         )
     s.step("DEBUG_MODE:0", 0.05)
-    s.step("TRANSITION:Engine Abort", 0.3)  # and an abort reaches the boards
     return s.finish()
 
 

@@ -164,7 +164,7 @@ same buckets, but that has not been verified.
   command worker** whenever Elodin was connected: `doTransitionTo` held `config_mutex_` while
   calling `publishState()`, which locks it again, and every later command (aborts included) waited
   the 10 s command timeout and failed. `digital-twin__scripts-load` now shows the refusal followed
-  by a prompt `OK` and an abort that reaches the boards, and fails outright if that `OK` takes
+  by a prompt `OK` (the transition's column goes out), and fails outright if that `OK` takes
   longer than 5 s.
 - C4-3 (#232): an abort entry applied its column with `is_transition=false`, which did not bump the
   stage generation: a delayed stage of the state being left still landed after the abort's batch,

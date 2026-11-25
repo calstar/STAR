@@ -8,7 +8,7 @@
               raw 0400........070701030002000500010008010600
       +0ms x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=0[GN2 Vent] ch3=0[GSE High Press Control] ch5=1[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=0[LOX Dump] ch7=0[LOX Fill]
               raw 0400........09020001000600030005010a00040008000700
-      +0ms x4 (x2 sends) to 127.0.0.1: ABORT v0
+      +0ms x4 to 127.0.0.1: ABORT v0
               raw 0700........
        +3s x4 to 127.0.0.1: ABORT_DONE v0
               raw 0800........

@@ -27,7 +27,13 @@
 > TRANSITION:Script Missing
   < ERR:Script Missing: cannot read <WORK>/digital-twin/scripts/missing.script — the script did not deploy with the profile, or the name is wrong
 > TRANSITION:Armed
-  < ERR:transition rejected
+  < OK
+  state Press Standby -> Armed
+  first datagram: ACTUATOR_COMMAND
+       +0s x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=7: ch3=0[Dome CTRL] ch6=0[Fuel Main] ch1=0[Fuel Upstream] ch2=0[High Press CTRL] ch10=0[Ox Upstream] ch7=1[fuel vent] ch9=1[lox vent]
+              raw 0400........0703000600010002000a0007010901
+       +0s x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=6: ch10=0[Dome CTRL Vent] ch2=0[Fuel Fill Press] ch5=0[Fuel Fill Vent] ch3=0[High Press Vent] ch6=0[Low Press Vent] ch7=0[Ox Main]
+              raw 0400........060a0002000500030006000700
 > DEBUG_MODE:0
   < OK
 -- sequencer log (N6: load-time lines, then message counts)
