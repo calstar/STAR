@@ -11,3 +11,4 @@
    [SequencerService] WARNING: fire opens "LOX Main" 0.001 s after entry, but no [fire].gate_actuator is set — the burn window is measured from the TRANSITION, so that valve is open for 0.499 s, not 0.5 s.
 -- busy log line(s), exact bytes: x1
    '[Sequencer] client limit (64) reached \u2014 refusing connection'
+-- accepts a connection on a non-loopback address (SEC-4): False

@@ -16,6 +16,11 @@ const FIRMWARE_REL = 'firmware/Hotfire_Code';
 const NON_FLASHABLE = new Set(['Hotfire_Tests']);
 
 function getWorkspaceRoot(): string {
+  // OTA_WORKSPACE_ROOT (server-side only, never from a request) names the directory that holds
+  // firmware/Hotfire_Code outright: the lifecycle harness points it at a fixture tree so a fake
+  // build never writes into the checkout's firmware.
+  const override = process.env.OTA_WORKSPACE_ROOT;
+  if (override) return path.resolve(override);
   // Walk up from cwd (daq-server under systemd, or .../backend in dev) until we find
   // the repo root that contains firmware/Hotfire_Code.
   let dir = process.cwd();
@@ -76,6 +81,19 @@ export function discoverProjects(): OtaProject[] {
   };
   walk(firmwarePath, FIRMWARE_REL);
   return projects.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Resolve a project NAME, as GET /api/ota-flash/projects lists it, to its absolute directory on
+ * this server (SEC-3). A client never supplies a path: `pio run` executes the project's
+ * platformio.ini `extra_scripts`, so whatever directory the build runs in is code the service
+ * user runs. Only a name that appears exactly once in discoverProjects() resolves; anything else
+ * (unknown, ambiguous, a path) is null.
+ */
+export function resolveProjectByName(name: string): string | null {
+  const matches = discoverProjects().filter((p) => p.name === name);
+  if (matches.length !== 1) return null;
+  return path.join(getWorkspaceRoot(), matches[0].path);
 }
 
 function getFirstEnv(platformioIniPath: string): string | null {

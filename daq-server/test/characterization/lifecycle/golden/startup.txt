@@ -386,6 +386,7 @@ calibration_service: up: True
     @139 enable_serial_printing = 1   [01]
   config_broadcast to integration_startup after calibration_service start: unchanged
 ota_service: accepting TCP: True
+ota_service: accepting TCP on a non-loopback address (SEC-4): False
 backend: accepting TCP: True
   GET /stats -> 200 keys=['ingestEntityUpdatesReceived', 'rawPrimarySamplesByGroup', 'rawPrimarySamplesIngested', 'sensorUpdatesBroadcast', 'sequencerStatesReceived', 'startTimeMs', 'uptimeMs']
   GET /no-such-path -> 404

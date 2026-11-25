@@ -57,7 +57,7 @@ function FlashPageContent() {
       .then((data) => {
         const list = data.projects ?? []
         setProjects(list)
-        if (list.length > 0 && !selectedProject) setSelectedProject(list[0].path)
+        if (list.length > 0 && !selectedProject) setSelectedProject(list[0].name)
       })
       .catch(() => setProjects([]))
   }, [])
@@ -85,7 +85,8 @@ function FlashPageContent() {
         port: typeof port === 'number' ? port : parseInt(String(port), 10) || DEFAULT_PORT,
       }
       if (sourceMode === 'project') {
-        body.projectPath = selectedProject
+        // A project NAME from /api/ota-flash/projects; the server resolves it (it refuses paths).
+        body.project = selectedProject
         if (boardId > 0) body.boardId = boardId
       } else if (file) {
         const buffer = await file.arrayBuffer()
@@ -129,6 +130,11 @@ function FlashPageContent() {
     setResult(null)
     try {
       const res = await fetch(`${getApiBaseUrl()}/api/ota-flash/flash-all`, { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setFlashAllLog([`Error: ${data.error || `HTTP ${res.status}`}`])
+        return
+      }
       if (!res.body) {
         setFlashAllLog(['Error: no response stream'])
         return
@@ -321,7 +327,7 @@ function FlashPageContent() {
                 >
                   <option value="">Select project…</option>
                   {projects.map((p) => (
-                    <option key={p.path} value={p.path}>
+                    <option key={p.path} value={p.name}>
                       {p.name} — {p.path}
                     </option>
                   ))}

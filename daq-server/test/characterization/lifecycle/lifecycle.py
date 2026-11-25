@@ -925,6 +925,11 @@ def session(r: Run):
         env=ota_env,
     )
     r.emit(g, f"ota_service: accepting TCP: {stack.wait_tcp(P['P_OTA'], 10)}")
+    r.emit(
+        g,
+        "ota_service: accepting TCP on a non-loopback address (SEC-4): "
+        f"{stack.accepts_on(stack.off_host_address(), P['P_OTA'])}",
+    )
 
     benv = {
         "WS_PORT": str(P["P_WS"]),
@@ -935,6 +940,7 @@ def session(r: Run):
         "CONFIG_PATH": r.cfg,
         "LOG_INGEST_PORT": str(P["P_LOG"]),
         "OTA_SERVICE_PORT": str(P["P_OTA"]),
+        "OTA_WORKSPACE_ROOT": os.path.join(r.work, "ws"),
         "GUI_PORT": "0",
     }
     be = r.start(
@@ -1257,7 +1263,11 @@ echo "fake build ok"
     with open(p, "w") as f:
         f.write(script)
     os.chmod(p, 0o755)
-    for name, fail in (("proj_ok", False), ("proj_fail", True)):
+    # proj_ok / proj_fail are what ota_service is handed directly. ws/firmware/Hotfire_Code/proj_ok
+    # is the backend's firmware tree (OTA_WORKSPACE_ROOT): the backend resolves a project NAME
+    # there (SEC-3), so a fake build never writes into the checkout's firmware.
+    ws_proj = os.path.join(r.work, "ws", "firmware", "Hotfire_Code", "proj_ok")
+    for name, fail in (("proj_ok", False), ("proj_fail", True), (ws_proj, False)):
         d = os.path.join(r.work, name)
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "platformio.ini"), "w") as f:
@@ -1370,24 +1380,33 @@ def ota_handshake(r: Run):
         "firmwareBase64, nothing listening", {"ip": "127.0.0.1", "firmwareBase64": b64}
     )
     post(
-        "projectPath + boardId 21",
-        {"ip": "127.0.0.1", "projectPath": ok_dir, "boardId": 21},
+        "project proj_ok + boardId 21",
+        {"ip": "127.0.0.1", "project": "proj_ok", "boardId": 21},
         "ok",
         build_fw,
     )
+    # SEC-3: a client path is never built, relative, absolute or a project's own directory.
+    post(
+        "projectPath (absolute) is refused",
+        {"ip": "127.0.0.1", "projectPath": ok_dir, "boardId": 21},
+    )
+    post(
+        "projectPath (relative, ..) is refused",
+        {"ip": "127.0.0.1", "projectPath": "../../proj_ok"},
+    )
+    post("project not in the list", {"ip": "127.0.0.1", "project": "no_such_project"})
+    post("project given as a path", {"ip": "127.0.0.1", "project": ok_dir})
     post(
         "port other than 3232", {"ip": "127.0.0.1", "port": 1234, "firmwareBase64": b64}
     )
     post("no ip", {"firmwareBase64": b64})
     post("neither firmware nor project", {"ip": "127.0.0.1"})
     # H8 (DESIGN-WP7 §7, LEDGER D-OTA / SEC-2): the same flash as the viewer -- a signed-in email
-    # that is not in operators.txt. The route has no operator gate, so today the board is flashed
-    # and the viewer gets the operator's 200; frozen so the hole stays visible until the team
-    # closes it (a 403 here is that fix, a contract change, not a regression).
+    # that is not in operators.txt. The route is behind the operator gate: 403, and no board is
+    # listening, so a flash that got through would show as a connect error, not as this line.
     post(
-        "firmwareBase64, board answers OK, as viewer@example.com (not an operator; no gate)",
+        "firmwareBase64, as viewer@example.com (not an operator)",
         {"ip": "127.0.0.1", "firmwareBase64": b64},
-        "ok",
         headers={"X-Auth-Email": "viewer@example.com"},
     )
 

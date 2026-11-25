@@ -62,17 +62,23 @@
     board: received 10000 bytes, identical to the file: True
 == backend POST /api/ota-flash: firmwareBase64, nothing listening
   -> 200 {"bytesSent":0,"durationMs":"<dur>","error":"ERR:connect to 127.0.0.1:3232 failed","success":false}
-== backend POST /api/ota-flash: projectPath + boardId 21
+== backend POST /api/ota-flash: project proj_ok + boardId 21
   -> 200 {"bytesSent":0,"durationMs":"<dur>","success":true}
     board: size header [00 00 23 28] = 9000 (big-endian)
     board: received 9000 bytes, identical to the file: True
+== backend POST /api/ota-flash: projectPath (absolute) is refused
+  -> 400 {"error":"projectPath is not accepted; send project, a name from GET /api/ota-flash/projects"}
+== backend POST /api/ota-flash: projectPath (relative, ..) is refused
+  -> 400 {"error":"projectPath is not accepted; send project, a name from GET /api/ota-flash/projects"}
+== backend POST /api/ota-flash: project not in the list
+  -> 400 {"error":"Unknown firmware project: \"no_such_project\""}
+== backend POST /api/ota-flash: project given as a path
+  -> 400 {"error":"Unknown firmware project: \"<WORK>/proj_ok\""}
 == backend POST /api/ota-flash: port other than 3232
   -> 400 {"error":"ota_service uses board OTA port 3232"}
 == backend POST /api/ota-flash: no ip
   -> 400 {"error":"Missing or invalid ip"}
 == backend POST /api/ota-flash: neither firmware nor project
-  -> 400 {"error":"Provide firmwareBase64 or projectPath"}
-== backend POST /api/ota-flash: firmwareBase64, board answers OK, as viewer@example.com (not an operator; no gate)
-  -> 200 {"bytesSent":10000,"durationMs":"<dur>","success":true}
-    board: size header [00 00 27 10] = 10000 (big-endian)
-    board: received 10000 bytes, identical to the file: True
+  -> 400 {"error":"Provide firmwareBase64 or project"}
+== backend POST /api/ota-flash: firmwareBase64, as viewer@example.com (not an operator)
+  -> 403 {"error":"Not an approved operator"}

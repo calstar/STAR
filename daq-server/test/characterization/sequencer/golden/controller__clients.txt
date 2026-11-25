@@ -10,3 +10,4 @@
    x65 'control connection closed with no command (timeout or peer went away)'
 -- busy log line(s), exact bytes: x1
    '[ControllerService] \u26a0\ufe0f  client limit (64) reached \u2014 refusing connection'
+-- accepts a connection on a non-loopback address (SEC-4): False

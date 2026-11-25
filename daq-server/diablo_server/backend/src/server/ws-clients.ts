@@ -23,6 +23,7 @@ import * as http from 'http';
 import WebSocket, { WebSocketServer } from 'ws';
 import { ClientOutbox, FlushPacer, linkStatus } from '../client-outbox.js';
 import { MessageType } from '../../../shared/types.js';
+import { isAllowedOrigin } from '../origin-policy.js';
 import type { SensorUpdate } from '../../../shared/types.js';
 
 // Per-connection control-auth state, stashed on the WebSocket.
@@ -115,7 +116,16 @@ export let wss: WebSocketServer;
 
 /** Attach the WebSocket server to the HTTP server; server.ts calls this at today's position. */
 export function attachWebSocketServer(httpServer: http.Server): void {
-  wss = new WebSocketServer({ server: httpServer });
+  // SEC-6: a browser page that is not the GUI's own (origin-policy.ts) gets a 403 on the
+  // upgrade, so a hostile page cannot open an operator socket from a bench laptop. No Origin
+  // header (the harnesses, non-browser tools) is allowed.
+  wss = new WebSocketServer({
+    server: httpServer,
+    verifyClient: (info, cb) => {
+      if (isAllowedOrigin(info.req.headers.origin)) cb(true);
+      else cb(false, 403, 'Origin not allowed');
+    },
+  });
 }
 
 export function broadcast(message: object): void {

@@ -192,8 +192,10 @@ fi
 # local operator (backend/src/server.ts, the WS upgrade handler). Anything reaching :8081 directly
 # is therefore an operator, and can drive state_transition (ARMED / FUEL_FILL /
 # OX_FILL / FIRE / VENT), actuator open-close, extend_fire and session
-# start-stop; /api/ota-flash and /api/ota-flash/flash-all have no operator gate
-# at all. That is accepted here for a bench network. If this box is ever on an
+# start-stop, and flash boards (/api/ota-flash, /api/ota-flash/flash-all). A browser
+# page must come from the GUI's own origin (backend/src/origin-policy.ts), so a
+# hostile web page cannot drive it, but any non-browser client on the network
+# can. That is accepted here for a bench network. If this box is ever on an
 # open network, put Caddy in front (DAQ_BACKEND / DAQ_GUI) and drop these rules
 # rather than relying on the ports being unguessable.
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then

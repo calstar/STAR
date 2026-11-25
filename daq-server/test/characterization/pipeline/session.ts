@@ -268,6 +268,10 @@ async function main(): Promise<void> {
   step('control_locked');
   command('A', 'state_transition', { state: 2 });
   command('A', 'actuator', { actuatorName: 'Fuel Vent', actuatorState: 1 });
+  // SEC-8 / SEC-5: the countdown target and a calibration write are control actions too; an
+  // unarmed socket gets `Control locked` and nothing reaches the countdown or calibration_service.
+  command('A', 'set_countdown_target', { targetTimeMs: 4102444000000 });
+  send('A', { type: 'calibration_command', payload: { commandType: 'zero_all' } });
   await settle(600);
 
   step('unlock');
