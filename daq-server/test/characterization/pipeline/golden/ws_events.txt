@@ -28,6 +28,10 @@
 ## control_locked
 > A {"type":"send_command","payload":{"commandType":"state_transition","data":{"state":2}}}
 > A {"type":"send_command","payload":{"commandType":"actuator","data":{"actuatorName":"Fuel Vent","actuatorState":1}}}
+> A {"type":"send_command","payload":{"commandType":"set_countdown_target","data":{"targetTimeMs":4102444000000}}}
+> A {"type":"calibration_command","payload":{"commandType":"zero_all"}}
+< A {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
+< A {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
 < A {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
 < A {"payload": {"message": "Control locked: unlock as an approved operator first."}, "timestamp": "<ts>", "type": "error"}
 
