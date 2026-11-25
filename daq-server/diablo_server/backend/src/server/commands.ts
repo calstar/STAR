@@ -5,7 +5,10 @@
  * dispatch catch — `Bad message`, no reply — is ws-connection's, today, kept: D43(5)); handleCommand
  * stays module-private and sends four of the five :9998 lines (TRANSITION, ACTUATOR, DEBUG_MODE,
  * EXTEND_FIRE) through sequencer-client, which never rejects — each caller answers the sender with
- * `ERROR "<Action> failed: <refusalText(reply)>"`. An abort is a state_transition and passes the
+ * `ERROR "<Action> failed: <refusalText(reply)>"` when the sequencer said what happened, and, when
+ * it did not (no reply in 5 s, or `ERR:pending:`; sequencer-outcome.ts), with a one-shot warning
+ * "<Action>: … state unknown, resyncing" plus a state_update re-broadcast of the published state
+ * (D-LATE, #234). An abort is a state_transition and passes the
  * same control gate. Cross-module writes go through the owners' setters: setDebugMode,
  * setCountdownTarget (DESIGN-WP6 §6.2, 2.2). What a state id means is engine-state's
  * (resolveTransitionTarget, step 2.9); this module keeps the warning, the ERROR text, the holdMs
@@ -26,6 +29,7 @@ import { getStateTransitions } from '../state-csv/state-transitions.js';
 import { refusalText } from '../refusal-text.js';
 import { valvePlanSuffix } from '../valve-plan.js';
 import { sendToSequencer } from '../sequencer-client.js';
+import { outcomeUnknown, resyncText, type ReplyLike } from '../sequencer-outcome.js';
 import { sessionManager } from '../session-manager.js';
 import { ConfigIssuesError } from '../config-validation.js';
 import { countByLevel } from '../../../shared/config-validation.js';
@@ -94,6 +98,19 @@ export function handleMessage(ws: WebSocket, message: any): void {
   }
 }
 
+/**
+ * The sequencer did not say whether `action` ran: tell the sender so, as a warning rather than a
+ * failure, and resync every client from the published state — the only truth left. Returns
+ * whether it handled the reply.
+ */
+function resyncIfUnknown(ws: WebSocket, action: string, r: ReplyLike): boolean {
+  if (!outcomeUnknown(r)) return false;
+  const now = Date.now();
+  send(ws, { type: MessageType.NOTIFICATION, timestamp: now, payload: { category: 'warning', message: resyncText(action, r), timestampMs: now } });
+  broadcastStateUpdate();
+  return true;
+}
+
 function handleCommand(ws: WebSocket, command: CommandPayload): void {
   // The real, unbypassable gate: engine-control commands require an armed
   // (approved-operator) connection, regardless of what the UI shows.
@@ -142,9 +159,10 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       }
       // No optimistic update — real state/actuator positions arrive via _SEQUENCER_STATE [0x50]
       // and [0x32] packets from Elodin. FIRE_START/FIRE_STOP are sent from the subscriber path.
-      sendToSequencer(`TRANSITION:${csvName}${holdSuffix}${valveSuffix}\n`).then(({ ok, reply }) => {
+      sendToSequencer(`TRANSITION:${csvName}${holdSuffix}${valveSuffix}\n`).then((r) => {
+        const { ok, reply } = r;
         console.log(`[ThinServer] State transition ${stateName} → ${csvName}${holdSuffix}${valveSuffix}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
-        if (!ok) {
+        if (!ok && !resyncIfUnknown(ws, 'State transition', r)) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `State transition failed: ${refusalText(reply)}` } });
         }
       });
@@ -154,8 +172,9 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
       const open = command.data.actuatorState === 1 || command.data.actuatorState as unknown as string === 'open';
       const actuatorName = command.data.actuatorName!;
       // No optimistic update — real commanded state arrives via [0x32] packets from Elodin.
-      sendToSequencer(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then(({ ok, reply }) => {
-        if (!ok) {
+      sendToSequencer(`ACTUATOR:${actuatorName}:${open ? 1 : 0}\n`).then((r) => {
+        const { ok, reply } = r;
+        if (!ok && !resyncIfUnknown(ws, 'Actuator command', r)) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Actuator command failed: ${refusalText(reply)}` } });
         }
       });
@@ -163,19 +182,23 @@ function handleCommand(ws: WebSocket, command: CommandPayload): void {
     }
     case 'debug_mode': {
       const newDebug = !!command.data.debugMode;
-      sendToSequencer(`DEBUG_MODE:${newDebug ? 1 : 0}\n`).then(({ ok, reply }) => {
+      sendToSequencer(`DEBUG_MODE:${newDebug ? 1 : 0}\n`).then((r) => {
+        const { ok, reply } = r;
         console.log(`[ThinServer] Debug mode ${newDebug ? 'ON' : 'OFF'}: ${ok ? 'OK' : 'FAIL'} (${reply})`);
         if (ok) {
           setDebugMode(newDebug);
           broadcastStateUpdate();
+        } else {
+          resyncIfUnknown(ws, 'Debug mode', r);
         }
       }).catch(() => { });
       break;
     }
     case 'extend_fire':
-      sendToSequencer('EXTEND_FIRE\n').then(({ ok, reply }) => {
+      sendToSequencer('EXTEND_FIRE\n').then((r) => {
+        const { ok, reply } = r;
         console.log(`[ThinServer] Extend fire: ${ok ? 'OK' : 'FAIL'} (${reply})`);
-        if (!ok) {
+        if (!ok && !resyncIfUnknown(ws, 'Extend fire', r)) {
           send(ws, { type: MessageType.ERROR, timestamp: Date.now(), payload: { message: `Extend fire failed: ${refusalText(reply)}` } });
         }
       });

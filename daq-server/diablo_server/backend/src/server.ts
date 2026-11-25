@@ -104,6 +104,7 @@ import { handleElodinPacket } from './server/ingest.js';
 import { handleConnection } from './server/ws-connection.js';
 import { startServerHeartbeatWatch } from './server/server-heartbeat.js';
 import { startSubscriptionWatch } from './server/subscription-watch.js';
+import { startSequencerHealthWatch } from './server/sequencer-health.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -335,4 +336,6 @@ httpServer.listen(WS_PORT, () => {
   startServerHeartbeatWatch();
   // Table-id collisions and accepted-but-silent subscriptions (D-SUB, #23 / issue #227).
   startSubscriptionWatch(elodin);
+  // The sequencer worker's watchdog (HEALTH on :9998); alerts the operator when it wedges (#234).
+  startSequencerHealthWatch(() => sessionManager.pipelineExpected());
 });
