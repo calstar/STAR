@@ -27,7 +27,6 @@
 .type: string
 
 ## calibration_status
-.payload.calibrationFilePath: string
 .payload.channels: []
 .payload.message: string
 .payload.phase2Enabled: bool
