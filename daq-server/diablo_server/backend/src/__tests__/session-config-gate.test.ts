@@ -74,26 +74,11 @@ is_abort = true
 [[states]]
 id = 3
 name = "Fire"
-
-[[states]]
-id = 4
-name = "Vent"
-
-[[states]]
-id = 5
-name = "Engine Abort"
 `;
 
-// Vent and Engine Abort are the columns config_broadcast reads the boards' vent and abort
-// positions from; a profile without them is refused (see "the gate reports what the services
-// would only log" below).
-const ACTUATORS_CSV =
-  ',Idle,Armed,Fire,Vent,Engine Abort\n' +
-  'Fuel Press,CLOSE,CLOSE,OPEN,CLOSE,CLOSE\nLOX Press,CLOSE,CLOSE,OPEN,CLOSE,CLOSE\n';
-const DELAYS_CSV = ',Idle,Armed,Fire,Vent,Engine Abort\nFuel Press,0,0,0,0,0\nLOX Press,0,0,0,0,0\n';
-const TRANSITIONS_CSV =
-  ',Idle,Armed,Fire,Vent,Engine Abort\nIdle,1,1,0,0,1\nArmed,1,1,1,1,1\nFire,0,1,1,1,1\n' +
-  'Vent,1,1,0,1,1\nEngine Abort,1,0,0,1,1\n';
+const ACTUATORS_CSV = ',Idle,Armed,Fire\nFuel Press,CLOSE,CLOSE,OPEN\nLOX Press,CLOSE,CLOSE,OPEN\n';
+const DELAYS_CSV = ',Idle,Armed,Fire\nFuel Press,0,0,0\nLOX Press,0,0,0\n';
+const TRANSITIONS_CSV = ',Idle,Armed,Fire\nIdle,1,1,0\nArmed,1,1,1\nFire,0,1,1\n';
 
 /** Write a profile (and its CSVs) as the active one, and reset what is deployed. */
 function writeProfile(configToml: string): void {
@@ -252,10 +237,19 @@ active_connectors = [1, 2]
 
   it('an Actuators table with no "Engine Abort" column (digital-twin, le4)', async () => {
     // Without it config_broadcast reads no vent or abort positions and sends every valve closed.
-    writeProfile(CLEAN_PROFILE);
+    // That matters only on a rig with a designated survivor, which is what gets ACTUATOR_CONFIG.
+    const survivor = CLEAN_PROFILE.replace('enabled = true\n', 'enabled = true\ndesignated_survivor = true\n');
+    writeProfile(survivor);
+    expect(errorsMatching('no "Vent" or "Engine Abort" column')).toHaveLength(1);
     writeFileSync(join(profileDir, 'state_machine_actuators.csv'),
       ',Idle,Armed,Fire,Vent\nFuel Press,CLOSE,CLOSE,OPEN,OPEN\nLOX Press,CLOSE,CLOSE,OPEN,OPEN\n');
     expect(errorsMatching('no "Engine Abort" column')).toHaveLength(1);
+    // Without a survivor no ACTUATOR_CONFIG is sent, so the same table is not an error.
+    writeProfile(CLEAN_PROFILE);
+    expect(errorsMatching('Engine Abort" column')).toHaveLength(0);
+    writeProfile(survivor);
+    writeFileSync(join(profileDir, 'state_machine_actuators.csv'),
+      ',Idle,Armed,Fire,Vent\nFuel Press,CLOSE,CLOSE,OPEN,OPEN\nLOX Press,CLOSE,CLOSE,OPEN,OPEN\n');
     await expect(sessionManager.start(false, 60_000)).rejects.toThrow(ConfigIssuesError);
     expect(deployed()).toBe('# deployed-marker\n');
   });

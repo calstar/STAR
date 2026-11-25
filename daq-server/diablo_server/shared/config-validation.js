@@ -774,7 +774,11 @@ export function validateConfigForRun(config, csv, abortThresholds) {
     // what the survivor board drives every valve to when it aborts on its own. Without either
     // column it reads nothing and sends 0 (closed) for every valve, including one the table opens
     // in Vent, and until now nothing said so.
-    if (gActuators) {
+    // Only a rig with a designated survivor gets ACTUATOR_CONFIG at all (buildPackets returns
+    // nothing without one), so only there do the positions matter.
+    const survivor = Object.values(boards).some((b) => String(b?.type ?? '').toUpperCase() === 'ACTUATOR' && b?.enabled !== false &&
+        b?.designated_survivor === true);
+    if (gActuators && survivor) {
         const missing = VENT_ABORT_COLUMNS.filter((c) => !gActuators.states.includes(c));
         if (missing.length > 0)
             add('state', 'error', `The Actuators table has no ${missing.map((c) => `"${c}"`).join(' or ')} column, so the ` +
