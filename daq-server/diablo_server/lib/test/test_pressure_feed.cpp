@@ -27,6 +27,8 @@
 #include <chrono>
 #include <cstring>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -119,21 +121,35 @@ struct FakeDb {
 };
 
 /**
- * Fake elodin-db that REFUSES the first subscription, the way the real one does when the
- * calibrated VTable does not exist yet.
- *
- * It says nothing back — which is the whole problem: a refusal is invisible to the C++ client,
- * which sends request id 0 and never reads a reply. Data is published only once a RE-subscribe
- * arrives, so this passes if and only if PressureFeed asks again.
+ * Fake elodin-db that speaks the subscription protocol the way elodin-db 0.16 does: each
+ * VTableStream is a 10-byte MSG `len(4) ty [0x11,0x0d] req_id hi lo`. It records every one, per
+ * table. `refuse` (if set) is refused the first time — an ErrorResponse echoing that request id,
+ * as the DB answers a subscription to a table nobody has registered yet — and `blob` is published
+ * once it has been asked for a second time. With no `refuse`, it accepts everything and publishes
+ * nothing: a board that is off.
  */
-struct FakeDbRefuseFirst {
+struct FakeSubscribingDb {
     std::thread th;
     std::atomic<bool> run{true};
     std::atomic<uint16_t> port{0};
-    std::atomic<int> subscribes{0};
+    std::mutex mtx;
+    std::map<std::pair<uint8_t, uint8_t>, int> per_table;
 
-    void start(std::vector<uint8_t> blob, int publishAfterSubscribes) {
-        th = std::thread([this, blob = std::move(blob), publishAfterSubscribes]() {
+    int subscribesTo(std::pair<uint8_t, uint8_t> t) {
+        std::lock_guard<std::mutex> lk(mtx);
+        auto it = per_table.find(t);
+        return it == per_table.end() ? 0 : it->second;
+    }
+    int total() {
+        std::lock_guard<std::mutex> lk(mtx);
+        int n = 0;
+        for (const auto& [t, c] : per_table)
+            n += c;
+        return n;
+    }
+
+    void start(std::vector<uint8_t> blob, std::pair<uint8_t, uint8_t> refuse = {0, 0}) {
+        th = std::thread([this, blob = std::move(blob), refuse]() {
             int srv = socket(AF_INET, SOCK_STREAM, 0);
             int opt = 1;
             setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -155,18 +171,35 @@ struct FakeDbRefuseFirst {
                 close(srv);
                 return;
             }
-            // Each subscribe_tables() entry is a 10-byte MSG. Count them; publish only once
-            // enough have arrived that at least one must have been a RE-subscribe.
+            std::vector<uint8_t> in;
             bool published = false;
+            const bool refusing = refuse != std::pair<uint8_t, uint8_t>{0, 0};
             uint8_t buf[512];
             while (run) {
                 const ssize_t n = recv(c, buf, sizeof(buf), MSG_DONTWAIT);
                 if (n > 0)
-                    subscribes += static_cast<int>(n / 10);
-                if (!published && subscribes.load() >= publishAfterSubscribes) {
-                    ssize_t unused = write(c, blob.data(), blob.size());
-                    (void)unused;
-                    published = true;
+                    in.insert(in.end(), buf, buf + n);
+                while (in.size() >= 10) {
+                    const uint8_t req = in[7];
+                    const std::pair<uint8_t, uint8_t> t{in[8], in[9]};
+                    in.erase(in.begin(), in.begin() + 10);
+                    int seen;
+                    {
+                        std::lock_guard<std::mutex> lk(mtx);
+                        seen = ++per_table[t];
+                    }
+                    if (!refusing || t != refuse)
+                        continue;
+                    if (seen == 1) {
+                        // ErrorResponse: len | ty | [0xE0, 0x1D] | req id | postcard "nope"
+                        const uint8_t err[] = {9, 0, 0, 0, 0, 0xE0, 0x1D, req, 4, 'n', 'o', 'p', 'e'};
+                        ssize_t unused = write(c, err, sizeof(err));
+                        (void)unused;
+                    } else if (!published) {
+                        ssize_t unused = write(c, blob.data(), blob.size());
+                        (void)unused;
+                        published = true;
+                    }
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
@@ -336,14 +369,9 @@ full_scale = 1000.0
     // was blind for the life of the process and every dynamic state reading a pressure was
     // refused entry with "has produced no reading yet" for the whole session.
     {
-        std::vector<uint8_t> blob;
-        const auto a = ptFrame(0x16, 6, 250.0f, /*cal=*/1);
-        blob.insert(blob.end(), a.begin(), a.end());
-
-        FakeDbRefuseFirst db;
-        // Two roles subscribe on connect (2 messages); publishing only at 3 means the feed must
-        // have re-sent at least one of them.
-        db.start(blob, /*publishAfterSubscribes=*/3);
+        FakeSubscribingDb db;
+        // GN2 Regulated's table is refused once; its value is published only on the re-subscribe.
+        db.start(ptFrame(0x16, 6, 250.0f, /*cal=*/1), /*refuse=*/{0x20, 0x16});
         check(db.port.load() != 0, "refusing fake db is listening");
 
         PressureFeed feed;
@@ -360,8 +388,33 @@ full_scale = 1000.0
         }
         check(got, "a table refused on first subscribe is re-subscribed and starts delivering");
         check(got && psi > 249.0 && psi < 251.0, "and the value that arrives is the right one");
-        check(db.subscribes.load() >= 3, "the feed really did send a second subscribe");
+        check(db.subscribesTo({0x20, 0x16}) == 2, "the refused table was asked for exactly twice");
+        check(db.subscribesTo({0x20, 0x34}) == 1,
+              "and the accepted one beside it once: an accepted table is never re-sent");
 
+        feed.stop();
+        db.stop();
+    }
+
+    // ── An accepted but silent table is never re-subscribed (D-PF) ───────────────────────────
+    //
+    // A board that is off: the DB accepts both subscriptions (the tables are registered) and
+    // nothing is ever written. The feed used to re-send every table that had delivered nothing
+    // once a second, and elodin-db spawns a stream task per VTableStream with no dedupe: ~3,600
+    // extra streams an hour per silent table, and that many copies of every row once the board
+    // came up.
+    {
+        FakeSubscribingDb db;
+        db.start({});
+        PressureFeed feed;
+        feed.start(cfg, {"GN2 Regulated", "GN2 High"}, "127.0.0.1", db.port.load());
+        std::this_thread::sleep_for(std::chrono::milliseconds(3500));  // 3+ old resubscribe periods
+        check(db.subscribesTo({0x20, 0x16}) == 1 && db.subscribesTo({0x20, 0x34}) == 1,
+              "each silent table was subscribed exactly once in 3.5 s (" +
+                  std::to_string(db.total()) + " subscriptions for 2 tables)");
+        double psi = 0.0;
+        check(feed.read("GN2 High", psi) == PressureFeed::Status::NoReading,
+              "and a read says NoReading rather than inventing one");
         feed.stop();
         db.stop();
     }

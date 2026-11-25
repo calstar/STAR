@@ -30,6 +30,7 @@ import { ELODIN_HOST, ELODIN_PORT } from './env.js';
 import { wss, send, clientStreamStatus } from './ws-clients.js';
 import { setCalibrationElodin } from './calibration-state.js';
 import { refreshScriptStatus } from './engine-state.js';
+import { staleChannels } from './subscription-watch.js';
 
 // Authoritative "data is actually flowing" signal: epoch-ms of the last entity we
 // ingested from Elodin. The status badge derives dataFresh from this, so it reflects
@@ -105,6 +106,9 @@ export function isSimulated(): boolean {
 // produced-point count the client never receives, and lagMs needs the server
 // clock. An operator must never be looking at decimated data without being told.
 export function connectionStatusPayload(extra: Record<string, unknown> = {}) {
+  // Channels the subscription watch has flagged (D-SUB): present only while there are some, so a
+  // healthy stand's payload is unchanged.
+  const stale = staleChannels();
   return {
     connected: true,
     elodinConnected: elodin.isConnected(),
@@ -113,6 +117,7 @@ export function connectionStatusPayload(extra: Record<string, unknown> = {}) {
     throttled: false,
     resolutionPct: 100,
     lagMs: 0,
+    ...(stale.length > 0 ? { staleChannels: stale } : {}),
     ...extra,
   };
 }

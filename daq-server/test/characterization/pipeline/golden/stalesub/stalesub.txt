@@ -8,9 +8,9 @@ backend: gave up on [0x20, 0x31] (refusals exhausted): 0 time(s)
 
 ## sensor_update, client A, 2 x RESUBSCRIBE_MIN_MS (server.ts 5000) + 2 s from PT2_Cal.CH2's first sample; board 22 channel by channel (P7 values)
 PT2.CH1.raw_adc_counts  value=577243604
-PT2_Cal.CH1.pressure_psi  absent (no frame carried it)
-PT2_Cal.CH1.raw_adc  absent (no frame carried it)
-PT2_Cal.CH1.raw_adc_counts  absent (no frame carried it)
+PT2_Cal.CH1.pressure_psi  value=500
+PT2_Cal.CH1.raw_adc  value=577243604
+PT2_Cal.CH1.raw_adc_counts  value=577243604
 PT2.CH2.raw_adc_counts  value=560750930
 PT2_Cal.CH2.pressure_psi  value=450
 PT2_Cal.CH2.raw_adc  value=560750930
@@ -42,7 +42,7 @@ PT2_Cal.CH4.raw_adc_counts  value=544258255
   PT2_Cal.CH4.pressure_psi {400}
   PT2_Cal.CH4.raw_adc {544258255}
   PT2_Cal.CH4.raw_adc_counts {544258255}
-# history: 2 PT2* series
+# history: 3 PT2* series
   PT2.CH1.raw_adc_counts {577243604}
-  PT2_Cal.CH1.pressure_psi absent
+  PT2_Cal.CH1.pressure_psi {500}
   PT2_Cal.CH2.pressure_psi {450}

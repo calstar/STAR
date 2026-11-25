@@ -85,7 +85,10 @@ export const MAX_PAIR_ATTEMPTS = 12;
  *  provably a misattribution — and re-sending it would spawn a SECOND stream task for a live
  *  table, doubling its rate (the hazard documented above). Guarding on delivery makes that
  *  structurally impossible rather than merely unlikely. */
-const deliveredPairs = new Set<string>();
+const deliveredPairs = new Map<string, number>();
+/** When each pair still marked subscribed was last sent, for the liveness watch (D-SUB,
+ *  server/subscription-watch.ts): a pair is judged silent only against its own subscribe time. */
+const subscribedAtMs = new Map<string, number>();
 /** Rejected pairs awaiting a retry, with their backoff. */
 const rejectedPairs = new Map<string, { attempts: number; nextAttemptMs: number }>();
 /** Pairs that exhausted MAX_PAIR_ATTEMPTS — stop asking, and stop logging about it. */
@@ -107,7 +110,17 @@ function backoffMs(attempts: number): number {
 
 /** Record that the DB delivered a packet for this pair. */
 export function notePairDelivered(high: number, low: number): void {
-    deliveredPairs.add(`${high},${low}`);
+    deliveredPairs.set(`${high},${low}`, nowFn());
+}
+
+/** When the DB last delivered a row for `key` (`high,low`) on this connection; undefined if never. */
+export function pairDeliveredAtMs(key: string): number | undefined {
+    return deliveredPairs.get(key);
+}
+
+/** When `key` was last subscribed on this connection; undefined if it is not marked subscribed. */
+export function pairSubscribedAtMs(key: string): number | undefined {
+    return subscribedVTableStreamPairs.has(key) ? subscribedAtMs.get(key) : undefined;
 }
 
 /** Call on Elodin disconnect so the next connect re-sends all streams cleanly. */
@@ -115,6 +128,7 @@ export function clearSubscriptionState(): void {
     subscriptionGeneration++;
     runningPass = null;
     subscribedVTableStreamPairs.clear();
+    subscribedAtMs.clear();
     pendingSubscriptionReqIds.clear();
     deliveredPairs.clear();
     rejectedPairs.clear();
@@ -425,6 +439,7 @@ async function subscribeVTables(client: ElodinClient, cfg: unknown, generation: 
             const thisId = reqId++;
             pendingSubscriptionReqIds.set(thisId, key);
             subscribedVTableStreamPairs.add(key);
+            subscribedAtMs.set(key, nowFn());
             const ok = client.sendRawMessage(vtableStreamMsgId, ElodinPacketType.MSG, payload, thisId);
             if (ok) {
                 successCount++;

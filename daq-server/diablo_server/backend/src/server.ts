@@ -103,6 +103,7 @@ import { elodin, broadcastConnectionStatus, syncElodinToSession, onElodinConnect
 import { handleElodinPacket } from './server/ingest.js';
 import { handleConnection } from './server/ws-connection.js';
 import { startServerHeartbeatWatch } from './server/server-heartbeat.js';
+import { startSubscriptionWatch } from './server/subscription-watch.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -332,4 +333,6 @@ httpServer.listen(WS_PORT, () => {
   startBoardLogReceiver(broadcast);
   // The loopback copy of SERVER_HEARTBEAT; alerts the operator when it stops (C6-3).
   startServerHeartbeatWatch();
+  // Table-id collisions and accepted-but-silent subscriptions (D-SUB, #23 / issue #227).
+  startSubscriptionWatch(elodin);
 });

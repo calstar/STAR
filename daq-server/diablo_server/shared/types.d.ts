@@ -231,6 +231,9 @@ export interface ConnectionStatus {
     resolutionPct?: number;
     /** Age of the newest delivered sample at the last flush, in ms. */
     lagMs?: number;
+    /** Calibrated channels (entity names, e.g. `PT2_Cal.CH1`) the backend has flagged stale: silent
+     *  while their raw channel delivers (D-SUB). Absent when there are none. */
+    staleChannels?: string[];
 }
 export interface MissionStartTime {
     missionStartTime: number;

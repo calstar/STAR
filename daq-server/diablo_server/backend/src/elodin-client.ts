@@ -227,33 +227,28 @@ export class ElodinClient extends EventEmitter {
     while (this.buffer.length >= 4 && processed < MAX_PACKETS_PER_TICK) {
       const packetLen = this.buffer.readUInt32LE(0);
 
-      if (this.buffer.length < packetLen + 4) break;
-
-      // len >= 4 (empty payload valid); reject obviously corrupt values
-      if (packetLen < 4 || packetLen > 65536) {
-        const syncOffset = this.findSyncOffset();
-        if (syncOffset > 0) {
-          this.buffer = this.buffer.subarray(syncOffset);
-        } else {
-          this.buffer = this.buffer.subarray(4);
-        }
-        continue;
+      // Checked BEFORE waiting for the rest of the packet (C1-6). A length that makes no sense
+      // means the stream is misaligned or corrupt, and nothing after it can be trusted: this
+      // used to wait for a 4 GB "packet" that would never arrive, buffering everything up to
+      // the 128 MB cap and re-scheduling itself every tick, or skip ahead by a guess and decode
+      // whatever bytes happened to look like a header. The only clean resync is a new connection.
+      if (packetLen < ElodinClient.MIN_PACKET_LEN || packetLen > ElodinClient.MAX_PACKET_LEN) {
+        this.resync(`implausible packet length ${packetLen}`);
+        return;
       }
+
+      // Incomplete: wait for the next chunk, which restarts parsing (handleData).
+      if (this.buffer.length < packetLen + 4) break;
 
       const packet = this.buffer.subarray(0, packetLen + 4);
       this.buffer = this.buffer.subarray(packetLen + 4);
 
       const header: ElodinPacketHeader = {
-        len: packet.readUInt32LE(0),
+        len: packetLen,
         ty: packet.readUInt8(4) as ElodinPacketType,
         packetId: [packet.readUInt8(5), packet.readUInt8(6)],
         requestId: packet.readUInt8(7),
       };
-
-      if (header.len < 4 || header.len > 65536) {
-        console.error(`[ElodinClient] Invalid header.len=${header.len}`);
-        continue;
-      }
 
       const payload = packet.subarray(8);
 
@@ -290,7 +285,9 @@ export class ElodinClient extends EventEmitter {
       processed++;
     }
 
-    if (this.buffer.length >= 4) {
+    // Come back next tick only when this one stopped at its packet budget with whole packets
+    // still buffered; an incomplete tail waits for data instead of spinning.
+    if (processed >= MAX_PACKETS_PER_TICK && this.buffer.length >= 4) {
       setImmediate(() => this.processBufferedPackets());
       return;
     }
@@ -298,16 +295,21 @@ export class ElodinClient extends EventEmitter {
     this.processingPackets = false;
   }
 
-  /** Find offset of next valid packet to recover from chunking/misalignment. */
-  private findSyncOffset(): number {
-    for (let i = 1; i <= Math.min(64, this.buffer.length - 8); i++) {
-      const len = this.buffer.readUInt32LE(i);
-      if (len >= 4 && len <= 65536 && this.buffer.length >= i + 4 + len) {
-        const ty = this.buffer.readUInt8(i + 4);
-        if (ty <= 3) return i; // ElodinPacketType 0-3
-      }
-    }
-    return 0;
+  /** Lengths a real packet can have: a bare header (len 4) up to 64 KiB. */
+  private static readonly MIN_PACKET_LEN = 4;
+  private static readonly MAX_PACKET_LEN = 65536;
+
+  /**
+   * The byte stream can no longer be framed: drop what is buffered and the connection with it.
+   * The socket's 'close' handler then does what any lost connection does — emits 'disconnected'
+   * (so the registry clears its subscription state) and schedules the reconnect, whose fresh
+   * subscriptions start on a clean stream.
+   */
+  private resync(reason: string): void {
+    console.error(`[ElodinClient] ❌ Stream out of sync (${reason}); dropping the connection to resync`);
+    this.buffer = Buffer.alloc(0);
+    this.processingPackets = false;
+    this.socket?.destroy();
   }
 
   /**

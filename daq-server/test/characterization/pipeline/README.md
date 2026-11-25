@@ -197,10 +197,14 @@ inserting vtable `[32, 49]` (five: bridge ×2, registrar A, calibration_service 
 (two); that the backend never gave up on `[0x20, 0x31]` (the only per-pair line it logs, and only
 for refusals); then, per channel of board 22, the live value of the raw stream and of every
 calibrated component (`absent` when no frame carried it), the series present in the connect
-backfill and in the query. Main's behaviour: channel 1's raw stream flows, channels 2–4 flow raw
-and calibrated, and `PT2_Cal.CH1.*` is **absent** live, from the backfill and from the query —
-accepted, never refused, never retried, silent for the whole run. It uses real elodin-db 0.16.1
-and the real backend; no product code is touched.
+backfill and in the query. Main's behaviour was: channel 1's raw stream flows, channels 2–4 flow
+raw and calibrated, and `PT2_Cal.CH1.*` is **absent** live, from the backfill and from the query —
+accepted, never refused, never retried, silent for the whole run. Since the D-SUB watch (#23,
+`backend/src/server/subscription-watch.ts`) the backend sees `PT2_Cal.CH1` silent while
+`PT2.CH1` and `PT2_Cal.CH2` deliver, flags it after 5 s and reconnects, and the fresh subscription
+binds to the live registration: the golden now has `PT2_Cal.CH1` live and in the query, inside the
+12 s window. The backfill on connect still predates the reconnect, so it shows the channel absent.
+It uses real elodin-db 0.16.1 and the real backend; no product code is touched.
 
 On macOS it needs the `127.0.0.22` alias only. It adds ~1 min to the area.
 
