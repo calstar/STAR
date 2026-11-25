@@ -1,0 +1,20 @@
+{
+  "board": "RTD_Hotfire",
+  "built_by": "ci",
+  "commits": [
+    "b7c03767e8dcb9a2596999a5e6cf77d31614f35b"
+  ],
+  "esptool": "tool-esptoolpy @ 2.41100.260830",
+  "file_sha256": "2399af508ef0b7f692ab43ae14cf39882644bf242829433ef987541d12de0d7f",
+  "first_seen_commit_at": "2026-11-25T04:46:23-08:00",
+  "framework": "framework-arduinoespressif32 @ 4.20017.260907+sha.dcc1105b",
+  "image_digest": "2f872d4a8f3183ba0f93218234dff0d4e64624bdcb434a1eddd1b4b11374d27f",
+  "image_len": 321808,
+  "pio_env": "adafruit_feather_esp32s3",
+  "platform": "espressif32 @ 7.1.3 (required: espressif32 @ 7.1.3)",
+  "run_attempt": "1",
+  "run_id": "45616991958",
+  "run_url": "https://github.com/calstar/STAR/actions/runs/45616991958",
+  "subject": "Packet encoder fixes: ABORT_DONE version, sensor-data encoder bounds, DIABLO_COMMS_VERSION in controller/abort (#252)",
+  "toolchains": "toolchain-riscv32-esp @ 8.4.0+2021r2-patch5,toolchain-riscv32-esp @ 8.4.0+2021r2-patch5) toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5,toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5)"
+}
