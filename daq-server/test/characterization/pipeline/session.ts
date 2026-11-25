@@ -659,10 +659,13 @@ async function operator(): Promise<void> {
  *  (run.sh holds) is answered `OK:<ms>` -- no error frame, the state_update into 21 and, after the
  *  800 ms hold plus the gate's 0.4 s stagger, the auto-return to Press Standby. Stalled: with the
  *  sequencer SIGSTOPped a self-transition on the hub (Press Standby -> Press Standby; the diagonal
- *  is 1, so the line changes no state when it is finally read) gets `State transition failed:
- *  timeout` after the client's 2000 ms socket timeout -- bounded here at 2.8 s (D34's macOS timer
- *  overshoot fits; a 3000 ms timeout does not), as a per-step note; then SIGCONT, and whatever the
- *  resumed sequencer does with the line still in its listen backlog (D-LATE) lands in this step.
+ *  is 1, so the line changes no state when it is finally read) gets the warning `State
+ *  transition: no reply from the sequencer within 5 s -- state unknown, resyncing ...` and a
+ *  state_update re-broadcast after the client's 5000 ms overall deadline -- bounded here at 5.8 s
+ *  (D34's macOS timer overshoot fits; a 6000 ms deadline does not), as a per-step note; then
+ *  SIGCONT. The resumed sequencer finds the line in its socket buffer with the sender already
+ *  gone and does not run it (D-LATE, #234): the second note says whether any state_update
+ *  arrived after the resume (a transition the operator was told about running late).
  *  Down: SIGTERM, wait until :9998 refuses, then the same transition -> `connect ECONNREFUSED`,
  *  and a `debug_mode` whose failure has no reply at all. Nothing else, so a change elsewhere in
  *  the WS/HTTP surface cannot fail this golden. */
@@ -671,7 +674,7 @@ async function holds(): Promise<void> {
   const seqPid: number = ports.sequencer_pid;
   const seqPort: number = ports.sequencer;
   if (!Number.isInteger(seqPid) || !Number.isInteger(seqPort)) throw new Error('ports.json lacks sequencer_pid / sequencer');
-  const TIMEOUT_BOUND_MS = 2800;
+  const TIMEOUT_BOUND_MS = 5800;
 
   step('readiness');
   await waitForData(60000);
@@ -703,17 +706,23 @@ async function holds(): Promise<void> {
   const isTimeoutError = (f: Frame) => {
     try {
       const m = JSON.parse(f.raw);
-      return m.type === 'error' && String(m.payload?.message ?? '').endsWith(': timeout');
+      return m.type === 'notification' && String(m.payload?.message ?? '').includes('state unknown, resyncing');
     } catch { return false; }
   };
   // Wait for the reply itself (bounded well past the bound) rather than for quiet, so the note
   // judges the reply's arrival and not the end of the step.
-  const replyBy = Date.now() + 8000;
+  const replyBy = Date.now() + 10000;
   while (!cur!.frames.some(isTimeoutError) && Date.now() < replyBy) await sleep(50);
   const reply = cur!.frames.find(isTimeoutError);
   cur!.notes.push(`timeout_reply_within_${TIMEOUT_BOUND_MS}ms: ${reply && reply.t - sentAt <= TIMEOUT_BOUND_MS ? 'yes' : 'no'}`);
   process.kill(seqPid, 'SIGCONT');
-  await settle(1500);
+  const resumedAt = Date.now();
+  await settle(2500);
+  const isStateUpdate = (f: Frame) => {
+    try { return JSON.parse(f.raw).type === 'state_update'; } catch { return false; }
+  };
+  const late = cur!.frames.some((f) => isStateUpdate(f) && f.t >= resumedAt);
+  cur!.notes.push(`late_transition_after_resume: ${late ? 'yes' : 'no'}`);
 
   step('sequencer_down');
   process.kill(seqPid, 'SIGTERM');
