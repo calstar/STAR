@@ -1,0 +1,32 @@
+=== script fixtures/bad/scripts/unknown_names.script as state "Idle"
+parse.ok = true
+parse.diag.count = 0
+top = [0, 3) empty=false max_depth=0
+stmt[0] OpenValve @1:1 var=-1 expr=-1 slug=0 body=[-1, -1) else=[-1, -1)
+stmt[1] Assign @2:1 var=0 expr=0 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[2] TransitionTo @3:1 var=-1 expr=-1 slug=2 body=[-1, -1) else=[-1, -1)
+expr[0] Pressure @2:5 number=0 var=-1 slug=1 op=+ lhs=-1 rhs=-1
+block_items = [0, 1, 2]
+slug[0] WARP_COIL ns=actuator @1:12 len=9
+slug[1] NO_SUCH_SENSOR ns=sensor @2:14 len=14
+slug[2] NOWHERE ns=state @3:15 len=7
+variable[0] x
+canonical:
+(seq (open WARP_COIL) (set x (pressure NO_SUCH_SENSOR)) (goto NOWHERE))
+validate.diag.count = 3
+validate.diag 1:12 E_UNKNOWN_ACTUATOR "no actuator named WARP_COIL — known names include DOME_CTRL_GSE, DOME_CTRL_R, DOME_CTRL_VENT"
+validate.diag 2:14 E_UNKNOWN_SENSOR "no sensor named NO_SUCH_SENSOR — known names include DOME_CTRL, DOME_CTRL_R, DOME_MID"
+validate.diag 3:15 E_UNKNOWN_STATE "no state named NOWHERE — known names include ARMED, COPV_FILL, DOME_PRESS"
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 14 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0

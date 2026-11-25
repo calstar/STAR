@@ -12,42 +12,71 @@ The product is a full-stack pipeline: ESP32 sensor boards → UDP → DAQ bridge
 daq-server/                 # this subproject (inside the STAR monorepo)
 ├── diablo_server/          # All pipeline product code
 │   ├── daq_bridge/         # C++ UDP receiver → Elodin DB publisher
-│   ├── services/           # C++ background services
-│   │   ├── sequencer/      # State machine + actuator UDP (TCP :9998)
+│   │   ├── BoardMap.{hpp,cpp}        # [boards.*] map, source IP → board
+│   │   └── BackendLogForwarder.hpp   # board LOG text → backend over loopback UDP
+│   ├── services/           # C++ service executables (one main per service)
+│   │   ├── sequencer/      # State machine + actuator UDP (TCP :9998); also holds the
+│   │   │                   #   sequencer classes (StateMachine, ScriptRunner, HoldTimer, …),
+│   │   │                   #   split by concern: SequencerService_{config,controller_notify,elodin}.cpp,
+│   │   │                   #   ActuatorCommander_load.cpp
 │   │   ├── calibration/    # Raw sensor → calibrated sensor (Elodin→Elodin)
 │   │   ├── controller/     # RobustDDP controller (Elodin→PWM UDP)
 │   │   ├── heartbeat/      # SERVER_HEARTBEAT UDP to boards
 │   │   ├── config_broadcast/ # SENSOR_CONFIG / ACTUATOR_CONFIG to boards
-│   │   ├── data_logger/    # CSV data logger from Elodin
+│   │   ├── stacklight/     # stack-light commands from sequencer state
+│   │   ├── t7_bridge/      # LabJack T7 stream bridge
 │   │   └── ota/            # Ethernet OTA firmware flash
 │   ├── lib/                # Shared C++ library (fsw_daq_lib.so)
-│   │   ├── include/        # Public headers (ElodinClient, StateMachine, …)
-│   │   └── src/            # Implementation
+│   │   ├── include/        # Public headers (ElodinClient, StateMachine, StopSignals, TcpCommandServer, …)
+│   │   ├── src/            # Implementation; subdirs by area (elodin/, script/, service/, net/, …)
+│   │   │   ├── control/ControllerService_{elodin,pwm}.cpp  # ControllerService, split by concern
+│   │   │   ├── elodin/SendMsg.hpp     # encode + send one Elodin db.hpp message
+│   │   │   ├── script/Printer.cpp     # canonical printer for state scripts (beside Lexer, Parser, Validate)
+│   │   │   ├── service/StopSignals.cpp  # stop flag + SIGINT/SIGTERM/SIGPIPE installer (header in include/service/)
+│   │   │   └── net/TcpCommandServer.cpp # accept loop shared by sequencer :9998 and controller :9999
+│   │   ├── third_party/elodin/db.hpp  # vendored Elodin DB client header (db.hpp)
+│   │   └── test/           # C++ unit tests (ctest)
 │   ├── transport/          # daq_comms C++ packet parsing library
 │   │   ├── include/
 │   │   └── src/
-│   ├── backend/            # Node.js/TypeScript backend (server.ts → WS+HTTP)
+│   ├── backend/            # Node.js/TypeScript backend
+│   │   ├── src/server.ts   # entry point: WebSocket + HTTP on :8081 (wiring; state lives in src/server/)
+│   │   ├── src/server/     # server state and handlers by owner: env, stats, ws-clients, ws-connection,
+│   │   │                   #   notifications, history, mission-time, sensor-stream, config-caches,
+│   │   │                   #   calibration-state, board-status, engine-state, actuator-mismatch,
+│   │   │                   #   elodin-link, ingest, commands (all .ts)
+│   │   ├── src/api-server.ts  # HTTP API wiring
+│   │   ├── src/api/        # HTTP handlers by area (config, calibration, ota, history, states, …)
+│   │   ├── src/routes/     # route modules (calibration/config profiles, script check)
+│   │   ├── src/sequencer-client.ts  # TCP :9998 client to sequencer_service
+│   │   ├── src/state-csv/  # State-machine CSV readers (state-ids, state-actuators, state-transitions)
+│   │   ├── src/video/      # Video gateway
+│   │   ├── src/__tests__/  # backend unit tests (vitest)
+│   │   └── test/           # backend integration tests
 │   ├── frontend/           # React/Vite SPA web GUI (static build served by backend :3000)
 │   └── shared/             # Shared TypeScript types
 │
 ├── config/                 # Runtime config files
-│   ├── config.toml         # Main system config (boards, sensors, actuators)
+│   ├── config_base.toml    # Base system config (boards, sensors, actuators)
 │   ├── config_flight_daq.toml
-│   └── config_ground_daq.toml
-│
-├── external/               # Submodule(s); contains only uWebSockets/
-│   └── uWebSockets/        # WebSocket library for C++ services
+│   ├── config_ground_daq.toml
+│   └── profiles/           # Per-profile config.toml + the three state-machine CSVs
+│                           # (default/, digital-twin/, server/)
 │
 ├── deploy/                 # Deployment and operations scripts
 │   ├── startup/            # tmux dev stack launchers (start_tmux_dev.sh, etc.)
 │   ├── setup/              # One-time setup scripts (Jetson, network, etc.)
+│   ├── dhcp/               # Board-LAN DHCP generator and installer
 │   └── systemd/            # systemd unit files for production Jetson deployment
 │
-├── test/                   # All test scripts and helpers
+├── test/                   # Test scripts and helpers
 │   ├── test_integration.sh # Full-stack integration test (run via `int` alias)
 │   ├── ws_data_flow_test.ts  # WebSocket data flow assertions (called by integration test)
 │   ├── udp_listener.ts     # Captures actuator UDP commands during integration test
-│   └── verify_packet_reception.sh
+│   └── characterization/   # Behaviour-freezing harness for the remaster: goldens per area
+│       ├── run.sh          # runs every area (CHAR_AREAS=a,b limits it)
+│       ├── gate.sh         # the merge gate (build, ctest, vitest, goldens, integration)
+│       └── linux/          # Dockerfile + linux_gate.sh: the same goldens on Linux
 │
 ├── sim/                    # Simulators
 │   ├── board_simulator.py  # Simulates all ESP32 sensor boards over UDP
@@ -65,13 +94,18 @@ daq-server/                 # this subproject (inside the STAR monorepo)
 │   └── ...                 # export_sensor_config.py, setup_pre_commit.sh, test_udp.py
 │                           # (clang-format/prettier: ../format.sh at the monorepo root)
 │
+├── docs/                   # Guides; docs/remaster/ holds the refactor's ledger and REPORT.md
 ├── archive/                # Legacy code kept for reference
-│   └── legacy/             # Old Python services, old C++ monolith, nav, SITL
+│   └── legacy/             # Old Python services (python-services/)
 │
 └── build/                  # CMake build output (gitignored)
     ├── bin/                # All compiled executables
     └── lib/                # Shared libraries (fsw_daq_lib.so, etc.)
 ```
+
+The data-logger service and the repo-level `node_modules/`, `build-ci/` and
+`.cache/clangd/` that older checkouts carried are gone: build output and editor
+caches are no longer tracked.
 
 ---
 
@@ -122,8 +156,8 @@ build   # runs scripts/build.sh from repo root
 ### Install Frontend/Backend Dependencies
 
 ```bash
-cd diablo_server/backend && npm install
-cd diablo_server/frontend && npm install
+cd diablo_server/backend && npm ci
+cd diablo_server/frontend && npm ci
 ```
 
 ---
@@ -166,13 +200,13 @@ Runs a full pipeline smoke test: board simulator → DAQ bridge → Elodin → b
 int         # runs test/test_integration.sh
 ```
 
-The test builds any missing binaries, starts all services on offset ports, runs ~39 checks, and cleans up. See `CLAUDE.md` for the canonical path.
+The test builds any missing binaries, starts all services on offset ports, runs 167 checks, and cleans up. See `CLAUDE.md` for the canonical path.
 
 ---
 
 ## Configuration
 
-All runtime config lives in `config/config.toml`. Key sections:
+Runtime config is `config/config.toml`, generated from the active profile in `config/profiles/<profile>/` (the profile directory also holds the state-machine CSVs). Key sections:
 
 - `[database]` — Elodin DB host/port
 - `[network]` — UDP sensor_port, actuator_cmd_port, broadcast settings
@@ -183,9 +217,9 @@ All runtime config lives in `config/config.toml`. Key sections:
 - `[calibration]` — Calibration service parameters
 
 State machine transitions and actuator positions per state are defined in:
-- `config/state_transitions.csv`
-- `config/state_machine_actuators.csv`
-- `config/state_machine_actuator_delays.csv`
+- `config/profiles/<profile>/state_transitions.csv`
+- `config/profiles/<profile>/state_machine_actuators.csv`
+- `config/profiles/<profile>/state_machine_actuator_delays.csv`
 
 ---
 

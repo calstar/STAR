@@ -1,8 +1,7 @@
 #!/bin/bash
 # Full stack with the default server.ts (direct Elodin DB backend).
-# Legacy monolithic backend is available via start_tmux_dev_legacy.sh.
 #
-# Thin backend: HTTP + WebSocket on WS_PORT (8081 here so frontend + data_logger defaults work).
+# Thin backend: HTTP + WebSocket on WS_PORT (8081 here so the frontend default works).
 # Backend connects directly to Elodin DB (no relay). Env: ELODIN_HOST, ELODIN_PORT, WS_PORT.
 #
 # Startup delays in each CMD_* keep pipeline safe (DB before DAQ) regardless of pane order.

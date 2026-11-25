@@ -1,0 +1,53 @@
+{
+  "counts": {
+    "errors": 2,
+    "warnings": 1
+  },
+  "grouped": [
+    {
+      "issues": [
+        {
+          "level": "error",
+          "message": "Environmental Board #1 (env_a): Environmental board ID 90 is also claimed by env_b — their readings would merge.",
+          "page": "boards"
+        },
+        {
+          "level": "error",
+          "message": "Environmental Board #2 (env_b): Environmental board ID 90 is also claimed by env_a — their readings would merge.",
+          "page": "boards"
+        }
+      ],
+      "label": "Boards",
+      "page": "boards"
+    },
+    {
+      "issues": [
+        {
+          "level": "warn",
+          "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Main, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+          "page": "state"
+        }
+      ],
+      "label": "State Machine",
+      "page": "state"
+    }
+  ],
+  "logs": [],
+  "value": [
+    {
+      "level": "error",
+      "message": "Environmental Board #1 (env_a): Environmental board ID 90 is also claimed by env_b — their readings would merge.",
+      "page": "boards"
+    },
+    {
+      "level": "error",
+      "message": "Environmental Board #2 (env_b): Environmental board ID 90 is also claimed by env_a — their readings would merge.",
+      "page": "boards"
+    },
+    {
+      "level": "warn",
+      "message": "In the Actuators table but not in [actuator_roles]: Fuel Vent, Fuel Press, Fuel Main, Fuel Fill Vent, Fuel Fill Press, LOX Vent, LOX Press, LOX Main, LOX Dump, LOX Fill, GSE Low Press Vent, GSE High Press Vent, GN2 Vent, GSE LOX Fill Vent, GSE High Press Control, GSE Med Press Control — these rows command nothing.",
+      "page": "state"
+    }
+  ]
+}

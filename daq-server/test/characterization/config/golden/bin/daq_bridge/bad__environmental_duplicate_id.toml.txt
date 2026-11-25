@@ -1,0 +1,6 @@
+=== DAQ Bridge - DiabloAvionics Packet Receiver ===
+Config: config/config.toml
+Listening on: 0.0.0.0:5006
+
+FATAL: [Config] environmental board ID 90 is claimed by both [boards.env_a] and [boards.env_b]
+=== exit 1

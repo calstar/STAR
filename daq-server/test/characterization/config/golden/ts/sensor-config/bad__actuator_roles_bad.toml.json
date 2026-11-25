@@ -1,0 +1,52 @@
+{
+  "hpBoardNumbers": {
+    "logs": [],
+    "value": []
+  },
+  "loadActuatorChannelToEntityMap": {
+    "logs": [],
+    "value": {
+      "0": "ACT.Channel_Zero",
+      "1": "ACT.Ball_NO",
+      "2": "ACT.Lowercase_no",
+      "3": "ACT.Unknown_Board",
+      "4": "ACT.PWM_One",
+      "5": "ACT.PWM_Two",
+      "6": "ACT.PWM_Bad",
+      "10": "ACT.Channel_Zero",
+      "11": "ACT.Channel_Eleven",
+      "12": "ACT.Lowercase_no",
+      "14": "ACT.PWM_One",
+      "15": "ACT.PWM_Two",
+      "16": "ACT.PWM_Bad",
+      "21": "ACT.Channel_Eleven",
+      "601": "ACT.Ball_NO",
+      "883": "ACT.Unknown_Board"
+    }
+  },
+  "loadLcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadRtdBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "loadSensorRoleMap": {
+    "logs": [
+      "log: 📋 Loaded sensor role map from config.toml (0 channels): {}"
+    ],
+    "value": {
+      "boardChannelToEntityMaps": [],
+      "channelToEntityMap": {}
+    }
+  },
+  "loadTcBoardConfig": {
+    "logs": [],
+    "value": []
+  },
+  "t7CalFields": {
+    "logs": [],
+    "value": []
+  }
+}

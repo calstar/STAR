@@ -16,9 +16,8 @@
 # Browser / Playwright E2E is separate: bash test/e2e_guitest_playwright.sh (not run by this script).
 #
 # Usage:
-#   bash test/test_integration.sh [-v|--verbose] [--legacy] [--only=<ids>]
+#   bash test/test_integration.sh [-v|--verbose] [--only=<ids>]
 #
-#   --legacy   Use server-legacy.ts instead of server.ts (default: thin backend).
 #
 # Running only some WS checks (still starts the full stack unless you hack the script):
 #   bash test/test_integration.sh --only=sensor_data
@@ -39,7 +38,6 @@ ONLY_FLAG=""
 for arg in "$@"; do
   case "$arg" in
     -v|--verbose) VERBOSE=1 ;;
-    --legacy) BACKEND=legacy ;;
     --only=*) ONLY_FLAG="$arg" ;;
   esac
 done
@@ -78,6 +76,12 @@ CUBIC_STORE="$REPO_ROOT/scripts/calibration/calibrations/cubic_calibration.json"
 # this run needs it absent, and a tare an operator set is their state, not scratch.
 TARE_STORE="$REPO_ROOT/scripts/calibration/calibrations/lc_tare.json"
 
+# The live abort thresholds. calibration_service regenerates this tracked file in place on every
+# start, so a run used to overwrite the operator's thresholds. Unlike the two stores above the run
+# keeps it where it is (what the services see is unchanged); a byte copy is taken first and put back
+# on exit.
+THRESH_STORE="$REPO_ROOT/scripts/calibration/calibrations/abort_thresholds.txt"
+
 # Delete only inside .tmp/. Every rm in this script goes through here so a path that came out
 # empty — REPO_ROOT unset, a variable renamed — cannot expand into something outside the scratch
 # directory. Refuses rather than guesses.
@@ -107,10 +111,36 @@ INTEGRATION_PROCESS_NAMES=(
   board_startup_sim
 )
 
+# PIDs bound to a port: lsof (macOS; the Linux image has it too), else fuser (psmisc).
+port_holders() {
+  local port=$1 proto=${2:-tcp}
+  if command -v lsof >/dev/null 2>&1; then
+    if [ "$proto" = udp ]; then lsof -nP -iUDP:"$port" -t 2>/dev/null; else lsof -nP -iTCP:"$port" -t 2>/dev/null; fi
+  elif command -v fuser >/dev/null 2>&1; then
+    fuser "$port/$proto" 2>/dev/null | tr -s ' ' '\n'
+  fi | sort -u || true
+}
+# Kill what this checkout left on a port; a holder from anywhere else is named and left alone.
+# Until LEDGER D80 this killed whatever held the port (and fuser -k everything on Linux), so a run
+# of this script that failed early still took down another worktree's stack — the reason every run,
+# however short, had to hold the stack lock. Matching the command line on $REPO_ROOT/ is the same
+# anchor the pkill sweeps below use; elodin-db qualifies through its DB path under .tmp/.
+kill_port() {
+  local port=$1 proto=${2:-tcp} sig=${3:-TERM} p cmd
+  for p in $(port_holders "$port" "$proto"); do
+    cmd="$(ps -o command= -p "$p" 2>/dev/null || true)"
+    case "$cmd" in
+      *"$REPO_ROOT/"*) kill "-$sig" "$p" 2>/dev/null || true ;;
+      "") ;;
+      *) echo "  ⚠️  port $port/$proto is held by pid $p from outside this checkout; left alone: ${cmd:0:90}" >&2 ;;
+    esac
+  done
+}
+
 # Kill any leftover processes from a previous integration test run that may
 # still be holding ports.  Only targets processes whose command line contains
-# our repo path or the well-known binary names, to avoid killing unrelated
-# processes.
+# our repo path (the elodin-db match is its DB path under this checkout's .tmp/),
+# to avoid killing unrelated processes or another worktree's stack.
 kill_stale_integration_processes() {
   local label="${1:-}"
   local killed=0
@@ -121,11 +151,12 @@ kill_stale_integration_processes() {
   done
   # Backend server (tsx src/server.ts) — match on the server.ts path
   pkill -f "$REPO_ROOT/diablo_server/backend.*server\.ts" 2>/dev/null && killed=$((killed + 1)) || true
-  # Elodin DB — match on the test DB path pattern
-  pkill -f "elodin.*integration_test" 2>/dev/null && killed=$((killed + 1)) || true
-  # Also kill any process bound to our test ports
+  # Elodin DB — match on this checkout's test DB path
+  pkill -f "elodin.*$REPO_ROOT/\.tmp/elodin_integration_test" 2>/dev/null && killed=$((killed + 1)) || true
+  # Also kill anything of ours still bound to a test port
   for port in $TEST_ELODIN_PORT $TEST_DAQ_UDP_PORT $TEST_BACKEND_WS_PORT $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_SEQUENCER_PORT; do
-    lsof -ti ":$port" 2>/dev/null | xargs kill 2>/dev/null || true
+    kill_port "$port" tcp
+    kill_port "$port" udp
   done
   if [ "$killed" -gt 0 ]; then
     sleep 1
@@ -134,7 +165,7 @@ kill_stale_integration_processes() {
       pkill -9 -f "$REPO_ROOT.*$name" 2>/dev/null || true
     done
     pkill -9 -f "$REPO_ROOT/diablo_server/backend.*server\.ts" 2>/dev/null || true
-    pkill -9 -f "elodin.*integration_test" 2>/dev/null || true
+    pkill -9 -f "elodin.*$REPO_ROOT/\.tmp/elodin_integration_test" 2>/dev/null || true
     [ -n "$label" ] && echo "  $label: killed $killed stale process group(s)"
   fi
 }
@@ -176,6 +207,12 @@ cleanup() {
       && echo "  📦 restored the operator load-cell tares" \
       || echo "  ⚠️  COULD NOT restore the tares — they are at $STASH_DIR/lc_tare.json"
   fi
+  if [ -f "$STASH_DIR/abort_thresholds.txt" ]; then
+    mkdir -p "$(dirname "$THRESH_STORE")"
+    mv -f "$STASH_DIR/abort_thresholds.txt" "$THRESH_STORE" \
+      && echo "  📦 restored the operator abort thresholds" \
+      || echo "  ⚠️  COULD NOT restore the abort thresholds — they are at $STASH_DIR/abort_thresholds.txt"
+  fi
 
   tmp_rm "$TEST_DB_PATH" "$TEST_CONFIG" "$UDP_COMMANDS_FILE" "$SIM_STATS_FILE" \
          "$SIM_STATS_FILE.tmp" "$REPO_ROOT/.tmp/integration_adjustments_$$.json" \
@@ -212,6 +249,18 @@ wait_for_port() {
   return 0
 }
 
+# `timeout` is coreutils and macOS has none, so a bare `timeout 8 …` was "command not found" and
+# the check behind it never ran while its verdict still printed green (LEDGER D61a). GNU timeout
+# where it exists (brew's is gtimeout), else perl's alarm: the timer survives exec, so the
+# command itself is the process SIGALRM ends.
+run_with_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"
+  elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"
+  else perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' "$secs" "$@"
+  fi
+}
+
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Full-Stack Integration Test  [backend: $BACKEND]"
 echo "═══════════════════════════════════════════════════════════════"
@@ -227,8 +276,9 @@ mkdir -p "$REPO_ROOT/.tmp"
 # ── macOS loopback aliases for board simulator ────────────────────────────────
 # On Linux, 127.0.0.x all resolve to lo. On macOS, only 127.0.0.1 works unless we add explicit
 # aliases. The board_simulator binds each board to 127.0.0.<host-octet> (the last octet of its
-# config IP, which equals its board_id here) so the DAQ bridge can route by source address. These
-# are the board_id octets from config_base.toml (enabled and not) plus the startup board (60).
+# config IP, which equals its board_id for config_base.toml's boards) so the DAQ bridge can route by
+# source address. These are the board_id octets from config_base.toml (enabled and not) plus the
+# startup board's IP octet (60; its board_id is 23, see [boards.integration_startup] below).
 if [ "$(uname)" = "Darwin" ]; then
   LOOPBACK_IPS=(11 12 13 14 21 22 25 31 32 41 42 51 52 60 61 71)
   NEED_ALIAS=false
@@ -243,45 +293,42 @@ if [ "$(uname)" = "Darwin" ]; then
     for i in "${LOOPBACK_IPS[@]}"; do
       sudo ifconfig lo0 alias "127.0.0.$i" up 2>/dev/null || true
     done
+    # Re-check after the loop: sudo can fail (no tty, denied, wrong password) and the `|| true`
+    # above hides it. This used to print the ✅ below regardless and the run died minutes later on
+    # a bind deep in the stack. Fail here, before anything is launched, naming what is missing.
+    # (A string, not an array: an empty array expansion under set -u errors on macOS bash 3.2.)
+    MISSING_ALIASES=""
+    for i in "${LOOPBACK_IPS[@]}"; do
+      if ! ifconfig lo0 2>/dev/null | grep -q "127.0.0.$i "; then
+        MISSING_ALIASES="$MISSING_ALIASES 127.0.0.$i"
+      fi
+    done
+    if [ -n "$MISSING_ALIASES" ]; then
+      echo "  ❌ Loopback aliases still missing:$MISSING_ALIASES"
+      echo "     Add them by hand: sudo ifconfig lo0 alias 127.0.0.<octet> up  (for each octet above)"
+      fail "macOS loopback aliases missing — sudo ifconfig failed"
+    fi
     echo "  ✅ Loopback aliases added (127.0.0.{board_id octets})"
   fi
 fi
 
-# ── Kill stale listeners on test ports (cross-platform: lsof on macOS, fuser on Linux) ──
-kill_port() {
-  local port=$1 proto=${2:-tcp}
-  local pids
-  if command -v fuser &>/dev/null; then
-    fuser -k "$port/$proto" > /dev/null 2>&1 || true
-  else
-    # macOS: use lsof
-    if [ "$proto" = "udp" ]; then
-      pids=$(lsof -nP -iUDP:"$port" -t 2>/dev/null) || true
-    else
-      pids=$(lsof -nP -iTCP:"$port" -t 2>/dev/null) || true
-    fi
-    for p in $pids; do
-      kill -9 "$p" 2>/dev/null || true
-    done
-  fi
-}
-
+# ── Kill this checkout's stale listeners on the test ports (kill_port, defined above) ──
 for port in $TEST_ACTUATOR_UDP_PORT $TEST_STARTUP_LISTEN_PORT $TEST_LOG_INGEST_PORT $TEST_DAQ_UDP_PORT; do
-  kill_port "$port" udp
+  kill_port "$port" udp KILL
 done
 sleep 0.3
 
 for port in $TEST_ELODIN_PORT $TEST_BACKEND_WS_PORT $TEST_BACKEND_API_PORT; do
-  kill_port "$port" tcp
+  kill_port "$port" tcp KILL
 done
-# FSWConfigManager in daq_bridge binds to UDP 5008 (hardcoded); kill stale holders
-kill_port 5008 udp
+# FSWConfigManager in daq_bridge binds to UDP 5008 (hardcoded); kill our stale holders
+kill_port 5008 udp KILL
 sleep 0.5
 
 # ── Build C++ binaries ───────────────────────────────────────────────────────
 
 # Full build via the canonical script, NOT a hand-maintained --target list.
-# A previous targeted list here omitted fake_packet_generator, so the test ran
+# A previous targeted list here omitted fake_packet_generator (since deleted), so the test ran
 # a STALE packet generator against fresh services after transport changes —
 # the classic "int fails until you run build first" bug. Full incremental
 # builds cost seconds and can never skip a binary the test uses.
@@ -353,9 +400,9 @@ else
 fi
 
 # Data source: board_simulator.py (speaks the current daq-protocol protocol).
-# NOTE: transport/src/fake_packet_generator.cpp is a pre-DAQv2 fossil (0xAA
-# magic + XOR framing the current daq_bridge cannot parse) with no CMake
-# target — never use it here even if someone makes it buildable again.
+# NOTE: the old fake_packet_generator.cpp (pre-DAQv2: 0xAA magic + XOR framing the
+# current daq_bridge cannot parse; deleted by WP2) was never a data source here —
+# never reintroduce a hand-built packet generator even if someone writes one.
 BOARD_SIM="$REPO_ROOT/sim/board_simulator.py"
 [ -f "$BOARD_SIM" ] || fail "board_simulator.py not found"
 echo "  ✅ board_simulator: $BOARD_SIM"
@@ -685,12 +732,19 @@ sedi 's/^"GSE Low" = "cubic"$/"GSE Low" = "physics"/' "$TEST_CONFIG"
 # captured point is stored but cannot change the reading.
 printf '\n[calibration_model_labjack_1]\n"T7 Thrust LC" = "cubic"\n' >> "$TEST_CONFIG"
 
+# The startup board (board_startup_sim.py, Test 9 and the log-mode test). Its board_id must sit on a
+# free PT slot (board_id % 10 in 1-8, not 1 or 2, which pt_board / pt_board_2 hold): it used to be 60,
+# slot 10, whose packet-id low byte wrapped onto pt_board_2 CH1 ([0x20,0x21] raw, [0x20,0x31]
+# calibrated). daq_bridge and calibration_service then each registered those two tables as PT10.CH1
+# and, a moment later, as PT2.CH1; a backend subscription that landed in between stayed bound to the
+# PT10 components and PT2_Cal.CH1 never reached the GUI. The IP stays 127.0.0.60: daq_bridge matches
+# a board by its exact config IP first, and that loopback alias already exists.
 cat >> "$TEST_CONFIG" << EOF
 
 [boards.integration_startup]
 enabled = true
 type = "PT"
-board_id = 60
+board_id = 23
 ip = "127.0.0.60"
 send_port = $TEST_DAQ_UDP_PORT
 listen_port = $TEST_STARTUP_LISTEN_PORT
@@ -739,8 +793,8 @@ wait_for_port "$TEST_ELODIN_PORT" "Elodin DB" 10 || {
 echo "  ✅ Elodin DB started (PID ${PIDS[-1]})"
 
 # ── Start sequencer_service ──────────────────────────────────────────────────
-# Provides TCP command endpoint on :9998. Both thin and legacy backends forward
-# state/actuator commands here. Reads Elodin port from the test config.
+# Provides TCP command endpoint on :9998. The backend forwards state/actuator
+# commands here. Reads Elodin port from the test config.
 
 if [ -n "$SEQ_SVC" ]; then
   echo "⚙️  Starting sequencer_service..."
@@ -810,32 +864,15 @@ fi
 
 # ── Start Backend Server ─────────────────────────────────────────────────────
 
-if [ "$BACKEND" = "thin" ]; then
-  echo "🖥️  Starting Backend server (server.ts)..."
-  (cd "$REPO_ROOT/diablo_server/backend" && \
-    WS_PORT=$TEST_BACKEND_WS_PORT \
-    ELODIN_HOST=127.0.0.1 \
-    ELODIN_PORT=$TEST_ELODIN_PORT \
-    ACTUATOR_SERVICE_PORT=9998 \
-    CONFIG_PATH="$TEST_CONFIG" \
-    LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
-    npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
-else
-  echo "🖥️  Starting Backend server (server-legacy.ts)..."
-  (cd "$REPO_ROOT/diablo_server/backend" && \
-    WS_PORT=$TEST_BACKEND_WS_PORT \
-    API_PORT=$TEST_BACKEND_API_PORT \
-    ELODIN_HOST=127.0.0.1 \
-    ELODIN_PORT=$TEST_ELODIN_PORT \
-    ELODIN_RELAY_WS_URL="ws://127.0.0.1:$TEST_RELAY_WS_PORT" \
-    ACTUATOR_SERVICE_ENABLED=false \
-    ACTUATOR_SERVICE_PORT=9998 \
-    USE_CALIBRATION_SERVICE_CALIBRATED=false \
-    USE_DIRECT_DAQ=false \
-    USE_CPP_CONTROLLER=true \
-    CONFIG_PATH="$TEST_CONFIG" \
-    npx tsx src/server-legacy.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
-fi
+echo "🖥️  Starting Backend server (server.ts)..."
+(cd "$REPO_ROOT/diablo_server/backend" && \
+  WS_PORT=$TEST_BACKEND_WS_PORT \
+  ELODIN_HOST=127.0.0.1 \
+  ELODIN_PORT=$TEST_ELODIN_PORT \
+  ACTUATOR_SERVICE_PORT=9998 \
+  CONFIG_PATH="$TEST_CONFIG" \
+  LOG_INGEST_PORT=$TEST_LOG_INGEST_PORT \
+  npx tsx src/server.ts > "$REPO_ROOT/.tmp/integration_backend_$$.log" 2>&1) &
 PIDS+=($!)
 
 wait_for_port "$TEST_BACKEND_WS_PORT" "Backend WS" 15 || {
@@ -885,6 +922,13 @@ if [ -n "$CALIB_SVC" ]; then
     mkdir -p "$STASH_DIR"
     mv "$TARE_STORE" "$STASH_DIR/lc_tare.json"
     echo "  📦 parked the operator load-cell tares in .tmp (restored on exit)"
+  fi
+  # Abort thresholds: copied, not moved — the run sees the file exactly as before; cleanup() puts the
+  # operator's bytes back over whatever calibration_service regenerates.
+  if [ -f "$THRESH_STORE" ]; then
+    mkdir -p "$STASH_DIR"
+    cp -p "$THRESH_STORE" "$STASH_DIR/abort_thresholds.txt"
+    echo "  📦 saved the operator abort thresholds in .tmp (restored on exit)"
   fi
   (cd "$REPO_ROOT" && "$CALIB_SVC" --config "$TEST_CONFIG" --adjustments "$CAL_ADJ" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
@@ -941,23 +985,35 @@ if [ -n "$CONTROLLER_SVC" ]; then
     echo "  ❌ test setup: could not remove the pwm_fuel assignment from $TEST_CONFIG"
     UDP_CHECK_FAILED=1
   fi
-  # Listen where PWM would land, so "nothing was sent" is observed rather than assumed.
-  timeout 8 python3 -c "
-import socket, sys
+  # Listen where PWM would land, so "nothing was sent" is observed rather than assumed. The port
+  # also carries heartbeat_service's SERVER_HEARTBEAT (type 2, every second), so the listener runs
+  # to a wall-clock deadline (an idle timeout never expired and the outer timeout killed it before
+  # it wrote; the count then read as 0) and counts only PWM packets (type 10, ControllerService).
+  run_with_timeout 8 python3 -c "
+import socket, time
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(('127.0.0.1', $TEST_ACTUATOR_UDP_PORT))
-s.settimeout(6)
+s.settimeout(0.5)
+deadline = time.monotonic() + 5.5
 n = 0
 try:
-    while True:
-        s.recvfrom(2048); n += 1
-except Exception:
-    pass
-open('$BAD_UDP','w').write(str(n))
+    while time.monotonic() < deadline:
+        try:
+            data, _ = s.recvfrom(2048)
+        except socket.timeout:
+            continue
+        if data and data[0] == 10:
+            n += 1
+finally:
+    open('$BAD_UDP', 'w').write(str(n))
 " &
   BAD_LISTENER=$!
   sleep 0.5
+  if ! kill -0 "$BAD_LISTENER" 2>/dev/null; then
+    echo "  ❌ test setup: the PWM listener on 127.0.0.1:$TEST_ACTUATOR_UDP_PORT did not start"
+    UDP_CHECK_FAILED=1
+  fi
   "$CONTROLLER_SVC" --config "$BAD_CFG" \
     --elodin-host 127.0.0.1 --elodin-port "$TEST_ELODIN_PORT" \
     --control-port "$((TEST_CONTROLLER_PORT + 20))" \
@@ -965,11 +1021,19 @@ open('$BAD_UDP','w').write(str(n))
   BAD_PID=$!
   sleep 2
   # Ask it to fire. A controller that resolved its actuators would start PWM here.
-  printf 'FIRE_START\n' | timeout 2 nc 127.0.0.1 "$((TEST_CONTROLLER_PORT + 20))" >/dev/null 2>&1 || true
+  printf 'FIRE_START\n' | run_with_timeout 2 nc 127.0.0.1 "$((TEST_CONTROLLER_PORT + 20))" >/dev/null 2>&1 || true
   sleep 2
   kill "$BAD_PID" 2>/dev/null || true
   wait "$BAD_LISTENER" 2>/dev/null || true
-  BAD_PWM_COUNT="$(cat "$BAD_UDP" 2>/dev/null || echo 0)"
+  # The listener writes its count on exit, 0 included; no file means it never listened, and a
+  # missing file used to read as 0 (the vacuous green of D61a).
+  if [ -f "$BAD_UDP" ]; then
+    BAD_PWM_COUNT="$(cat "$BAD_UDP")"
+  else
+    echo "  ❌ test setup: the PWM listener left no count at $BAD_UDP (it did not run to its timeout)"
+    BAD_PWM_COUNT=unknown
+    UDP_CHECK_FAILED=1
+  fi
   if command grep -aq 'no \[actuator_roles\] entry is assigned "pwm_fuel"' "$BAD_LOG" &&
      command grep -aq "PWM fire gate DISABLED" "$BAD_LOG"; then
     echo "  ✅ unassigned PWM output refused with a reason"
@@ -980,7 +1044,7 @@ open('$BAD_UDP','w').write(str(n))
   fi
   if [ "$BAD_PWM_COUNT" = "0" ]; then
     echo "  ✅ no PWM emitted while unresolved"
-  else
+  elif [ "$BAD_PWM_COUNT" != unknown ]; then
     echo "  ❌ controller emitted $BAD_PWM_COUNT PWM packet(s) despite an unassigned output"
     UDP_CHECK_FAILED=1
   fi
@@ -1073,6 +1137,32 @@ echo "  All services running. Starting tests..."
 echo "═══════════════════════════════════════════════════════════════"
 echo ""
 
+# ── The stack's config is one the services accept without error ──────────────────────────────
+# The C++ config loader reports a config it cannot honour (two boards on one slot, a board_id whose
+# slot the packet id cannot encode, a bad pt_type) as "[Config] ERROR" on stderr and then carries on.
+# A board_id 60 here once did exactly that: it was logged on every run and nothing failed, while its
+# channel silently aliased pt_board_2 CH1. The services running the generated test config must
+# therefore print none. integration_badpwm_*.log is left out: it is a deliberately broken config.
+# Checked here, once every service has loaded the config and before the WS test, because a failing
+# WS test ends the script under set -e and this line must be reported either way.
+CONFIG_ERROR_FAILED=0
+CONFIG_ERROR_LINES=""
+for svc_log in daq calibration sequencer controller heartbeat config_broadcast t7 backend; do
+  f="$REPO_ROOT/.tmp/integration_${svc_log}_$$.log"
+  [ -f "$f" ] || continue
+  hits=$(grep -F "[Config] ERROR" "$f" 2>/dev/null | sort -u || true)  # set -e + pipefail: no match is fine
+  if [ -n "$hits" ]; then
+    CONFIG_ERROR_LINES="${CONFIG_ERROR_LINES}    ${svc_log}: ${hits}"$'\n'
+  fi
+done
+if [ -n "$CONFIG_ERROR_LINES" ]; then
+  CONFIG_ERROR_FAILED=1
+  echo "  ❌ Service config errors on the test config:"
+  printf '%s' "$CONFIG_ERROR_LINES"
+else
+  echo "  ✅ No [Config] ERROR from any service on the test config"
+fi
+
 # ── Run WebSocket Data Flow Test ──────────────────────────────────────────────
 
 VERBOSE_FLAG=""
@@ -1144,6 +1234,7 @@ FINAL_EXIT=0
 UDP_CHECK_FAILED=${UDP_CHECK_FAILED:-0}
 [ "$WS_TEST_EXIT" -ne 0 ] && FINAL_EXIT=1
 [ "$UDP_CHECK_FAILED" -ne 0 ] && FINAL_EXIT=1
+[ "$CONFIG_ERROR_FAILED" -ne 0 ] && FINAL_EXIT=1
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
@@ -1153,6 +1244,7 @@ else
   echo "  ❌ INTEGRATION TEST FAILED"
   [ "$WS_TEST_EXIT" -ne 0 ] && echo "     WS test failed (exit code: $WS_TEST_EXIT)"
   [ "$UDP_CHECK_FAILED" -ne 0 ] && echo "     UDP test failed (0 or dropped packets)"
+  [ "$CONFIG_ERROR_FAILED" -ne 0 ] && echo "     A service reported [Config] ERROR on the test config"
 fi
 echo "═══════════════════════════════════════════════════════════════"
 echo ""

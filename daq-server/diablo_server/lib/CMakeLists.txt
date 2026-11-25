@@ -16,6 +16,7 @@ set(FSW_SOURCES
     src/config/SensorTables.cpp
     src/script/Lexer.cpp
     src/script/Parser.cpp
+    src/script/Printer.cpp
     src/script/Validate.cpp
     src/script/Slug.cpp
     src/script/ScriptConfig.cpp
@@ -26,7 +27,6 @@ set(FSW_SOURCES
     src/elodin/ElodinClient.cpp
     src/streams/SensorFramePipeline.cpp
     src/fsw/FSWConfigManager.cpp
-    src/control/PressureStateMachine.cpp
     src/calibration/PTCalibration.cpp
     src/calibration/CubicCalibrationStore.cpp
     src/calibration/LcTareStore.cpp
@@ -40,7 +40,10 @@ set(FSW_SOURCES
     src/control/ControllerLUT.cpp
     src/control/RobustDDPController.cpp
     src/control/ControllerService.cpp
-    # src/calibration/IMUCalibration.cpp  (disabled)
+    src/control/ControllerService_pwm.cpp
+    src/control/ControllerService_elodin.cpp
+    src/service/StopSignals.cpp
+    src/net/TcpCommandServer.cpp
 )
 
 add_library(fsw_daq_lib SHARED ${FSW_SOURCES})
@@ -53,12 +56,16 @@ target_include_directories(fsw_daq_lib PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../transport/include
 )
 
-# SYSTEM so the archived Elodin headers do not report warnings we are not going to act on — db.hpp
-# alone accounts for every -Wmissing-field-initializers left in the tree. Suppressing the warning
-# itself would have hidden the 22 live ones in SensorAssignment.cpp that turned out to be two
-# struct fields nothing reads; scoping it to the vendored header keeps the warning useful.
-target_include_directories(fsw_daq_lib SYSTEM PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../archive/legacy/utl
+# SYSTEM so the vendored Elodin encoder (third_party/elodin/db.hpp) does not report warnings we are
+# not going to act on: its designated initialisers omit fields, which gcc-12 and clang-18 (CI's
+# matrix, the Linux leg) report as -Wmissing-field-initializers and Apple clang >= 19 (where the
+# warning baseline is compared) does not. Suppressing the warning itself would hide the live ones in
+# our own code (two in baseline_warnings.txt today; 22 in SensorAssignment.cpp once turned out to be
+# two struct fields nothing reads), so it is scoped to the vendored header. Check it survived with
+# `ninja -t commands fsw_daq_lib | grep -c 'isystem *[^ ]*third_party/elodin'` (>= 1; 0 if dropped).
+# PRIVATE: only fsw_daq_lib's own sources include it (DatabaseConfig.cpp, ControllerService.cpp).
+target_include_directories(fsw_daq_lib SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/elodin
 )
 
 target_link_libraries(fsw_daq_lib
@@ -158,7 +165,7 @@ add_executable(test_fire_lifecycle
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
 )
 target_include_directories(test_fire_lifecycle PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -207,7 +214,7 @@ set_tests_properties(pressure_feed PROPERTIES TIMEOUT 60)
 
 add_executable(test_actuator_delays
     test/test_actuator_delays.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
 )
 target_include_directories(test_actuator_delays PRIVATE
@@ -227,7 +234,7 @@ set_tests_properties(actuator_delays PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 add_executable(test_script_positions
     test/test_script_positions.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
 )
 target_include_directories(test_script_positions PRIVATE
@@ -243,7 +250,7 @@ set_tests_properties(script_positions PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
 
 add_executable(test_ball_valve_commander
     test/test_ball_valve_commander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
+    ${ACTUATOR_COMMANDER_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
 )
 target_include_directories(test_ball_valve_commander PRIVATE
@@ -258,14 +265,7 @@ set_tests_properties(ball_valve_commander PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 
 add_executable(test_sequencer_elodin
     test/test_sequencer_elodin.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_sequencer_elodin PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -280,14 +280,7 @@ target_link_libraries(test_sequencer_elodin
 
 add_executable(test_hold_rules
     test/test_hold_rules.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_hold_rules PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -303,14 +296,7 @@ set_tests_properties(hold_rules PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
 add_executable(test_valve_plan
     test/test_valve_plan.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_valve_plan PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -325,14 +311,7 @@ set_tests_properties(valve_plan PROPERTIES TIMEOUT 180 RUN_SERIAL TRUE)
 
 add_executable(test_script_states
     test/test_script_states.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_script_states PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -351,14 +330,7 @@ set_tests_properties(script_states PROPERTIES
 
 add_executable(test_script_runtime
     test/test_script_runtime.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+    ${SEQUENCER_SOURCES}
 )
 target_include_directories(test_script_runtime PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -436,14 +408,7 @@ add_test(NAME controller_pwm_roles COMMAND test_controller_pwm_roles)
 foreach(seq_test test_sequencer_concurrency test_abort_ordering)
     add_executable(${seq_test}
         test/${seq_test}.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/SequencerService.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/StateMachine.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ActuatorCommander.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/AbortBroadcaster.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/HoldTimer.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptStates.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/ScriptRunner.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../services/sequencer/PressureFeed.cpp
+        ${SEQUENCER_SOURCES}
     )
     target_include_directories(${seq_test} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include

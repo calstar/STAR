@@ -1,0 +1,23 @@
+=== script fixtures/bad/scripts/delay_zero.script as state "Idle"
+parse.ok = false
+parse.diag.count = 1
+parse.diag 1:1 E_DELAY_NOT_POSITIVE "delay(0.000000) — a delay must be a positive number of seconds"
+top = [0, 0) empty=true max_depth=0
+expr[0] Number @1:7 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+block_items = []
+canonical:
+(seq)
+validate.diag.count = 0
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 14 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0

@@ -1,0 +1,27 @@
+== board heartbeats stop: simulator frozen (SIGSTOP) for 9 s; a stand-in sends SENSOR_DATA
+   from 127.0.0.1 meanwhile, so data keeps arriving without heartbeats
+  [[4, 8] s: BOARD_HEARTBEAT_STALE_MS 5000 - 1 s hb period, + 1 s sweep + 1 s hb + 1 s] notification error: 'Board 21 (PT) connection lost' ongoing=True key=board_lost_21
+  [[4, 8] s: BOARD_HEARTBEAT_STALE_MS 5000 - 1 s hb period, + 1 s sweep + 1 s hb + 1 s] board 21: connected=False boardState=2
+  PT1.* sensor updates on the WS while heartbeats were stopped: True
+  board 21 connected at +9 s: False
+  SIGCONT (no reboot, no SETUP):
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] board 21: connected=True boardState=2
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] notification error: 'Board 21 (PT) connection lost' ongoing=False key=board_lost_21
+  [[0, 6] s: start-up 3 s + config interval 1 s + 1 Hz status/sweep 2 s] notification info: 'Board 21 (PT) connected' ongoing=- key=-
+
+== server heartbeat stops: heartbeat_service SIGTERM; board 21 is a sensor board
+  heartbeat_service exit 0
+  SERVER_HEARTBEAT on the broadcast port after +0.5 s: 0
+  daq_bridge takes over sending SERVER_HEARTBEAT: False
+  board 21 connected at +7 s: True
+  board status changes / notifications in those 7 s: 0
+  heartbeat_service restarted: first SERVER_HEARTBEAT after [0, 2] s: first send precedes the first 200 ms sleep; + process start-up
+
+== board_simulator.py ball valve: SERVER_HEARTBEAT loss failsafe
+  boot, heartbeats flowing: ch1 closed (496)
+  OPEN command + 3.6 s: ch1 open (2482)
+  CLOSE command + 3.6 s: ch1 closed (496)
+  heartbeats stopped: valve starts opening after [4.8, 6] s: BALL_VALVE_HEARTBEAT_TIMEOUT_S 5 - 0.2 s sender period, + 0.1 s data period + 0.9 s
+  + 3.5 s: ch1 open (2482)
+  CLOSE while heartbeats stale, + 1 s: ch1 open (2482)
+  heartbeats back, CLOSE + 3.6 s: ch1 closed (496)

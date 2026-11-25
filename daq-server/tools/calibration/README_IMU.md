@@ -58,14 +58,8 @@ Each calibration produces:
 
 ## Integration with FSW
 
-Calibration parameters can be loaded in C++ FSW:
-
-```cpp
-#include "calibration/IMUCalibration.hpp"
-
-// Load calibration from JSON
-auto calibrator = std::make_shared<IMUCalibration>(SensorType::ACCELEROMETER, "imu_0");
-// Would need JSON loader in C++
-```
+The C++ `IMUCalibration` class (`diablo_server/lib/include/calibration/IMUCalibration.hpp`) was
+deleted in WP2: it was commented out of the build and did not compile. There is no
+C++ loader for these JSON files today.
 
 Or use Python calibration results directly in Python-based systems.

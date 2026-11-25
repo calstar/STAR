@@ -1,0 +1,47 @@
+{
+  "carets": [
+    "0: command \"\" 0-0 => 0-0 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while ",
+    "1: command \"p\" 0-1 => 0-1 open_valve(+",
+    "2: command \"pr\" 0-2 => null",
+    "3: command \"pre\" 0-3 => null",
+    "4: command \"pres\" 0-4 => null",
+    "5: command \"press\" 0-5 => null",
+    "6: command \"pressu\" 0-6 => null",
+    "7: command \"pressur\" 0-7 => null",
+    "8: command \"pressure\" 0-8 => null",
+    "9: sensor \"\" 9-9 => 9-9 DOME_CTRL)[DOME_CTRL] | DOME_MID)[DOME_MID] | EXCITATION_V)[EXCITATION_V] | FUEL_FILL_VENT)[FUEL_FILL_VENT] | FUEL_UPSTREAM)[FUEL_UPSTREAM] | GN2_HIGH)[GN2_HIGH] | HIGH_PRESS)[HIGH_PRESS] | LOW_PRESS)[LOW_PRESS] | LOX_UPSTREAM)[LOX_UPSTREAM]",
+    "10: sensor \"G\" 9-10 => 9-10 GN2_HIGH)[GN2_HIGH] | HIGH_PRESS)[HIGH_PRESS]",
+    "11: sensor \"GN\" 9-11 => 9-11 GN2_HIGH)[GN2_HIGH]",
+    "12: sensor \"GN2\" 9-12 => 9-12 GN2_HIGH)[GN2_HIGH]",
+    "13: sensor \"GN2_\" 9-13 => 9-13 GN2_HIGH)[GN2_HIGH]",
+    "14: sensor \"GN2_H\" 9-14 => 9-14 GN2_HIGH)[GN2_HIGH]",
+    "15: sensor \"GN2_HI\" 9-15 => 9-15 GN2_HIGH)[GN2_HIGH]",
+    "16: sensor \"GN2_HIG\" 9-16 => 9-16 GN2_HIGH)[GN2_HIGH]",
+    "17: sensor \"GN2_HIGH\" 9-17 => 9-17 GN2_HIGH",
+    "18: null => null",
+    "19: command \"\" 19-19 => 19-19 open_valve(+ | close_valve(+ | delay( | transition_to(+ | if  | elif  | else: | while "
+  ],
+  "checkScriptNames_DynamicTest": [],
+  "checkScriptNames_Idle": [],
+  "renameActuator": "pressure(GN2_HIGH)\n",
+  "renameState": "pressure(GN2_HIGH)\n",
+  "scanScriptNames": [
+    {
+      "line": 1,
+      "ns": "sensor",
+      "slug": "GN2_HIGH"
+    }
+  ],
+  "tokenize": [
+    "0-8 command \"pressure\"",
+    "8-9 op \"(\"",
+    "9-17 sensor known \"GN2_HIGH\"",
+    "17-18 op \")\""
+  ],
+  "tokenizeNoTables": [
+    "0-8 command \"pressure\"",
+    "8-9 op \"(\"",
+    "9-17 sensor \"GN2_HIGH\"",
+    "17-18 op \")\""
+  ]
+}

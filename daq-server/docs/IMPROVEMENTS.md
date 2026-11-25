@@ -110,7 +110,7 @@ active config doesn't declare (`server.ts:942-969`). Those close the two exploit
 What remains is shape validation. `handleMessage` still takes `any`, and the command
 handlers still reach through non-null assertions: `command.data.state!`,
 `command.data.actuatorName!`. A malformed message reaches business logic before anything
-notices, and `sendToActuatorService(\`ACTUATOR:${undefined}:1\`)` is a wire message the
+notices, and `sendToSequencer(\`ACTUATOR:${undefined}:1\`)` is a wire message the
 sequencer will parse and reject rather than an error the operator sees.
 
 **Fix:** a discriminated union over `MessageType` validated at the `JSON.parse` boundary in
@@ -270,7 +270,8 @@ is the part worth keeping:
   The 22 `-Wmissing-field-initializers` in `SensorAssignment.cpp` all traced to
   `PressureSensorSpec::calibration_file` and `requires_calibration`, which **nothing in the tree
   reads** — deleted rather than suppressed. Two scoped suppressions remain and are deliberate: the
-  archived Elodin headers are now `SYSTEM` includes (`db.hpp` was the only remaining source of that
+  vendored Elodin headers are now `SYSTEM` includes (`db.hpp`, now at
+  `diablo_server/lib/third_party/elodin/db.hpp`, was the only remaining source of that
   warning), and `daqv2_comms` carries `-Wno-stringop-overflow` for the GCC 13 false positive on the
   guarded `vector::resize` calls at `DiabloPacketUtils.cpp:748,769`. The tree builds at **0
   warnings**.
@@ -522,9 +523,9 @@ box (`04709920`), which now carries the board LAN, the site LAN and a Docker bri
 | `fix_ethernet_interface.sh` printed `.20` and assigned `.201` | **Fixed.** It assigns `192.168.2.20` (what the firmware targets) and its verification is anchored, so `.201` can no longer pass as `.20`. |
 | `[discovery].network_interface = "auto"` documented as selecting the board NIC | **Corrected.** `BoardDiscovery` stores it and only prints it; the docs now point at the resolver instead. |
 
-Not fixed, deliberately: `PressureStateMachine`'s command socket. Nothing constructs that class —
-pinning a socket that never opens is churn — so it carries a comment pointing at the resolver
-instead.
+Not fixed, deliberately: `PressureStateMachine`'s command socket. Nothing constructed that class —
+pinning a socket that never opens is churn — so it carried a comment pointing at the resolver
+instead. The class has since been deleted (WP3).
 
 ### By the config draft-only work (2026-09-07)
 

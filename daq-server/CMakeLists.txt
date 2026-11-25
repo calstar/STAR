@@ -63,6 +63,7 @@ endif()
 enable_testing()
 
 add_subdirectory(diablo_server)
+add_subdirectory(test/characterization)
 
 if(EXISTS ${CMAKE_SOURCE_DIR}/tests)
     add_subdirectory(tests)

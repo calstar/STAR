@@ -54,7 +54,6 @@ def find_ota_service() -> str:
     daq_root = os.path.dirname(here)  # daq-server/
     candidates = [
         os.path.join(daq_root, "build", "bin", "ota_service"),
-        os.path.join(daq_root, "build-ci", "FSW", "ota_service"),
         os.path.join(daq_root, "build", "FSW", "ota_service"),
     ]
     for c in candidates:

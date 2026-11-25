@@ -1,0 +1,86 @@
+{
+  "ballValveBoardIds": {
+    "logs": [],
+    "value": [
+      71
+    ]
+  },
+  "perBoard": {
+    "actuator_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Actuator Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    },
+    "ball_valve_board": {
+      "boardDisplayName": {
+        "logs": [],
+        "value": "Ball Valve Board"
+      },
+      "boardGivenName": {
+        "logs": [],
+        "value": ""
+      },
+      "boardSlotIssue": {
+        "logs": [],
+        "value": null
+      },
+      "isCurrentLoopBoard": {
+        "logs": [],
+        "value": false
+      },
+      "recoveryAddress": {
+        "logs": [],
+        "value": null
+      },
+      "t7BoardIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7BoardSettingsIssues": {
+        "logs": [],
+        "value": []
+      },
+      "t7ChannelIssues": {
+        "logs": [],
+        "value": []
+      }
+    }
+  },
+  "t7Channels": {
+    "logs": [],
+    "value": []
+  },
+  "t7RoleClashes": {
+    "logs": [],
+    "value": []
+  }
+}

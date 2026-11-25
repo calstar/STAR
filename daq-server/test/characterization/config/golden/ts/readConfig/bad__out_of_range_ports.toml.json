@@ -1,0 +1,63 @@
+{
+  "logs": [],
+  "value": {
+    "actuator_service": {
+      "port": 99999
+    },
+    "boards": {
+      "pt_board": {
+        "active_connectors": [
+          0,
+          256,
+          -1,
+          300
+        ],
+        "board_id": 21,
+        "enable_serial_printing": 9,
+        "ip": "192.168.2.21",
+        "listen_port": 65537,
+        "send_port": -5,
+        "type": "PT",
+        "voltage_reference": 7
+      }
+    },
+    "controller": {
+      "duty_sweep_step_duration_sec": 2,
+      "duty_sweep_steps": [
+        [
+          0.1,
+          0.1
+        ],
+        [
+          0.3,
+          0.2
+        ],
+        [
+          0.5,
+          0.4
+        ],
+        [
+          0.3,
+          0.3
+        ],
+        [
+          0.1,
+          0.1
+        ]
+      ]
+    },
+    "controller_service": {
+      "port": 0
+    },
+    "database": {
+      "port": 65536
+    },
+    "logs": {
+      "backend_udp_port": -8092
+    },
+    "network": {
+      "actuator_cmd_port": -1,
+      "sensor_port": 70000
+    }
+  }
+}

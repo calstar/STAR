@@ -20,14 +20,7 @@ LOG_FILE="${LOG_FILE:-flash_deploy.log}"
 # Executables to flash (updated with new dependencies)
 EXECUTABLES=(
     "daq_bridge"                    # Main DAQ bridge with state machine
-    "send_all_sensors_from_config"  # Test program for config-based sensors
-    "send_all_message_types"        # Test program for all message types
-    "test_fsw_simulator"            # FSW simulator
-    "esp32_pt_streamer"             # ESP32 PT streamer
-    "fake_esp32_packet_gen"         # Fake ESP32 packet generator
-    "sitl_simulator"                # SITL simulator (if built)
     "test_robust_ddp"               # Robust DDP controller test (if built)
-    "test_imu_calibration"          # IMU calibration test (if built)
 )
 
 # Libraries to flash (updated with new dependencies)

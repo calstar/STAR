@@ -1,0 +1,15 @@
+
+=== script fixtures/bad/scripts/indent.script (parse only)
+parse.ok = false
+parse.diag.count = 1
+parse.diag 3:6 E_BAD_INDENT_UNIT "indented 2 spaces; this script indents 3 at a time, so 6 was expected"
+top = [0, 0) empty=true max_depth=0
+block_items = []
+canonical:
+(seq)
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

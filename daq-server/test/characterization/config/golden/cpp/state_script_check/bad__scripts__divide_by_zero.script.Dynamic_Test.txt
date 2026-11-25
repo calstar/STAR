@@ -1,0 +1,6 @@
+=== stdout
+1:7: E_DIVIDE_BY_ZERO_LITERAL division by a literal zero
+=== stderr
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+=== exit 1

@@ -1,0 +1,1112 @@
+# transport/include/comms message types: serialized layout and a known-valued instance
+# (field k of a message is filled from seed k; integers repeat (seed&15)<<4 + byte#).
+message BarometerMessage fields=5 MessageSize=40 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] u64 @32 +8 = 0xc7c6c5c4c3c2c1c0
+      bytes: c0 c1 c2 c3 c4 c5 c6 c7
+  serialized_total=40
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0100 len=48
+  frame.len @0    +4  : 2c 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +40 : 00 00 00 00 00 00 f8 bf 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf c0 c1 c2 c3 c4 c5 c6 c7
+  frame body == serialize(): yes
+message CalibrationMessage fields=15 MessageSize=81 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] u8 @9 +1 = 0xa0
+      bytes: a0
+  [3] u8 @10 +1 = 0xb0
+      bytes: b0
+  [4] f64 @11 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @19 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @27 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @35 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  [8] f64 @43 +8 = -0.5 (bits bfe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 bf
+  [9] u32 @51 +4 = 0x13121110
+      bytes: 10 11 12 13
+  [10] f64 @55 +8 = -0.25 (bits bfd0000000000000)
+      bytes: 00 00 00 00 00 00 d0 bf
+  [11] bool @63 +1 = false
+      bytes: 00
+  [12] f64 @64 +8 = 0 (bits 0000000000000000)
+      bytes: 00 00 00 00 00 00 00 00
+  [13] u8 @72 +1 = 0x50
+      bytes: 50
+  [14] u64 @73 +8 = 0x6766656463626160
+      bytes: 60 61 62 63 64 65 66 67
+  serialized_total=81
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0101 len=89
+  frame.len @0    +4  : 55 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +81 : 00 00 00 00 00 00 f8 bf 90 a0 b0 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf 00 00 00 00 00 00 e0 bf 10 11 12 13 00 00 00 00 00 00 d0 bf 00 00 00 00 00 00 00 00 00 50 60 61 62 63 64 65 66 67
+  frame body == serialize(): yes
+message EngineControlMessage fields=16 MessageSize=107 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] f64 @9 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @17 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @25 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @33 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @41 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @49 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  [8] f64 @57 +8 = -0.5 (bits bfe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 bf
+  [9] f64 @65 +8 = -0.375 (bits bfd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 bf
+  [10] f64 @73 +8 = -0.25 (bits bfd0000000000000)
+      bytes: 00 00 00 00 00 00 d0 bf
+  [11] f64 @81 +8 = -0.125 (bits bfc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 bf
+  [12] f64 @89 +8 = 0 (bits 0000000000000000)
+      bytes: 00 00 00 00 00 00 00 00
+  [13] bool @97 +1 = false
+      bytes: 00
+  [14] bool @98 +1 = true
+      bytes: 01
+  [15] u64 @99 +8 = 0x7776757473727170
+      bytes: 70 71 72 73 74 75 76 77
+  serialized_total=107
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0102 len=115
+  frame.len @0    +4  : 6f 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 02
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +107: 00 00 00 00 00 00 f8 bf 90 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf 00 00 00 00 00 00 e0 bf 00 00 00 00 00 00 d8 bf 00 00 00 00 00 00 d0 bf 00 00 00 00 00 00 c0 bf 00 00 00 00 00 00 00 00 00 01 70 71 72 73 74 75 76 77
+  frame body == serialize(): yes
+message GPSPositionMessage fields=9 MessageSize=49 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u32 @8 +4 = 0x93929190
+      bytes: 90 91 92 93
+  [2] u32 @12 +4 = 0xa3a2a1a0
+      bytes: a0 a1 a2 a3
+  [3] f64 @16 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @24 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @32 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f32 @40 +4 = 5 (bits 40a00000)
+      bytes: 00 00 a0 40
+  [7] f32 @44 +4 = 5.25 (bits 40a80000)
+      bytes: 00 00 a8 40
+  [8] u8 @48 +1 = 0x00
+      bytes: 00
+  serialized_total=49
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0103 len=57
+  frame.len @0    +4  : 35 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 03
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +49 : 80 81 82 83 84 85 86 87 90 91 92 93 a0 a1 a2 a3 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 a0 40 00 00 a8 40 00
+  frame body == serialize(): yes
+message GPSVelocityMessage fields=6 MessageSize=28 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u32 @8 +4 = 0x93929190
+      bytes: 90 91 92 93
+  [2] f32 @12 +4 = 4 (bits 40800000)
+      bytes: 00 00 80 40
+  [3] f32 @16 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] f32 @20 +4 = 4.5 (bits 40900000)
+      bytes: 00 00 90 40
+  [5] f32 @24 +4 = 4.75 (bits 40980000)
+      bytes: 00 00 98 40
+  serialized_total=28
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0104 len=36
+  frame.len @0    +4  : 20 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 04
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +28 : 80 81 82 83 84 85 86 87 90 91 92 93 00 00 80 40 00 00 88 40 00 00 90 40 00 00 98 40
+  frame body == serialize(): yes
+message IMUMessage fields=8 MessageSize=64 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @32 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @40 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @48 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] u64 @56 +8 = 0xf7f6f5f4f3f2f1f0
+      bytes: f0 f1 f2 f3 f4 f5 f6 f7
+  serialized_total=64
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0105 len=72
+  frame.len @0    +4  : 44 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 05
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +64 : 00 00 00 00 00 00 f8 bf 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf f0 f1 f2 f3 f4 f5 f6 f7
+  frame body == serialize(): yes
+message NavigationMessage (global) fields=23 MessageSize=170 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @32 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @40 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @48 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @56 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  [8] f64 @64 +8 = -0.5 (bits bfe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 bf
+  [9] f64 @72 +8 = -0.375 (bits bfd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 bf
+  [10] f64 @80 +8 = -0.25 (bits bfd0000000000000)
+      bytes: 00 00 00 00 00 00 d0 bf
+  [11] f64 @88 +8 = -0.125 (bits bfc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 bf
+  [12] f64 @96 +8 = 0 (bits 0000000000000000)
+      bytes: 00 00 00 00 00 00 00 00
+  [13] f64 @104 +8 = 0.125 (bits 3fc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 3f
+  [14] f64 @112 +8 = 0.25 (bits 3fd0000000000000)
+      bytes: 00 00 00 00 00 00 d0 3f
+  [15] f64 @120 +8 = 0.375 (bits 3fd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 3f
+  [16] f64 @128 +8 = 0.5 (bits 3fe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 3f
+  [17] f64 @136 +8 = 0.625 (bits 3fe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 3f
+  [18] f64 @144 +8 = 0.75 (bits 3fe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 3f
+  [19] f64 @152 +8 = 0.875 (bits 3fec000000000000)
+      bytes: 00 00 00 00 00 00 ec 3f
+  [20] u8 @160 +1 = 0xc0
+      bytes: c0
+  [21] bool @161 +1 = false
+      bytes: 00
+  [22] u64 @162 +8 = 0xe7e6e5e4e3e2e1e0
+      bytes: e0 e1 e2 e3 e4 e5 e6 e7
+  serialized_total=170
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0106 len=178
+  frame.len @0    +4  : ae 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 06
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +170: 00 00 00 00 00 00 f8 bf 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf 00 00 00 00 00 00 e0 bf 00 00 00 00 00 00 d8 bf 00 00 00 00 00 00 d0 bf 00 00 00 00 00 00 c0 bf 00 00 00 00 00 00 00 00 00 00 00 00 00 00 c0 3f 00 00 00 00 00 00 d0 3f 00 00 00 00 00 00 d8 3f 00 00 00 00 00 00 e0 3f 00 00 00 00 00 00 e4 3f 00 00 00 00 00 00 e8 3f 00 00 00 00 00 00 ec 3f c0 00 e0 e1 e2 e3 e4 e5 e6 e7
+  frame body == serialize(): yes
+message PTMessage fields=7 MessageSize=20 alignof=4
+  [0] u8 @0 +1 = 0x80
+      bytes: 80
+  [1] u8 @1 +1 = 0x90
+      bytes: 90
+  [2] u16 @2 +2 = 0xa1a0
+      bytes: a0 a1
+  [3] u32 @4 +4 = 0xb3b2b1b0
+      bytes: b0 b1 b2 b3
+  [4] u32 @8 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u32 @12 +4 = 0xd3d2d1d0
+      bytes: d0 d1 d2 d3
+  [6] u32 @16 +4 = 0xe3e2e1e0
+      bytes: e0 e1 e2 e3
+  serialized_total=20
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0107 len=28
+  frame.len @0    +4  : 18 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 07
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +20 : 80 90 a0 a1 b0 b1 b2 b3 c0 c1 c2 c3 d0 d1 d2 d3 e0 e1 e2 e3
+  frame body == serialize(): yes
+message RTDMessage fields=13 MessageSize=76 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] f64 @9 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @17 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @25 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @33 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @41 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] bool @49 +1 = false
+      bytes: 00
+  [8] u8 @50 +1 = 0x00
+      bytes: 00
+  [9] f64 @51 +8 = -0.375 (bits bfd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 bf
+  [10] u8 @59 +1 = 0x20
+      bytes: 20
+  [11] f64 @60 +8 = -0.125 (bits bfc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 bf
+  [12] u64 @68 +8 = 0x4746454443424140
+      bytes: 40 41 42 43 44 45 46 47
+  serialized_total=76
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0108 len=84
+  frame.len @0    +4  : 50 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 08
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +76 : 00 00 00 00 00 00 f8 bf 90 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 00 00 d8 bf 20 00 00 00 00 00 00 c0 bf 40 41 42 43 44 45 46 47
+  frame body == serialize(): yes
+message SystemHealthMessage fields=15 MessageSize=84 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] f64 @9 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] u32 @17 +4 = 0xb3b2b1b0
+      bytes: b0 b1 b2 b3
+  [4] u32 @21 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] f64 @25 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @33 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @41 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  [8] f64 @49 +8 = -0.5 (bits bfe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 bf
+  [9] f64 @57 +8 = -0.375 (bits bfd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 bf
+  [10] f64 @65 +8 = -0.25 (bits bfd0000000000000)
+      bytes: 00 00 00 00 00 00 d0 bf
+  [11] u8 @73 +1 = 0x30
+      bytes: 30
+  [12] bool @74 +1 = true
+      bytes: 01
+  [13] bool @75 +1 = false
+      bytes: 00
+  [14] u64 @76 +8 = 0x6766656463626160
+      bytes: 60 61 62 63 64 65 66 67
+  serialized_total=84
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0109 len=92
+  frame.len @0    +4  : 58 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 09
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +84 : 00 00 00 00 00 00 f8 bf 90 00 00 00 00 00 00 f4 bf b0 b1 b2 b3 c0 c1 c2 c3 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf 00 00 00 00 00 00 e0 bf 00 00 00 00 00 00 d8 bf 00 00 00 00 00 00 d0 bf 30 01 00 60 61 62 63 64 65 66 67
+  frame body == serialize(): yes
+message TCMessage fields=13 MessageSize=76 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] f64 @9 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @17 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @25 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @33 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @41 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] bool @49 +1 = false
+      bytes: 00
+  [8] u8 @50 +1 = 0x00
+      bytes: 00
+  [9] f64 @51 +8 = -0.375 (bits bfd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 bf
+  [10] u8 @59 +1 = 0x20
+      bytes: 20
+  [11] f64 @60 +8 = -0.125 (bits bfc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 bf
+  [12] u64 @68 +8 = 0x4746454443424140
+      bytes: 40 41 42 43 44 45 46 47
+  serialized_total=76
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x010a len=84
+  frame.len @0    +4  : 50 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 0a
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +76 : 00 00 00 00 00 00 f8 bf 90 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 00 00 d8 bf 20 00 00 00 00 00 00 c0 bf 40 41 42 43 44 45 46 47
+  frame body == serialize(): yes
+message ValveControlMessage fields=15 MessageSize=85 alignof=8
+  [0] f64 @0 +8 = -1.5 (bits bff8000000000000)
+      bytes: 00 00 00 00 00 00 f8 bf
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] u8 @9 +1 = 0xa0
+      bytes: a0
+  [3] f64 @10 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @18 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @26 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @34 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @42 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  [8] f64 @50 +8 = -0.5 (bits bfe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 bf
+  [9] f64 @58 +8 = -0.375 (bits bfd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 bf
+  [10] bool @66 +1 = true
+      bytes: 01
+  [11] bool @67 +1 = false
+      bytes: 00
+  [12] u8 @68 +1 = 0x40
+      bytes: 40
+  [13] f64 @69 +8 = 0.125 (bits 3fc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 3f
+  [14] u64 @77 +8 = 0x6766656463626160
+      bytes: 60 61 62 63 64 65 66 67
+  serialized_total=85
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x010b len=93
+  frame.len @0    +4  : 59 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 01 0b
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +85 : 00 00 00 00 00 00 f8 bf 90 a0 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf 00 00 00 00 00 00 e0 bf 00 00 00 00 00 00 d8 bf 01 00 40 00 00 00 00 00 00 c0 3f 60 61 62 63 64 65 66 67
+  frame body == serialize(): yes
+message board::BoardHeartbeatElodinMessage fields=6 MessageSize=16 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] u8 @9 +1 = 0xa0
+      bytes: a0
+  [3] u8 @10 +1 = 0xb0
+      bytes: b0
+  [4] u8 @11 +1 = 0xc0
+      bytes: c0
+  [5] u32 @12 +4 = 0xd3d2d1d0
+      bytes: d0 d1 d2 d3
+  serialized_total=16
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x1015 len=24
+  frame.len @0    +4  : 14 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 10 15
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +16 : 80 81 82 83 84 85 86 87 90 a0 b0 c0 d0 d1 d2 d3
+  frame body == serialize(): yes
+message control::ActuatorCommandMessage fields=5 MessageSize=15 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] u8 @9 +1 = 0xa0
+      bytes: a0
+  [3] f32 @10 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u8 @14 +1 = 0xc0
+      bytes: c0
+  serialized_total=15
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x3201 len=23
+  frame.len @0    +4  : 13 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 32 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +15 : 80 81 82 83 84 85 86 87 90 a0 00 00 88 40 c0
+  frame body == serialize(): yes
+message control::ControlStateMessage fields=13 MessageSize=104 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @32 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @40 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @48 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @56 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  [8] f64 @64 +8 = -0.5 (bits bfe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 bf
+  [9] f64 @72 +8 = -0.375 (bits bfd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 bf
+  [10] f64 @80 +8 = -0.25 (bits bfd0000000000000)
+      bytes: 00 00 00 00 00 00 d0 bf
+  [11] f64 @88 +8 = -0.125 (bits bfc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 bf
+  [12] f64 @96 +8 = 0 (bits 0000000000000000)
+      bytes: 00 00 00 00 00 00 00 00
+  serialized_total=104
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0200 len=112
+  frame.len @0    +4  : 6c 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 02 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +104: 80 81 82 83 84 85 86 87 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf 00 00 00 00 00 00 e0 bf 00 00 00 00 00 00 d8 bf 00 00 00 00 00 00 d0 bf 00 00 00 00 00 00 c0 bf 00 00 00 00 00 00 00 00
+  frame body == serialize(): yes
+message control::ControllerActuationMessage fields=6 MessageSize=19 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] f32 @8 +4 = 3.75 (bits 40700000)
+      bytes: 00 00 70 40
+  [2] f32 @12 +4 = 4 (bits 40800000)
+      bytes: 00 00 80 40
+  [3] u8 @16 +1 = 0xb0
+      bytes: b0
+  [4] u8 @17 +1 = 0xc0
+      bytes: c0
+  [5] u8 @18 +1 = 0xd0
+      bytes: d0
+  serialized_total=19
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x4000 len=27
+  frame.len @0    +4  : 17 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 40 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +19 : 80 81 82 83 84 85 86 87 00 00 70 40 00 00 80 40 b0 c0 d0
+  frame body == serialize(): yes
+message control::ControllerDiagnosticsMessage fields=10 MessageSize=62 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @32 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @40 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @48 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] i32 @56 +4 = -202182160
+      bytes: f0 f1 f2 f3
+  [8] u8 @60 +1 = 0x00
+      bytes: 00
+  [9] u8 @61 +1 = 0x10
+      bytes: 10
+  serialized_total=62
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x4100 len=70
+  frame.len @0    +4  : 42 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 41 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +62 : 80 81 82 83 84 85 86 87 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf f0 f1 f2 f3 00 10
+  frame body == serialize(): yes
+message control::ControllerMeasurementMessage fields=9 MessageSize=72 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @32 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @40 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @48 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @56 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  [8] f64 @64 +8 = -0.5 (bits bfe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 bf
+  serialized_total=72
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x4200 len=80
+  frame.len @0    +4  : 4c 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 42 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +72 : 80 81 82 83 84 85 86 87 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf 00 00 00 00 00 00 e0 bf
+  frame body == serialize(): yes
+message control::ControllerStateTransitionMessage fields=4 MessageSize=11 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] u8 @9 +1 = 0xa0
+      bytes: a0
+  [3] u8 @10 +1 = 0xb0
+      bytes: b0
+  serialized_total=11
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x4300 len=19
+  frame.len @0    +4  : 0f 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 43 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +11 : 80 81 82 83 84 85 86 87 90 a0 b0
+  frame body == serialize(): yes
+message control::ControllerFireStateMessage fields=4 MessageSize=17 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] f32 @9 +4 = 4 (bits 40800000)
+      bytes: 00 00 80 40
+  [3] f32 @13 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  serialized_total=17
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x4400 len=25
+  frame.len @0    +4  : 15 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 44 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +17 : 80 81 82 83 84 85 86 87 90 00 00 80 40 00 00 88 40
+  frame body == serialize(): yes
+message filtered::CalibratedPTMessage fields=6 MessageSize=30 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] f64 @9 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @17 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f32 @25 +4 = 4.5 (bits 40900000)
+      bytes: 00 00 90 40
+  [5] u8 @29 +1 = 0xd0
+      bytes: d0
+  serialized_total=30
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0300 len=38
+  frame.len @0    +4  : 22 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 03 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +30 : 80 81 82 83 84 85 86 87 90 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 90 40 d0
+  frame body == serialize(): yes
+message filtered::CalibratedTCMessage fields=5 MessageSize=22 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] f64 @9 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f32 @17 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u8 @21 +1 = 0xc0
+      bytes: c0
+  serialized_total=22
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0301 len=30
+  frame.len @0    +4  : 1a 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 03 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +22 : 80 81 82 83 84 85 86 87 90 00 00 00 00 00 00 f4 bf 00 00 88 40 c0
+  frame body == serialize(): yes
+message filtered::FilteredStateMessage fields=7 MessageSize=52 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @32 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @40 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f32 @48 +4 = 5 (bits 40a00000)
+      bytes: 00 00 a0 40
+  serialized_total=52
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0302 len=60
+  frame.len @0    +4  : 38 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 03 02
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +52 : 80 81 82 83 84 85 86 87 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 a0 40
+  frame body == serialize(): yes
+message flight::NavigationMessage fields=14 MessageSize=112 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @32 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @40 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @48 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @56 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  [8] f64 @64 +8 = -0.5 (bits bfe0000000000000)
+      bytes: 00 00 00 00 00 00 e0 bf
+  [9] f64 @72 +8 = -0.375 (bits bfd8000000000000)
+      bytes: 00 00 00 00 00 00 d8 bf
+  [10] f64 @80 +8 = -0.25 (bits bfd0000000000000)
+      bytes: 00 00 00 00 00 00 d0 bf
+  [11] f64 @88 +8 = -0.125 (bits bfc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 bf
+  [12] f64 @96 +8 = 0 (bits 0000000000000000)
+      bytes: 00 00 00 00 00 00 00 00
+  [13] f64 @104 +8 = 0.125 (bits 3fc0000000000000)
+      bytes: 00 00 00 00 00 00 c0 3f
+  serialized_total=112
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0400 len=120
+  frame.len @0    +4  : 74 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 04 00
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +112: 80 81 82 83 84 85 86 87 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf 00 00 00 00 00 00 e0 bf 00 00 00 00 00 00 d8 bf 00 00 00 00 00 00 d0 bf 00 00 00 00 00 00 c0 bf 00 00 00 00 00 00 00 00 00 00 00 00 00 00 c0 3f
+  frame body == serialize(): yes
+message flight::AttitudeMessage fields=8 MessageSize=64 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] f64 @8 +8 = -1.375 (bits bff6000000000000)
+      bytes: 00 00 00 00 00 00 f6 bf
+  [2] f64 @16 +8 = -1.25 (bits bff4000000000000)
+      bytes: 00 00 00 00 00 00 f4 bf
+  [3] f64 @24 +8 = -1.125 (bits bff2000000000000)
+      bytes: 00 00 00 00 00 00 f2 bf
+  [4] f64 @32 +8 = -1 (bits bff0000000000000)
+      bytes: 00 00 00 00 00 00 f0 bf
+  [5] f64 @40 +8 = -0.875 (bits bfec000000000000)
+      bytes: 00 00 00 00 00 00 ec bf
+  [6] f64 @48 +8 = -0.75 (bits bfe8000000000000)
+      bytes: 00 00 00 00 00 00 e8 bf
+  [7] f64 @56 +8 = -0.625 (bits bfe4000000000000)
+      bytes: 00 00 00 00 00 00 e4 bf
+  serialized_total=64
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x0401 len=72
+  frame.len @0    +4  : 44 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 04 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +64 : 80 81 82 83 84 85 86 87 00 00 00 00 00 00 f6 bf 00 00 00 00 00 00 f4 bf 00 00 00 00 00 00 f2 bf 00 00 00 00 00 00 f0 bf 00 00 00 00 00 00 ec bf 00 00 00 00 00 00 e8 bf 00 00 00 00 00 00 e4 bf
+  frame body == serialize(): yes
+message sensor::RawPTMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] u32 @12 +4 = 0xb3b2b1b0
+      bytes: b0 b1 b2 b3
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2001 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 20 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 b0 b1 b2 b3 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::RawTCMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] u32 @12 +4 = 0xb3b2b1b0
+      bytes: b0 b1 b2 b3
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2101 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 21 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 b0 b1 b2 b3 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::RawRTDMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] u32 @12 +4 = 0xb3b2b1b0
+      bytes: b0 b1 b2 b3
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2201 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 22 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 b0 b1 b2 b3 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::RawLCMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] u32 @12 +4 = 0xb3b2b1b0
+      bytes: b0 b1 b2 b3
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2301 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 23 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 b0 b1 b2 b3 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::ActuatorStateMessage fields=3 MessageSize=10 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] u8 @9 +1 = 0xa0
+      bytes: a0
+  serialized_total=10
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x3101 len=18
+  frame.len @0    +4  : 0e 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 31 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +10 : 80 81 82 83 84 85 86 87 90 a0
+  frame body == serialize(): yes
+message sensor::CalibratedPTMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] f32 @12 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2011 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 20 11
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 00 00 88 40 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::CalibratedTCMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] f32 @12 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2111 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 21 11
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 00 00 88 40 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::CalibratedRTDMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] f32 @12 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2211 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 22 11
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 00 00 88 40 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::CalibratedLCMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] f32 @12 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2311 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 23 11
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 00 00 88 40 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::CalibratedACTMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] f32 @12 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x3111 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 31 11
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 00 00 88 40 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::CalibratedValvePositionMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] f32 @12 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x3411 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 34 11
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 00 00 88 40 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::EnvironmentalMessage fields=5 MessageSize=24 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] f32 @8 +4 = 3.75 (bits 40700000)
+      bytes: 00 00 70 40
+  [2] u32 @12 +4 = 0xa3a2a1a0
+      bytes: a0 a1 a2 a3
+  [3] f32 @16 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u32 @20 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  serialized_total=24
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2515 len=32
+  frame.len @0    +4  : 1c 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 25 15
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +24 : 80 81 82 83 84 85 86 87 00 00 70 40 a0 a1 a2 a3 00 00 88 40 c0 c1 c2 c3
+  frame body == serialize(): yes
+message sensor::T7RawMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] f32 @12 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] u32 @16 +4 = 0xc3c2c1c0
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2601 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 26 01
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 00 00 88 40 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message sensor::T7CalibratedMessage fields=6 MessageSize=21 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] array<u8,3> @9 +3 = [0x80,0x90,0xa0,]
+      bytes: 80 90 a0
+  [3] f32 @12 +4 = 4.25 (bits 40880000)
+      bytes: 00 00 88 40
+  [4] i32 @16 +4 = -1010646592
+      bytes: c0 c1 c2 c3
+  [5] u8 @20 +1 = 0xd0
+      bytes: d0
+  serialized_total=21
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x2611 len=29
+  frame.len @0    +4  : 19 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 26 11
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +21 : 80 81 82 83 84 85 86 87 90 80 90 a0 00 00 88 40 c0 c1 c2 c3 d0
+  frame body == serialize(): yes
+message daq_bridge SelfTestElodinMsg CommsMessage<u64,u8,u8> fields=3 MessageSize=10 alignof=8
+  [0] u64 @0 +8 = 0x8786858483828180
+      bytes: 80 81 82 83 84 85 86 87
+  [1] u8 @8 +1 = 0x90
+      bytes: 90
+  [2] u8 @9 +1 = 0xa0
+      bytes: a0
+  serialized_total=10
+  deserialize(serialize(x)) reserializes identically: yes
+  elodin frame id=0x6015 len=18
+  frame.len @0    +4  : 0e 00 00 00
+  frame.ty @4    +1  : 01
+  frame.packet_id @5    +2  : 60 15
+  frame.request_id @7    +1  : 00
+  <trailing> @8    +10 : 80 81 82 83 84 85 86 87 90 a0
+  frame body == serialize(): yes
+
+# protocol/EncryptedFrame.hpp host-side structs
+struct RawPTSample sizeof=16 alignof=4
+  channel_id offset=0 size=1
+  raw_adc_counts offset=4 size=4
+  sample_timestamp_ms offset=8 size=4
+  status_flags offset=12 size=1
+struct RawTCSample sizeof=16 alignof=4
+  channel_id offset=0 size=1
+  raw_adc_counts offset=4 size=4
+  sample_timestamp_ms offset=8 size=4
+  status_flags offset=12 size=1
+struct RawRTDSample sizeof=16 alignof=4
+  channel_id offset=0 size=1
+  raw_resistance_counts offset=4 size=4
+  sample_timestamp_ms offset=8 size=4
+  status_flags offset=12 size=1
+struct RawLCSample sizeof=16 alignof=4
+  channel_id offset=0 size=1
+  raw_adc_counts offset=4 size=4
+  sample_timestamp_ms offset=8 size=4
+  status_flags offset=12 size=1
+struct ParsedSelfTestPacket::Result sizeof=2 alignof=1
+  sensor_id offset=0 size=1
+  result offset=1 size=1
+ParsedSelfTestPacket defaults: packet_type=0 version=0 timestamp=0 adc_good=0 num_sensors=0 is_valid=0
+
+# elodin/ElodinProtocol.hpp
+struct fsw::elodin::PacketHeader sizeof=8 alignof=4
+  len offset=0 size=4
+  ty offset=4 size=1
+  packet_id offset=5 size=2
+  request_id offset=7 size=1
+PacketType MSG=0 TABLE=1 TIME_SERIES=2
+  "VTableMsg": fnv1a_32=0xdf536814 fnv1a_64=0x7434139918d389f4 msg_id=[0x47,0xb7] component_id=0x7434139918d389f4
+  "VTableStream": fnv1a_32=0x857a886b fnv1a_64=0x48fc43337f4efc2b msg_id=[0x11,0x0d] component_id=0x48fc43337f4efc2b
+  "SetComponentMetadata": fnv1a_32=0xd01c1aab fnv1a_64=0xfb1d7692134beaeb msg_id=[0xb7,0xca] component_id=0x7b1d7692134beaeb
+  "SetEntityMetadata": fnv1a_32=0x884bbef9 fnv1a_64=0x1b9bea1b1466a919 msg_id=[0xb2,0x36] component_id=0x1b9bea1b1466a919
+  "MsgStream": fnv1a_32=0x47814b5a fnv1a_64=0xaaddffe45e0e9eda msg_id=[0xdb,0x0c] component_id=0x2addffe45e0e9eda
+  "GetEarliestTimestamp": fnv1a_32=0x7a7a3606 fnv1a_64=0x563ada2fda749f06 msg_id=[0x7c,0x4c] component_id=0x563ada2fda749f06
+  "ErrorResponse": fnv1a_32=0xb17b555a fnv1a_64=0x9a3902da2081fbba msg_id=[0x21,0xe4] component_id=0x1a3902da2081fbba
+  "": fnv1a_32=0x811c9dc5 fnv1a_64=0xcbf29ce484222325 msg_id=[0xd9,0x1c] component_id=0x4bf29ce484222325
+  "a": fnv1a_32=0xe40c292c fnv1a_64=0xaf63dc4c8601ec8c msg_id=[0x20,0xcd] component_id=0x2f63dc4c8601ec8c
+  "a-name-longer-than-thirty-two-characters-for-the-cutoff": fnv1a_32=0xbde14952 fnv1a_64=0x95219bc453834a19 msg_id=[0xb3,0xf4] component_id=0x15219bc453834a19
+message_id_to_packet_id(0x2a31) = [0x2a,0x31]
+
+# fsw/BoardTypeWire.hpp
+  kUnknown=0
+  kPressureTransducer=1
+  kLoadCell=2
+  kRtd=3
+  kThermocouple=4
+  kActuator=5
+  kEnvironmental=7
+  kBallValve=8
+
+# config/BoardDiscovery: what a BOARD_HEARTBEAT announces (daq_bridge feeds it every one)
+# (the hash-derived MAC and assigned IP use std::hash and are not portable: not frozen)
+  127.0.0.21: board_id=21 board_type=0 hardware_version=0 firmware_version=3 serial_number=21 port=5005 is_configured=0
+  127.0.0.22: none

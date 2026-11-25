@@ -1,0 +1,86 @@
+{
+  "diffVsDefaultHeader": {
+    "missing": [
+      "Fuel Fill",
+      "Ox Fill",
+      "Press Standby",
+      "GN2 Low Press",
+      "GN2 Low Vent",
+      "Fuel Press",
+      "Fuel Vent",
+      "Ox Press",
+      "Ox Vent",
+      "GN2 High Press",
+      "GN2 High Vent",
+      "Calibrate",
+      "Ready",
+      "Fire",
+      "Vent",
+      "Engine Abort",
+      "GSE Abort"
+    ],
+    "orphan": [
+      "Warp Drive"
+    ]
+  },
+  "grid": {
+    "logs": [],
+    "value": {
+      "rows": [
+        {
+          "cells": [
+            "1",
+            "1",
+            "1",
+            "1"
+          ],
+          "key": "Idle"
+        },
+        {
+          "cells": [
+            "1",
+            "1",
+            "1",
+            "1"
+          ],
+          "key": "Warp Drive"
+        },
+        {
+          "cells": [
+            "1",
+            "0",
+            "1",
+            "1"
+          ],
+          "key": "armed"
+        },
+        {
+          "cells": [
+            "1",
+            "0",
+            "0",
+            "1"
+          ],
+          "key": "\"Emergency Abort\""
+        },
+        {
+          "cells": [
+            "yes",
+            "1",
+            "true",
+            "1"
+          ],
+          "key": "Fire"
+        }
+      ],
+      "states": [
+        "Idle",
+        "Armed",
+        "Warp Drive",
+        "Emergency Abort"
+      ]
+    }
+  },
+  "roundTrip": ",Idle,Armed,Warp Drive,Emergency Abort\nIdle,1,1,1,1\nWarp Drive,1,1,1,1\narmed,1,0,1,1\n\"Emergency Abort\",1,0,0,1\nFire,yes,1,true,1\n",
+  "roundTripIdentical": false
+}

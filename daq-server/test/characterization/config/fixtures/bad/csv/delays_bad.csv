@@ -1,0 +1,5 @@
+,Idle,Armed,Fire
+Fuel Main,0,abc,0.5
+Fuel Vent,-1,1e-1,
+Warp Coil,2,2,2
+Ox Main,0.25,0x10,inf

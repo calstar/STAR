@@ -1,0 +1,61 @@
+=== script fixtures/bad/scripts/comments_and_else.script as state "Idle"
+parse.ok = true
+parse.diag.count = 0
+top = [6, 10) empty=false max_depth=1
+stmt[0] Assign @2:1 var=0 expr=0 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[1] OpenValve @4:5 var=-1 expr=-1 slug=1 body=[-1, -1) else=[-1, -1)
+stmt[2] CloseValve @6:5 var=-1 expr=-1 slug=2 body=[-1, -1) else=[-1, -1)
+stmt[3] Delay @8:5 var=-1 expr=16 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[4] If @5:1 var=-1 expr=15 slug=-1 body=[1, 2) else=[2, 3)
+stmt[5] If @3:1 var=-1 expr=8 slug=-1 body=[0, 1) else=[3, 4)
+stmt[6] Delay @10:5 var=-1 expr=20 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[7] Assign @11:5 var=0 expr=23 slug=-1 body=[-1, -1) else=[-1, -1)
+stmt[8] While @9:1 var=-1 expr=19 slug=-1 body=[4, 6) else=[-1, -1)
+stmt[9] TransitionTo @12:1 var=-1 expr=-1 slug=3 body=[-1, -1) else=[-1, -1)
+expr[0] Pressure @2:9 number=0 var=-1 slug=0 op=+ lhs=-1 rhs=-1
+expr[1] Var @3:4 number=0 var=0 slug=-1 op=+ lhs=-1 rhs=-1
+expr[2] Number @3:12 number=500 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[3] Binary @3:10 number=0 var=-1 slug=-1 op=> lhs=1 rhs=2
+expr[4] Elapsed @3:24 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[5] Number @3:36 number=3 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[6] Binary @3:34 number=0 var=-1 slug=-1 op=> lhs=4 rhs=5
+expr[7] Unary @3:20 number=0 var=-1 slug=-1 op=not lhs=6 rhs=-1
+expr[8] Binary @3:16 number=0 var=-1 slug=-1 op=and lhs=3 rhs=7
+expr[9] Var @5:6 number=0 var=0 slug=-1 op=+ lhs=-1 rhs=-1
+expr[10] Number @5:15 number=100 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[11] Binary @5:12 number=0 var=-1 slug=-1 op=<= lhs=9 rhs=10
+expr[12] Var @5:22 number=0 var=0 slug=-1 op=+ lhs=-1 rhs=-1
+expr[13] Number @5:31 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[14] Binary @5:28 number=0 var=-1 slug=-1 op=== lhs=12 rhs=13
+expr[15] Binary @5:19 number=0 var=-1 slug=-1 op=or lhs=11 rhs=14
+expr[16] Number @8:11 number=0.5 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[17] Elapsed @9:7 number=0 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[18] Number @9:19 number=2 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[19] Binary @9:17 number=0 var=-1 slug=-1 op=< lhs=17 rhs=18
+expr[20] Number @10:11 number=0.25 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[21] Var @11:13 number=0 var=0 slug=-1 op=+ lhs=-1 rhs=-1
+expr[22] Number @11:21 number=1 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[23] Binary @11:19 number=0 var=-1 slug=-1 op=- lhs=21 rhs=22
+block_items = [1, 2, 3, 4, 6, 7, 0, 5, 8, 9]
+slug[0] GN2_HIGH ns=sensor @2:18 len=8
+slug[1] HIGH_PRESS_CTRL ns=actuator @4:16 len=15
+slug[2] HIGH_PRESS_CTRL ns=actuator @6:17 len=15
+slug[3] PRESS_STANDBY ns=state @12:15 len=13
+variable[0] level
+canonical:
+(seq (set level (pressure GN2_HIGH)) (if (and (> level 500) (not (> (elapsed) 3))) (seq (open HIGH_PRESS_CTRL)) (seq (if (or (<= level 100) (== level 0)) (seq (close HIGH_PRESS_CTRL)) (seq (delay 0.5))))) (while (< (elapsed) 2) (seq (delay 0.25) (set level (- level 1)))) (goto PRESS_STANDBY))
+validate.diag.count = 1
+validate.diag 12:15 E_TRANSITION_NOT_ALLOWED "this state is not allowed to transition to PRESS_STANDBY — state_transitions.csv does not permit it"
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 14 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0

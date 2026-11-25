@@ -1557,7 +1557,6 @@ int main(int argc, char* argv[]) {
     int packet_count = 0;
     static std::atomic<bool> logged_ch5{false};
     auto last_save = std::chrono::steady_clock::now();
-    std::map<uint16_t, int32_t> last_adc_map;
     // Every re-subscribe adds a copy of the command stream; handle each command once.
     fsw::calibration::CommandDedupe command_dedupe;
 
@@ -1572,7 +1571,6 @@ int main(int argc, char* argv[]) {
                 // Samples either side of the gap are not a continuous record; averaging
                 // across it would blend pre-disconnect codes into the next capture.
                 capture_window.clear();
-                last_adc_map.clear();
                 std::cout << "[Cal] Reconnected to Elodin" << std::endl;
             }
             continue;
@@ -1857,7 +1855,6 @@ int main(int argc, char* argv[]) {
 
             elodin_client.begin_batch();
             if (t->channel.kind == "PT") {
-                last_adc_map[uid] = code;
                 capture_window.push(uid, code, ts_ns, rx_ns);
                 const bool fac_ok = pt_calibration.is_calibrated(t->logical_ch);
                 const double psi_fac =
@@ -1880,7 +1877,6 @@ int main(int argc, char* argv[]) {
                 psi = std::isfinite(psi) ? std::clamp(psi, -3000.0, 20000.0) : 0.0;
                 publish(psi, cal_status);
             } else if (t->channel.kind == "LC") {
-                last_adc_map[uid] = code;
                 capture_window.push(uid, code, ts_ns, rx_ns);
                 const bool cubic_ok = lc_calibration.is_calibrated(t->logical_ch);
                 const double kg_cubic =
@@ -1980,7 +1976,6 @@ int main(int argc, char* argv[]) {
             const uint32_t hp_wire_adc = is_loop ? fsw::calibration::hp_pt_shunt_code(adc_u32) : 0u;
             const int32_t cal_adc = is_loop ? static_cast<int32_t>(hp_wire_adc) : adc_i32;
 
-            last_adc_map[uid] = cal_adc;
             capture_window.push(uid, cal_adc, ts_ns, rx_ns);
 
             const uint8_t pt_log_ch =
@@ -2072,7 +2067,6 @@ int main(int argc, char* argv[]) {
                                        // (cubic operator fit, or the datasheet physics formula).
             const uint16_t uid = resolve_lc_sensor_uid(type_lo, ch_eff, lc_boards);
 
-            last_adc_map[uid] = adc_i32;
             capture_window.push(uid, adc_i32, ts_ns, rx_ns);
 
             const uint8_t lc_log_ch =

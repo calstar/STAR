@@ -1,0 +1,89 @@
+/**
+ * server/config-caches.ts — config-derived lookups on the Elodin hot path, rebuilt after a deploy.
+ *
+ * Owns the HP (4-20 mA) board-number set and the T7 calibrated-table field map that
+ * parseElodinPacket takes on every packet, and the two slot→board_id maps behind
+ * uniqueIdFromPtEntity. initConfigCaches() is the startup read (DESIGN-WP6 §1.2 row 8);
+ * resetConfigCaches() is the one rebuild point, called from applyDeployedConfigChange (STYLE-S20).
+ * Both slot maps are private and lazily filled; t7BoardIdForSlot() is the one T7 lookup
+ * (step 2.4), used here and by board-status.noteT7Alive().
+ *
+ * `hpBoardNumbersCache` and `t7CalFieldsCache` are `export let` live bindings assigned only here
+ * (STYLE-S32); step 2.5 renames them. No effect at import (M1). Never imports api-server.ts or api/*.
+ *
+ * Contract: uniqueId = board_id*100+channel matches calibration_service (the calibration capture
+ * path of test/ws_data_flow_test.ts); the slot rule is sensor-config.boardSlot() (step 2.3, after
+ * G6 — __tests__/config-caches.test.ts), the `typeof` guard staying in the caller.
+ */
+
+import { hpBoardNumbers, t7CalFields, boardSlot } from '../sensor-config.js';
+import { readConfig } from '../routes/config.js';
+import { t7Channels } from '../../../shared/config-validation.js';
+
+/** Cached HP (4-20 mA) PT board-number set for the Elodin decode hot path. Rebuilt on config
+ *  reload (onConfigUpdated) so moving/adding an HP board takes effect without a restart. */
+export let hpBoardNumbersCache: Set<number>;
+/** Cached T7 calibrated-table -> field map (which float is psi, °C or kg); rebuilt with it. */
+export let t7CalFieldsCache: Map<number, string>;
+
+/** The startup config reads (HP set, then T7 fields), in today's order. */
+export function initConfigCaches(): void {
+  hpBoardNumbersCache = hpBoardNumbers();
+  t7CalFieldsCache = t7CalFields();
+}
+
+/** Cached slot→board_id map for uniqueIdFromPtEntity — built once, avoids config re-reads on hot path. */
+const ptBoardIdBySlot = new Map<number, number>();
+function _ensurePtSlotCache(): void {
+  if (ptBoardIdBySlot.size > 0) return;
+  try {
+    const config = readConfig();
+    const boards = (config.boards || {}) as Record<string, Record<string, unknown>>;
+    for (const [, raw] of Object.entries(boards)) {
+      const bid = raw.board_id;
+      const typ = raw.type;
+      if (typeof bid !== 'number' || typ !== 'PT') continue;
+      ptBoardIdBySlot.set(boardSlot(bid), bid);
+    }
+  } catch { /* fine — fallback below */ }
+}
+
+/** T7 slot -> board_id, for T7<slot>_Cal.AIN<n> (built with the PT cache, cleared with it). */
+const t7BoardIdBySlot = new Map<number, number>();
+
+/** The one T7 slot lookup (step 2.4; it replaced two equivalent lazy fillers, here and in
+ *  board-status.noteT7Alive): `undefined` when the slot has no T7 board or on a config error,
+ *  which both callers treat as "no board". */
+export function t7BoardIdForSlot(slot: number): number | undefined {
+  if (t7BoardIdBySlot.size === 0) {
+    try {
+      for (const ch of t7Channels(readConfig().boards)) t7BoardIdBySlot.set(ch.slot, ch.boardId);
+    } catch { /* no config: no T7 board */ }
+  }
+  return t7BoardIdBySlot.get(slot);
+}
+
+/** Map PT{n}.CH{m} — or a T7 input's T7{n}_Cal.AIN{m} — to uniqueId = board_id*100+channel
+ *  (matches calibration_service, where a T7 input's channel is its AIN). */
+export function uniqueIdFromPtEntity(entity: string): number | null {
+  const t7 = entity.match(/^T7(\d+)_Cal\.AIN(\d+)$/);
+  if (t7) {
+    const bid = t7BoardIdForSlot(parseInt(t7[1], 10));
+    return bid !== undefined ? bid * 100 + parseInt(t7[2], 10) : null;
+  }
+  const m = entity.match(/^PT(\d+)(?:_Cal)?\.CH(\d+)$/);
+  if (!m) return null;
+  const slot = parseInt(m[1], 10);
+  const ch = parseInt(m[2], 10);
+  _ensurePtSlotCache();
+  const bid = ptBoardIdBySlot.get(slot);
+  return bid !== undefined ? bid * 100 + ch : slot * 100 + ch;
+}
+
+/** The post-deploy rebuild: the same four statements, in the same order, as applyDeployedConfigChange had. */
+export function resetConfigCaches(): void {
+  ptBoardIdBySlot.clear();
+  t7BoardIdBySlot.clear();
+  hpBoardNumbersCache = hpBoardNumbers();
+  t7CalFieldsCache = t7CalFields();
+}

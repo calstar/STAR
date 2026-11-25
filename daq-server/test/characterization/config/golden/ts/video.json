@@ -1,0 +1,74 @@
+{
+  "loadVideoConfig": {
+    "logs": [],
+    "value": {
+      "config": {
+        "layout": {
+          "preset": "auto",
+          "slots": []
+        },
+        "recording": {
+          "refuseBelowGB": 20,
+          "stopBelowGB": 5
+        },
+        "streams": [],
+        "version": 1
+      },
+      "errors": [],
+      "secrets": {
+        "streams": {}
+      }
+    }
+  },
+  "validate_bad": {
+    "logs": [],
+    "value": {
+      "config": {
+        "layout": {
+          "preset": "auto",
+          "slots": []
+        },
+        "recording": {
+          "refuseBelowGB": 20,
+          "stopBelowGB": 5
+        },
+        "streams": [],
+        "version": 1
+      },
+      "errors": [
+        "unsupported video config version 2",
+        "stream 1 (\"Bad ID\"): id must be lowercase letters, digits and dashes (max 32)",
+        "stream 1 (\"Bad ID\"): label is required",
+        "stream 1 (\"Bad ID\"): url has credentials in it; put them in the secrets file instead",
+        "stream 2 (\"udp-1\"): label is required",
+        "stream 2 (\"udp-1\"): UDP port must be 5600-5609",
+        "stream 3 (\"udp-1\"): label is required",
+        "stream 4: id must be lowercase letters, digits and dashes (max 32)",
+        "stream 4: label is required",
+        "stream 4: kind must be \"rtsp\" or \"udp\"",
+        "stream 4: url is required",
+        "unknown layout preset \"4x4\"",
+        "recording.refuseBelowGB must be a number of GB",
+        "recording.stopBelowGB must be a number of GB"
+      ]
+    }
+  },
+  "validate_tracked": {
+    "logs": [],
+    "value": {
+      "config": {
+        "layout": {
+          "preset": "auto",
+          "slots": []
+        },
+        "recording": {
+          "refuseBelowGB": 20,
+          "stopBelowGB": 5
+        },
+        "streams": [],
+        "version": 1
+      },
+      "errors": []
+    }
+  }
+}

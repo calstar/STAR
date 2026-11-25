@@ -1,0 +1,29 @@
+=== script fixtures/bad/scripts/syntax.script as state "Dynamic Test"
+parse.ok = false
+parse.diag.count = 1
+parse.diag 2:15 E_EXPECTED_COLON "expected ':', found end of line"
+top = [0, 0) empty=true max_depth=0
+stmt[0] Assign @1:1 var=0 expr=0 slug=-1 body=[-1, -1) else=[-1, -1)
+expr[0] Pressure @1:9 number=0 var=-1 slug=0 op=+ lhs=-1 rhs=-1
+expr[1] Var @2:4 number=0 var=0 slug=-1 op=+ lhs=-1 rhs=-1
+expr[2] Number @2:12 number=100 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[3] Binary @2:10 number=0 var=-1 slug=-1 op=> lhs=1 rhs=2
+block_items = []
+slug[0] GN2_HIGH ns=sensor @1:18 len=8
+variable[0] start
+canonical:
+(seq)
+validate.diag.count = 0
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 14 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0

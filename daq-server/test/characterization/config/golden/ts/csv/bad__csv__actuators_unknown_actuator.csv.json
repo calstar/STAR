@@ -1,0 +1,77 @@
+{
+  "diffVsDefaultHeader": {
+    "missing": [
+      "Fuel Fill",
+      "Ox Fill",
+      "Press Standby",
+      "GN2 Low Press",
+      "GN2 Low Vent",
+      "Fuel Press",
+      "Fuel Vent",
+      "Ox Press",
+      "Ox Vent",
+      "GN2 High Press",
+      "GN2 High Vent",
+      "Calibrate",
+      "Ready",
+      "Vent",
+      "Engine Abort",
+      "GSE Abort",
+      "Emergency Abort"
+    ],
+    "orphan": [
+      "No Such State"
+    ]
+  },
+  "grid": {
+    "logs": [],
+    "value": {
+      "rows": [
+        {
+          "cells": [
+            "CLOSE",
+            "CLOSE",
+            "OPEN",
+            "OPEN"
+          ],
+          "key": "Fuel Main"
+        },
+        {
+          "cells": [
+            "OPEN",
+            "OPEN",
+            "OPEN",
+            "OPEN"
+          ],
+          "key": "Warp Coil"
+        },
+        {
+          "cells": [
+            "AJAR",
+            "closed",
+            "open",
+            ""
+          ],
+          "key": "Fuel Vent"
+        },
+        {
+          "cells": [
+            "CLOSE",
+            "",
+            "",
+            ""
+          ],
+          "key": "Ox Main"
+        }
+      ],
+      "states": [
+        "Idle",
+        "Armed",
+        "Fire",
+        "No Such State"
+      ]
+    }
+  },
+  "roundTrip": ",Idle,Armed,Fire,No Such State\nFuel Main,CLOSE,CLOSE,OPEN,OPEN\nWarp Coil,OPEN,OPEN,OPEN,OPEN\nFuel Vent,AJAR,closed,open,\nOx Main,CLOSE,,,\n",
+  "roundTripIdentical": false
+}

@@ -90,10 +90,15 @@ class SimulatedBoard:
         timing=None,
         sensor_hz=None,
         allow_ip_fallback=False,
+        fail_connectors=None,
     ):
         self.name = name
         self.board_index = board_index
         self.config = board_config
+        # --fail-connector (test harnesses only): connectors whose SELF_TEST result is reported
+        # as 0 (fail) instead of 1. Empty by default, so the packet is byte-identical to the one
+        # every existing launch sends (test/characterization/pipeline/sim_selftest_check.py).
+        self.fail_connectors = set(int(c) for c in (fail_connectors or ()))
         # Only permit rebinding a non-bindable config IP to loopback when explicitly allowed
         # (sim_config.toml already uses loopback IPs so it never needs this; a hardware config
         # must NOT silently fall back — that emits synthetic data tagged with real board IDs).
@@ -478,7 +483,8 @@ class SimulatedBoard:
         n = min(len(active_connectors), 255)
         body = struct.pack("BB", adc_good, n)
         for sensor_id in active_connectors[:n]:
-            body += struct.pack("BB", sensor_id & 0xFF, 1)
+            result = 0 if sensor_id in self.fail_connectors else 1
+            body += struct.pack("BB", sensor_id & 0xFF, result)
 
         try:
             self.sock.sendto(header + body, (self.target_ip, self.target_port))
@@ -680,6 +686,15 @@ def main():
              "tagged with real board IDs).",
     )
     parser.add_argument(
+        "--fail-connector",
+        action="append",
+        default=[],
+        metavar="BOARD:CH",
+        help="Report connector CH of board BOARD as failed (result 0) in its SELF_TEST packet. "
+             "Repeatable. Test harnesses only (characterization of self_test_fail_<id>); the "
+             "default leaves every packet byte-identical.",
+    )
+    parser.add_argument(
         "--sensor-hz",
         type=float,
         default=None,
@@ -745,6 +760,14 @@ def main():
         return
 
     boards = config.get("boards", {})
+    fail_connectors = {}  # board_id -> {connector, ...}
+    for spec in args.fail_connector:
+        try:
+            bid, ch = (int(x) for x in spec.split(":", 1))
+        except ValueError:
+            print(f"Error: --fail-connector expects BOARD:CH, got {spec!r}")
+            return
+        fail_connectors.setdefault(bid, set()).add(ch)
     sim_pt_targets = {
         int(k): float(v) for k, v in config.get("sim_pt_targets", {}).items()
     }
@@ -783,6 +806,7 @@ def main():
             skip_startup=args.skip_startup,
             sensor_hz=args.sensor_hz,
             allow_ip_fallback=args.allow_ip_fallback,
+            fail_connectors=fail_connectors.get(board_cfg.get("board_id", 0)),
             timing=TimingPathology(
                 chunks_per_packet=args.chunks_per_packet,
                 net_jitter_ms=args.net_jitter_ms,

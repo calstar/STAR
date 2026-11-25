@@ -1,0 +1,35 @@
+input fixtures/bad/environmental_bad_id.toml readable=true bytes=90
+
+=== config::load
+EXCEPTION std::invalid_argument: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+
+=== config::load_from_string
+EXCEPTION std::invalid_argument: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+
+=== StateMachine
+EXCEPTION std::invalid_argument: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+
+=== ActuatorCommander
+EXCEPTION std::invalid_argument: [Config] [boards.env_board] environmental board ID must be an integer from 1 to 255
+
+=== load_dynamic_states
+
+=== hold_rule_inputs
+fire_state = 255 "Unknown"
+fire_expiry = 255 "Unknown"
+fire isAllowed(state, expiry) = false
+parseHoldMs("1500") = true 1500
+parseHoldMs(" 250 ") = true 250
+parseHoldMs("0") = false 0
+parseHoldMs("1e3") = false 0
+parseHoldMs("-5") = false 0
+parseHoldMs("3600000") = true 3600000
+parseHoldMs("3600001") = false 0
+parseHoldMs("") = false 0
+parseHoldMs("12x") = false 0
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 1

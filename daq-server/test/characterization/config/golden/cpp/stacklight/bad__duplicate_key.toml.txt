@@ -1,0 +1,15 @@
+getTomlValue(stacklight_service, interval_ms) = ""
+getTomlValue(stacklight_service, target_ip) = ""
+getTomlValue(stacklight_service, target_port) = ""
+getTomlValue(stacklight_service, elodin_host) = ""
+getTomlValue(stacklight_service, elodin_port) = ""
+getTomlValue(database, port) = "<fallback>"
+getTomlValue(network, sensor_port) = "5006"
+getTomlValue(server_heartbeat, broadcast_ip) = "<fallback>"
+getTomlValue(no_such_section, x) = "<fallback>"
+
+=== captured stdout
+
+=== captured stderr
+
+=== exit 0

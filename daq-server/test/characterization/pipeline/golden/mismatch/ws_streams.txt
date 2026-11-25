@@ -1,0 +1,153 @@
+## sensor_update (client A, whole session; P7 values)
+ACT_CMD.B2.CH1.actuator_state_commanded  value=0
+ACT_CMD.B2.CH2.actuator_state_commanded  value=0
+ACT_CMD.B2.CH3.actuator_state_commanded  value=0
+ACT_CMD.B2.CH5.actuator_state_commanded  value=0
+ACT_CMD.B2.CH6.actuator_state_commanded  value=0
+ACT_CMD.B2.CH7.actuator_state_commanded  value={0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, replayed by elodin-db on subscribe (defect)
+ACT_CMD.B2.CH8.actuator_state_commanded  value=1
+ACT_CMD.B4.CH1.actuator_state_commanded  value=0
+ACT_CMD.B4.CH10.actuator_state_commanded  value=0
+ACT_CMD.B4.CH2.actuator_state_commanded  value=0
+ACT_CMD.B4.CH3.actuator_state_commanded  value=0
+ACT_CMD.B4.CH4.actuator_state_commanded  value=0
+ACT_CMD.B4.CH5.actuator_state_commanded  value=0
+ACT_CMD.B4.CH6.actuator_state_commanded  value=0
+ACT_CMD.B4.CH7.actuator_state_commanded  value=0
+ACT_CMD.B4.CH8.actuator_state_commanded  value=0
+BV1.CH1.raw_adc_counts  value=<varies>
+BV1.CH2.raw_adc_counts  value=496
+BV1_Cal.CH1.cal_status  value=1
+BV1_Cal.CH1.position_pct  value=<varies>
+BV1_Cal.CH1.raw_adc  value=<varies>
+BV1_Cal.CH2.cal_status  value=1
+BV1_Cal.CH2.position_pct  value=0
+BV1_Cal.CH2.raw_adc  value=496
+BV_CMD.B1.CH1.actuator_state_commanded  value={0, 1}
+PT1.CH1.raw_adc_counts  value=1463500000
+PT1.CH10.raw_adc_counts  value=1199500000
+PT1.CH2.raw_adc_counts  value=1353500000
+PT1.CH3.raw_adc_counts  value=1419500000
+PT1.CH4.raw_adc_counts  value=1243500000
+PT1.CH5.raw_adc_counts  value=1463500000
+PT1.CH6.raw_adc_counts  value=2147483647
+PT1.CH7.raw_adc_counts  value=1419500000
+PT1.CH8.raw_adc_counts  value=1243500000
+PT1.CH9.raw_adc_counts  value=1199500000
+PT1_Cal.CH1.pressure_psi  value=0
+PT1_Cal.CH1.raw_adc  value=1463500000
+PT1_Cal.CH1.raw_adc_counts  value=1463500000
+PT1_Cal.CH10.pressure_psi  value=0
+PT1_Cal.CH10.raw_adc  value=1199500000
+PT1_Cal.CH10.raw_adc_counts  value=1199500000
+PT1_Cal.CH2.pressure_psi  value=0
+PT1_Cal.CH2.raw_adc  value=1353500000
+PT1_Cal.CH2.raw_adc_counts  value=1353500000
+PT1_Cal.CH3.pressure_psi  value=0
+PT1_Cal.CH3.raw_adc  value=1419500000
+PT1_Cal.CH3.raw_adc_counts  value=1419500000
+PT1_Cal.CH4.pressure_psi  value=0
+PT1_Cal.CH4.raw_adc  value=1243500000
+PT1_Cal.CH4.raw_adc_counts  value=1243500000
+PT1_Cal.CH5.pressure_psi  value=0
+PT1_Cal.CH5.raw_adc  value=1463500000
+PT1_Cal.CH5.raw_adc_counts  value=1463500000
+PT1_Cal.CH6.pressure_psi  value=0
+PT1_Cal.CH6.raw_adc  value=2147483647
+PT1_Cal.CH6.raw_adc_counts  value=2147483647
+PT1_Cal.CH7.pressure_psi  value=0
+PT1_Cal.CH7.raw_adc  value=1419500000
+PT1_Cal.CH7.raw_adc_counts  value=1419500000
+PT1_Cal.CH8.pressure_psi  value=0
+PT1_Cal.CH8.raw_adc  value=1243500000
+PT1_Cal.CH8.raw_adc_counts  value=1243500000
+PT1_Cal.CH9.pressure_psi  value=0
+PT1_Cal.CH9.raw_adc  value=1199500000
+PT1_Cal.CH9.raw_adc_counts  value=1199500000
+
+## self-test (P12): per board, the exact expected result | not-received (one-shot UDP self-test, defect)
+board 21 (PT): sensor_0, sensor_1, sensor_10, sensor_2, sensor_3, sensor_4, sensor_5, sensor_6, sensor_7, sensor_8, sensor_9 all 1 | not-received (one-shot UDP self-test, defect)
+paths checked: handshake A; history connect A
+self-test rule (a) exact if received, (b) at most half not-received, (c) all received when quiet, (d) every replay/full-history path complete when quiet: ok
+
+## timing bounds (from config, not observed; README T1)
+envelope spacing: fewer than 5 gaps in the history reply (0 points)
+
+## board_log distinct payloads, client A
+{"boardId": 21, "lines": ["[SIM] board 21 PT alive #<n>"], "totals": {"received": "<n>", "truncated": "<n>"}, "truncated": false, "ts": "<ts>"}
+{"boardId": 71, "lines": ["[SIM] board 71 BALL_VALVE alive #<n>"], "totals": {"received": "<n>", "truncated": "<n>"}, "truncated": false, "ts": "<ts>"}
+
+## board_status_update distinct payloads, client A
+{"boards": [{"boardNumber": 21, "boardState": 2, "connected": true, "engineState": 0, "expected": true, "frequencyHz": "<hz>", "heartbeatTimes": "<ts[]>", "id": 21, "ip": "127.0.0.1", "lastHeartbeatMs": "<ts>", "type": "PT"}, {"boardNumber": 22, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 22, "ip": "127.0.0.22", "lastHeartbeatMs": null, "type": "PT"}, {"boardNumber": 12, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 12, "ip": "127.0.0.12", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 14, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 14, "ip": "127.0.0.14", "lastHeartbeatMs": null, "type": "ACTUATOR"}, {"boardNumber": 42, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 42, "ip": "127.0.0.42", "lastHeartbeatMs": null, "type": "LC"}, {"boardNumber": 51, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 51, "ip": "127.0.0.51", "lastHeartbeatMs": null, "type": "TC"}, {"boardNumber": 31, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 31, "ip": "127.0.0.31", "lastHeartbeatMs": null, "type": "RTD"}, {"boardNumber": 25, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 25, "ip": "127.0.0.25", "lastHeartbeatMs": null, "type": "ENVIRONMENTAL"}, {"boardNumber": 61, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 61, "ip": "127.0.0.61", "lastHeartbeatMs": null, "type": "ENCODER"}, {"boardNumber": 81, "boardState": null, "connected": false, "engineState": null, "expected": true, "heartbeatTimes": [], "id": 81, "ip": "127.0.0.81", "lastHeartbeatMs": null, "type": "T7"}, {"boardNumber": 71, "boardState": 2, "connected": true, "engineState": 0, "expected": true, "frequencyHz": "<hz>", "heartbeatTimes": "<ts[]>", "id": 71, "ip": "127.0.0.71", "lastHeartbeatMs": "<ts>", "type": "BALL_VALVE"}]}
+
+## connection_status distinct payloads, client A
+{"connId": "c2", "connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
+{"connected": true, "dataFresh": true, "elodinConnected": true, "lagMs": "<int>", "resolutionPct": "<int>", "simulated": false, "throttled": "<bool>"}
+
+## historical_data (P8: series keys per step, the distinct values each carries)
+# connect client A: 65 series (self-test: P12)
+  ACT_CMD.B2.CH1.actuator_state_commanded {0}
+  ACT_CMD.B2.CH2.actuator_state_commanded {0}
+  ACT_CMD.B2.CH3.actuator_state_commanded {0}
+  ACT_CMD.B2.CH5.actuator_state_commanded {0}
+  ACT_CMD.B2.CH6.actuator_state_commanded {0}
+  ACT_CMD.B2.CH7.actuator_state_commanded {0} | {0, 1}  # alternative A1: the sequencer's boot-time de-energized row, replayed by elodin-db on subscribe (defect)
+  ACT_CMD.B2.CH8.actuator_state_commanded {1}
+  ACT_CMD.B4.CH1.actuator_state_commanded {0}
+  ACT_CMD.B4.CH10.actuator_state_commanded {0}
+  ACT_CMD.B4.CH2.actuator_state_commanded {0}
+  ACT_CMD.B4.CH3.actuator_state_commanded {0}
+  ACT_CMD.B4.CH4.actuator_state_commanded {0}
+  ACT_CMD.B4.CH5.actuator_state_commanded {0}
+  ACT_CMD.B4.CH6.actuator_state_commanded {0}
+  ACT_CMD.B4.CH7.actuator_state_commanded {0}
+  ACT_CMD.B4.CH8.actuator_state_commanded {0}
+  BV1.CH1.raw_adc_counts {496}
+  BV1.CH2.raw_adc_counts {496}
+  BV1_Cal.CH1.cal_status {1}
+  BV1_Cal.CH1.position_pct {0}
+  BV1_Cal.CH1.raw_adc {496}
+  BV1_Cal.CH2.cal_status {1}
+  BV1_Cal.CH2.position_pct {0}
+  BV1_Cal.CH2.raw_adc {496}
+  BV_CMD.B1.CH1.actuator_state_commanded {0}
+  PT1.CH1.raw_adc_counts {1463500000}
+  PT1.CH10.raw_adc_counts {1199500000}
+  PT1.CH2.raw_adc_counts {1353500000}
+  PT1.CH3.raw_adc_counts {1419500000}
+  PT1.CH4.raw_adc_counts {1243500000}
+  PT1.CH5.raw_adc_counts {1463500000}
+  PT1.CH6.raw_adc_counts {2147483647}
+  PT1.CH7.raw_adc_counts {1419500000}
+  PT1.CH8.raw_adc_counts {1243500000}
+  PT1.CH9.raw_adc_counts {1199500000}
+  PT1_Cal.CH1.pressure_psi {0}
+  PT1_Cal.CH1.raw_adc {1463500000}
+  PT1_Cal.CH1.raw_adc_counts {1463500000}
+  PT1_Cal.CH10.pressure_psi {0}
+  PT1_Cal.CH10.raw_adc {1199500000}
+  PT1_Cal.CH10.raw_adc_counts {1199500000}
+  PT1_Cal.CH2.pressure_psi {0}
+  PT1_Cal.CH2.raw_adc {1353500000}
+  PT1_Cal.CH2.raw_adc_counts {1353500000}
+  PT1_Cal.CH3.pressure_psi {0}
+  PT1_Cal.CH3.raw_adc {1419500000}
+  PT1_Cal.CH3.raw_adc_counts {1419500000}
+  PT1_Cal.CH4.pressure_psi {0}
+  PT1_Cal.CH4.raw_adc {1243500000}
+  PT1_Cal.CH4.raw_adc_counts {1243500000}
+  PT1_Cal.CH5.pressure_psi {0}
+  PT1_Cal.CH5.raw_adc {1463500000}
+  PT1_Cal.CH5.raw_adc_counts {1463500000}
+  PT1_Cal.CH6.pressure_psi {0}
+  PT1_Cal.CH6.raw_adc {2147483647}
+  PT1_Cal.CH6.raw_adc_counts {2147483647}
+  PT1_Cal.CH7.pressure_psi {0}
+  PT1_Cal.CH7.raw_adc {1419500000}
+  PT1_Cal.CH7.raw_adc_counts {1419500000}
+  PT1_Cal.CH8.pressure_psi {0}
+  PT1_Cal.CH8.raw_adc {1243500000}
+  PT1_Cal.CH8.raw_adc_counts {1243500000}
+  PT1_Cal.CH9.pressure_psi {0}
+  PT1_Cal.CH9.raw_adc {1199500000}
+  PT1_Cal.CH9.raw_adc_counts {1199500000}

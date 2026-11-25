@@ -1,0 +1,25 @@
+# session default/entry/Engine Abort
+(walk legally Idle -> Armed)
+> TRANSITION:Armed
+  < OK
+> TRANSITION:Engine Abort
+  < OK
+  state Armed -> Engine Abort
+  first datagram: ABORT
+      +0ms x3 (x2 sends) to board 12: ACTUATOR_COMMAND v0 n=7: ch7=0[Fuel Main] ch3=1[Fuel Press] ch2=1[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=1[LOX Main] ch8=0[LOX Press] ch6=1[LOX Vent]
+              raw 0400........070700030102010500010108000601
+      +0ms x3 (x2 sends) to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=1[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=1[LOX Dump] ch7=0[LOX Fill]
+              raw 0400........09020001000601030005000a00040008010700
+      +0ms x4 (x2 sends) to 127.0.0.1: ABORT v0
+              raw 0700........
+       +3s x4 to 127.0.0.1: ABORT_DONE v0
+              raw 0800........
+  republish [Engine Abort]: first after 1 s within [0.8, 1.5]x, every 1 s within [0.8, 1.5]x
+              to board 12: ACTUATOR_COMMAND v0 n=7: ch7=0[Fuel Main] ch3=1[Fuel Press] ch2=1[Fuel Vent] ch5=0[GSE Low Press Vent] ch1=1[LOX Main] ch8=0[LOX Press] ch6=1[LOX Vent]
+              raw 0400........070700030102010500010108000601
+              to board 14: ACTUATOR_COMMAND v0 n=9: ch2=0[Fuel Fill Press] ch1=0[Fuel Fill Vent] ch6=1[GN2 Vent] ch3=0[GSE High Press Control] ch5=0[GSE High Press Vent] ch10=0[GSE LOX Fill Vent] ch4=0[GSE Med Press Control] ch8=1[LOX Dump] ch7=0[LOX Fill]
+              raw 0400........09020001000601030005000a00040008010700
+-- sequencer log (N6: load-time lines, then message counts)
+   [SequencerService] Fire state: Fire → expires to Armed after 500 ms (extended 600 ms)
+   [SequencerService] WARNING: fire opens "Fuel Main" 0.08 s after entry, but no [fire].gate_actuator is set — the burn window is measured from the TRANSITION, so that valve is open for 0.42 s, not 0.5 s.
+   [SequencerService] WARNING: fire opens "LOX Main" 0.001 s after entry, but no [fire].gate_actuator is set — the burn window is measured from the TRANSITION, so that valve is open for 0.499 s, not 0.5 s.

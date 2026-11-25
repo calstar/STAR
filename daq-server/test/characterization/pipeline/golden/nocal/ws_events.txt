@@ -1,0 +1,14 @@
+## readiness
+
+## http_calibration
+
+## connect
+
+## calibration_command
+> A {"type":"calibration_command","payload":{"commandType":"char_probe"}}
+< A {"payload": {"calibrationFilePath": null, "channels": [], "message": "Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.", "phase2Enabled": true, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "calibration_status"}
+
+## disconnect
+
+## board-health notifications seen (any step, any client; P1, reset flaps P1b)
+{"category": "info", "message": "Board 21 (PT) connected", "timestampMs": "<ts>"}

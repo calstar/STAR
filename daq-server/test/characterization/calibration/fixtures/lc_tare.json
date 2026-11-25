@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "tares": [
+    {"uid": 4201, "entity": "LC2_Cal.CH1", "adc_at_tare": 1100000, "offset_kg": 17.5, "set_at_ms": 1757000020000, "curve_fp": 12345},
+    {"uid": 4206, "entity": "LC2_Cal.CH6", "adc_at_tare": 4000000, "offset_kg": 0, "set_at_ms": 1757000021000, "curve_fp": 0},
+    {"uid": 8104, "entity": "T71_Cal.AIN4", "adc_at_tare": 2500, "offset_kg": 1.25, "set_at_ms": 1757000022000, "curve_fp": 7},
+    {"uid": 0, "entity": "ignored", "adc_at_tare": 1, "offset_kg": 1, "set_at_ms": 1, "curve_fp": 1}
+  ]
+}

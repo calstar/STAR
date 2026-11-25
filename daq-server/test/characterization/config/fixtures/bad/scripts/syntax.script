@@ -1,0 +1,3 @@
+start = pressure(GN2_HIGH)
+if start > 100
+    open_valve(FUEL_MAIN)

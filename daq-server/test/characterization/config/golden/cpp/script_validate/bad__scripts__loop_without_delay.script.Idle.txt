@@ -1,0 +1,28 @@
+=== script fixtures/bad/scripts/loop_without_delay.script as state "Idle"
+parse.ok = false
+parse.diag.count = 1
+parse.diag 1:1 E_LOOP_WITHOUT_DELAY "this loop's body never calls delay() — add one (e.g. delay(0.05)) so the loop waits rather than spinning, and so its poll rate is visible where it is read"
+top = [0, 0) empty=true max_depth=1
+stmt[0] OpenValve @2:5 var=-1 expr=-1 slug=0 body=[-1, -1) else=[-1, -1)
+stmt[1] While @1:1 var=-1 expr=2 slug=-1 body=[0, 1) else=[-1, -1)
+expr[0] Number @1:7 number=1 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[1] Number @1:11 number=2 var=-1 slug=-1 op=+ lhs=-1 rhs=-1
+expr[2] Binary @1:9 number=0 var=-1 slug=-1 op=< lhs=0 rhs=1
+block_items = [0]
+slug[0] FUEL_MAIN ns=actuator @2:16 len=9
+canonical:
+(seq)
+validate.diag.count = 0
+
+=== captured stdout
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+[ActuatorCommander] Loaded 14 actuator roles from config
+[ActuatorCommander] Loaded 3 non-zero actuator delay(s) from ../../../config/profiles/digital-twin/state_machine_actuator_delays.csv
+[ActuatorCommander] Loaded 15 states from ../../../config/profiles/digital-twin/state_machine_actuators.csv
+[StateMachine] Loaded 15 state(s) from config
+[StateMachine] Loaded 15 states from ../../../config/profiles/digital-twin/state_transitions.csv
+
+=== captured stderr
+
+=== exit 0
