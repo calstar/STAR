@@ -4,14 +4,22 @@
  * shipped table put a 1 under Fire and none under Emergency Abort. The sequencer refuses such a
  * file; the backend refuses it too, so the GUI never draws doors the stand will not open.
  *
- * Hermetic: temp files only, plus a read of the shipped profiles.
+ * Hermetic: temp files only, plus a read of the shipped profiles. CONFIG_PATH points at a temp dir
+ * before the loader is imported: its config module generates config/config.toml when it finds
+ * none, and that must not happen in the checkout.
  */
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync, readdirSync, existsSync, readFileSync } from 'fs';
+import { mkdtempSync, writeFileSync, readdirSync, existsSync, readFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { parseStateTransitionsCSV, raggedTransitionRows } from '../state-csv/state-transitions.js';
+
+const configRoot = mkdtempSync(join(tmpdir(), 'transitions-config-'));
+mkdirSync(join(configRoot, 'config'), { recursive: true });
+process.env.CONFIG_PATH = join(configRoot, 'config', 'config.toml');
+const { parseStateTransitionsCSV, raggedTransitionRows } = await import(
+  '../state-csv/state-transitions.js'
+);
 
 const here = dirname(fileURLToPath(import.meta.url));
 const profilesDir = join(here, '..', '..', '..', '..', 'config', 'profiles');
