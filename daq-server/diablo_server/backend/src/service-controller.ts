@@ -214,6 +214,9 @@ export class ServiceController {
       }
     } else {
       console.log(`[Session] (mock) start pipeline → ${dbDir} (simulated=${simulated})`);
+      // No elodin-db is started for this run, so nothing else creates its directory — and the
+      // routes that store files with the run (POST /api/feed-char/results) write into it (C5-2).
+      mkdirSync(dbDir, { recursive: true });
       // Mock mode is a second lifecycle: the pipeline is already up, so there is no
       // service-is-down window and the unlink above would race a live writer. Clear the file AND
       // tell the running service to drop its in-memory tares. The fire-and-forget weakness of

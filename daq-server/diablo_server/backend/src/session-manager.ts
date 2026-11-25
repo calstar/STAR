@@ -85,9 +85,8 @@ class SessionManager {
   private readonly controller = new ServiceController(this.mode);
   private broadcast: Broadcast = () => {};
   private notify: Notify = () => {};
-  /** Fired after a run stops, so the server can revert board status to the
-   *  pristine config baseline (else boards keep a stale heartbeat timestamp and
-   *  read "---" instead of the disconnected baseline shown on fresh startup). */
+  /** Fired after a run stops, so the server can re-read the board list from config. That merges
+   *  into the live board status (C5-1); it never resets a heartbeating board to disconnected. */
   private onStopped: () => void = () => {};
   /** Fired after the active profile is deployed at session start, so the backend can rebuild
    *  its config-derived caches and tell open browsers to refetch. Without it a profile edited
@@ -384,7 +383,7 @@ class SessionManager {
     // otherwise be applied to the next run's first poll interval before the file check notices.
     setRunDir(null);
     resetTareState();
-    this.onStopped(); // revert board status to the disconnected baseline
+    this.onStopped(); // re-read the board list from config (merged, C5-1)
   }
 
   extend(addMs: number): void {

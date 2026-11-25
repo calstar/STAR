@@ -72,6 +72,8 @@ P = {
         (25, "P_SEQ"),
         (26, "P_CTRL"),
         (27, "P_CTRL_NODB"),
+        # the loopback copy of SERVER_HEARTBEAT the backend watches (C6-3)
+        (28, "P_HB_MON"),
     ]
 }
 FSW_PORT, OTA_BOARD_PORT = 5008, 3232

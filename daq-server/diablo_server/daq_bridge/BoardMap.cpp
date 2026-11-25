@@ -46,6 +46,7 @@ void load_board_map_from_config(const std::string& config_path,
         out_hb->broadcast_port = c.server_heartbeat.broadcast_port;
         out_hb->broadcast_ip = c.server_heartbeat.broadcast_ip;
         out_hb->send_from_daq_bridge = c.server_heartbeat.send_from_daq_bridge;
+        out_hb->monitor_port = c.server_heartbeat.monitor_port;
     }
     if (out_ts)
         *out_ts = c.time_sync;

@@ -35,6 +35,10 @@ struct ServerHeartbeatConfig {    // [server_heartbeat]
     uint16_t broadcast_port = 5005;
     std::string broadcast_ip = "255.255.255.255";
     bool send_from_daq_bridge = true;  // synthesized: false when [heartbeat_service].enabled
+    // Loopback copy of every SERVER_HEARTBEAT sent, to 127.0.0.1:monitor_port, so the backend can
+    // tell the operator when the heartbeat stops (C6-3). 0 turns the copy off. The backend's
+    // default (server/server-heartbeat.ts DEFAULT_MONITOR_PORT) must match this one.
+    uint16_t monitor_port = 8093;
 };
 
 struct HeartbeatServiceConfig {  // [heartbeat_service]

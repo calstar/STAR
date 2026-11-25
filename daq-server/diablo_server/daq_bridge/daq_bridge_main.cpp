@@ -400,8 +400,13 @@ int main(int argc, char* argv[]) {
                 auto pkt = build_server_heartbeat_packet();
                 ssize_t sent = pipeline.send_to(hb_config.broadcast_ip, hb_config.broadcast_port,
                                                 pkt.data(), pkt.size());
-                if (sent > 0)
+                if (sent > 0) {
                     last_heartbeat_send = now;
+                    // The backend's copy (C6-3): it raises an operator alert when these stop.
+                    if (hb_config.monitor_port != 0)
+                        pipeline.send_to("127.0.0.1", hb_config.monitor_port, pkt.data(),
+                                         pkt.size());
+                }
             }
         }
 

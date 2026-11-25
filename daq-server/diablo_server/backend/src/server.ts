@@ -13,7 +13,7 @@
  * NOT handled (owned by C++ services):
  *   - State machine validation — sequencer_service / actuator_service
  *   - Actuator UDP — sequencer / actuator_service
- *   - SERVER_HEARTBEAT — heartbeat_service
+ *   - SERVER_HEARTBEAT — heartbeat_service (the backend only watches a loopback copy: server/server-heartbeat.ts)
  *   - Config packets — config_broadcast_service
  *   - Calibration — calibration_service (stub reply)
  *
@@ -102,6 +102,7 @@ import { currentState, initEngineState, reloadStateActuatorMap, refreshScriptSta
 import { elodin, broadcastConnectionStatus, syncElodinToSession, onElodinConnected, onElodinDbError, onElodinDisconnected, onElodinError } from './server/elodin-link.js';
 import { handleElodinPacket } from './server/ingest.js';
 import { handleConnection } from './server/ws-connection.js';
+import { startServerHeartbeatWatch } from './server/server-heartbeat.js';
 
 // ── Calibration state ────────────────────────────────────────────────────────
 
@@ -311,8 +312,8 @@ httpServer.listen(WS_PORT, () => {
   console.log(`[ThinServer] Actuator service: localhost:${SEQUENCER_PORT}`);
   // Init the run-session manager last, once broadcast/notify + wss are live.
   // No-op (enabled=false) unless SESSION_SERVICE_MODE is mock/systemd.
-  // On run stop, re-baseline board status from config (clears stale heartbeat
-  // timestamps) so boards read "disconnected", matching fresh startup, instead of "---".
+  // On run stop, re-read the board list from config. It merges (C5-1): a board still
+  // heartbeating stays connected, and one that stopped goes stale through the normal sweep.
   sessionManager.init(broadcast, broadcastNotification, () => {
     loadBoardsFromConfig();
     broadcastBoardStatus();
@@ -329,4 +330,6 @@ httpServer.listen(WS_PORT, () => {
   syncElodinToSession();
   // Board diagnostic logs (type-15 LOGS forwarded by daq_bridge over loopback UDP).
   startBoardLogReceiver(broadcast);
+  // The loopback copy of SERVER_HEARTBEAT; alerts the operator when it stops (C6-3).
+  startServerHeartbeatWatch();
 });

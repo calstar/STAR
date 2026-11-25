@@ -3,8 +3,8 @@
  *
  * Owns: nothing; the file lives in the session's `dbDir`. The one method-agnostic path (still an
  * exact pathname, so WP7-S1's disjointness holds). Must not know about: `server/*`,
- * `api-server.ts`. Contract: `http.txt` (409 with no session on any method, GET, POST 500 in mock
- * mode — C5-2, kept; the H8 viewer 403 during a session). Import-time effects: none.
+ * `api-server.ts`. Contract: `http.txt` (409 with no session on any method, GET, POST 200 in mock
+ * mode — the run directory exists since C5-2; the H8 viewer 403 during a session). Import-time effects: none.
  */
 
 import * as fs from 'fs';
