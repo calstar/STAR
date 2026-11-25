@@ -91,6 +91,24 @@ struct ActuatorServiceConfig {  // [actuator_service]
     std::string bind_address = "0.0.0.0";
 };
 
+struct SequencerConfig {  // [sequencer] — the command queue's two timings (D-LATE, issue #234)
+    /**
+     * How long a :9998 command may wait in the sequencer's queue before its waiter cancels it and
+     * replies "ERR:not executed". A transition runs in milliseconds; this covers a command queued
+     * behind a slow one (a hold-timer join during a controller notify is ~1.3 s). It must stay
+     * below the backend's 5 s overall deadline (`sequencer-client.ts` SEQUENCER_REPLY_DEADLINE_MS)
+     * together with wedge_threshold_ms, so the backend hears the sequencer's own answer and its
+     * timeout only ever means "no reply".
+     */
+    uint32_t command_deadline_ms = 1500;
+    /**
+     * How long the worker may be inside one command before the watchdog reports it wedged, and
+     * how long a waiter waits for a command the worker has already claimed. Normal work never
+     * gets near it (a transition plus its joins is well under 2 s).
+     */
+    uint32_t wedge_threshold_ms = 3000;
+};
+
 struct CalibrationConfig {  // [calibration.tc/.rtd/.lc]
     double tc_adc_ref_voltage = 2.5;
     double rtd_adc_ref_voltage = 2.5;
@@ -284,6 +302,7 @@ struct Config {
     ControllerServiceConfig controller_service;
     ControllerConfig controller;
     ActuatorServiceConfig actuator_service;
+    SequencerConfig sequencer;
     CalibrationConfig calibration;
     StateMachinePaths state_machine;
     std::vector<StateDef> states;

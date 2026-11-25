@@ -173,6 +173,13 @@ same buckets, but that has not been verified.
 - C1-10: every abort sent two ABORT bursts (8 datagrams), and abort -> abort broadcast again. Now
   one burst per abort; abort -> abort (escalation or self-transition) sends none and keeps the
   pending ABORT_DONE; leaving the aborts re-arms it (`default__aborts`, `packets/service_abort`).
+- D-LATE (#234): a :9998 waiter gave up after 10 s but left its command queued, so a transition
+  reported as failed could still run later. Each queued command now carries one atomic state
+  (`CommandQueue.hpp`): cancelled at `[sequencer].command_deadline_ms` (1.5 s) it never runs; a
+  line whose sender has already hung up is not run (aborts excepted). The unit test is
+  `lib/test/test_command_queue.cpp` (also under TSan); this area cannot stall the worker from
+  outside, so the end-to-end check is the pipeline `holds` note `late_transition_after_resume`.
+  The read-only `HEALTH` query (`HEALTH:OK` / `HEALTH:WEDGED:<ms>`) reports the worker watchdog.
 
 ## Found while characterizing (frozen as found, not fixed)
 - With `sequencer_owns_valves = true` the Fire column still skips the PWM-assigned roles, so nobody

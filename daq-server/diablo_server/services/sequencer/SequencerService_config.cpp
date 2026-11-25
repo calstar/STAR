@@ -106,6 +106,24 @@ bool SequencerService::applyConfig(const fsw::config::Config& cfg) {
     // Idle <-> Armed worked and nothing else did.
     StateMachine::loadStatesFromConfig(config_content_);
 
+    // [sequencer] command-queue timings (CommandQueue.hpp). Refused, not clamped, when they
+    // cannot work: together they must finish inside the backend's 5 s deadline, or its timeout
+    // stops meaning "no reply" and starts meaning "the sequencer is still deciding".
+    {
+        const uint32_t deadline = cfg.sequencer.command_deadline_ms;
+        const uint32_t wedge = cfg.sequencer.wedge_threshold_ms;
+        if (deadline < 100 || wedge < 500 || deadline + wedge >= 5000) {
+            std::cerr << "[SequencerService] [sequencer] command_deadline_ms = " << deadline
+                      << " and wedge_threshold_ms = " << wedge
+                      << " refused: need deadline >= 100, threshold >= 500, and their sum below "
+                         "the backend's 5000 ms reply deadline"
+                      << std::endl;
+            return false;
+        }
+        queue_options_.deadline = std::chrono::milliseconds(deadline);
+        queue_options_.wedge_threshold = std::chrono::milliseconds(wedge);
+    }
+
     // State machine CSV — path from config.toml (canonical: daq-server/config/).
     std::string sm_csv = resolveDataPath(cfg.state_machine.transitions_csv);
     if (!state_machine_.load(sm_csv)) {

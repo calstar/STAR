@@ -16,12 +16,22 @@
  *   SCRIPTS                          — read-only: what this process made of its dynamic states
  *                                      at startup (loaded, or refused and why). A query, not a
  *                                      push; the answer is fixed for the life of the run.
+ *   HEALTH                           — read-only: the command worker's watchdog, answered on the
+ *                                      connection thread without the queue: "HEALTH:OK" or
+ *                                      "HEALTH:WEDGED:<ms inside the current command>".
  *
  * There is deliberately no reload command. Config reaches this process once, at startup: the
  * backend deploys the active profile to config/ at session start and then the pipeline units are
  * started, so a running sequencer's config is frozen for the life of the run.
  *
- * Each command gets an immediate reply of "OK\n" or "ERR:<reason>\n".
+ * Each command gets one reply, "OK\n" or "ERR:<reason>\n", and the reply is the truth (D-LATE,
+ * CommandQueue.hpp). A command still queued at the [sequencer].command_deadline_ms deadline is
+ * cancelled and answered "ERR:not executed: ..." — it will never run. One the worker has claimed is
+ * waited for; past [sequencer].wedge_threshold_ms it is answered "ERR:pending: ..." (outcome not
+ * known yet), and so is an abort, which is never cancelled. A line whose sender has already hung up
+ * is not executed at all (an abort excepted): nobody is waiting on it, and running it later is the
+ * D-LATE stall a client already reported as failed. A client keeps its write side open until its
+ * reply arrives.
  * Multiple simultaneous TCP clients are supported (a bounded, joined thread per connection).
  * Commands are not executed on those threads: each is posted to SequencerService's command queue
  * and run by its single worker, which is what serializes access to the state machine.
@@ -36,6 +46,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -73,6 +84,19 @@ std::string trim(const std::string& s) {
  * queue and executed by its single worker thread, which is what serializes them. This function
  * parses, dispatches, and replies.
  */
+/**
+ * Whether the peer has already closed (or reset) its connection. A read-ahead peek that sees EOF
+ * with nothing left to read means the sender is gone: it timed out and closed while this process
+ * was stalled (SIGSTOP, a pinned host), and its line sat in the socket buffer until now.
+ */
+bool peerHungUp(int client_fd) {
+    char c;
+    const ssize_t n = recv(client_fd, &c, 1, MSG_PEEK | MSG_DONTWAIT);
+    if (n == 0)
+        return true;
+    return n < 0 && (errno == ECONNRESET || errno == EPIPE || errno == ENOTCONN);
+}
+
 void handleCommandLine(int client_fd, const std::string& raw, sequencer::SequencerService& svc) {
     auto sendReply = [&](const std::string& msg) {
         send(client_fd, msg.c_str(), msg.size(), MSG_NOSIGNAL);
@@ -81,6 +105,29 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
     const std::string cmd = trim(raw);
     if (cmd.empty())
         return;
+
+    // A request nobody is waiting for is not executed (D-LATE). The one exception is an abort:
+    // running it late is what the operator wanted, and it is never dropped.
+    if (peerHungUp(client_fd)) {
+        bool is_abort = false;
+        if (cmd.compare(0, 11, "TRANSITION:") == 0) {
+            // The name without its optional :VALVES= plan and :<ms> hold, as parsed below.
+            std::string name = trim(cmd.substr(11));
+            const size_t vmark = name.rfind(":VALVES=");
+            if (vmark != std::string::npos)
+                name = trim(name.substr(0, vmark));
+            const size_t colon = name.rfind(':');
+            if (colon != std::string::npos && colon > 0 &&
+                trim(name.substr(colon + 1)).find_first_not_of("0123456789") == std::string::npos)
+                name = trim(name.substr(0, colon));
+            is_abort = svc.isAbortStateName(name);
+        }
+        if (!is_abort) {
+            std::cerr << "[Sequencer] sender hung up before its command ran — not executing: "
+                      << cmd << std::endl;
+            return;
+        }
+    }
 
     // ── TRANSITION:<state_name> ──────────────────────────────────────────
     if (cmd.compare(0, 11, "TRANSITION:") == 0) {
@@ -173,22 +220,25 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
         // ── DEBUG_MODE:<0|1> ─────────────────────────────────────────────────
     } else if (cmd.compare(0, 11, "DEBUG_MODE:") == 0) {
         const std::string val = trim(cmd.substr(11));
-        if (val == "1" || val == "true") {
-            svc.setDebugMode(true);
-            sendReply("OK\n");
-        } else if (val == "0" || val == "false") {
-            svc.setDebugMode(false);
-            sendReply("OK\n");
+        if (val == "1" || val == "true" || val == "0" || val == "false") {
+            // OK unless the worker did not run it: the reply used to be OK unconditionally, which
+            // told a client debug mode had changed when the command was still queued.
+            std::string why;
+            if (svc.setDebugMode(val == "1" || val == "true", &why) || why.empty())
+                sendReply("OK\n");
+            else
+                sendReply("ERR:" + why + "\n");
         } else {
             sendReply("ERR:bad DEBUG_MODE value\n");
         }
 
         // ── EXTEND_FIRE ──────────────────────────────────────────────────────
     } else if (cmd == "EXTEND_FIRE") {
-        if (svc.extendFire())
+        std::string why;
+        if (svc.extendFire(&why))
             sendReply("OK\n");
         else
-            sendReply("ERR:not in FIRE state\n");
+            sendReply("ERR:" + (why.empty() ? std::string("not in FIRE state") : why) + "\n");
 
         // ── SCRIPTS ──────────────────────────────────────────────────────────
         // Read-only. Reports what this process made of its dynamic states at startup, so the GUI
@@ -199,6 +249,14 @@ void handleCommandLine(int client_fd, const std::string& raw, sequencer::Sequenc
         // load, and cannot change for the life of the run.
     } else if (cmd == "SCRIPTS") {
         sendReply(svc.scriptStatusReport());
+
+        // ── HEALTH ───────────────────────────────────────────────────────────
+        // Read-only, and never through the queue: it must answer while the worker is wedged.
+        // The backend polls it and raises the operator alert `sequencer_wedged`.
+    } else if (cmd == "HEALTH") {
+        const auto h = svc.workerHealth();
+        sendReply(h.wedged ? "HEALTH:WEDGED:" + std::to_string(h.busy_ms) + "\n"
+                           : std::string("HEALTH:OK\n"));
 
     } else {
         sendReply("ERR:unknown command\n");

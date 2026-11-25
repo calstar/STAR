@@ -30,13 +30,7 @@ SequencerService::~SequencerService() {
     // Drain order matters. Stop accepting work first, then let the worker finish what it holds,
     // and only then tear down the things a command body touches — otherwise the worker can be
     // mid-transition while fire_manager_ is being destroyed under it.
-    {
-        std::lock_guard<std::mutex> lk(cmd_mutex_);
-        cmd_stop_ = true;
-    }
-    cmd_cv_.notify_all();
-    if (cmd_thread_.joinable())
-        cmd_thread_.join();
+    cmd_queue_.stop();
 
     stopElodinRetry();
     actuator_commander_.stopContinuousLoop();
@@ -46,67 +40,18 @@ SequencerService::~SequencerService() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Command queue
 // ─────────────────────────────────────────────────────────────────────────────
-void SequencerService::commandLoop() {
-    for (;;) {
-        Command cmd;
-        {
-            std::unique_lock<std::mutex> lk(cmd_mutex_);
-            cmd_cv_.wait(lk, [this] {
-                return cmd_stop_ || !cmd_queue_.empty();
-            });
-            // Shutdown wins over draining: a queue full of transitions is not worth running while
-            // the process is going down, and the caller of each is already gone or giving up.
-            if (cmd_stop_ && cmd_queue_.empty())
-                return;
-            if (cmd_queue_.empty())
-                continue;
-            cmd = std::move(cmd_queue_.front());
-            cmd_queue_.pop_front();
-        }
-
-        bool ok = false;
-        try {
-            ok = cmd.fn();
-        } catch (const std::exception& e) {
-            std::cerr << "[SequencerService] command threw: " << e.what() << std::endl;
-        } catch (...) {
-            std::cerr << "[SequencerService] command threw an unknown exception" << std::endl;
-        }
-        // The promise must be fulfilled on every path including a throw, or a caller waiting on
-        // the future blocks for the full timeout on what was an immediate failure.
-        if (cmd.result)
-            cmd.result->set_value(ok);
-    }
+bool SequencerService::enqueueAndWait(CommandQueue::Body fn, std::string* refusal_reason,
+                                      bool cancellable) {
+    const CommandQueue::Reply r = cmd_queue_.submit(std::move(fn), cancellable);
+    // The body wrote its reason into the queue's storage, not the caller's: on kPending it may
+    // still be running after this returns (CommandQueue.hpp).
+    if (refusal_reason && !r.ok)
+        *refusal_reason = r.reason;
+    return r.outcome == CommandQueue::Outcome::kDone && r.ok;
 }
 
-bool SequencerService::enqueueAndWait(std::function<bool()> fn) {
-    auto result = std::make_shared<std::promise<bool>>();
-    auto future = result->get_future();
-    {
-        std::lock_guard<std::mutex> lk(cmd_mutex_);
-        if (cmd_stop_)
-            return false;
-        cmd_queue_.push_back(Command{std::move(fn), result});
-    }
-    cmd_cv_.notify_one();
-
-    if (future.wait_for(std::chrono::seconds(kCommandTimeoutSeconds)) !=
-        std::future_status::ready) {
-        std::cerr << "[SequencerService] command timed out after " << kCommandTimeoutSeconds
-                  << "s waiting for the worker — reporting failure (it may still run)" << std::endl;
-        return false;
-    }
-    return future.get();
-}
-
-void SequencerService::enqueueDetached(std::function<bool()> fn) {
-    {
-        std::lock_guard<std::mutex> lk(cmd_mutex_);
-        if (cmd_stop_)
-            return;
-        cmd_queue_.push_back(Command{std::move(fn), nullptr});
-    }
-    cmd_cv_.notify_one();
+void SequencerService::enqueueDetached(CommandQueue::Body fn) {
+    cmd_queue_.post(std::move(fn));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,10 +100,7 @@ bool SequencerService::init(const std::string& config_path) {
     // Start the command worker last. Everything above runs on the caller's thread before any
     // command can be accepted, so init() needs no serialization of its own — and starting the
     // worker earlier would let a command run against a half-initialized service.
-    cmd_stop_ = false;
-    cmd_thread_ = std::thread([this]() {
-        commandLoop();
-    });
+    cmd_queue_.start(queue_options_);
 
     std::cout << "[SequencerService] Initialized. Current state: "
               << StateMachine::name(current_state_.load()) << std::endl;
@@ -180,38 +122,40 @@ bool SequencerService::transitionTo(const std::string& state_name) {
 
 bool SequencerService::transitionTo(const std::string& state_name, uint32_t requested_hold_ms,
                                     std::string* refusal_reason) {
-    // Resolve on the worker, not here. fromName() reads the config-declared state table, which
-    // the worker owns — resolving on the caller's thread would read it from an arbitrary thread.
-    // enqueueAndWait blocks until the lambda has run, so refusal_reason stays alive throughout.
-    return enqueueAndWait([this, state_name, requested_hold_ms, refusal_reason]() {
-        State to = StateMachine::fromName(state_name);
-        if (to == State::UNKNOWN) {
-            std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
-            if (refusal_reason)
-                *refusal_reason = "unknown state";
-            return false;
-        }
-        return doTransitionTo(to, requested_hold_ms, refusal_reason);
-    });
+    // Resolve on the worker; the state the worker resolves is the one that runs. The caller
+    // only asks whether the name is an abort, to keep an abort from being cancelled at the
+    // deadline (isAbortStateName). The body reports into the queue's reason, never the caller's
+    // refusal_reason: on a pending reply the caller has returned while the body may still run.
+    return enqueueAndWait(
+        [this, state_name, requested_hold_ms](std::string* why) {
+            State to = StateMachine::fromName(state_name);
+            if (to == State::UNKNOWN) {
+                std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
+                *why = "unknown state";
+                return false;
+            }
+            return doTransitionTo(to, requested_hold_ms, why);
+        },
+        refusal_reason, !isAbortStateName(state_name));
 }
 
 bool SequencerService::transitionTo(const std::string& state_name, uint32_t requested_hold_ms,
                                     const ValvePlan& plan, std::string* refusal_reason) {
-    // The plan is captured BY VALUE and the pointer handed on points at that copy. enqueueAndWait
-    // blocks until the worker has run the lambda, so the copy outlives every use of the pointer —
-    // and a copy rather than a reference because a caller is free to let its own plan die the
-    // moment this returns.
-    return enqueueAndWait([this, state_name, requested_hold_ms, plan, refusal_reason]() {
-        State to = StateMachine::fromName(state_name);
-        if (to == State::UNKNOWN) {
-            std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
-            if (refusal_reason)
-                *refusal_reason = "unknown state";
-            return false;
-        }
-        return doTransitionTo(to, requested_hold_ms, refusal_reason,
-                              plan.empty() ? nullptr : &plan);
-    });
+    // The plan is captured BY VALUE and the pointer handed on points at that copy, which lives in
+    // the queued command as long as the body can run — a copy rather than a reference because a
+    // caller is free to let its own plan die the moment this returns (and on a pending reply it
+    // returns before the body has finished).
+    return enqueueAndWait(
+        [this, state_name, requested_hold_ms, plan](std::string* why) {
+            State to = StateMachine::fromName(state_name);
+            if (to == State::UNKNOWN) {
+                std::cerr << "[SequencerService] Unknown state: " << state_name << std::endl;
+                *why = "unknown state";
+                return false;
+            }
+            return doTransitionTo(to, requested_hold_ms, why, plan.empty() ? nullptr : &plan);
+        },
+        refusal_reason, !isAbortStateName(state_name));
 }
 
 bool SequencerService::transitionTo(State to) {
@@ -220,9 +164,16 @@ bool SequencerService::transitionTo(State to) {
 
 bool SequencerService::transitionTo(State to, uint32_t requested_hold_ms,
                                     std::string* refusal_reason) {
-    return enqueueAndWait([this, to, requested_hold_ms, refusal_reason]() {
-        return doTransitionTo(to, requested_hold_ms, refusal_reason);
-    });
+    return enqueueAndWait(
+        [this, to, requested_hold_ms](std::string* why) {
+            return doTransitionTo(to, requested_hold_ms, why);
+        },
+        refusal_reason, !isAbortState(to));
+}
+
+bool SequencerService::isAbortStateName(const std::string& state_name) const {
+    const State s = StateMachine::fromName(state_name);
+    return s != State::UNKNOWN && isAbortState(s);
 }
 
 /**
@@ -235,8 +186,7 @@ bool SequencerService::transitionTo(State to, uint32_t requested_hold_ms,
  */
 static uint32_t holdWindowMs(uint32_t requested_ms, uint32_t open_delay_ms,
                              uint32_t close_delay_ms) {
-    const int64_t want = static_cast<int64_t>(requested_ms) +
-                         static_cast<int64_t>(open_delay_ms) -
+    const int64_t want = static_cast<int64_t>(requested_ms) + static_cast<int64_t>(open_delay_ms) -
                          static_cast<int64_t>(close_delay_ms);
     // Clamp rather than wrap: unsigned underflow here would become a ~49-day hold, valves open.
     return want > 0 ? static_cast<uint32_t>(want) : 1;
@@ -245,9 +195,8 @@ static uint32_t holdWindowMs(uint32_t requested_ms, uint32_t open_delay_ms,
 SequencerService::HoldReference SequencerService::holdReferenceFor(State to, const HoldRule& rule,
                                                                    const ValvePlan* plan) const {
     const std::string state_name = StateMachine::name(to);
-    const std::string ret_name = rule.return_state != State::UNKNOWN
-                                     ? StateMachine::name(rule.return_state)
-                                     : std::string();
+    const std::string ret_name =
+        rule.return_state != State::UNKNOWN ? StateMachine::name(rule.return_state) : std::string();
 
     // What a valve's entry delay actually is on this run: the plan's if it names it, the CSV's
     // otherwise. Only the ENTRY side can be retimed — the close happens in the return state, which
@@ -387,9 +336,9 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
                 // abandoned. Nothing is stranded, but the operator would weigh a catch believing
                 // both sides flowed, so it is refused rather than logged.
                 const HoldReference ref = holdReferenceFor(to, rule, plan);
-                const uint32_t hold = holdWindowMs(
-                    requested_hold_ms != 0 ? requested_hold_ms : rule.default_ms,
-                    ref.open_delay_ms, ref.close_delay_ms);
+                const uint32_t hold =
+                    holdWindowMs(requested_hold_ms != 0 ? requested_hold_ms : rule.default_ms,
+                                 ref.open_delay_ms, ref.close_delay_ms);
                 for (const auto& [role, ov] : *plan) {
                     if (ov.hold_shut || ov.delay_ms < hold)
                         continue;
@@ -592,8 +541,8 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
             std::cout << "[SequencerService] Valve plan on " << StateMachine::name(to)
                       << ": window measured on \""
                       << (ref.role.empty() ? std::string("(the state)") : ref.role) << "\" (+"
-                      << ref.open_delay_ms << " ms / -" << ref.close_delay_ms
-                      << " ms), holding " << hold_ms << " ms" << std::endl;
+                      << ref.open_delay_ms << " ms / -" << ref.close_delay_ms << " ms), holding "
+                      << hold_ms << " ms" << std::endl;
         const State return_state = rule.return_state;
         // The controller is told a burn started only when it owns the valves. When the sequencer
         // owns them there is no notifier at all rather than a suppressed one — nothing to forget
@@ -615,7 +564,7 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
                                        // worker waiting on the join, this thread waiting on the
                                        // worker — and it would strand the rig in the held state
                                        // with the gate valve open.
-                                       enqueueDetached([this, return_state]() {
+                                       enqueueDetached([this, return_state](std::string*) {
                                            return doTransitionTo(return_state);
                                        });
                                    },
@@ -677,10 +626,12 @@ bool SequencerService::doTransitionTo(State to, uint32_t requested_hold_ms,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-bool SequencerService::setDebugMode(bool enabled) {
-    return enqueueAndWait([this, enabled]() {
-        return doSetDebugMode(enabled);
-    });
+bool SequencerService::setDebugMode(bool enabled, std::string* refusal_reason) {
+    return enqueueAndWait(
+        [this, enabled](std::string*) {
+            return doSetDebugMode(enabled);
+        },
+        refusal_reason);
 }
 
 bool SequencerService::doSetDebugMode(bool enabled) {
@@ -695,9 +646,11 @@ bool SequencerService::doSetDebugMode(bool enabled) {
 // ─────────────────────────────────────────────────────────────────────────────
 bool SequencerService::manualActuator(const std::string& name, int pos,
                                       std::string* refusal_reason) {
-    return enqueueAndWait([this, name, pos, refusal_reason]() {
-        return doManualActuator(name, pos, refusal_reason);
-    });
+    return enqueueAndWait(
+        [this, name, pos](std::string* why) {
+            return doManualActuator(name, pos, why);
+        },
+        refusal_reason);
 }
 
 bool SequencerService::doManualActuator(const std::string& name, int pos,
@@ -717,10 +670,12 @@ bool SequencerService::doManualActuator(const std::string& name, int pos,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-bool SequencerService::extendFire() {
-    return enqueueAndWait([this]() {
-        return doExtendFire();
-    });
+bool SequencerService::extendFire(std::string* refusal_reason) {
+    return enqueueAndWait(
+        [this](std::string*) {
+            return doExtendFire();
+        },
+        refusal_reason);
 }
 
 bool SequencerService::doExtendFire() {
@@ -748,7 +703,7 @@ ScriptEnv SequencerService::makeScriptEnv(const DynamicState& ds) {
     // a guaranteed deadlock, and it would strand the rig in the dynamic state with the script's
     // valves wherever it left them. This is the same trap documented for the fire timer's expiry.
     env.transition = [this](State target) {
-        enqueueDetached([this, target]() {
+        enqueueDetached([this, target](std::string*) {
             return doTransitionTo(target);
         });
     };

@@ -296,8 +296,8 @@ Config from_table(const toml::table& t, std::vector<std::string>& errors) {
     for (const char* sec :
          {"network", "database", "server_heartbeat", "heartbeat_service", "logs", "time_sync",
           "config_broadcast_service", "boards", "actuator_roles", "fire", "flow",
-          "controller_service", "controller", "actuator_service", "calibration", "state_machine",
-          "abort_pts"})
+          "controller_service", "controller", "actuator_service", "sequencer", "calibration",
+          "state_machine", "abort_pts"})
         r.table(t[sec], std::string("[") + sec + "]");
     for (const char* sec : {"tc", "rtd", "lc"})
         r.table(t["calibration"][sec], std::string("[calibration.") + sec + "]");
@@ -480,6 +480,12 @@ Config from_table(const toml::table& t, std::vector<std::string>& errors) {
     c.actuator_service.bind_address =
         r.ip(t["actuator_service"]["bind_address"], "[actuator_service].bind_address",
              c.actuator_service.bind_address);
+    c.sequencer.command_deadline_ms =
+        r.u32(t["sequencer"]["command_deadline_ms"], "[sequencer].command_deadline_ms",
+              c.sequencer.command_deadline_ms);
+    c.sequencer.wedge_threshold_ms =
+        r.u32(t["sequencer"]["wedge_threshold_ms"], "[sequencer].wedge_threshold_ms",
+              c.sequencer.wedge_threshold_ms);
 
     const auto cal = [&](const char* type, const char* key) {
         return t["calibration"][type][key];

@@ -75,3 +75,16 @@ actuator board 11 but has its own Elodin namespace (0x33-0x35), so the two never
 - `2240` — Elodin DB
 
 (The split `config_*_daq.toml` files set `[system.network] bind_port = 5005`.)
+
+## Sequencer command queue (`[sequencer]`, optional)
+
+```toml
+[sequencer]
+command_deadline_ms = 1500  # a :9998 command still queued this long is cancelled: "ERR:not executed: ..."
+wedge_threshold_ms = 3000   # the worker inside one command this long is reported wedged (alert `sequencer_wedged`)
+```
+
+Both default as shown. A command the sequencer cancelled never runs later; an abort is never
+cancelled. The two must add up to less than the backend's 5 s reply deadline
+(`backend/src/sequencer-client.ts` `SEQUENCER_REPLY_DEADLINE_MS`), or the sequencer refuses to
+start. See `diablo_server/lib/include/control/CommandQueue.hpp`.

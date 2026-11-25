@@ -393,7 +393,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
           -G Ninja
         cmake --build build-tsan --parallel $(nproc) \
-          --target test_sequencer_concurrency test_abort_ordering
+          --target test_sequencer_concurrency test_abort_ordering test_command_queue
 
     # Two things that will waste an afternoon if they are not spelled out:
     #
@@ -415,6 +415,7 @@ jobs:
       run: |
         setarch -R ./bin/test_sequencer_concurrency
         setarch -R ./bin/test_abort_ordering
+        setarch -R ./bin/test_command_queue
 
   test:
     name: Run Tests

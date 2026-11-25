@@ -229,8 +229,10 @@ the pt session from its `unlock` step on (client A, no header), the first reds n
 The backend's `:9998` line client (`sequencer-client.ts sendToSequencer`) has three replies no other
 session reaches (DESIGN-WP5 §6 G4, LEDGER D64(1), D70): an **accepted hold** — the sequencer answers
 `OK:<ms>` rather than `OK`, and the client's predicate must take it — and the two ways the
-sequencer can fail to answer: **stalled** (`State transition failed: timeout` after the client's
-2000 ms socket timeout) and **down** (`… connect ECONNREFUSED 127.0.0.1:<port>`). `pt` sends only
+sequencer can fail to answer: **stalled** (the warning `State transition: no reply from the
+sequencer within 5 s — state unknown, resyncing from the published state` and a `state_update`
+re-broadcast after the client's 5000 ms overall deadline; until #234 it was `State transition
+failed: timeout` after a 2000 ms idle timeout) and **down** (`… connect ECONNREFUSED 127.0.0.1:<port>`). `pt` sends only
 an invalid hold (`holdMs: -5`, rejected before the wire), and `test_integration.sh` sends an
 accepted one without asserting its errors, so none of the three was frozen.
 
@@ -258,7 +260,7 @@ park on the hub (`Idle → Armed → Press Standby`, the CSV's only route) → *
 auto-return `state_update` to 20 after 800 + 400 ms, all inside the step → **sequencer_stalled**:
 `SIGSTOP` the sequencer (its PID comes from `run.sh` through `ports.json`'s `sequencer_pid`),
 `state_transition {state: 20}` — a self-transition on the hub, so the line changes no state when
-it is eventually read — wait for the `timeout` error, note whether it arrived within T2, `SIGCONT`,
+it is eventually read — wait for the resyncing warning, note whether it arrived within T2, `SIGCONT`,
 settle: the backend destroyed its socket at 2 s but the connection and the line sit in the
 sequencer's listen backlog, so the resumed sequencer reads and applies it and its reply write fails
 harmlessly (`SIGPIPE` ignored, `MSG_NOSIGNAL`); whatever it publishes lands in this step (D-LATE:
@@ -269,9 +271,12 @@ no reply at all (its `.catch(() => {})` path) → disconnect. Nothing else, so a
 the WS/HTTP surface cannot fail this golden. ~45 s; it needs nothing a Mac lacks.
 
 What it freezes: the usual six files for its steps. The one timing line is categorical (P13):
-`= timeout_reply_within_2800ms: yes`. It is judged on CI (LEDGER D34: this Mac's timer overshoot
-can make it `no` under load); the bound is 2000 ms + a margin for that overshoot, narrower than
-the next round number, so a 3000 ms socket timeout goes red.
+`= timeout_reply_within_5800ms: yes`. It is judged on CI (LEDGER D34: this Mac's timer overshoot
+can make it `no` under load); the bound is 5000 ms + a margin for that overshoot, narrower than
+the next round number, so a 6000 ms deadline goes red. The second note, `=
+late_transition_after_resume: no`, is D-LATE (#234): after `SIGCONT` the sequencer finds the line
+with its sender already gone and does not run it (`sequencer_main.cpp` `peerHungUp`); before the
+fix it ran it and published, and the note read `yes`.
 ### The startup-log session (`run.sh startlog` → `golden/startlog/backend_startup.txt`)
 
 G12 (`DESIGN-WP6.md` §6.3 "startup-log diff"; LEDGER D96, where it also gates WP5). The backend
@@ -494,7 +499,7 @@ P7 also applies to history series (more than four distinct values → `<varies>`
 | bound | how | assumption |
 |---|---|---|
 | T1 | the 10 s `query_historical` of `PT1.CH1.raw_adc_counts`: median spacing of consecutive points within [0.9 W, 2 W], W = 2000 / `[gui] points_per_second` (4 → 500 ms) | the envelope (`gui-stream.ts`) opens a window at a sample and closes it at the first sample ≥ W later, emitting a constant stream's window at its first sample time; samples come every 100 ms (sim 10 Hz). Measured on sample timestamps, so load cannot move it |
-| T2 | `holds` `sequencer_stalled`: the `State transition failed: timeout` error frame arrives ≤ 2800 ms after the command was sent (`= timeout_reply_within_2800ms: yes`) | `sequencer-client.ts sendToSequencer` `socket.setTimeout(2000, …)` plus 800 ms for D34's macOS timer overshoot and the WS hop, below the next round number (a 3000 ms timeout fails). CI-judged (D34, D70) |
+| T2 | `holds` `sequencer_stalled`: the "state unknown, resyncing" warning arrives ≤ 5800 ms after the command was sent (`= timeout_reply_within_5800ms: yes`) | `sequencer-client.ts` `SEQUENCER_REPLY_DEADLINE_MS` (5000, overall) plus 800 ms for D34's macOS timer overshoot and the WS hop, below the next round number (a 6000 ms deadline fails). CI-judged (D34, D70) |
 | — | `QUIET_MS` 1.5 s / cap 20 s per step | a reply arrives within 20 s on a machine under 1× load |
 
 Determinism (final evidence, commit `d4b56670`):
@@ -552,7 +557,8 @@ Each applied to the backend source, run, reverted (none committed):
 | `server.ts`: `const isOp = authEmail === '' ? true : false` at the WS upgrade (every non-empty header a viewer) (H8b) | `operator/ws_handshake.txt` (client A `control_status` `operator: false`), `operator/ws_events.txt` `unlock` (`control_unlock_result` `not_operator`). pt, nocal, boards, stalesub stay green: no other session sends an operator's header over WS |
 | `server.ts`: `const op = false` in the `CONTROL_UNLOCK` handler (unlock always refuses) (H8b) | `operator/ws_events.txt` `unlock` (`not_operator`); also the pt session, from its `unlock` step (client A, no header) through everything A does armed after it (`ws_events.txt`, `http.txt`: no session ever starts) |
 | `sequencer-client.ts` `sendToSequencer`: the reply predicate `reply === 'OK' \|\| reply.startsWith('OK:')` → `reply === 'OK'` (holds) | `golden/holds/ws_events.txt` `hold_accepted`: one new line, `error` "State transition failed: OK:800" |
-| `sequencer-client.ts` `sendToSequencer`: `socket.setTimeout(2000, …)` → `3000` (holds) | `golden/holds/ws_events.txt` `sequencer_stalled`: `= timeout_reply_within_2800ms: no` |
+| `sequencer-client.ts` `SEQUENCER_REPLY_DEADLINE_MS`: `5000` → `6000` (holds) | `golden/holds/ws_events.txt` `sequencer_stalled`: `= timeout_reply_within_5800ms: no` |
+| `sequencer_main.cpp` `handleCommandLine`: drop the `peerHungUp` check (holds) | `golden/holds/ws_events.txt` `sequencer_stalled`: `= late_transition_after_resume: yes` (D-LATE) |
 | `sequencer-client.ts` `sendToSequencer`: `done(false, err.message)` → `done(false, 'connect error')` (holds) | `golden/holds/ws_events.txt` `sequencer_down`: the `ECONNREFUSED` error text |
 | `api-server.ts` `/api/engine_state`: answer 1 regardless of `getEngineState` (D64(3)) | `http.txt` `transition_armed`: `{"engineState": 2}` becomes "same as the earlier identical request" |
 | `server.ts` `getDebugInfo`: `ingestConnected: false` (D64(3)) | `http.txt`: all three `GET /api/debug?values` lines (P14 values) |
