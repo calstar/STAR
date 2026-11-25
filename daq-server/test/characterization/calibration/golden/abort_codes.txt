@@ -1,0 +1,11 @@
+== control: round-number targets (must not move under any contraction policy)
+R1 100.0 psi -> 382962801
+R2 200.0 psi -> 546668866
+R3 300.0 psi -> 706072555
+R4 400.0 psi -> 861342655
+R5 500.0 psi -> 1012636598
+R6 600.0 psi -> 1160102665
+R7 700.0 psi -> 1303881233
+R8 800.0 psi -> 1444105601
+R9 900.0 psi -> 1580902610
+R10 1000.0 psi -> 1714393131

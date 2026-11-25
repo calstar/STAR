@@ -48,6 +48,18 @@ set(FSW_SOURCES
 
 add_library(fsw_daq_lib SHARED ${FSW_SOURCES})
 
+# No floating-point contraction (a*b+c -> fma) in the calibration translation units, as in
+# calibration_service (services/CMakeLists.txt): the cubic and robust evaluation feed the
+# abort-threshold bisection, so a fused build on arm64 (the Jetson) would answer different ADC
+# codes from x86 at a rounding edge (D-WP9-FMA; test/characterization/calibration/abort_codes.py).
+# Scoped to these sources only; the rest of the library keeps the compiler default.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    set(_fsw_calibration_sources ${FSW_SOURCES})
+    list(FILTER _fsw_calibration_sources INCLUDE REGEX "^src/calibration/")
+    set_source_files_properties(${_fsw_calibration_sources} PROPERTIES
+        COMPILE_OPTIONS "-ffp-contract=off")
+endif()
+
 find_package(Eigen3 REQUIRED)
 
 target_include_directories(fsw_daq_lib PUBLIC

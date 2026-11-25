@@ -1,119 +1,34 @@
 
-== calibration.ts validateCalibrationCoefficients / calculatePressure ==
-zero valid(default) = true
-zero valid([0,16777216]) = true
-zero psi = [0,0,0,0,0,0,0,0,0,0,0,0,"<NaN>","<NaN>"]
-linearRaw valid(default) = true
-linearRaw valid([0,16777216]) = true
-linearRaw psi = [-214.75,-214.749999,-214.750001,-0.0016350000000215914,-213.75,-197.972784,185.25,858.991824,1932.733647,3785.25,4085.25,-2362.233648,"<NaN>","<NaN>"]
-cubicRaw valid(default) = true
-cubicRaw valid([0,16777216]) = true
-cubicRaw psi = [-124,-123.99999942,-124.00000058,0.47172149980158906,-123.420001999,-114.26977294758694,107.74399999999997,497.7023549500716,1122.220663532183,2228,2412.527,-1388.6674081911376,"<NaN>","<NaN>"]
-bigA valid(default) = false
-bigA valid([0,16777216]) = false
-bigA psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
-diverges valid(default) = false
-diverges valid([0,16777216]) = false
-diverges psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
-normCubic valid(default) = true
-normCubic valid([0,16777216]) = true
-normCubic psi = [-362.90809327846364,-362.9080920718793,-362.908094485048,-101.96618647408035,-361.70146777091907,-342.65341586959,125.8710562414266,971.6066575201351,2350.0680313071784,4682.908093278464,5040.99451303155,-2696.3215838910332,"<NaN>","<NaN>"]
-normZeroScale valid(default) = true
-normZeroScale valid([0,16777216]) = true
-normZeroScale psi = [0,0.000001,-0.000001,214.74836499999998,1,16.777216,400,1073.741824,2147.483647,4000,4300,-2147.483648,"<NaN>","<NaN>"]
-polyNorm valid(default) = true
-polyNorm valid([0,16777216]) = true
-polyNorm psi = [-362.9080932784637,-362.9080920718793,-362.90809448504797,-101.96618647408033,-361.70146777091907,-342.65341586959005,125.8710562414266,971.6066575201352,2350.0680313071784,4682.908093278464,5040.994513031551,-2696.3215838910332,"<NaN>","<NaN>"]
-polyNormWild valid(default) = false
-polyNormWild valid([0,16777216]) = false
-polyNormWild psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
-polyRaw valid(default) = true
-polyRaw valid([0,16777216]) = true
-polyRaw psi = [-100,-99.999999,-100.000001,114.74836499999998,-99,-83.222784,300,973.741824,2047.483647,3900,4200,-2247.483648,"<NaN>","<NaN>"]
-polyNaN valid(default) = false
-polyNaN valid([0,16777216]) = false
-polyNaN psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
-polyEmpty valid(default) = true
-polyEmpty valid([0,16777216]) = true
-polyEmpty psi = [1,1.000001,0.999999,215.74836499999998,2,17.777216,401,1074.741824,2148.483647,4001,4301,-2146.483648,"<NaN>","<NaN>"]
-nonFinite valid(default) = false
-nonFinite valid([0,16777216]) = false
-nonFinite psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
-negOut valid(default) = false
-negOut valid([0,16777216]) = true
-negOut psi = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>"]
-
-== calibration.ts inversePressureToAdc ==
-linear24 inv = ["<NaN>",0,1000000,1004000,1050000,2000000,5000000,11000000,16777216,"<NaN>",16777216]
-cubic24 inv = ["<NaN>","<NaN>",845137,851995,930978,2610624,8635549,"<NaN>","<NaN>","<NaN>",16777216]
-decreasing inv = ["<NaN>","<NaN>",16000000,15996000,15950000,15000000,12000000,6000000,222784,"<NaN>",16777216]
-flat inv = ["<NaN>","<NaN>","<NaN>","<NaN>",8388608,"<NaN>","<NaN>","<NaN>","<NaN>","<NaN>",16777216]
-rawCubic inv = ["<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>","<NaN>",16777216]
-
-== calibration.ts loadPTCalibration ==
-ts_fill.json filePath = "<TMP>/pt_ts_fill.json"
-ts_fill.json map = [[1,{"A":1e-27,"B":-2e-18,"C":5.8e-7,"D":-124}],[2,{"A":1.1e-27,"B":-2.1e-18,"C":5.82e-7,"D":-125}],[3,{"A":9e-28,"B":-1.9e-18,"C":5.81e-7,"D":-124.5}],[4,{"A":1e-27,"B":-2e-18,"C":5.83e-7,"D":-125.5}],[6,{"A":1.05e-27,"B":-2.05e-18,"C":5.79e-7,"D":-123.5}],[7,{"A":5e-25,"B":3e-15,"C":0.000009,"D":400}],[8,{"A":9.77734656920985e-28,"B":-1.919474986438215e-18,"C":5.814621519238273e-7,"D":-123.79560903399144}],[9,{"A":9.984387975327728e-28,"B":-2.1218981333670018e-18,"C":5.798694823246823e-7,"D":-123.35807651960671}],[10,{"A":1.0036562649465718e-27,"B":-2.0886088596588686e-18,"C":5.810184622304533e-7,"D":-125.27908787318393}],[11,{"A":0,"B":0,"C":1e-8,"D":0}],[12,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-120,1100,30,-5],"adcNormMin":200000000,"adcNormScale":900000000}],[14,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[10,20],"adcNormMin":0,"adcNormScale":1000000}]]
-  ts_fill.json ch 1 psi = [0.47172149980158906,249.0994460857014,497.7023549500716]
-  ts_fill.json ch 2 psi = [-0.10240310419121101,249.37317060438585,498.85834045153956]
-  ts_fill.json ch 3 psi = [0.19009119879443404,249.25845684901702,498.26759492060387]
-  ts_fill.json ch 4 psi = [-0.3840334051984087,249.5321813677014,499.4235804220716]
-  ts_fill.json ch 6 psi = [0.7551624678051923,248.94781815704368,497.13286405280564]
-  ts_fill.json ch 7 psi = ["<NaN>","<NaN>","<NaN>"]
-  ts_fill.json ch 8 psi = [0.9936002563542559,250.27328965992174,499.54199544984385]
-  ts_fill.json ch 9 psi = [1.07997950223276,249.60627270378632,498.0616644893313]
-  ts_fill.json ch 10 psi = [-0.592703427083535,248.44069791357003,497.419199746862]
-  ts_fill.json ch 11 psi = [2.14748365,6.4424509400000005,10.73741824]
-  ts_fill.json ch 12 psi = [-101.96618647408033,429.67429585288636,971.6066575201352]
-  ts_fill.json ch 14 psi = [4304.9673,12894.90188,21484.836479999998]
-gui_pt_calibration.json filePath = "<TMP>/pt_gui_pt_calibration.json"
-gui_pt_calibration.json map = [[101,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-0.39787479146300453,954.4969902395802,-9.975424323357409,40.89526936932684],"adcNormMin":243631936,"adcNormScale":1655525661}],[102,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-0.8467227299794714,966.6812202172131,27.570013147742536,-4.923363988834175],"adcNormMin":227271534,"adcNormScale":1694883670}],[103,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-1.2006443282406485,973.9964621940605,-10.509014782108991,26.273897221712023],"adcNormMin":227849356,"adcNormScale":1683398690}],[104,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-4.777417335753107,1079.9748562244172,-1915.1758181756172,1617.7563098863973],"adcNormMin":211610318,"adcNormScale":1911724898}],[105,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-1.151650304150204,966.5060717177354,7.006442618913653,16.556863155404525],"adcNormMin":243569905,"adcNormScale":1682084599}],[106,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-0.9135130227428291,965.080328136295,-2.0323920205992465,26.863536720458143],"adcNormMin":257955462,"adcNormScale":1689416269}],[107,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[-0.5551911233692589,966.1262850972694,4.987105835569494,-12.811962],"adcNormMin":214268841,"adcNormScale":1684817961}],[1101,{"A":0,"B":0,"C":1e-8,"D":0}],[1103,{"A":0,"B":0,"C":1e-8,"D":0}],[1104,{"A":0,"B":0,"C":1e-8,"D":0}]]
-  gui_pt_calibration.json ch 101 psi = [-17.054015283346185,230.571882361737,480.85131847726626]
-  gui_pt_calibration.json ch 102 psi = [-7.987836925216947,238.5705834500527,488.2031665256242]
-  gui_pt_calibration.json ch 103 psi = [-8.78138636345428,239.47612072953092,488.90375306757375]
-  gui_pt_calibration.json ch 104 psi = [-3.0098196939530775,160.29277344071676,241.13555837772276]
-  gui_pt_calibration.json ch 105 psi = [-17.710195253503176,229.6929321050674,479.5524092462313]
-  gui_pt_calibration.json ch 106 psi = [-25.59737878460549,219.96961376246827,467.655867490816]
-  gui_pt_calibration.json ch 107 psi = [-0.2802169531031102,246.11823341680957,491.8899711503762]
-  gui_pt_calibration.json ch 1101 psi = [2.14748365,6.4424509400000005,10.73741824]
-  gui_pt_calibration.json ch 1103 psi = [2.14748365,6.4424509400000005,10.73741824]
-  gui_pt_calibration.json ch 1104 psi = [2.14748365,6.4424509400000005,10.73741824]
-profiles/restored-sep05.json filePath = "<TMP>/pt_restored-sep05.json"
-profiles/restored-sep05.json map = [[2,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[257.04376570014495,512.4782826560757,11.496535664744025,-39.73085251379725],"adcNormMin":706461387.6302084,"adcNormScale":860068972.046875}],[3,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[230.07799699768304,488.3144270242733,-11.143244029364073,59.16328594318461],"adcNormMin":618715876.7756697,"adcNormScale":870437145.7734375}],[11,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[227.55418457149202,508.6426853937093,9.818215070147435,-32.59103632245569],"adcNormMin":489696551.1629464,"adcNormScale":166212264.78125}],[13,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[256.3866033478879,510.73487177920856,7.3956295929398825,-33.76083091116416],"adcNormMin":498706788.21875,"adcNormScale":165743768.2734375}],[14,{"A":0,"B":0,"C":0,"D":0,"polyCoeffs":[232.42796988927824,510.0160594517714,12.837239118686318,-34.81477869819433],"adcNormMin":491031395.08928573,"adcNormScale":166056566.3984375}]]
-  profiles/restored-sep05.json ch 2 psi = [-24.764829170996023,220.04693954295428,474.8929528020355]
-  profiles/restored-sep05.json ch 3 psi = [-4.861475567821824,244.3917712491366,490.7537625790748]
-  profiles/restored-sep05.json ch 11 psi = [-439.45217904510343,682.7920113778916,722.0791768028444]
-  profiles/restored-sep05.json ch 13 psi = [-427.1440761507399,687.7035184806584,707.4742705054243]
-  profiles/restored-sep05.json ch 14 psi = [-420.24901676856985,686.5819274808105,675.8379299379662]
-
 == calibration-handler.ts ==
-elodin capture_reference ok = ["publish [46,0] c054b1ed301e62180100350800807a43","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_reference ok = ["publish [46,0] c054b1ed301e62180100350800807a43","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
 elodin capture_reference no ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_reference requires sensorId and a numeric referencePressure (PSI)\"}}"]
 elodin capture_reference bad ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_reference requires sensorId and a numeric referencePressure (PSI)\"}}"]
 elodin capture_reference not active = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 9 on Board 21 is not a valid PT/LC channel\"}}"]
-elodin capture_reference uid form = ["publish [46,0] c054b1ed301e6218010069100000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin capture_cubic_point = ["publish [46,0] c054b1ed301e621803009b0800409c44","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_reference uid form = ["publish [46,0] c054b1ed301e6218010069100000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_cubic_point = ["publish [46,0] c054b1ed301e621803009b0800409c44","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
 elodin capture_cubic_point bad = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_cubic_point requires sensorId and a numeric referencePressure (PSI)\"}}"]
-elodin clear_cubic_channel = ["publish [46,0] c054b1ed301e62180400370800000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin clear_cubic_channel = ["publish [46,0] c054b1ed301e62180400370800000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
 elodin clear_cubic_channel none = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"clear_cubic_channel requires sensorId and boardId\"}}"]
-elodin tare_lc one = ["publish [46,0] c054b1ed301e62180800691000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin tare_lc all = ["publish [46,0] c054b1ed301e62180800000000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin clear_tare_lc one = ["publish [46,0] c054b1ed301e621808006e100000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin clear_tare_lc all zero = ["publish [46,0] c054b1ed301e6218080000000000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin tare_lc one = ["publish [46,0] c054b1ed301e62180800691000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin tare_lc all = ["publish [46,0] c054b1ed301e62180800000000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin clear_tare_lc one = ["publish [46,0] c054b1ed301e621808006e100000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin clear_tare_lc all zero = ["publish [46,0] c054b1ed301e6218080000000000803f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
 elodin tare_lc unknown = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Unknown channel for tare_lc: CH5 on board 42\"}}"]
-elodin tare_lc t7 = ["publish [46,0] c054b1ed301e62180800a81f00000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin capture_point = ["publish [46,0] c054b1ed301e62180500aa1f000050c0","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin capture_point big ref = ["publish [46,0] c054b1ed301e6218050035080000807f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin tare_lc t7 = ["publish [46,0] c054b1ed301e62180800a81f00000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_point = ["publish [46,0] c054b1ed301e62180500aa1f000050c0","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin capture_point big ref = ["publish [46,0] c054b1ed301e6218050035080000807f","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
 elodin capture_point not active = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 2 on Board 81 is not a valid PT/LC channel\"}}"]
-elodin new_calibration = ["publish [46,0] c054b1ed301e621806006a1000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin new_calibration = ["publish [46,0] c054b1ed301e621806006a1000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
 elodin new_calibration none = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"new_calibration requires sensorId and boardId\"}}"]
-elodin enable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin disable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin reset_channel = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"reset_channel is not supported from the GUI; edit adjustments on disk or restart calibration_service.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin zero_all = ["publish [46,0] c054b1ed301e62180000000000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin clear_calibration = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-  host after clear_calibration = {"pt":{"<Map>":[[2101,{"A":0,"B":0,"C":1e-8,"D":0}],[2102,{"A":0,"B":0,"C":1e-8,"D":0}],[2103,{"A":0,"B":0,"C":1e-8,"D":0}],[2104,{"A":0,"B":0,"C":1e-8,"D":0}],[2105,{"A":0,"B":0,"C":1e-8,"D":0}],[2201,{"A":0,"B":0,"C":1e-8,"D":0}],[2202,{"A":0,"B":0,"C":1e-8,"D":0}],[2203,{"A":0,"B":0,"C":1e-8,"D":0}],[2204,{"A":0,"B":0,"C":1e-8,"D":0}],[4201,{"A":0,"B":0,"C":1e-8,"D":0}],[4202,{"A":0,"B":0,"C":1e-8,"D":0}],[4206,{"A":0,"B":0,"C":1e-8,"D":0}],[8101,{"A":0,"B":0,"C":1e-8,"D":0}],[8104,{"A":0,"B":0,"C":1e-8,"D":0}],[8106,{"A":0,"B":0,"C":1e-8,"D":0}]]},"points":{"<Map>":[]},"raw":{"<Map>":[]}}
-elodin unknown = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-elodin null payload = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin enable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin disable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin reset_channel = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"reset_channel is not supported from the GUI; edit adjustments on disk or restart calibration_service.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin zero_all = ["publish [46,0] c054b1ed301e62180000000000000000","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin save_coefficients = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin clear_calibration = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+  host after clear_calibration = {"raw":{"<Map>":[[2101,5]]}}
+elodin unknown = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+elodin null payload = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
 no-elodin capture_reference ok = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — start calibration_service and DB; cannot forward capture_reference.\"}}"]
 no-elodin capture_reference no ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_reference requires sensorId and a numeric referencePressure (PSI)\"}}"]
 no-elodin capture_reference bad ref = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"capture_reference requires sensorId and a numeric referencePressure (PSI)\"}}"]
@@ -134,14 +49,15 @@ no-elodin capture_point big ref = ["send {\"type\":\"error\",\"timestamp\":17570
 no-elodin capture_point not active = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Channel 2 on Board 81 is not a valid PT/LC channel\"}}"]
 no-elodin new_calibration = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"Elodin not connected — cannot forward new_calibration.\"}}"]
 no-elodin new_calibration none = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"new_calibration requires sensorId and boardId\"}}"]
-no-elodin enable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-no-elodin disable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-no-elodin reset_channel = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"reset_channel is not supported from the GUI; edit adjustments on disk or restart calibration_service.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-no-elodin zero_all = ["broadcast {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"ZERO ALL failed: Elodin not connected. Start calibration_service and the database.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-no-elodin clear_calibration = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-  host after clear_calibration = {"pt":{"<Map>":[[2101,{"A":0,"B":0,"C":1e-8,"D":0}],[2102,{"A":0,"B":0,"C":1e-8,"D":0}],[2103,{"A":0,"B":0,"C":1e-8,"D":0}],[2104,{"A":0,"B":0,"C":1e-8,"D":0}],[2105,{"A":0,"B":0,"C":1e-8,"D":0}],[2201,{"A":0,"B":0,"C":1e-8,"D":0}],[2202,{"A":0,"B":0,"C":1e-8,"D":0}],[2203,{"A":0,"B":0,"C":1e-8,"D":0}],[2204,{"A":0,"B":0,"C":1e-8,"D":0}],[4201,{"A":0,"B":0,"C":1e-8,"D":0}],[4202,{"A":0,"B":0,"C":1e-8,"D":0}],[4206,{"A":0,"B":0,"C":1e-8,"D":0}],[8101,{"A":0,"B":0,"C":1e-8,"D":0}],[8104,{"A":0,"B":0,"C":1e-8,"D":0}],[8106,{"A":0,"B":0,"C":1e-8,"D":0}]]},"points":{"<Map>":[]},"raw":{"<Map>":[]}}
-no-elodin unknown = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
-no-elodin null payload = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"calibrationFilePath\":null,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin enable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin disable_phase2 = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin reset_channel = ["send {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"reset_channel is not supported from the GUI; edit adjustments on disk or restart calibration_service.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin zero_all = ["broadcast {\"type\":\"error\",\"timestamp\":1757000000123,\"payload\":{\"message\":\"ZERO ALL failed: Elodin not connected. Start calibration_service and the database.\"}}","broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin save_coefficients = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin clear_calibration = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+  host after clear_calibration = {"raw":{"<Map>":[[2101,5]]}}
+no-elodin unknown = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
+no-elodin null payload = ["broadcast {\"type\":\"calibration_status\",\"timestamp\":1757000000123,\"payload\":{\"channels\":[],\"phase2Enabled\":true,\"timestamp\":1757000000123,\"message\":\"Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.\"}}"]
 publishCalibrationReload + publishClearAllTares = ["publish [46,0] c054b1ed301e62180700000000000000","publish [46,0] c054b1ed301e6218080000000000803f"]
 publish without elodin = []
 fallback board maps sensor 1 = "publish [46,0] c054b1ed301e6218050035080000803f"
@@ -169,39 +85,34 @@ tarePath = "<TMP>/calibrations/lc_tare.json"
 COMPONENT_TARED = "force_kg_tared"
 absent: map = {"<Map>":[]}
 absent: expand = [{"entity":"LC2_Cal.CH1","component":"force_kg","value":30.5,"timestamp":1},{"entity":"LC2_Cal.CH1","component":"raw_adc","value":123,"timestamp":1},{"entity":"LC2_Cal.CH6","component":"force_kg","value":-2,"timestamp":2},{"entity":"T71_Cal.AIN4","component":"force_kg","value":125,"timestamp":3},{"entity":"LC9_Cal.CH9","component":"force_kg","value":7,"timestamp":4},{"entity":"LC2_Cal.CH1","component":"force_kg","value":"<NaN>","timestamp":5},{"entity":"LC2_Cal.CH1","component":"force_kg_tared","value":30.5,"timestamp":1},{"entity":"LC2_Cal.CH6","component":"force_kg_tared","value":-2,"timestamp":2},{"entity":"T71_Cal.AIN4","component":"force_kg_tared","value":125,"timestamp":3},{"entity":"LC9_Cal.CH9","component":"force_kg_tared","value":7,"timestamp":4}]
-fixture: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}],["ignored",{"uid":0,"offsetKg":1,"adcAtTare":1,"setAtMs":1}]]}
-fixture: offsets = [17.5,0,1.25,0,1]
+fixture: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}]]}
+fixture: offsets = [17.5,0,1.25,0,0]
 fixture: expand = [{"entity":"LC2_Cal.CH1","component":"force_kg","value":30.5,"timestamp":1},{"entity":"LC2_Cal.CH1","component":"raw_adc","value":123,"timestamp":1},{"entity":"LC2_Cal.CH6","component":"force_kg","value":-2,"timestamp":2},{"entity":"T71_Cal.AIN4","component":"force_kg","value":125,"timestamp":3},{"entity":"LC9_Cal.CH9","component":"force_kg","value":7,"timestamp":4},{"entity":"LC2_Cal.CH1","component":"force_kg","value":"<NaN>","timestamp":5},{"entity":"LC2_Cal.CH1","component":"force_kg_tared","value":13,"timestamp":1},{"entity":"LC2_Cal.CH6","component":"force_kg_tared","value":-2,"timestamp":2},{"entity":"T71_Cal.AIN4","component":"force_kg_tared","value":123.75,"timestamp":3},{"entity":"LC9_Cal.CH9","component":"force_kg_tared","value":7,"timestamp":4}]
-fixture: current = [{"entity":"LC2_Cal.CH1","uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000},{"entity":"LC2_Cal.CH6","uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000},{"entity":"T71_Cal.AIN4","uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000},{"entity":"ignored","uid":0,"offsetKg":1,"adcAtTare":1,"setAtMs":1}]
+fixture: current = [{"entity":"LC2_Cal.CH1","uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000},{"entity":"LC2_Cal.CH6","uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000},{"entity":"T71_Cal.AIN4","uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}]
 no force rows: expand returns same array = true
-changed: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}],["LC3_Cal.CH2",{"uid":0,"offsetKg":2.5,"adcAtTare":0,"setAtMs":0}]]}
-torn: map (held) = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}],["LC3_Cal.CH2",{"uid":0,"offsetKg":2.5,"adcAtTare":0,"setAtMs":0}]]}
-no tares array: map (held) = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}],["LC3_Cal.CH2",{"uid":0,"offsetKg":2.5,"adcAtTare":0,"setAtMs":0}]]}
+changed: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}]]}
+torn: map (held) = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}]]}
+no tares array: map (held) = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":20,"adcAtTare":1100000,"setAtMs":5}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":1,"adcAtTare":4100000,"setAtMs":6}]]}
 removed: map = {"<Map>":[]}
-rewritten: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}],["ignored",{"uid":0,"offsetKg":1,"adcAtTare":1,"setAtMs":1}]]}
+rewritten: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}]]}
 clearTareFile: exists = false
 after clearTareFile: map = {"<Map>":[]}
 --- run lc_tare.jsonl ---
 {"entity":"LC2_Cal.CH1","uid":4201,"event":"set","offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000,"appliedAtMs":1757000000123}
 {"entity":"LC2_Cal.CH6","uid":4206,"event":"set","offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000,"appliedAtMs":1757000000123}
 {"entity":"T71_Cal.AIN4","uid":8104,"event":"set","offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000,"appliedAtMs":1757000000123}
-{"entity":"ignored","uid":0,"event":"set","offsetKg":1,"adcAtTare":1,"setAtMs":1,"appliedAtMs":1757000000123}
 {"entity":"LC2_Cal.CH1","uid":4201,"event":"recal","offsetKg":20,"adcAtTare":1100000,"setAtMs":5,"appliedAtMs":1757000000123}
 {"entity":"LC2_Cal.CH6","uid":4206,"event":"set","offsetKg":1,"adcAtTare":4100000,"setAtMs":6,"appliedAtMs":1757000000123}
-{"entity":"LC3_Cal.CH2","uid":0,"event":"set","offsetKg":2.5,"adcAtTare":0,"setAtMs":0,"appliedAtMs":1757000000123}
 {"entity":"T71_Cal.AIN4","uid":8104,"event":"clear","offsetKg":0,"adcAtTare":2500,"setAtMs":1757000022000,"appliedAtMs":1757000000123}
-{"entity":"ignored","uid":0,"event":"clear","offsetKg":0,"adcAtTare":1,"setAtMs":1,"appliedAtMs":1757000000123}
 {"entity":"LC2_Cal.CH1","uid":4201,"event":"clear","offsetKg":0,"adcAtTare":1100000,"setAtMs":5,"appliedAtMs":1757000000123}
 {"entity":"LC2_Cal.CH6","uid":4206,"event":"clear","offsetKg":0,"adcAtTare":4100000,"setAtMs":6,"appliedAtMs":1757000000123}
-{"entity":"LC3_Cal.CH2","uid":0,"event":"clear","offsetKg":0,"adcAtTare":0,"setAtMs":0,"appliedAtMs":1757000000123}
 {"entity":"LC2_Cal.CH1","uid":4201,"event":"set","offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000,"appliedAtMs":1757000000123}
 {"entity":"LC2_Cal.CH6","uid":4206,"event":"set","offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000,"appliedAtMs":1757000000123}
 {"entity":"T71_Cal.AIN4","uid":8104,"event":"set","offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000,"appliedAtMs":1757000000123}
-{"entity":"ignored","uid":0,"event":"set","offsetKg":1,"adcAtTare":1,"setAtMs":1,"appliedAtMs":1757000000123}
 
 --- end run lc_tare.jsonl ---
-no run dir: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}],["ignored",{"uid":0,"offsetKg":1,"adcAtTare":1,"setAtMs":1}]]}
-no run dir: jsonl unchanged lines = 17
+no run dir: map = {"<Map>":[["LC2_Cal.CH1",{"uid":4201,"offsetKg":17.5,"adcAtTare":1100000,"setAtMs":1757000020000}],["LC2_Cal.CH6",{"uid":4206,"offsetKg":0,"adcAtTare":4000000,"setAtMs":1757000021000}],["T71_Cal.AIN4",{"uid":8104,"offsetKg":1.25,"adcAtTare":2500,"setAtMs":1757000022000}]]}
+no run dir: jsonl unchanged lines = 12
 
 == ball-valve-cal.ts ==
 constants = [496,2482,100,1000,3]

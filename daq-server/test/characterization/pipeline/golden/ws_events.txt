@@ -86,7 +86,7 @@
 
 ## calibration_command
 > A {"type":"calibration_command","payload":{"commandType":"char_probe"}}
-< A {"payload": {"calibrationFilePath": "<fx>/srv/calibration/calibration_2026-02-25T03-44-09.json", "channels": [], "message": "Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.", "phase2Enabled": true, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "calibration_status"}
+< A {"payload": {"channels": [], "message": "Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.", "phase2Enabled": true, "timestamp": "<ts>"}, "timestamp": "<ts>", "type": "calibration_status"}
 
 ## unsupported_command
 > A {"type":"send_command","payload":{"commandType":"controller_frequency","data":{"frequency":10}}}

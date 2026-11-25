@@ -14,3 +14,14 @@
   PT1.* sensor updates resumed on the WS: True
   SELF_TEST.BOARD_21 components re-delivered: ['sensor_0', 'sensor_1', 'sensor_2', 'sensor_3', 'sensor_4', 'sensor_5', 'sensor_6', 'sensor_7', 'sensor_8', 'sensor_9', 'sensor_10']
   backend Elodin (re)subscription announcements over the session: 1
+
+== calibration_service started before elodin-db, which comes up 2 s later
+  retrying with backoff (attempt 2 logged, 500 ms): True
+  alive while elodin-db is down: True
+  connected and subscribed within [0, 6] s: backoff cap 4000 ms + 100 ms wait slice, + 1.9 s
+  SIGTERM: exit 0 within [0, 3.5] s: timing assumption, README
+== calibration_service with elodin-db unreachable, SIGTERM while it retries
+  retrying with backoff (attempt 2 logged, 500 ms): True
+  SIGTERM: exit 0 within [0, 1] s: 100 ms backoff wait slice, a refused connect is immediate, + 0.9 s
+  handler line: '\n[CalibrationService] Caught signal, shutting down...'
+  final line: '[Cal] Stopped.'

@@ -1,31 +1,17 @@
 /**
- * Calibration command handling — zero_all, capture_reference, save coefficients, etc.
+ * Calibration command handling — zero_all, capture_reference, captures and tares, etc.
  * Extracted from server.ts.
  */
 
-import * as fs from 'fs';
 import { t7Channels } from '../../shared/config-validation.js';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
 import { WebSocket } from 'ws';
-import { loadPTCalibration, CalibrationCoefficients } from './calibration.js';
 import { readConfig } from './routes/config.js';
 import {
     MessageType,
 } from '../../shared/types.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-/** Single (ADC code, pressure) calibration point — human value is guidance for the fit, not a fixed intercept. */
-export interface CalibrationPoint { adc: number; pressure: number; }
-
 /** Minimal interface for the parts of SensorSystemServer that calibration needs. */
 export interface CalibrationHost {
-    ptCalibration: Map<number, CalibrationCoefficients>;
-    /** Absolute path of the calibration file loaded at startup (null = none found). */
-    ptCalibrationFilePath: string | null;
-    /** Accumulated (adc, pressure) points per channel for ADC→pressure fit. */
-    calibrationPoints: Map<number, CalibrationPoint[]>;
     /** calibration_service (FSW) owns RLS / robust adjustments; backend only forwards commands via Elodin. */
     calibrationSidecar?: any;
     channelToEntityMap?: Record<number, string>;
@@ -35,8 +21,6 @@ export interface CalibrationHost {
     send(ws: WebSocket, message: any): void;
     broadcast(message: any): void;
     elodin?: any; // Elodin client for publishing commands
-    /** If set, called after ptCalibration is updated so the UI can show the new fit immediately. */
-    pushCalibrationUpdate?(uniqueId: number): void;
 }
 
 /**
@@ -340,79 +324,6 @@ export function handleCalibrationCommand(
             console.log('✅ Zero all forwarded as global command (sensor_id=0)');
             break;
         }
-        case 'save_coefficients': {
-            const calibrationDir = path.join(__dirname, '../../../calibration');
-            try {
-                if (!fs.existsSync(calibrationDir)) {
-                    fs.mkdirSync(calibrationDir, { recursive: true });
-                }
-                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-                const filename = path.join(calibrationDir, `calibration_${ts}.json`);
-                const calibration_polynomials: Record<string, number[]> = {};
-                const calibration_poly_coeffs: Record<string, number[]> = {};
-                const calibration_adc_norm_min: Record<string, number> = {};
-                const calibration_adc_norm_scale: Record<string, number> = {};
-                const channelsToSave = getActiveChannels(host);
-                for (const ch of channelsToSave) {
-                    const ptCoeffs = host.ptCalibration.get(ch);
-                    const coeffs = (ptCoeffs?.polyCoeffs?.length ? ptCoeffs : null) ?? ptCoeffs;
-                    if (coeffs) {
-                        calibration_polynomials[String(ch)] = [coeffs.A, coeffs.B, coeffs.C, coeffs.D];
-                        if (coeffs.polyCoeffs?.length) calibration_poly_coeffs[String(ch)] = coeffs.polyCoeffs;
-                        if (coeffs.adcNormMin != null) calibration_adc_norm_min[String(ch)] = coeffs.adcNormMin;
-                        if (coeffs.adcNormScale != null) calibration_adc_norm_scale[String(ch)] = coeffs.adcNormScale;
-                    }
-                }
-                if (Object.keys(calibration_polynomials).length === 0) {
-                    host.send(ws, {
-                        type: MessageType.ERROR, timestamp: Date.now(),
-                        payload: { message: 'No calibration coefficients to save' }
-                    });
-                    return;
-                }
-                const data: Record<string, unknown> = {
-                    sensor_type: 'PT',
-                    unit: 'PSI',
-                    framework: 'phase2_rls',
-                    created: new Date().toISOString(),
-                    phase: 'MONITORING',
-                    calibration_polynomials,
-                };
-                if (Object.keys(calibration_poly_coeffs).length > 0) data.calibration_poly_coeffs = calibration_poly_coeffs;
-                if (Object.keys(calibration_adc_norm_min).length > 0) data.calibration_adc_norm_min = calibration_adc_norm_min;
-                if (Object.keys(calibration_adc_norm_scale).length > 0) data.calibration_adc_norm_scale = calibration_adc_norm_scale;
-                fs.writeFileSync(filename, JSON.stringify(data, null, 2));
-                console.log(`💾 Calibration saved to ${filename}`);
-                host.ptCalibrationFilePath = filename;
-
-                // Also trigger save in C++ service
-                publishCalibrationCommand(host, 2, 0, 0);
-
-                host.send(ws, {
-                    type: MessageType.CALIBRATION_STATUS, timestamp: Date.now(),
-                    payload: { message: 'Calibration saved', path: filename }
-                });
-            } catch (err) {
-                console.error('❌ Save calibration failed:', err);
-                host.send(ws, {
-                    type: MessageType.ERROR, timestamp: Date.now(),
-                    payload: { message: String(err) }
-                });
-            }
-            break;
-        }
-        case 'clear_calibration': {
-            const defaultCoeffs: CalibrationCoefficients = { A: 0, B: 0, C: 1e-8, D: 0 };
-            host.ptCalibration.clear();
-            host.calibrationPoints.clear();
-            const channelsToClear = getActiveChannels(host);
-            for (const ch of channelsToClear) {
-                host.ptCalibration.set(ch, { ...defaultCoeffs });
-            }
-            host.lastRawAdc.clear();
-            console.log('🗑️ Calibration cleared — capture points (incl. a 0 psi point) to build the ADC→pressure fit');
-            break;
-        }
         default:
             console.warn('⚠️ Unknown calibration command:', commandType);
     }
@@ -424,7 +335,6 @@ export function handleCalibrationCommand(
             channels: [],
             phase2Enabled: true,
             timestamp: Date.now(),
-            calibrationFilePath: host.ptCalibrationFilePath,
             message: 'Robust calibration runs in calibration_service (FSW); GUI displays Elodin streams.',
         },
     });

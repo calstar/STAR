@@ -69,17 +69,26 @@ export function resetTareState(): void {
   _held = new Map();
 }
 
+/** board_id*100 + connector, as the service writes it: a positive integer that fits its u16. */
+function isValidUid(uid: unknown): uid is number {
+  return typeof uid === 'number' && Number.isInteger(uid) && uid >= 1 && uid <= 0xffff;
+}
+
 function parseTareFile(text: string): TareMap {
   const map: TareMap = new Map();
   const root = JSON.parse(text) as { tares?: TareRecord[] };
   if (!root || !Array.isArray(root.tares)) throw new Error('no tares array');
   for (const t of root.tares) {
     if (!t || typeof t.entity !== 'string' || !t.entity) continue;
+    // A record without a valid uid (board_id*100 + connector, a u16; 0 is never one) is skipped,
+    // exactly as LcTareStore::load skips it on the C++ side, so both readers of this file agree
+    // on which tares exist.
+    if (!isValidUid(t.uid)) continue;
     // A non-finite offset is refused rather than clamped to 0: it means the service wrote
     // something it should not have, and silently treating it as "no tare" would hide that.
     if (!Number.isFinite(t.offset_kg)) continue;
     map.set(t.entity, {
-      uid: Number(t.uid) || 0,
+      uid: t.uid,
       offsetKg: t.offset_kg,
       adcAtTare: Number.isFinite(t.adc_at_tare) ? t.adc_at_tare : 0,
       setAtMs: Number.isFinite(t.set_at_ms) ? t.set_at_ms : 0,

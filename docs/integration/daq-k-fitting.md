@@ -62,8 +62,9 @@ The physics is not the hard part:
    value of a measured K is that it does not depend on the fitting-K bookkeeping
    being right — see the double-count trap in `docs/integration/line-loss-plan.md`.
 
-The one real subtlety: the DAQ's transducers are calibrated in
-`daq-server/calibration/*.json` as ADC→PSI polynomials. Those are transducer
+The one real subtlety: the DAQ's transducers are calibrated by `calibration_service`
+(its cubic store, `daq-server/scripts/calibration/calibrations/cubic_calibration.json`) as
+ADC→PSI polynomials. Those are transducer
 calibrations, **not** line coefficients, and the two should never be conflated.
 A K fit consumes the calibrated pressures, it does not produce a calibration.
 

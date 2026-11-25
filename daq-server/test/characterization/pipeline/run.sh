@@ -244,21 +244,17 @@ fi
 
 # The backend runs from a copy of its own source under the fixture (srv/, the same layout as
 # daq-server/), so everything it resolves relative to its own file lands in the fixture rather
-# than in the checkout: its PT calibration (calibration.ts: <srv>/calibration/*.json, newest by
-# mtime -- in a checkout every committed file shares one mtime, so the pick was filesystem order:
-# macOS got one dated file, a Linux export another with no coefficients), /api/cubic_calibration
-# (<srv>/scripts/calibration/calibrations), the state-CSV loaders (<srv>/../config = the
-# fixture's), the state-script checker (<srv>/build). The source is copied unchanged from this
-# checkout at every run, so a change to it is what runs. pt: one calibration file, chosen by name;
-# nocal: none.
+# than in the checkout: the state-CSV loaders (<srv>/../config = the fixture's), the state-script
+# checker (<srv>/build). The source is copied unchanged from this checkout at every run, so a
+# change to it is what runs. (The backend's legacy PT store, <srv>/calibration/*.json, was deleted
+# with calibration.ts, C3-2, so pt and nocal now start the backend identically.)
 SRV="$FX/srv"
-mkdir -p "$SRV/diablo_server/backend" "$SRV/calibration" "$SRV/scripts/calibration"
+mkdir -p "$SRV/diablo_server/backend" "$SRV/scripts/calibration"
 cp -R "$BACKEND/src" "$BACKEND/package.json" "$SRV/diablo_server/backend/"
 ln -s "$BACKEND/node_modules" "$SRV/diablo_server/backend/node_modules"
 cp -R "$ROOT/diablo_server/shared" "$SRV/diablo_server/shared"
 ln -s "$FX/scripts/calibration/calibrations" "$SRV/scripts/calibration/calibrations"
 ln -s "$BUILD" "$SRV/build"
-[ "$MODE" = nocal ] || cp "$ROOT/calibration/calibration_2026-02-25T03-44-09.json" "$SRV/calibration/"
 CFG="$FX/config/config.toml"
 # unrecognized: the backend reads its own copy of the config (make_fixture.py config_backend/);
 # every service keeps $CFG.

@@ -1541,8 +1541,25 @@ int main(int argc, char* argv[]) {
         return true;
     };
 
-    if (!connect_and_register())
-        return 1;
+    // Elodin may not be up yet (the units start together): retry with backoff, capped, logging
+    // each attempt, instead of exiting 1 (C6-9). The wait is sliced so SIGTERM/SIGINT still ends
+    // the service promptly; it then falls through to the normal shutdown path below and exits 0.
+    {
+        constexpr int kConnectBackoffStartMs = 250;
+        constexpr int kConnectBackoffMaxMs = 4000;
+        constexpr int kConnectWaitSliceMs = 100;
+        int backoff_ms = kConnectBackoffStartMs;
+        int attempt = 1;
+        while (running && !connect_and_register()) {
+            elodin_client.disconnect();  // a half-done attempt (connected, subscribe failed)
+            std::cerr << "[Cal] Elodin not reachable (attempt " << attempt << "), retrying in "
+                      << backoff_ms << " ms" << std::endl;
+            for (int waited = 0; running && waited < backoff_ms; waited += kConnectWaitSliceMs)
+                std::this_thread::sleep_for(std::chrono::milliseconds(kConnectWaitSliceMs));
+            backoff_ms = std::min(backoff_ms * 2, kConnectBackoffMaxMs);
+            ++attempt;
+        }
+    }
     // Allow read_packet() to yield every 1 s so a refused subscription is asked for again (below)
     // on the tracker's 1 s retry even when nothing else is arriving.
     elodin_client.set_recv_timeout_ms(1000);

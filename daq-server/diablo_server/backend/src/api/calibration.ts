@@ -2,36 +2,29 @@
  * api/calibration — calibration as files and live state: status, cubic store, ball-valve
  * endpoints, LC tares, calibration profiles.  [WP7 1.10]
  *
- * Owns: the module constant `SRC_DIR` (from `import.meta.url`, STYLE-S30; WP7-S3): the two
- * `__dirname` candidates of `GET /api/cubic_calibration` are re-rooted on it so this one-level-
- * deeper file resolves the same paths `api-server.ts` did — step 1's only non-verbatim edit.
- * Stores belong to `routes/calibration-profiles.ts`, `ball-valve-cal.ts`, `lc-tare.ts` and
- * `calibration_service` (sole writer of the cubic store). Must not know about: `server/*`
+ * `GET /api/cubic_calibration` reads routes/calibration-profiles.livePath(). Stores belong to
+ * `routes/calibration-profiles.ts`, `ball-valve-cal.ts`, `lc-tare.ts` and `calibration_service` (sole writer of the cubic store). Must not know about: `server/*`
  * (Elodin cmd 7 is reached through `opts.onCalibrationReload`, synchronously, before the
  * response), `api-server.ts`. Contract: `http.txt` (the cubic body, the 403s on save /
  * ball_valve_cal, the H8 viewer 403s on load / new_blank), `boards/http.txt`. Kept verbatim:
  * `/api/calibration_status` always answers the error object (D-API1); bad JSON on the
- * `readJsonBody` routes is a 500 through the router (D-API2); `cubic_calibration` ignores
- * `DAQ_CALIBRATIONS_DIR` (C5-5). Import-time effects: none.
+ * `readJsonBody` routes is a 500 through the router (D-API2). Import-time effects: none.
  */
 
 import * as fs from 'fs';
-import * as path from 'path';
-import { fileURLToPath } from 'url';
 import { IncomingMessage, ServerResponse } from 'http';
 import {
   listCalibrationProfiles,
   saveCalibrationProfile,
   loadCalibrationProfile,
   newBlankCalibration,
+  livePath,
 } from '../routes/calibration-profiles.js';
 import { currentTares } from '../lc-tare.js';
 import { captureEndpoint, clearEndpoints, valveCalibrationSnapshot } from '../ball-valve-cal.js';
 import { clearCurrents, currentsSnapshot, endTrial, saveTrialAs, setCurrents, startTrial } from '../ball-valve-current.js';
 import { isConfigWriteAuthorized, readJsonBody } from './http.js';
 import type { APIHandlerOptions } from './http.js';
-
-const SRC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 export async function handleCalibrationRequest(req: IncomingMessage, res: ServerResponse, url: URL, opts: APIHandlerOptions): Promise<boolean> {
   const { getCalibrationStatus, onCalibrationReload } = opts;
@@ -43,20 +36,13 @@ export async function handleCalibrationRequest(req: IncomingMessage, res: Server
   }
   if (url.pathname === '/api/cubic_calibration' && req.method === 'GET') {
     // Read-only view of the calibration service's cubic_calibration.json (the service is the
-    // sole writer; it rewrites the file atomically per capture). Search the same candidate
-    // roots loadPTCalibration() uses, covering both dev (tsx) and dist layouts.
-    const candidates = [
-      path.join(SRC_DIR, '../../../scripts/calibration/calibrations/cubic_calibration.json'),
-      path.join(SRC_DIR, '../../../../scripts/calibration/calibrations/cubic_calibration.json'),
-      path.join(process.cwd(), 'scripts/calibration/calibrations/cubic_calibration.json'),
-      path.join(process.cwd(), '../../scripts/calibration/calibrations/cubic_calibration.json'),
-    ];
+    // sole writer; it rewrites the file atomically per capture). The path is livePath(), the one
+    // every other calibration route uses, so DAQ_CALIBRATIONS_DIR is honoured here too (C5-5).
     let body: string | null = null;
-    for (const c of candidates) {
-      try {
-        if (fs.existsSync(c)) { body = fs.readFileSync(c, 'utf8'); break; }
-      } catch { /* try next candidate */ }
-    }
+    try {
+      const live = livePath();
+      if (fs.existsSync(live)) body = fs.readFileSync(live, 'utf8');
+    } catch { /* unreadable: answered as empty below */ }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     if (body == null) {
       res.end(JSON.stringify({ cubic_state: {} }));

@@ -136,3 +136,20 @@ describe('POST /api/calibration_profiles/new_blank as the operator', () => {
     expect(atCall[0]).toMatchObject({ headersSent: false, writableEnded: false });
   });
 });
+
+// C5-5: GET /api/cubic_calibration used to search fixed repo paths and never DAQ_CALIBRATIONS_DIR,
+// so it could show a different store from the one load / new_blank had just written.
+describe('GET /api/cubic_calibration reads the same live store the profile routes write', () => {
+  it('serves the store a load has just swapped in', async () => {
+    expect((await post('/api/calibration_profiles/load', { name: 'hotfire' })).status).toBe(200);
+    const res = await fetch(`${base}/api/cubic_calibration`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(HOTFIRE_CAL);
+  });
+
+  it('answers an empty store when DAQ_CALIBRATIONS_DIR holds none, whatever the checkout has', async () => {
+    const res = await fetch(`${base}/api/cubic_calibration`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ cubic_state: {} });
+  });
+});

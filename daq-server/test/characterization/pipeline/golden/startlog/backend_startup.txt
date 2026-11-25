@@ -1,21 +1,5 @@
 ## backend startup log, first line to the end of the synchronous start (G12)
 [ThinServer] GUI downsampling: envelope @ 4 pts/s per stream (encoders @ 100 pts/s)
-🔍 Searching for calibration files…
-   __dirname: <fx>/srv/diablo_server/backend/src
-   ⚠️ <fx>/srv/scripts/calibration/calibrations — no calibration JSON files
-📋 Loading calibration from: <fx>/srv/calibration/calibration_2026-02-25T03-44-09.json
-✅ Loaded PT calibration: 10 sensors
-   Sensor 101: A=0.00e+0, B=0.00e+0, C=0.00e+0, D=0.00
-   Sensor 102: A=0.00e+0, B=0.00e+0, C=0.00e+0, D=0.00
-   Sensor 103: A=0.00e+0, B=0.00e+0, C=0.00e+0, D=0.00
-   Sensor 104: A=0.00e+0, B=0.00e+0, C=0.00e+0, D=0.00
-   Sensor 105: A=0.00e+0, B=0.00e+0, C=0.00e+0, D=0.00
-   Sensor 106: A=0.00e+0, B=0.00e+0, C=0.00e+0, D=0.00
-   Sensor 107: A=0.00e+0, B=0.00e+0, C=0.00e+0, D=0.00
-   Sensor 1101: A=0.00e+0, B=0.00e+0, C=1.00e-8, D=0.00
-   Sensor 1103: A=0.00e+0, B=0.00e+0, C=1.00e-8, D=0.00
-   Sensor 1104: A=0.00e+0, B=0.00e+0, C=1.00e-8, D=0.00
-[ThinServer] Loaded 10 PT calibrations from <fx>/srv/calibration/calibration_2026-02-25T03-44-09.json
 📋 Loaded sensor role map from config.toml (14 channels): {
   '1': 'PT_Cal.Fuel_Upstream',
   '2': 'PT_Cal.GSE_Low',

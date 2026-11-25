@@ -33,6 +33,14 @@ target_link_libraries(controller_service
 # ── Calibration Service ───────────────────────────────────────────────────────
 add_executable(calibration_service calibration/calibration_main.cpp)
 target_include_directories(calibration_service PRIVATE ${COMMON_INCLUDES})
+# No floating-point contraction (a*b+c -> fma) in this target. The abort thresholds are ADC codes
+# found by bisecting the streaming conversion (invert_abort_psi_to_adc / select_pt_psi), and
+# whether gcc fused those multiply-adds used to depend on how it inlined unrelated code in this
+# file, so a last-bit change could move a code (D-WP9-FMA). Pinned by
+# test/characterization/calibration/abort_codes.py.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(calibration_service PRIVATE -ffp-contract=off)
+endif()
 target_link_libraries(calibration_service
     fsw_daq_lib daq_comms_lib Eigen3::Eigen Threads::Threads pthread ${RT_LIBRARY}
 )

@@ -74,6 +74,8 @@ P = {
         (27, "P_CTRL_NODB"),
         # the loopback copy of SERVER_HEARTBEAT the backend watches (C6-3)
         (28, "P_HB_MON"),
+        # calibration_service started before its elodin-db (cal_late_elodin)
+        (29, "P_CAL_LATE_DB"),
     ]
 }
 FSW_PORT, OTA_BOARD_PORT = 5008, 3232
@@ -1914,6 +1916,58 @@ def signals(r: Run):
     )
 
 
+def cal_late_elodin(r: Run):
+    """calibration_service started before elodin-db (C6-9): it retries with a capped backoff
+    instead of exiting 1, connects once the db is up, and a SIGTERM while it is still retrying
+    ends it cleanly."""
+    g = "reconnect"
+    cal_cli = lambda port, tag: [  # noqa: E731
+        "--config", r.cfg, "--adjustments", os.path.join(r.work, f"adj_{tag}.json"),
+        "--elodin-host", "127.0.0.1", "--elodin-port", str(port),
+    ]
+    retry_rx = r"\[Cal\] Elodin not reachable \(attempt 2\), retrying in 500 ms"
+    ready_rx = r"\[Cal\] Connected to Elodin, registered calibrated VTables, subscribed\."
+
+    r.emit(g, "")
+    r.emit(g, "== calibration_service started before elodin-db, which comes up 2 s later")
+    cal = r.svc("late_cal", "calibration_service", *cal_cli(P["P_CAL_LATE_DB"], "late"))
+    retrying = cal.wait_log(retry_rx, 15)
+    r.emit(g, f"  retrying with backoff (attempt 2 logged, 500 ms): {retrying}")
+    time.sleep(max(0.0, 2.0 - 0.75))
+    r.emit(g, f"  alive while elodin-db is down: {cal.alive()}")
+    el = r.start(
+        "late_elodin",
+        [r.elodin, "run", f"127.0.0.1:{P['P_CAL_LATE_DB']}", os.path.join(r.work, "db_late")],
+    )
+    stack.wait_tcp(P["P_CAL_LATE_DB"], 15)
+    t = time.monotonic()
+    ok = cal.wait_log(ready_rx, 10)
+    dt = time.monotonic() - t if ok else 99
+    r.emit(
+        g,
+        f"  connected and subscribed within {N.bucket(dt, [bound(0, 6.0, 'backoff cap 4000 ms + 100 ms wait slice, + 1.9 s')])}",
+    )
+    rc, dt = r.stop(cal)
+    r.emit(
+        g,
+        f"  SIGTERM: exit {rc} within {N.bucket(dt if dt is not None else 99, [bound(0, 3.5, 'timing assumption, README')])}",
+    )
+    r.stop(el)
+
+    r.emit(g, "== calibration_service with elodin-db unreachable, SIGTERM while it retries")
+    cal = r.svc("nodb_cal", "calibration_service", *cal_cli(P["P_DEAD_CTRL"], "nodb"))
+    retrying = cal.wait_log(retry_rx, 15)
+    r.emit(g, f"  retrying with backoff (attempt 2 logged, 500 ms): {retrying}")
+    before = cal.output()
+    rc, dt = r.stop(cal)
+    r.emit(
+        g,
+        f"  SIGTERM: exit {rc} within {N.bucket(dt if dt is not None else 99, [bound(0, 1.0, '100 ms backoff wait slice, a refused connect is immediate, + 0.9 s')])}",
+    )
+    for ln in handler_tail(before, cal.output()):
+        r.emit(g, ln)
+
+
 # ── main ─────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -1975,6 +2029,7 @@ def main() -> int:
         signals(r)
         sim_board(r)
         ball_valve_heartbeat_loss(r)
+        cal_late_elodin(r)
     finally:
         # The work dir is deleted on cleanup: keep the output of every process that exited
         # non-zero on its own (not by our signal), to print if the run fails.
