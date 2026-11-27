@@ -9,7 +9,8 @@ import { ReimbursementDetail } from "@/components/finance/ReimbursementDetail";
 import { ReimbursementTable } from "@/components/finance/ReimbursementTable";
 import type { TagOptions } from "@/components/finance/ReimbursementTags";
 import { Modal } from "@/components/Modal";
-import { loadReimbursement } from "@/lib/actions/finance";
+import { bulkSetReimbursementStatus, loadReimbursement } from "@/lib/actions/finance";
+import { BULK_ACTIONS, BULK_LABEL, bulkApplies, type BulkAction } from "@/lib/finance/bulk";
 import type { FinanceDetail, FinanceRow } from "@/lib/finance/queries";
 
 const chip = (active: boolean) =>
@@ -21,8 +22,18 @@ const chip = (active: boolean) =>
 
 /** The Reimbursements tab: filters, the reimbursement table, and the detail card
  * (opened in place, or from a `?r=<number>` share link). */
-export function FinanceWorkspace({ rows, admin, tagOptions }: { rows: FinanceRow[]; admin: boolean; tagOptions: TagOptions }) {
+export function FinanceWorkspace({
+  rows,
+  viewer,
+  tagOptions,
+}: {
+  rows: FinanceRow[];
+  viewer: { isAdmin: boolean; isPvp: boolean };
+  tagOptions: TagOptions;
+}) {
+  const admin = viewer.isAdmin || viewer.isPvp;
   const router = useRouter();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [mine, setMine] = useState(false);
@@ -55,6 +66,9 @@ export function FinanceWorkspace({ rows, admin, tagOptions }: { rows: FinanceRow
       return true;
     });
   }, [rows, search, status, mine, review]);
+
+  // Only rows still shown count, so a filter change never acts on hidden ones.
+  const picked = useMemo(() => filtered.filter((r) => selected.has(r.id)), [filtered, selected]);
 
   const openRow = useCallback((n: number) => {
     setData(null);
@@ -133,8 +147,20 @@ export function FinanceWorkspace({ rows, admin, tagOptions }: { rows: FinanceRow
         </p>
       </div>
 
+      {admin && picked.length > 0 && (
+        <BulkBar
+          rows={picked}
+          viewer={viewer}
+          onDone={() => {
+            setSelected(new Set());
+            router.refresh();
+          }}
+          onClear={() => setSelected(new Set())}
+        />
+      )}
+
       <div className="mt-4">
-        <ReimbursementTable rows={filtered} onOpen={openRow} />
+        <ReimbursementTable rows={filtered} onOpen={openRow} selection={admin ? { selected, onChange: setSelected } : undefined} />
       </div>
 
       {open != null && (
@@ -161,6 +187,107 @@ export function FinanceWorkspace({ rows, admin, tagOptions }: { rows: FinanceRow
           )}
         </Modal>
       )}
+    </div>
+  );
+}
+
+const bulkBtn = "min-h-11 rounded px-3 py-1.5 text-sm font-medium disabled:opacity-50 sm:min-h-0";
+const bulkField =
+  "min-h-11 rounded border border-blue-300 bg-white px-2 py-1.5 text-sm text-neutral-900 dark:border-blue-800 dark:bg-neutral-900 dark:text-neutral-100 sm:min-h-0";
+
+/**
+ * Set one status on every selected reimbursement. Only the changes that apply
+ * to at least one of them are offered, with how many each would move; rows it
+ * doesn't apply to are left alone, and the server checks each one again.
+ */
+function BulkBar({
+  rows,
+  viewer,
+  onDone,
+  onClear,
+}: {
+  rows: FinanceRow[];
+  viewer: { isAdmin: boolean; isPvp: boolean };
+  onDone: () => void;
+  onClear: () => void;
+}) {
+  const [action, setAction] = useState<BulkAction | "">("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const options = BULK_ACTIONS.map((a) => ({ a, n: rows.filter((r) => bulkApplies(a, r.rawStatus, viewer)).length })).filter(
+    (o) => o.n > 0,
+  );
+  const chosen = options.find((o) => o.a === action);
+  const targets = chosen ? rows.filter((r) => bulkApplies(chosen.a, r.rawStatus, viewer)) : [];
+
+  async function apply() {
+    if (!chosen) return;
+    const extra = chosen.a === "send" ? " The worker files them on CalLink under MISC-STAR." : "";
+    if (!window.confirm(`${BULK_LABEL[chosen.a]}: ${targets.map((r) => `R-${r.number}`).join(", ")}?${extra}`)) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await bulkSetReimbursementStatus(
+        targets.map((r) => r.id),
+        chosen.a,
+        chosen.a === "reject" ? note : undefined,
+      );
+      if ("error" in res) setMessage(res.error);
+      else if (res.failed.length) {
+        setMessage(`${res.done} done; ${res.failed.map((f) => `R-${f.number}: ${f.error}`).join("; ")}`);
+        if (res.done) onDone();
+      } else onDone();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="sticky top-2 z-10 mt-4 flex flex-col gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-950 shadow-sm dark:border-blue-900 dark:bg-blue-950 dark:text-blue-100">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{rows.length} selected</span>
+        {options.length === 0 ? (
+          <span className="text-blue-800 dark:text-blue-300">No status change applies to these.</span>
+        ) : (
+          <>
+            <select
+              aria-label="Set status"
+              value={action}
+              onChange={(e) => setAction(e.target.value as BulkAction | "")}
+              className={bulkField}
+            >
+              <option value="">Set status…</option>
+              {options.map((o) => (
+                <option key={o.a} value={o.a}>
+                  {BULK_LABEL[o.a]} ({o.n === rows.length ? "all" : `${o.n} of ${rows.length}`})
+                </option>
+              ))}
+            </select>
+            {chosen?.a === "reject" && (
+              <input
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                placeholder="Why? Each member sees this."
+                aria-label="Reason for rejecting"
+                className={`${bulkField} min-w-48 flex-1 px-3`}
+              />
+            )}
+            <button
+              type="button"
+              disabled={busy || !chosen || (chosen.a === "reject" && !note.trim())}
+              onClick={apply}
+              className={`${bulkBtn} bg-neutral-900 text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300`}
+            >
+              {busy ? "Working…" : chosen ? `${BULK_LABEL[chosen.a]} ${targets.length}` : "Apply"}
+            </button>
+          </>
+        )}
+        <button type="button" onClick={onClear} className={`${bulkBtn} ml-auto hover:bg-blue-100 dark:hover:bg-blue-900`}>
+          Clear
+        </button>
+      </div>
+      {message && <p role="alert">{message}</p>}
     </div>
   );
 }

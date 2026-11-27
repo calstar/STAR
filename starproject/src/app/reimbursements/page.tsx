@@ -37,7 +37,7 @@ export default async function ReimbursementsPage() {
       )}
       <FinanceWorkspace
         rows={rows}
-        admin={viewer.isAdmin || viewer.isPvp}
+        viewer={{ isAdmin: viewer.isAdmin, isPvp: viewer.isPvp }}
         tagOptions={{ projects, subteams: subteams.map((s) => ({ id: s.id, name: s.name })) }}
       />
     </main>

@@ -4,6 +4,7 @@ import { budgetOptions } from "@/lib/actions/budget";
 import { addPvp, removePvp } from "@/lib/actions/pvp";
 import {
   approvePurchaseRequest,
+  bulkDecidePurchaseRequests,
   cancelPurchaseRequest,
   createPurchaseRequest,
   rejectPurchaseRequest,
@@ -138,6 +139,36 @@ export const purchaseRequestTools: ToolModule = (server) => {
       annotations: WRITE,
     },
     async ({ number }) => check(await cancelPurchaseRequest((await byNumber(number)).id), number),
+  );
+
+  defineTool(
+    server,
+    "bulk_decide_purchase_requests",
+    {
+      description:
+        "The Purchase Requests page's Set status on several waiting requests at once, by PR number: approve (every " +
+        "line of each; PVPs only, use approve_purchase_request to pick lines), reject (one reason for all; PVPs " +
+        "only) or cancel (whoever made it, or a PVP). Each goes through the single-request action; one that can't " +
+        "move is listed in failed and the rest still move. Returns { done, failed: [{ number, error }] }.",
+      inputSchema: {
+        numbers: z.array(numberSchema).min(1).max(200),
+        action: z.enum(["approve", "reject", "cancel"]),
+        reason: z.string().min(1).max(MAX_NOTE).optional().describe("Required for reject"),
+      },
+      annotations: DESTRUCTIVE,
+    },
+    async ({ numbers, action, reason }) => {
+      const ids: string[] = [];
+      const missing: { number: number; error: string }[] = [];
+      for (const n of numbers) {
+        const r = await getPurchaseRequest({ number: n });
+        if (r) ids.push(r.id);
+        else missing.push({ number: n, error: `There is no PR-${n}.` });
+      }
+      const res = await bulkDecidePurchaseRequests(ids, action, reason);
+      if ("error" in res) throw new Error(res.error);
+      return { ...res, failed: [...res.failed, ...missing] };
+    },
   );
 
   defineTool(
