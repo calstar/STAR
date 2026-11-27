@@ -29,8 +29,12 @@ export function starproject() {
     result: (id, body) => call('POST', `/api/worker/jobs/${id}/result`, body),
     release: id => call('POST', `/api/worker/jobs/${id}/release`),
     heartbeat: body => call('POST', '/api/worker/heartbeat', body),
-    /** true once per admin press of "Sign in to CalLink". */
-    loginRequested: async () => (await call('GET', '/api/worker/login')).login === true,
+    /** { login, work }: login is true once per admin press of "Sign in to CalLink";
+     * work, that a claim would find a job (an older STARProject leaves it out). */
+    poll: async () => {
+      const out = await call('GET', '/api/worker/login');
+      return { login: out.login === true, work: out.work === true };
+    },
     reportLogin: (state, note) => call('POST', '/api/worker/login', { state, note }),
     /** CalLink's financeAccount objects, as read at `asOf`. */
     accounts: (accounts, asOf) => call('POST', '/api/worker/accounts', { accounts, asOf }),

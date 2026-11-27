@@ -3,6 +3,7 @@ import type { ReimbursementStatus } from "@prisma/client";
 import { isAdmin } from "@/lib/admins";
 import { isPvp } from "@/lib/pvp";
 import { canSeePii, isMine, redact, type DetailDto, type ItemDto, type PiiDto, type Viewer } from "@/lib/finance/access";
+import { bulkApplies } from "@/lib/finance/bulk";
 import { displayStatus, needsAdmin, needsPvp, type Tone } from "@/lib/finance/status";
 import { prisma } from "@/lib/db";
 import { displayNameOf } from "@/lib/names";
@@ -29,6 +30,8 @@ export type FinanceRow = {
   /** When it went to CalLink, or when it was filed here if it hasn't yet. */
   date: string;
   status: { key: string; label: string; tone: Tone };
+  /** Our own status (what the bulk actions move), under the displayed one. */
+  rawStatus: ReimbursementStatus;
   callinkRequestNumber: string | null;
   vendors: string;
   mine: boolean;
@@ -37,7 +40,10 @@ export type FinanceRow = {
   /** Filed through STARProject, or imported from CalLink. */
   source: "callink" | "starproject";
   projectId: string | null;
+  /** "LE4 › Engine". */
+  projectLabel: string | null;
   subteamId: string | null;
+  subteamName: string | null;
 };
 
 export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
@@ -64,8 +70,10 @@ export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
       source: true,
       projectId: true,
       subteamId: true,
+      subteam: { select: { name: true } },
     },
   });
+  const tree = await getProjectTree();
   return rows
     .map((r) => ({
       id: r.id,
@@ -76,13 +84,16 @@ export async function listFinanceRows(viewer: Viewer): Promise<FinanceRow[]> {
       amountCents: r.amountCents,
       date: (r.submittedOn ?? r.createdAt).toISOString(),
       status: displayStatus(r),
+      rawStatus: r.status,
       callinkRequestNumber: r.callinkRequestNumber,
       vendors: [...new Set(r.items.map((i) => i.vendor).filter(Boolean))].join(", "),
       mine: isMine(viewer, r),
       needsAdmin: (viewer.isAdmin && needsAdmin(r)) || (viewer.isPvp && needsPvp(r)),
       source: r.source,
       projectId: r.projectId,
+      projectLabel: r.projectId ? pathOf(tree, r.projectId) || null : null,
       subteamId: r.subteamId,
+      subteamName: r.subteam?.name ?? null,
     }))
     .sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -162,7 +173,6 @@ export async function getFinanceDetail(number: number, viewer: Viewer): Promise<
     : null;
 
   const owner = !!r.createdById && r.createdById === viewer.id;
-  const staff = viewer.isAdmin || viewer.isPvp;
   const items: ItemDto[] = r.items.map((i) => ({
     position: i.position,
     date: i.date,
@@ -224,13 +234,11 @@ export async function getFinanceDetail(number: number, viewer: Viewer): Promise<
     })),
     can: {
       seePii: allowed,
-      approve: staff && r.status === "pending_approval",
-      reject: staff && ["pending_approval", "awaiting_send"].includes(r.status),
-      send: viewer.isPvp && r.status === "awaiting_send",
-      retry: viewer.isPvp && r.status === "failed",
-      cancel:
-        (staff && ["pending_approval", "awaiting_send", "approved", "failed"].includes(r.status)) ||
-        (owner && r.status === "pending_approval"),
+      approve: bulkApplies("approve", r.status, viewer),
+      reject: bulkApplies("reject", r.status, viewer),
+      send: bulkApplies("send", r.status, viewer),
+      retry: bulkApplies("retry", r.status, viewer),
+      cancel: bulkApplies("cancel", r.status, viewer) || (owner && r.status === "pending_approval"),
       resolve: viewer.isAdmin && r.status === "submitting" && r.needsCheck,
       tag: canTag(viewer, r),
     },

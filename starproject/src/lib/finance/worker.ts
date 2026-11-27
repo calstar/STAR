@@ -28,6 +28,19 @@ export type ClaimedJob =
 
 const leaseEnd = () => new Date(Date.now() + LEASE_MINUTES * 60_000);
 
+/**
+ * Whether a claim would find something: an approved request, or a filing whose
+ * lease ran out. The worker asks between polls so a send is picked up in seconds.
+ */
+export async function hasWork(): Promise<boolean> {
+  const n = await prisma.reimbursement.count({
+    where: {
+      OR: [{ status: "approved" }, { status: "submitting", needsCheck: false, leaseUntil: { lt: new Date() } }],
+    },
+  });
+  return n > 0;
+}
+
 export async function claimJob(): Promise<ClaimedJob> {
   // 1. A filing whose lease ran out: the worker died mid-way. Check, never re-file.
   const stale = await prisma.reimbursement.findFirst({

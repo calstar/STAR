@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 
 import { isAdmin } from "@/lib/admins";
 import { prisma } from "@/lib/db";
+import { BULK_ACTIONS, type BulkAction } from "@/lib/finance/bulk";
 import { canRequestLogin } from "@/lib/finance/login";
 import { isPvp } from "@/lib/pvp";
 import { canTag, getFinanceDetail, getViewer, type FinanceDetail } from "@/lib/finance/queries";
@@ -122,6 +123,41 @@ export async function tagReimbursement(id: string, tags: { projectId?: string | 
   await prisma.reimbursement.update({ where: { id }, data });
   revalidatePath("/finance");
   return { ok: true };
+}
+
+export type BulkResult = { done: number; failed: { number: number; error: string }[] } | { error: string };
+
+const MAX_BULK = 200;
+
+/**
+ * Apply one status change to several reimbursements: each goes through the
+ * single-row action above, so the same permission checks and events apply, and
+ * one that can't move is reported rather than stopping the rest.
+ */
+export async function bulkSetReimbursementStatus(ids: string[], action: BulkAction, note?: string): Promise<BulkResult> {
+  if (!BULK_ACTIONS.includes(action)) return { error: "Unknown status change." };
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return { error: "Select at least one reimbursement." };
+  if (unique.length > MAX_BULK) return { error: `Select at most ${MAX_BULK} at a time.` };
+  if (action === "reject" && !note?.trim()) return { error: "Say why they're rejected; each member sees this." };
+  const numbers = new Map(
+    (await prisma.reimbursement.findMany({ where: { id: { in: unique } }, select: { id: true, number: true } })).map((r) => [r.id, r.number]),
+  );
+  const one: Record<BulkAction, (id: string) => Promise<Result>> = {
+    approve: approveReimbursement,
+    send: sendReimbursement,
+    retry: retryReimbursement,
+    reject: (id) => rejectReimbursement(id, note ?? ""),
+    cancel: cancelReimbursement,
+  };
+  let done = 0;
+  const failed: { number: number; error: string }[] = [];
+  for (const id of unique) {
+    const res = await one[action](id);
+    if ("error" in res) failed.push({ number: numbers.get(id) ?? 0, error: res.error });
+    else done++;
+  }
+  return { done, failed };
 }
 
 /** Admins: ask callink-worker to sign in to CalLink, which sends the Duo push. */

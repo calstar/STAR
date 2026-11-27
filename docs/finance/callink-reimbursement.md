@@ -80,6 +80,11 @@ worker polls `GET /api/worker/login` every 10 s, takes it once, and runs
 CalLink's own cookies aside so a still-live session is renewed too, and puts them back if
 the new sign-in fails. Requests not taken within 2 minutes lapse.
 
+The same poll answers `work: true` when a claim would find a job (an approved request, or
+a lease that ran out), so a live worker claims a request a PVP just sent within about 10 s
+instead of at its next minute. A dry run doesn't wake for it: the job it just handed back
+would wake it again at once.
+
 ## Reading requests (no HTML scraping of the app)
 
 All read-only, with the session's cookies:

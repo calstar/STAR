@@ -17,13 +17,16 @@ const row = (over: Partial<FinanceRow>): FinanceRow => ({
   amountCents: 1234,
   date: "2026-10-01T00:00:00.000Z",
   status: { key: "pending_approval", label: "Pending approval", tone: "amber" },
+  rawStatus: "pending_approval",
   callinkRequestNumber: null,
   vendors: "",
   mine: false,
   needsAdmin: false,
   source: "starproject",
   projectId: null,
+  projectLabel: null,
   subteamId: null,
+  subteamName: null,
   ...over,
 });
 

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   approveReimbursement,
+  bulkSetReimbursementStatus,
   cancelReimbursement,
   rejectReimbursement,
   requestCallinkLogin,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/actions/finance";
 import { isAdmin, requireAdmin } from "@/lib/admins";
 import { canSeePii } from "@/lib/finance/access";
+import { BULK_ACTIONS } from "@/lib/finance/bulk";
 import { FETCH_WAIT_MS, isInlineMime } from "@/lib/finance/receipt-fetch";
 import { isPvp } from "@/lib/pvp";
 import { prisma } from "@/lib/db";
@@ -698,6 +700,35 @@ export const financeTools: ToolModule = (server) => {
       annotations: DESTRUCTIVE,
     },
     async ({ number }) => act(number, (id) => cancelReimbursement(id)),
+  );
+
+  define(
+    "bulk_set_reimbursement_status",
+    {
+      description:
+        "Admins or PVPs (MCP). The Reimbursements list's Set status on several at once, by R-number: approve " +
+        "(pending_approval), send (awaiting_send, PVPs only), retry (failed, PVPs only), reject (pending_approval or " +
+        "awaiting_send; note required, every member sees it) or cancel (pending_approval, awaiting_send, approved, " +
+        "failed). Each goes through the single-reimbursement action; one that can't move is listed in failed and " +
+        "the rest still move. Reject and cancel are final. Returns { done, failed: [{ number, error }] }.",
+      inputSchema: {
+        numbers: z.array(numberSchema).min(1).max(200),
+        action: z.enum(BULK_ACTIONS as [string, ...string[]]),
+        note: z.string().trim().min(1).max(1000).optional().describe("Why; required for reject, shown to each member"),
+      },
+      annotations: DESTRUCTIVE,
+    },
+    async ({ numbers, action, note }) => {
+      const found = await prisma.reimbursement.findMany({ where: { number: { in: numbers } }, select: { id: true, number: true } });
+      const missing = numbers.filter((n) => !found.some((r) => r.number === n));
+      const res = await bulkSetReimbursementStatus(
+        found.map((r) => r.id),
+        action as (typeof BULK_ACTIONS)[number],
+        note,
+      );
+      if ("error" in res) throw new Error(res.error);
+      return { ...res, failed: [...res.failed, ...missing.map((number) => ({ number, error: `There is no R-${number}.` }))] };
+    },
   );
 
   define(

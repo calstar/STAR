@@ -242,3 +242,44 @@ export async function cancelPurchaseRequest(id: string): Promise<{ error?: strin
   revalidate();
   return {};
 }
+
+export type PrBulkAction = "approve" | "reject" | "cancel";
+
+/**
+ * Decide several purchase requests at once: approve (every line of each),
+ * reject (one reason for all) or cancel. Each goes through the single-request
+ * action, so the PVP check and the activity log apply per request, and one that
+ * can't move is reported rather than stopping the rest.
+ */
+export async function bulkDecidePurchaseRequests(
+  ids: string[],
+  action: PrBulkAction,
+  reason?: string,
+): Promise<{ done: number; failed: { number: number; error: string }[] } | { error: string }> {
+  if (!["approve", "reject", "cancel"].includes(action)) return { error: "Unknown status change." };
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) return { error: "Select at least one request." };
+  if (unique.length > 200) return { error: "Select at most 200 at a time." };
+  if (action === "reject" && !reason?.trim()) return { error: "Say why, so the people who asked know what to change." };
+  const numbers = new Map(
+    (await prisma.purchaseRequest.findMany({ where: { id: { in: unique } }, select: { id: true, number: true } })).map((r) => [r.id, r.number]),
+  );
+  let done = 0;
+  const failed: { number: number; error: string }[] = [];
+  for (const id of unique) {
+    let res: { error?: string };
+    try {
+      res =
+        action === "approve"
+          ? await approvePurchaseRequest(id)
+          : action === "reject"
+            ? await rejectPurchaseRequest(id, reason ?? "")
+            : await cancelPurchaseRequest(id);
+    } catch (e) {
+      res = { error: (e as Error).message };
+    }
+    if (res.error) failed.push({ number: numbers.get(id) ?? 0, error: res.error });
+    else done++;
+  }
+  return { done, failed };
+}

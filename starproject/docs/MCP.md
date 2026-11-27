@@ -362,6 +362,7 @@ Subteams → Budget is.
 | `approve_purchase_request` | Approve a waiting request, all of it or the lines in `itemIds`; approved lines become Approved, the rest stay Planned | write; PVPs only |
 | `reject_purchase_request` | Reject a waiting request with a reason; lines stay Planned | write; PVPs only |
 | `cancel_purchase_request` | Withdraw a waiting request | write; its maker or a PVP |
+| `bulk_decide_purchase_requests` | The page's Set status on several waiting requests by PR number: `approve` (every line), `reject` (one `reason`), `cancel`. Each goes through the single-request action; returns `{ done, failed }` | destructive; approve/reject PVPs only, cancel its maker or a PVP |
 | `list_pvps` | The PVPs (purchase approvers), seed or added | read |
 | `add_pvp` / `remove_pvp` | Change the PVP list | PVPs only; the last PVP can't be removed |
 | `list_blockers` | By `taskId`: blocked-by and blocking lists; by `projectId`: every edge (the Gantt arrows) | read |
@@ -376,7 +377,7 @@ Subteams → Budget is.
 | `delete_subteam` | Delete a subteam; its tasks keep existing with no subteam; returns `tasksDetached` | admins only; destructive |
 | `list_users` | Everyone who has signed in (the assignee picker's team): id, email, name, displayName, isAdmin, createdAt, openTaskCount | read |
 | `get_user` | One user by `userId` or `email` (exactly one): the same summary plus `assignedTaskCount`, `archivedTaskCount`, `tasksByStatus`. Never settings or tokens | read |
-| `list_reimbursements` | Every reimbursement (STAR's and CalLink's), filtered by any of: `status`, `mine`, `review`, `search`, `person` (payee or submitter name), `vendor`, `minAmount`/`maxAmount` (dollars), `from`/`to` (Berkeley days), `schoolYear`, `source` (`callink`/`starproject`), `projectId`, `subteamId`; `sort` newest/oldest/largest/smallest, `limit`; `withItems` adds line items. Returns `{ total, totalCents, rows }` (totals before `limit`) | read |
+| `list_reimbursements` | Every reimbursement (STAR's and CalLink's), filtered by any of: `status`, `mine`, `review`, `search`, `person` (payee or submitter name), `vendor`, `minAmount`/`maxAmount` (dollars), `from`/`to` (Berkeley days), `schoolYear`, `source` (`callink`/`starproject`), `projectId`, `subteamId`; rows carry `projectLabel` and `subteamName`; `sort` newest/oldest/largest/smallest, `limit`; `withItems` adds line items. Returns `{ total, totalCents, rows }` (totals before `limit`) | read |
 | `get_reimbursement` | One reimbursement by R-number: fields, items + receipts, timeline, `can`; PII and receipt links redacted unless you are the payee, the filer or an admin | read |
 | `get_reimbursement_receipts` | A reimbursement's line items plus the receipt files: PDFs as embedded resources, images as images (`item` for one item; up to 20 MB per call). A CalLink receipt not yet held is downloaded for that call (callink-worker, up to 30 s wait) and kept; nothing is downloaded unless asked for | read; payee, filer and admins only |
 | `get_payee_defaults` | What the New reimbursement form pre-fills for you (saved profile, else your newest CalLink request, else account) | read |
@@ -392,6 +393,7 @@ Subteams → Budget is.
 | `reject_reimbursement` | Reject a pending or awaiting-send reimbursement with a reason (≤1000 chars) | admins or PVPs; destructive (final) |
 | `retry_reimbursement` | Put a failed filing back in the CalLink queue | PVPs only; write |
 | `cancel_reimbursement` | Cancel before it reaches CalLink: the filer while pending, an admin or PVP also when awaiting send, approved or failed | destructive (final) |
+| `bulk_set_reimbursement_status` | The list's Set status on several by R-number: `approve`, `send`, `retry`, `reject` (`note` required), `cancel`, with the same per-status rules as the single tools. Returns `{ done, failed }` | destructive (reject/cancel are final) |
 | `resolve_needs_check` | Record whether a filing the worker could not confirm is on CalLink (`filed`); not filed goes back to awaiting send | admins only; write |
 | `request_callink_login` | Ask callink-worker to sign in to CalLink (sends the Duo push) | admins only; write |
 | `get_worker_status` | The CalLink worker's last report and the sign-in banner state | admins only; read |

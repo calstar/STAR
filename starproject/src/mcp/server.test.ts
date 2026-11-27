@@ -69,6 +69,8 @@ const ADMIN_ONLY = [
 ];
 
 const DESTRUCTIVE = [
+  "bulk_set_reimbursement_status",
+  "bulk_decide_purchase_requests",
   "delete_task",
   "delete_project",
   "delete_subteam",
