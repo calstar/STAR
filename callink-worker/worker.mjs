@@ -178,15 +178,18 @@ function signIn() {
   });
 }
 
-async function loginIfAsked() {
-  if (!(await api.loginRequested().catch(e => { log('login poll failed:', brief(e)); return false; }))) return false;
+/** Ask STARProject what's waiting: sign in now if an admin asked (signedIn), and
+ * whether a job is ready to claim (work). */
+async function pollServer() {
+  const p = await api.poll().catch(e => { log('login poll failed:', brief(e)); return { login: false, work: false }; });
+  if (!p.login) return { signedIn: false, work: p.work };
   log('an admin asked for a CalLink sign-in');
   await ctx.close();
   const res = await signIn();
   ctx = await openSession();
   log(`sign-in ${res.ok ? 'succeeded' : `failed: ${res.note}`}`);
   await api.reportLogin(res.ok ? 'ok' : 'failed', res.note).catch(e => log('login report failed:', brief(e)));
-  return true;
+  return { signedIn: true, work: p.work };
 }
 
 // ---- the loop -----------------------------------------------------------------------------
@@ -262,20 +265,23 @@ let wake = () => {};
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { stopping = true; wake(); log(`${sig}: finishing the current step`); });
 const nap = ms => new Promise(res => { const t = setTimeout(res, ms); wake = () => { clearTimeout(t); res(); }; });
 // Wait between polls, but stop waiting the moment we're asked to stop, answer a
-// sign-in request within seconds (then go round the loop at once to report it), and
-// bring in receipts someone is waiting on over MCP.
-async function idle(ms) {
+// sign-in request within seconds (then go round the loop at once to report it),
+// with `wakeForWork` go round at once when a job is waiting (a PVP just sent one),
+// and bring in receipts someone is waiting on over MCP.
+async function idle(ms, { wakeForWork = false } = {}) {
   for (const end = Date.now() + ms; !stopping && Date.now() < end; ) {
     await nap(Math.min(LOGIN_POLL_MS, end - Date.now()));
     if (stopping || once) continue;
-    if (await loginIfAsked()) return;
+    const polled = await pollServer();
+    if (polled.signedIn) return;
+    if (wakeForWork && polled.work && sessionOk) return;
     if (sessionOk) await fetchReceipts(ctx).catch(receiptsFailed);
   }
 }
 
 try {
   while (!stopping) {
-    if (!once) await loginIfAsked();
+    if (!once) await pollServer();
     const alive = await sessionAlive(ctx).catch(() => false);
     sessionOk = alive;
     const expires = alive ? await sessionExpiresAt(ctx) : null;
@@ -313,7 +319,9 @@ try {
     if (once) break;
     // A dry run hands the job back, so the next claim is the same job: wait a poll
     // rather than claim and release it every second.
-    if (!claimed || released) await idle(POLL_MS);
+    // Live, a job that turns up while waiting is claimed within LOGIN_POLL_MS; a dry
+    // run doesn't wake for one, or it would wake for the job it just handed back.
+    if (!claimed || released) await idle(POLL_MS, { wakeForWork: live });
   }
 } catch (e) {
   log('worker error:', brief(e));
