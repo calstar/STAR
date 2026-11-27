@@ -123,7 +123,7 @@ async function file(ctx, claimed) {
       const { built } = await fileRequest(ctx, checked, { submit: false });
       log(`R-${job.number}: dry run, ${built.pairs.length} fields checked; handing it back`);
       await api.release(job.id);
-      return;
+      return 'released';
     }
 
     journal(job.id, { state: 'posting', tag: job.tag });
@@ -309,9 +309,11 @@ try {
 
     const claimed = await api.claim().catch(e => { log('claim failed:', brief(e)); return null; });
     if (claimed?.kind === 'reconcile') await reconcile(ctx, claimed.job);
-    else if (claimed?.kind === 'file') await file(ctx, claimed);
+    const released = claimed?.kind === 'file' && (await file(ctx, claimed)) === 'released';
     if (once) break;
-    if (!claimed) await idle(POLL_MS);
+    // A dry run hands the job back, so the next claim is the same job: wait a poll
+    // rather than claim and release it every second.
+    if (!claimed || released) await idle(POLL_MS);
   }
 } catch (e) {
   log('worker error:', brief(e));
